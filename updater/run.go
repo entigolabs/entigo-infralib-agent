@@ -1,18 +1,18 @@
- 
-package main
+package updater
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/codecommit"
 	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"log"
+	"os"
 )
 
-func main() {
+func Run(flags *common.Flags) {
 	// Initialize a session using Amazon SDK
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(os.Getenv("AWS_REGION")),
@@ -51,7 +51,6 @@ func main() {
 		fmt.Printf("Repository created with name: %s\n", *result.RepositoryMetadata.RepositoryName)
 	}
 
-
 	putFileInput := &codecommit.PutFileInput{
 		BranchName:     aws.String("main"), // The default branch that gets created
 		CommitMessage:  aws.String("Add README.md"),
@@ -67,5 +66,3 @@ func main() {
 
 	fmt.Println("README.md added to repository.")
 }
-
-
