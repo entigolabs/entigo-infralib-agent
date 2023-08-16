@@ -1,0 +1,84 @@
+prefix: ep
+source: https://github.com/entigolabs/entigo-infralib-release
+version: stable
+steps:
+- name: network
+  type: terraform
+  version: stable
+  inputs:
+    approve: minor
+    modules:
+    - name: main
+      source: aws/vpc
+      version: stable
+      inputs:
+        vpc_cidr:
+        private_subnets:
+        public_subnets:
+    - name: dns
+      source: aws/route53
+      version: stable
+      inputs:
+        vpc_prefix: ep-main
+      
+    
+- name: infrastructure
+  type: terraform
+  version: stable
+  inputs:
+    vpc_prefix: ep-main
+    approve: minor
+    modules:
+    - name: main
+      source: aws/eks
+      version: stable
+      inputs:
+        vpc_prefix: ep-main
+        eks_main_min_size: 3
+        eks_main_max_size: 6
+    - name: main
+      source: aws/helm
+      version: stable
+      inputs:
+        chart: k8s/argocd
+        version: stable
+        
+- name: custom
+  type: terraform
+  version: stable
+  inputs:
+    vpc_prefix: ep-main
+    approve: always
+    modules:
+    - name: main
+      source: custom
+      version: stable
+      inputs: {}
+      
+- name: applications
+  type: argocd-apps
+  version: stable
+  inputs:
+    vpc_prefix: ep-main
+    modules:
+    - name: aws-alb
+      source: k8s/aws-alb
+      version: stable
+    - name: crossplane
+      source: k8s/crossplane
+      version: stable
+    - name: external-dns
+      source: k8s/external-dns
+      version: stable
+      inputs:
+        
+
+
+---
+
+steps:
+  - name: applications
+    inputs:
+      modules:
+      - name: external-dns
+        operation: delete
