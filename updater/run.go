@@ -81,16 +81,20 @@ func Run(flags *common.Flags) {
 			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/main.tf", config.Prefix, step.Name), main, parentCommitId)
 			break
 		case "argocd-apps":
-			inputs := getHelmValues(step)
-			if len(inputs) == 0 {
-				continue
+			for _, module := range step.Modules {
+				inputs := module.Inputs
+				if len(inputs) == 0 {
+					continue
+				}
+				yamlBytes, err := yaml.Marshal(inputs)
+				if err != nil {
+					common.Logger.Fatalf("Failed to marshal helm values: %s", err)
+				}
+				parentCommitId = putFile(codeCommit, repoName,
+					fmt.Sprintf("%s-%s/%s-values.yaml", config.Prefix, step.Name, module.Name),
+					yamlBytes, parentCommitId)
+				break
 			}
-			yamlBytes, err := yaml.Marshal(inputs)
-			if err != nil {
-				common.Logger.Fatalf("Failed to marshal helm values: %s", err)
-			}
-			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/values.yaml", config.Prefix, step.Name), yamlBytes, parentCommitId)
-			break
 		}
 	}
 }
@@ -224,16 +228,6 @@ func getGithubOwnerAndRepo(repoURL string) (string, string, error) {
 	}
 
 	return parts[0], parts[1], nil
-}
-
-func getHelmValues(step model.Steps) map[string]interface{} {
-	inputs := make(map[string]interface{})
-	for _, module := range step.Modules {
-		for name, value := range module.Inputs {
-			inputs[name] = value
-		}
-	}
-	return inputs
 }
 
 func getLatestCommitId(codeCommit *codecommit.CodeCommit, repoName string) (*string, error) {
