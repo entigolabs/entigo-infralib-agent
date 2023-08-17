@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/google/go-github/v54/github"
 	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
@@ -24,14 +25,8 @@ import (
 
 const branchName = "main"
 
-// Type Terraform tekitab terraformi faili
-// Step name = kausta nimi, koos parent prefixiga, kõigile stepidele
-// Failid provider.tf, moodulinimi.tf
-// Helmi puhul input väljundisse
-// Terraformi puhul module nagu test module, source midagi muud
 func Run(flags *common.Flags) {
 	config := getConfig(flags.Config)
-	fmt.Println(config)
 	// Initialize a session using Amazon SDK
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(os.Getenv("AWS_REGION")),
@@ -72,12 +67,20 @@ func Run(flags *common.Flags) {
 	releaseTag := release.GetTagName()
 
 	for _, step := range config.Steps {
-		if step.Type == "terraform" {
-			provider, err := getTerraformProvider(step, config.Source, releaseTag)
+		switch step.Type {
+		case "terraform":
+			provider, err := getTerraformProvider(step)
 			if err != nil {
 				common.Logger.Fatalf("Failed to create terraform provider: %s", err)
 			}
 			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/provider.tf", config.Prefix, step.Name), provider, parentCommitId)
+			main, err := getTerraformMain(step, config.Source, releaseTag)
+			if err != nil {
+				common.Logger.Fatalf("Failed to create terraform main: %s", err)
+			}
+			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/main.tf", config.Prefix, step.Name), main, parentCommitId)
+			break
+		case "argocd-apps":
 			inputs := getHelmValues(step)
 			if len(inputs) == 0 {
 				continue
@@ -87,24 +90,106 @@ func Run(flags *common.Flags) {
 				common.Logger.Fatalf("Failed to marshal helm values: %s", err)
 			}
 			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/values.yaml", config.Prefix, step.Name), yamlBytes, parentCommitId)
+			break
 		}
 	}
 }
 
-func getTerraformProvider(step model.Steps, source string, releaseTag string) ([]byte, error) {
-	baseFile, err := ReadTerraformFile("base.tf")
+func getTerraformProvider(step model.Steps) ([]byte, error) {
+	file, err := ReadTerraformFile("base.tf")
 	if err != nil {
 		return nil, err
 	}
-	newFile := hclwrite.NewEmptyFile()
-	body := newFile.Body()
+	body := file.Body()
+	err = injectEKS(body, step)
+	if err != nil {
+		return nil, err
+	}
+	return hclwrite.Format(file.Bytes()), nil
+}
+
+func getTerraformMain(step model.Steps, source string, releaseTag string) ([]byte, error) {
+	file := hclwrite.NewEmptyFile()
+	body := file.Body()
 	for _, module := range step.Modules {
 		newModule := body.AppendNewBlock("module", []string{module.Name})
 		moduleBody := newModule.Body()
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s/%s.git?ref=%s", source, module.Source, releaseTag)))
+		if module.Inputs == nil {
+			continue
+		}
+		for name, value := range module.Inputs {
+			if value == nil {
+				continue
+			}
+			moduleBody.SetAttributeRaw(name, getTokens(value))
+		}
 	}
-	return hclwrite.Format(append(baseFile.Bytes, newFile.Bytes()...)), nil
+	return file.Bytes(), nil
+}
+
+func injectEKS(body *hclwrite.Body, step model.Steps) error {
+	hasEKSModule := false
+	for _, module := range step.Modules {
+		if module.Name == "eks" {
+			hasEKSModule = true
+			break
+		}
+	}
+	if !hasEKSModule {
+		return nil
+	}
+	file, err := ReadTerraformFile("eks.tf")
+	if err != nil {
+		return err
+	}
+	body.AppendBlock(file.Body().Blocks()[0])
+	body.AppendNewline()
+	terraformBlock := body.FirstMatchingBlock("terraform", []string{})
+	if terraformBlock == nil {
+		return fmt.Errorf("terraform block not found")
+	}
+	providersBlock := terraformBlock.Body().FirstMatchingBlock("required_providers", []string{})
+	if providersBlock == nil {
+		providersBlock = terraformBlock.Body().AppendNewBlock("required_providers", []string{})
+	}
+	kubernetesProvider := map[string]string{
+		"source":  "hashicorp/kubernetes",
+		"version": "~>2.0",
+	}
+	providerBytes, err := createKeyValuePairs(kubernetesProvider)
+	if err != nil {
+		return err
+	}
+	providersBlock.Body().SetAttributeRaw("kubernetes", getBytesTokens(providerBytes))
+	return nil
+}
+
+func createKeyValuePairs(m map[string]string) ([]byte, error) {
+	b := new(bytes.Buffer)
+	b.Write([]byte("{\n"))
+	for key, value := range m {
+		_, err := fmt.Fprintf(b, "%s=\"%s\"\n", key, value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	b.Write([]byte("}"))
+	return bytes.TrimRight(b.Bytes(), ", "), nil
+}
+
+func getTokens(value interface{}) hclwrite.Tokens {
+	return getBytesTokens([]byte(fmt.Sprintf("%v", value)))
+}
+
+func getBytesTokens(bytes []byte) hclwrite.Tokens {
+	return hclwrite.Tokens{
+		{
+			Type:  hclsyntax.TokenIdent,
+			Bytes: bytes,
+		},
+	}
 }
 
 func getLatestRelease(url string) (*github.RepositoryRelease, error) {
@@ -214,12 +299,12 @@ func createRepository(codeCommit *codecommit.CodeCommit, repoName string) bool {
 }
 
 func getConfig(configFile string) model.Config {
-	bytes, err := os.ReadFile(configFile)
+	fileBytes, err := os.ReadFile(configFile)
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
 	var config model.Config
-	err = yaml.Unmarshal(bytes, &config)
+	err = yaml.Unmarshal(fileBytes, &config)
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
@@ -240,11 +325,14 @@ func validateConfig(config model.Config) {
 	}
 }
 
-func ReadTerraformFile(fileName string) (*hcl.File, error) {
-	parser := hclparse.NewParser()
-	file, diags := parser.ParseHCLFile(fileName)
+func ReadTerraformFile(fileName string) (*hclwrite.File, error) {
+	file, err := os.ReadFile(fileName)
+	if err != nil {
+		return nil, err
+	}
+	hclFile, diags := hclwrite.ParseConfig(file, fileName, hcl.InitialPos)
 	if diags.HasErrors() {
 		return nil, diags
 	}
-	return file, nil
+	return hclFile, nil
 }
