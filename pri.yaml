@@ -23,6 +23,24 @@ steps:
             ["10.175.0.0/26", "10.175.0.64/26", "10.175.0.128/26"]
           intra_subnets: |
             []
+          vastiknaidis: |
+            {
+              "a" = {
+                cidr  = "10.145.0.0/26"
+                az    = data.aws_availability_zones.available.names[0]
+                route = module.vpc.private_route_table_ids[0]
+              }
+              "b" = {
+                cidr  = "10.145.0.64/26"
+                az    = data.aws_availability_zones.available.names[1]
+                route = module.vpc.private_route_table_ids[1]
+              }
+              "c" = {
+                cidr  = "10.145.0.128/26"
+                az    = data.aws_availability_zones.available.names[2]
+                route = module.vpc.private_route_table_ids[2]
+              }
+            }
       - name: dns
         source: aws/route53
         version: stable
