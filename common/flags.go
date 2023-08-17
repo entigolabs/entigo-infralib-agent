@@ -2,6 +2,7 @@ package common
 
 type Flags struct {
 	LoggingLevel string
+	Config       string
 }
 
 func (f *Flags) Setup(cmd Command) error {

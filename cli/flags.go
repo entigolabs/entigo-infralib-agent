@@ -27,7 +27,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 }
 
 func updateSpecificFlags(baseFlags []cli.Flag) []cli.Flag {
-	return append(baseFlags)
+	return append(baseFlags,
+		&configFlag)
 }
 
 var loggingFlag = cli.StringFlag{
@@ -38,4 +39,14 @@ var loggingFlag = cli.StringFlag{
 	Value:       "prod",
 	Usage:       "set `logging level` (prod | dev)",
 	Destination: &flags.LoggingLevel,
+}
+
+var configFlag = cli.StringFlag{
+	Name:        "config",
+	Aliases:     []string{"c"},
+	EnvVars:     []string{"CONFIG"},
+	Value:       "",
+	Usage:       "set config file",
+	Destination: &flags.Config,
+	Required:    true,
 }
