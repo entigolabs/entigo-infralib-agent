@@ -3,6 +3,8 @@ package common
 type Flags struct {
 	LoggingLevel string
 	Config       string
+	Branch       string
+	AWSPrefix    string
 }
 
 func (f *Flags) Setup(cmd Command) error {

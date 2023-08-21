@@ -1,332 +1,147 @@
 package updater
 
 import (
-	"bytes"
-	"context"
-	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/codecommit"
-	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/google/go-github/v54/github"
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/zclconf/go-cty/cty"
-	"gopkg.in/yaml.v3"
-	"net/url"
-	"os"
-	"strings"
+	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
-const branchName = "main"
-
 func Run(flags *common.Flags) {
-	config := getConfig(flags.Config)
-	// Initialize a session using Amazon SDK
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(os.Getenv("AWS_REGION")),
-	})
+	config := service.GetConfig(flags.Config)
+
+	awsConfig := service.NewAWSConfig()
+	stsService := service.NewSTS(awsConfig)
+
+	accountID := stsService.GetAccountID()
+	codeCommit := setupCodeCommit(awsConfig, accountID, flags.AWSPrefix, flags.Branch)
+
+	service.CreateStepFiles(config, codeCommit)
+
+	s3 := service.NewS3(awsConfig)
+
+	s3Arn, err := s3.CreateBucket(fmt.Sprintf("%s-%s", flags.AWSPrefix, "pipeline"))
 	if err != nil {
-		common.Logger.Fatalf("Failed to initialize AWS session: %s", err)
+		common.Logger.Fatalf("Failed to create S3 bucket: %s", err)
+	}
+	dynamoDBArn, err := service.CreateDynamoDBTable(awsConfig, fmt.Sprintf("%s-%s", flags.AWSPrefix, "pipeline"))
+	if err != nil {
+		common.Logger.Fatalf("Failed to create DynamoDB table: %s", err)
+	}
+	cloudwatch := service.NewCloudWatch(awsConfig)
+	logGroup := fmt.Sprintf("log-%s", flags.AWSPrefix)
+	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create CloudWatch log group: %s", err)
+	}
+	err = cloudwatch.CreateLogStream(logGroup, fmt.Sprintf("log-%s", flags.AWSPrefix))
+	if err != nil {
+		common.Logger.Fatalf("Failed to create CloudWatch log stream: %s", err)
 	}
 
-	// Get AWS account number using STS
-	stsService := sts.New(sess)
-	stsInput := &sts.GetCallerIdentityInput{}
-	stsOutput, err := stsService.GetCallerIdentity(stsInput)
-	if err != nil {
-		common.Logger.Fatalf("Failed to get AWS account number: %s", err)
-	}
-	accountID := *stsOutput.Account
+	iam := service.NewIAM(awsConfig)
 
-	// Create CodeCommit repository with name containing the AWS account number
-	repoName := fmt.Sprintf("entigo-infralib-%s", accountID)
-	codeCommit := codecommit.New(sess)
-
-	created := createRepository(codeCommit, repoName)
-
-	var parentCommitId *string = nil
-	if !created {
-		parentCommitId, err = getLatestCommitId(codeCommit, repoName)
+	buildRole := iam.CreateRole(fmt.Sprintf("%s-build", flags.AWSPrefix), []service.PolicyStatement{{
+		Effect:    "Allow",
+		Action:    []string{"sts:AssumeRole"},
+		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
+	}})
+	if buildRole != nil {
+		err = iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
 		if err != nil {
-			common.Logger.Fatalf("Failed to get latest commit id: %s", err)
+			common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
 		}
-	}
-
-	parentCommitId = putFile(codeCommit, repoName, "README.md", []byte("# My New Repository\nThis is the README file."), parentCommitId)
-
-	release, err := getLatestRelease(config.Source)
-	if err != nil {
-		common.Logger.Fatalf("Failed to get latest release: %s", err)
-	}
-	releaseTag := release.GetTagName()
-
-	for _, step := range config.Steps {
-		switch step.Type {
-		case "terraform":
-			provider, err := getTerraformProvider(step)
-			if err != nil {
-				common.Logger.Fatalf("Failed to create terraform provider: %s", err)
-			}
-			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/provider.tf", config.Prefix, step.Name), provider, parentCommitId)
-			main, err := getTerraformMain(step, config.Source, releaseTag)
-			if err != nil {
-				common.Logger.Fatalf("Failed to create terraform main: %s", err)
-			}
-			parentCommitId = putFile(codeCommit, repoName, fmt.Sprintf("%s-%s/main.tf", config.Prefix, step.Name), main, parentCommitId)
-			break
-		case "argocd-apps":
-			for _, module := range step.Modules {
-				inputs := module.Inputs
-				if len(inputs) == 0 {
-					continue
-				}
-				yamlBytes, err := yaml.Marshal(inputs)
-				if err != nil {
-					common.Logger.Fatalf("Failed to marshal helm values: %s", err)
-				}
-				parentCommitId = putFile(codeCommit, repoName,
-					fmt.Sprintf("%s-%s/%s-values.yaml", config.Prefix, step.Name, module.Name),
-					yamlBytes, parentCommitId)
-				break
-			}
-		}
-	}
-}
-
-func getTerraformProvider(step model.Steps) ([]byte, error) {
-	file, err := ReadTerraformFile("base.tf")
-	if err != nil {
-		return nil, err
-	}
-	body := file.Body()
-	err = injectEKS(body, step)
-	if err != nil {
-		return nil, err
-	}
-	return hclwrite.Format(file.Bytes()), nil
-}
-
-func getTerraformMain(step model.Steps, source string, releaseTag string) ([]byte, error) {
-	file := hclwrite.NewEmptyFile()
-	body := file.Body()
-	for _, module := range step.Modules {
-		newModule := body.AppendNewBlock("module", []string{module.Name})
-		moduleBody := newModule.Body()
-		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s/%s.git?ref=%s", source, module.Source, releaseTag)))
-		if module.Inputs == nil {
-			continue
-		}
-		for name, value := range module.Inputs {
-			if value == nil {
-				continue
-			}
-			moduleBody.SetAttributeRaw(name, getTokens(value))
-		}
-	}
-	return file.Bytes(), nil
-}
-
-func injectEKS(body *hclwrite.Body, step model.Steps) error {
-	hasEKSModule := false
-	for _, module := range step.Modules {
-		if module.Name == "eks" {
-			hasEKSModule = true
-			break
-		}
-	}
-	if !hasEKSModule {
-		return nil
-	}
-	file, err := ReadTerraformFile("eks.tf")
-	if err != nil {
-		return err
-	}
-	body.AppendBlock(file.Body().Blocks()[0])
-	body.AppendNewline()
-	terraformBlock := body.FirstMatchingBlock("terraform", []string{})
-	if terraformBlock == nil {
-		return fmt.Errorf("terraform block not found")
-	}
-	providersBlock := terraformBlock.Body().FirstMatchingBlock("required_providers", []string{})
-	if providersBlock == nil {
-		providersBlock = terraformBlock.Body().AppendNewBlock("required_providers", []string{})
-	}
-	kubernetesProvider := map[string]string{
-		"source":  "hashicorp/kubernetes",
-		"version": "~>2.0",
-	}
-	providerBytes, err := createKeyValuePairs(kubernetesProvider)
-	if err != nil {
-		return err
-	}
-	providersBlock.Body().SetAttributeRaw("kubernetes", getBytesTokens(providerBytes))
-	return nil
-}
-
-func createKeyValuePairs(m map[string]string) ([]byte, error) {
-	b := new(bytes.Buffer)
-	b.Write([]byte("{\n"))
-	for key, value := range m {
-		_, err := fmt.Fprintf(b, "%s=\"%s\"\n", key, value)
+		buildPolicy := iam.CreatePolicy(fmt.Sprintf("%s-build", flags.AWSPrefix),
+			codeBuildPolicy(logGroupArn, s3Arn, *codeCommit.GetRepoArn(), dynamoDBArn))
+		err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 		if err != nil {
-			return nil, err
+			common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 		}
 	}
-	b.Write([]byte("}"))
-	return bytes.TrimRight(b.Bytes(), ", "), nil
+
+	pipelineRole := iam.CreateRole(fmt.Sprintf("%s-pipeline", flags.AWSPrefix), []service.PolicyStatement{{
+		Effect:    "Allow",
+		Action:    []string{"sts:AssumeRole"},
+		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
+	}})
+	if pipelineRole != nil {
+		pipelinePolicy := iam.CreatePolicy(fmt.Sprintf("%s-pipeline", flags.AWSPrefix), codePipelinePolicy(s3Arn))
+		err = iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
+		if err != nil {
+			common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
+		}
+	}
 }
 
-func getTokens(value interface{}) hclwrite.Tokens {
-	return getBytesTokens([]byte(fmt.Sprintf("%v", value)))
+func setupCodeCommit(awsConfig aws.Config, accountID string, prefix string, branch string) service.CodeCommit {
+	repoName := fmt.Sprintf("%s-%s", prefix, accountID)
+	codeCommit := service.NewCodeCommit(awsConfig, repoName, branch)
+	err := codeCommit.CreateRepository()
+	if err != nil {
+		common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
+	}
+	codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis is the README file."))
+	return codeCommit
 }
 
-func getBytesTokens(bytes []byte) hclwrite.Tokens {
-	return hclwrite.Tokens{
-		{
-			Type:  hclsyntax.TokenIdent,
-			Bytes: bytes,
+func codePipelinePolicy(s3Arn string) []service.PolicyStatement {
+	return []service.PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{s3Arn},
+		Action: []string{
+			"s3:*",
 		},
-	}
+	}, {
+		Effect:   "Allow",
+		Resource: []string{"*"},
+		Action: []string{
+			"codebuild:BatchGetBuilds",
+			"codebuild:StartBuild",
+		},
+	}}
 }
 
-func getLatestRelease(url string) (*github.RepositoryRelease, error) {
-	client := github.NewClient(nil)
-	owner, repo, err := getGithubOwnerAndRepo(url)
-	if err != nil {
-		return nil, err
-	}
-	release, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
-	if err != nil {
-		return nil, err
-	}
-	if release == nil {
-		return nil, fmt.Errorf("no releases found for %s/%s", owner, repo)
-	}
-
-	return release, nil
-}
-
-func getGithubOwnerAndRepo(repoURL string) (string, string, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil {
-		return "", "", err
-	}
-	if u.Hostname() != "github.com" {
-		return "", "", fmt.Errorf("not a GitHub URL: %s", repoURL)
-	}
-
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid GitHub URL: %s", repoURL)
-	}
-
-	return parts[0], parts[1], nil
-}
-
-func getLatestCommitId(codeCommit *codecommit.CodeCommit, repoName string) (*string, error) {
-	input := &codecommit.GetBranchInput{
-		RepositoryName: aws.String(repoName),
-		BranchName:     aws.String(branchName),
-	}
-
-	result, err := codeCommit.GetBranch(input)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.Branch.CommitId, nil
-}
-
-func putFile(codeCommit *codecommit.CodeCommit, repoName string, file string, content []byte, parentCommitId *string) *string {
-	putFileInput := &codecommit.PutFileInput{
-		BranchName:     aws.String(branchName),
-		CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
-		RepositoryName: aws.String(repoName),
-		FileContent:    content,
-		FilePath:       aws.String(file),
-		ParentCommitId: parentCommitId,
-	}
-
-	putFileOutput, err := codeCommit.PutFile(putFileInput)
-	if err != nil {
-		var awsErr awserr.Error
-		ok := errors.As(err, &awsErr)
-		if ok && awsErr.Code() == codecommit.ErrCodeSameFileContentException {
-			common.Logger.Printf("%s already exists in repository. Continuing...\n", file)
-			return parentCommitId
-		} else {
-			common.Logger.Fatalf("Failed to put README.md file to repository: %s", err)
-			return nil
-		}
-	}
-	common.Logger.Printf("File %s added to repository\n", file)
-	return putFileOutput.CommitId
-}
-
-func createRepository(codeCommit *codecommit.CodeCommit, repoName string) bool {
-	input := &codecommit.CreateRepositoryInput{
-		RepositoryName: aws.String(repoName),
-	}
-
-	result, err := codeCommit.CreateRepository(input)
-	if err != nil {
-		var awsErr awserr.Error
-		ok := errors.As(err, &awsErr)
-		if ok && awsErr.Code() == codecommit.ErrCodeRepositoryNameExistsException {
-			common.Logger.Printf("Repository %s already exists. Continuing...\n", repoName)
-			return false
-		} else {
-			common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
-			return false
-		}
-	} else {
-		common.Logger.Printf("Repository created with name: %s\n", *result.RepositoryMetadata.RepositoryName)
-		return true
-	}
-}
-
-func getConfig(configFile string) model.Config {
-	fileBytes, err := os.ReadFile(configFile)
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	var config model.Config
-	err = yaml.Unmarshal(fileBytes, &config)
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	validateConfig(config)
-	return config
-}
-
-func validateConfig(config model.Config) {
-	moduleNames := model.NewSet[string]()
-	for _, step := range config.Steps {
-		for _, module := range step.Modules {
-			if moduleNames.Contains(module.Name) {
-				common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name %s is not unique",
-					module.Name)})
-			}
-			moduleNames.Add(module.Name)
-		}
-	}
-}
-
-func ReadTerraformFile(fileName string) (*hclwrite.File, error) {
-	file, err := os.ReadFile(fileName)
-	if err != nil {
-		return nil, err
-	}
-	hclFile, diags := hclwrite.ParseConfig(file, fileName, hcl.InitialPos)
-	if diags.HasErrors() {
-		return nil, diags
-	}
-	return hclFile, nil
+func codeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbArn string) []service.PolicyStatement {
+	return []service.PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{logGroupArn, fmt.Sprintf("%s:*", logGroupArn)},
+		Action: []string{
+			"logs:CreateLogGroup",
+			"logs:CreateLogStream",
+			"logs:PutLogEvents",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{"arn:aws:s3:::*"},
+		Action:   []string{"s3:ListBucket"},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{s3Arn},
+		Action: []string{
+			"s3:PutObject",
+			"s3:GetObject",
+			"s3:GetObjectVersion",
+			"s3:GetBucketAcl",
+			"s3:GetBucketLocation",
+			"s3:ListBucket",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{repoArn},
+		Action: []string{
+			"codecommit:GetCommit",
+			"codecommit:ListBranches",
+			"codecommit:GetRepository",
+			"codecommit:GetBranch",
+			"codecommit:GitPull",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{dynamodbArn},
+		Action: []string{
+			"dynamodb:GetItem",
+			"dynamodb:PutItem",
+			"dynamodb:DeleteItem",
+		},
+	}}
 }
