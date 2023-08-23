@@ -131,7 +131,7 @@ func (s *steps) CreateStepsPipelines() {
 	}
 
 	codeBuild := NewBuilder(s.awsConfig)
-	codePipeline := NewPipeline(s.awsConfig)
+	codePipeline := NewPipeline(s.awsConfig, *repoMetadata.RepositoryName, s.branch, *pipelineRole.Arn, bucket)
 
 	for _, step := range s.config.Steps {
 		stepName := fmt.Sprintf("%s-%s", s.config.Prefix, step.Name)
@@ -144,21 +144,21 @@ func (s *steps) CreateStepsPipelines() {
 		switch step.Type {
 		case "terraform":
 			s.createBackendConf(bucket, *dynamoDBTable.TableName, stepName)
-			err = codePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace, *pipelineRole.Arn, bucket)
+			err = codePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace)
 			if err != nil {
 				common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 			}
-			err = codePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace, *pipelineRole.Arn, bucket)
+			err = codePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
 			if err != nil {
 				common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 			}
 			break
 		case "argocd-apps":
-			err = codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace, *pipelineRole.Arn, bucket)
+			err = codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
 			if err != nil {
 				common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 			}
-			err = codePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace, *pipelineRole.Arn, bucket)
+			err = codePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
 			if err != nil {
 				common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 			}

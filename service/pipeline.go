@@ -11,32 +11,60 @@ import (
 )
 
 type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error
-	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error
-	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error
+	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 }
 
 type pipeline struct {
 	codePipeline *codepipeline.Client
+	repo         string
+	branch       string
+	roleArn      string
+	bucket       string
 }
 
-func NewPipeline(awsConfig aws.Config) Pipeline {
+func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn string, bucket string) Pipeline {
 	return &pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
+		repo:         repo,
+		branch:       branch,
+		roleArn:      roleArn,
+		bucket:       bucket,
 	}
 }
 
-func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error {
+func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(roleArn),
+			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(bucket),
+				Location: aws.String(p.bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			}, Stages: []types.StageDeclaration{{
+				Name: aws.String("Source"),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String("Source"),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeCommit"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        util.NewInt32(1),
+					Configuration: map[string]string{
+						"RepositoryName":       p.repo,
+						"BranchName":           p.branch,
+						"PollForSourceChanges": "false",
+						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
+					},
+				},
+				},
+			}, {
 				Name: aws.String("Plan"),
 				Actions: []types.ActionDeclaration{{
 					Name: aws.String("Plan"),
@@ -46,10 +74,12 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 						Provider: aws.String("CodeBuild"),
 						Version:  aws.String("1"),
 					},
+					InputArtifacts:  []types.InputArtifact{{Name: aws.String("source_output")}},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:        util.NewInt32(1),
+					RunOrder:        util.NewInt32(2),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
 						"EnvironmentVariables": "[{\"name\":\"COMMAND\",\"value\":\"plan\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]",
 					},
 				},
@@ -64,11 +94,11 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 						Provider: aws.String("CodeBuild"),
 						Version:  aws.String("1"),
 					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:       util.NewInt32(2),
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}, {Name: aws.String("Plan")}},
+					RunOrder:       util.NewInt32(3),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
-						"PrimarySource":        "Plan",
+						"PrimarySource":        "source_output",
 						"EnvironmentVariables": "[{\"name\":\"COMMAND\",\"value\":\"apply\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]",
 					},
 				},
@@ -85,16 +115,36 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	return err
 }
 
-func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error {
+func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
 	common.Logger.Printf("Creating destroy CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(roleArn),
+			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(bucket),
+				Location: aws.String(p.bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			}, Stages: []types.StageDeclaration{{
+				Name: aws.String("Source"),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String("Source"),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeCommit"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        util.NewInt32(1),
+					Configuration: map[string]string{
+						"RepositoryName":       p.repo,
+						"BranchName":           p.branch,
+						"PollForSourceChanges": "false",
+						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
+					},
+				},
+				},
+			}, {
 				Name: aws.String("Destroy"),
 				Actions: []types.ActionDeclaration{{
 					Name: aws.String("Destroy"),
@@ -104,10 +154,12 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 						Provider: aws.String("CodeBuild"),
 						Version:  aws.String("1"),
 					},
+					InputArtifacts:  []types.InputArtifact{{Name: aws.String("source_output")}},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:        util.NewInt32(1),
+					RunOrder:        util.NewInt32(2),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
 						"EnvironmentVariables": "[{\"name\":\"COMMAND\",\"value\":\"plan-destroy\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]",
 					},
 				},
@@ -122,7 +174,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 						Provider: aws.String("Manual"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: util.NewInt32(2),
+					RunOrder: util.NewInt32(3),
 				}},
 			}, {
 				Name: aws.String("ApplyDestroy"),
@@ -134,11 +186,11 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 						Provider: aws.String("CodeBuild"),
 						Version:  aws.String("1"),
 					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:       util.NewInt32(3),
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}, {Name: aws.String("Plan")}},
+					RunOrder:       util.NewInt32(4),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
-						"PrimarySource":        "Plan",
+						"PrimarySource":        "source_output",
 						"EnvironmentVariables": "[{\"name\":\"COMMAND\",\"value\":\"apply-destroy\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]",
 					},
 				},
@@ -155,16 +207,36 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	return err
 }
 
-func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error {
+func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(roleArn),
+			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(bucket),
+				Location: aws.String(p.bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			}, Stages: []types.StageDeclaration{{
+				Name: aws.String("Source"),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String("Source"),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeCommit"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        util.NewInt32(1),
+					Configuration: map[string]string{
+						"RepositoryName":       p.repo,
+						"BranchName":           p.branch,
+						"PollForSourceChanges": "false",
+						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
+					},
+				},
+				},
+			}, {
 				Name: aws.String("ArgoCDApply"),
 				Actions: []types.ActionDeclaration{{
 					Name: aws.String("ArgoCDApply"),
@@ -174,9 +246,11 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 						Provider: aws.String("CodeBuild"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: util.NewInt32(1),
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:       util.NewInt32(2),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
 						"EnvironmentVariables": "[{\"name\":\"COMMAND\",\"value\":\"argocd-apply\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]",
 					},
 				},
@@ -193,16 +267,36 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 	return err
 }
 
-func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, roleArn string, bucket string) error {
+func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
 	common.Logger.Printf("Creating destroy CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(roleArn),
+			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(bucket),
+				Location: aws.String(p.bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			}, Stages: []types.StageDeclaration{{
+				Name: aws.String("Source"),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String("Source"),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeCommit"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        util.NewInt32(1),
+					Configuration: map[string]string{
+						"RepositoryName":       p.repo,
+						"BranchName":           p.branch,
+						"PollForSourceChanges": "false",
+						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
+					},
+				},
+				},
+			}, {
 				Name: aws.String("Approve"),
 				Actions: []types.ActionDeclaration{{
 					Name: aws.String("Approval"),
@@ -212,7 +306,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 						Provider: aws.String("Manual"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: util.NewInt32(1),
+					RunOrder: util.NewInt32(2),
 				}},
 			}, {
 				Name: aws.String("ArgoCDDestroy"),
@@ -224,11 +318,11 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 						Provider: aws.String("CodeBuild"),
 						Version:  aws.String("1"),
 					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:       util.NewInt32(2),
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:       util.NewInt32(3),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
-						"PrimarySource":        "Plan",
+						"PrimarySource":        "source_output",
 						"EnvironmentVariables": "[{\"name\":\"COMMAND\",\"value\":\"argocd-destroy\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]",
 					},
 				},
