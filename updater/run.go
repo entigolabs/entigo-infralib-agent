@@ -15,6 +15,7 @@ func Run(flags *common.Flags) {
 
 	accountID := stsService.GetAccountID()
 	codeCommit := setupCodeCommit(awsConfig, accountID, flags.AWSPrefix, flags.Branch)
+	repoMetadata := codeCommit.GetRepoMetadata()
 
 	service.CreateStepFiles(config, codeCommit)
 
@@ -34,7 +35,8 @@ func Run(flags *common.Flags) {
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CloudWatch log group: %s", err)
 	}
-	err = cloudwatch.CreateLogStream(logGroup, fmt.Sprintf("log-%s", flags.AWSPrefix))
+	logStream := fmt.Sprintf("log-%s", flags.AWSPrefix)
+	err = cloudwatch.CreateLogStream(logGroup, logStream)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CloudWatch log stream: %s", err)
 	}
@@ -52,11 +54,19 @@ func Run(flags *common.Flags) {
 			common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
 		}
 		buildPolicy := iam.CreatePolicy(fmt.Sprintf("%s-build", flags.AWSPrefix),
-			codeBuildPolicy(logGroupArn, s3Arn, *codeCommit.GetRepoArn(), dynamoDBArn))
+			codeBuildPolicy(logGroupArn, s3Arn, *repoMetadata.Arn, dynamoDBArn))
 		err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 		if err != nil {
 			common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 		}
+	} else {
+		buildRole = iam.GetRole(fmt.Sprintf("%s-build", flags.AWSPrefix))
+	}
+
+	codeBuild := service.NewBuilder(awsConfig)
+	err = codeBuild.CreateProject(fmt.Sprintf("%s-build", flags.AWSPrefix), *buildRole.Arn, logGroup, logStream, s3Arn, *repoMetadata.CloneUrlHttp)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
 	}
 
 	pipelineRole := iam.CreateRole(fmt.Sprintf("%s-pipeline", flags.AWSPrefix), []service.PolicyStatement{{

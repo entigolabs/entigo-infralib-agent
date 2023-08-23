@@ -6,7 +6,9 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.20.3
 	github.com/aws/aws-sdk-go-v2/config v1.18.34
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.23.3
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.21.4
 	github.com/aws/aws-sdk-go-v2/service/codecommit v1.15.3
+	github.com/aws/aws-sdk-go-v2/service/codepipeline v1.16.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.21.4
 	github.com/aws/aws-sdk-go-v2/service/iam v1.22.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.38.4

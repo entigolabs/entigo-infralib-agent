@@ -14,6 +14,7 @@ type IAM interface {
 	AttachRolePolicy(policyArn string, roleName string) error
 	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
 	CreateRole(roleName string, statement []PolicyStatement) *types.Role
+	GetRole(roleName string) *types.Role
 }
 
 type PolicyDocument struct {
@@ -54,6 +55,14 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 		}
 	}
 	return result.Role
+}
+
+func (i *identity) GetRole(roleName string) *types.Role {
+	role, err := i.iamClient.GetRole(context.Background(), &iam.GetRoleInput{RoleName: aws.String(roleName)})
+	if err != nil {
+		common.Logger.Fatalf("Failed to get role %s: %s", roleName, err)
+	}
+	return role.Role
 }
 
 func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy {

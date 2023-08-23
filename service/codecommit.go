@@ -13,14 +13,14 @@ import (
 type CodeCommit interface {
 	CreateRepository() error
 	GetLatestCommitId() (*string, error)
-	GetRepoArn() *string
+	GetRepoMetadata() *types.RepositoryMetadata
 	PutFile(file string, content []byte)
 }
 
 type codeCommit struct {
 	codecommit     *codecommit.Client
 	repo           *string
-	repoArn        *string
+	repoMetadata   *types.RepositoryMetadata
 	branch         *string
 	parentCommitId *string
 }
@@ -43,7 +43,7 @@ func (c *codeCommit) CreateRepository() error {
 		if errors.As(err, &awsError) {
 			common.Logger.Printf("Repository %s already exists. Continuing...\n", *c.repo)
 			c.parentCommitId, err = c.GetLatestCommitId()
-			c.repoArn = c.GetRepoArn()
+			c.repoMetadata = c.GetRepoMetadata()
 			return err
 		} else {
 			common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
@@ -51,14 +51,14 @@ func (c *codeCommit) CreateRepository() error {
 		}
 	} else {
 		common.Logger.Printf("Repository created with name: %s\n", *result.RepositoryMetadata.RepositoryName)
-		c.repoArn = result.RepositoryMetadata.Arn
+		c.repoMetadata = result.RepositoryMetadata
 		return nil
 	}
 }
 
-func (c *codeCommit) GetRepoArn() *string {
-	if c.repoArn != nil {
-		return c.repoArn
+func (c *codeCommit) GetRepoMetadata() *types.RepositoryMetadata {
+	if c.repoMetadata != nil {
+		return c.repoMetadata
 	}
 	result, err := c.codecommit.GetRepository(context.Background(), &codecommit.GetRepositoryInput{
 		RepositoryName: c.repo,
@@ -66,7 +66,7 @@ func (c *codeCommit) GetRepoArn() *string {
 	if err != nil {
 		common.Logger.Fatalf("Failed to get CodeCommit repository: %s", err)
 	}
-	return result.RepositoryMetadata.Arn
+	return result.RepositoryMetadata
 }
 
 func (c *codeCommit) GetLatestCommitId() (*string, error) {
