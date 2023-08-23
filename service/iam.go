@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -101,4 +102,69 @@ func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
 		RoleName:  aws.String(roleName),
 	})
 	return err
+}
+
+func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbArn string) []PolicyStatement {
+	return []PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{logGroupArn, fmt.Sprintf("%s:*", logGroupArn)},
+		Action: []string{
+			"logs:CreateLogGroup",
+			"logs:CreateLogStream",
+			"logs:PutLogEvents",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{"arn:aws:s3:::*"},
+		Action:   []string{"s3:ListBucket"},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{s3Arn},
+		Action: []string{
+			"s3:PutObject",
+			"s3:GetObject",
+			"s3:GetObjectVersion",
+			"s3:GetBucketAcl",
+			"s3:GetBucketLocation",
+			"s3:ListBucket",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{repoArn},
+		Action: []string{
+			"codecommit:GetCommit",
+			"codecommit:ListBranches",
+			"codecommit:GetRepository",
+			"codecommit:GetBranch",
+			"codecommit:GitPull",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{dynamodbArn},
+		Action: []string{
+			"dynamodb:GetItem",
+			"dynamodb:PutItem",
+			"dynamodb:DeleteItem",
+		},
+	}}
+}
+
+func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
+	return []PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{s3Arn},
+		Action: []string{
+			"s3:*",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{repoArn},
+		Action: []string{
+			"codecommit:GetCommit",
+			"codecommit:ListBranches",
+			"codecommit:GetRepository",
+			"codecommit:GetBranch",
+			"codecommit:GitPull",
+		},
+	}}
 }

@@ -31,7 +31,7 @@ func GetTerraformMain(step model.Steps, source string, releaseTag string) ([]byt
 		newModule := body.AppendNewBlock("module", []string{module.Name})
 		moduleBody := newModule.Body()
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s/%s.git?ref=%s", source, module.Source, releaseTag)))
+			cty.StringVal(fmt.Sprintf("git::%s//modules/%s.git?ref=%s", source, module.Source, releaseTag)))
 		if module.Inputs == nil {
 			continue
 		}

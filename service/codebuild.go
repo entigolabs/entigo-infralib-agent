@@ -41,16 +41,17 @@ type Artifacts struct {
 
 type builder struct {
 	codeBuild *codebuild.Client
+	region    *string
 }
 
 func NewBuilder(awsConfig aws.Config) Builder {
 	return &builder{
 		codeBuild: codebuild.NewFromConfig(awsConfig),
+		region:    &awsConfig.Region,
 	}
 }
 
 func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string) error {
-	// TODO Buildspec, either dynamic or copy from file or S3, same for terraform.sh, env variables
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	buildSpec, err := yaml.Marshal(createBuildSpec())
 	if err != nil {
@@ -63,12 +64,18 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String("public.ecr.aws/a3z4f8w3/entigo-infralib-base:v0.3.9-rc6"),
+			Image:                    aws.String("public.ecr.aws/a3z4f8w3/entigo-infralib-base:latest"),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables: []types.EnvironmentVariable{{
 				Name:  aws.String("PROJECT_NAME"),
 				Value: aws.String(projectName),
+			}, {
+				Name:  aws.String("AWS_REGION"),
+				Value: b.region,
+			}, {
+				Name:  aws.String("COMMAND"),
+				Value: aws.String("plan"),
 			}},
 		},
 		LogsConfig: &types.LogsConfig{
@@ -102,7 +109,7 @@ func createBuildSpec() BuildSpec {
 		Version: "0.2",
 		Phases: Phases{
 			Install: Install{
-				Commands: []string{"env"},
+				Commands: []string{"env", "find ."},
 			},
 			Build: Build{
 				Commands: []string{"/usr/bin/entrypoint.sh"},

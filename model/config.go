@@ -10,6 +10,7 @@ type Config struct {
 type Steps struct {
 	Name      string    `yaml:"name"`
 	Type      string    `yaml:"type"`
+	Workspace string    `yaml:"workspace"`
 	Approve   Approve   `yaml:"approve,omitempty"`
 	Modules   []Modules `yaml:"modules"`
 	Version   string    `yaml:"version,omitempty"`
