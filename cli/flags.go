@@ -64,8 +64,6 @@ var branchFlag = cli.StringFlag{
 	Required:    false,
 }
 
-//
-
 var awsPrefixFlag = cli.StringFlag{
 	Name:        "aws-prefix",
 	Aliases:     []string{"ap"},

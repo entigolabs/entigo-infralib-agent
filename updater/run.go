@@ -21,14 +21,17 @@ func Run(flags *common.Flags) {
 
 	s3 := service.NewS3(awsConfig)
 
-	s3Arn, err := s3.CreateBucket(fmt.Sprintf("%s-%s", flags.AWSPrefix, "pipeline"))
+	bucket := fmt.Sprintf("%s-pipeline", flags.AWSPrefix)
+	s3Arn, err := s3.CreateBucket(bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create S3 bucket: %s", err)
 	}
-	dynamoDBArn, err := service.CreateDynamoDBTable(awsConfig, fmt.Sprintf("%s-%s", flags.AWSPrefix, "pipeline"))
+	dynamoDBTable, err := service.CreateDynamoDBTable(awsConfig, fmt.Sprintf("%s-%s", flags.AWSPrefix, "pipeline"))
 	if err != nil {
 		common.Logger.Fatalf("Failed to create DynamoDB table: %s", err)
 	}
+	service.CreateBackendConf(bucket, *dynamoDBTable.TableName, codeCommit)
+
 	cloudwatch := service.NewCloudWatch(awsConfig)
 	logGroup := fmt.Sprintf("log-%s", flags.AWSPrefix)
 	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
@@ -43,7 +46,8 @@ func Run(flags *common.Flags) {
 
 	iam := service.NewIAM(awsConfig)
 
-	buildRole := iam.CreateRole(fmt.Sprintf("%s-build", flags.AWSPrefix), []service.PolicyStatement{{
+	buildRoleName := fmt.Sprintf("%s-build", flags.AWSPrefix)
+	buildRole := iam.CreateRole(buildRoleName, []service.PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
@@ -53,14 +57,14 @@ func Run(flags *common.Flags) {
 		if err != nil {
 			common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
 		}
-		buildPolicy := iam.CreatePolicy(fmt.Sprintf("%s-build", flags.AWSPrefix),
-			codeBuildPolicy(logGroupArn, s3Arn, *repoMetadata.Arn, dynamoDBArn))
+		buildPolicy := iam.CreatePolicy(buildRoleName,
+			codeBuildPolicy(logGroupArn, s3Arn, *repoMetadata.Arn, *dynamoDBTable.TableArn))
 		err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 		if err != nil {
 			common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 		}
 	} else {
-		buildRole = iam.GetRole(fmt.Sprintf("%s-build", flags.AWSPrefix))
+		buildRole = iam.GetRole(buildRoleName)
 	}
 
 	codeBuild := service.NewBuilder(awsConfig)
@@ -69,17 +73,26 @@ func Run(flags *common.Flags) {
 		common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
 	}
 
-	pipelineRole := iam.CreateRole(fmt.Sprintf("%s-pipeline", flags.AWSPrefix), []service.PolicyStatement{{
+	pipelineRoleName := fmt.Sprintf("%s-pipeline", flags.AWSPrefix)
+	pipelineRole := iam.CreateRole(pipelineRoleName, []service.PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
 	}})
 	if pipelineRole != nil {
-		pipelinePolicy := iam.CreatePolicy(fmt.Sprintf("%s-pipeline", flags.AWSPrefix), codePipelinePolicy(s3Arn))
+		pipelinePolicy := iam.CreatePolicy(pipelineRoleName, codePipelinePolicy(s3Arn))
 		err = iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 		if err != nil {
 			common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
 		}
+	} else {
+		pipelineRole = iam.GetRole(pipelineRoleName)
+	}
+
+	codePipeline := service.NewPipeline(awsConfig)
+	err = codePipeline.CreatePipeline(fmt.Sprintf("%s-pipeline", flags.AWSPrefix), *pipelineRole.Arn, bucket, *repoMetadata.RepositoryName, flags.Branch)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 	}
 }
 

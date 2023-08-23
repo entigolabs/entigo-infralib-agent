@@ -9,7 +9,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
-func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (string, error) {
+func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
 	common.Logger.Printf("Creating DynamoDB table %s\n", tableName)
 	dynamodbClient := dynamodb.NewFromConfig(awsConfig)
 	table, err := dynamodbClient.CreateTable(context.Background(), &dynamodb.CreateTableInput{
@@ -31,18 +31,18 @@ func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (string, error)
 			common.Logger.Printf("DynamoDB table %s already exists. Continuing...\n", tableName)
 			return GetDynamoDBTable(dynamodbClient, tableName)
 		} else {
-			return "", err
+			return nil, err
 		}
 	}
-	return *table.TableDescription.TableArn, nil
+	return table.TableDescription, nil
 }
 
-func GetDynamoDBTable(client *dynamodb.Client, tableName string) (string, error) {
+func GetDynamoDBTable(client *dynamodb.Client, tableName string) (*types.TableDescription, error) {
 	table, err := client.DescribeTable(context.Background(), &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return *table.Table.TableArn, nil
+	return table.Table, nil
 }

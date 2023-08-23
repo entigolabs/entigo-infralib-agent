@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,12 +58,12 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 	}
 	_, err = b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
-		TimeoutInMinutes: NewInt32(5),
+		TimeoutInMinutes: util.NewInt32(5),
 		ServiceRole:      aws.String(roleArn),
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String("aws/codebuild/amazonlinux2-x86_64-standard:5.0"),
+			Image:                    aws.String("public.ecr.aws/a3z4f8w3/entigo-infralib-base:v0.3.9-rc6"),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables: []types.EnvironmentVariable{{
@@ -82,11 +84,16 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		},
 		Source: &types.ProjectSource{
 			Type:          types.SourceTypeCodecommit,
-			GitCloneDepth: NewInt32(1),
+			GitCloneDepth: util.NewInt32(1),
 			Buildspec:     aws.String(string(buildSpec)),
 			Location:      &repoURL,
 		},
 	})
+	var awsError *types.ResourceAlreadyExistsException
+	if err != nil && errors.As(err, &awsError) {
+		common.Logger.Printf("Project %s already exists. Continuing...\n", projectName)
+		return nil
+	}
 	return err
 }
 
@@ -95,15 +102,10 @@ func createBuildSpec() BuildSpec {
 		Version: "0.2",
 		Phases: Phases{
 			Install: Install{
-				Commands: []string{"find .", "env"},
+				Commands: []string{"env"},
 			},
 			Build: Build{
-				Commands: []string{
-					"echo Build started on `date`",
-					"chmod +x terraform.sh",
-					"./terraform.sh",
-					"echo Build ended on `date`",
-				},
+				Commands: []string{"/usr/bin/entrypoint.sh"},
 			},
 		},
 		Artifacts: Artifacts{

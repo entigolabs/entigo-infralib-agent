@@ -1,9 +1,9 @@
 package terraform
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -74,25 +74,12 @@ func injectEKS(body *hclwrite.Body, step model.Steps) error {
 		"source":  "hashicorp/kubernetes",
 		"version": "~>2.0",
 	}
-	providerBytes, err := createKeyValuePairs(kubernetesProvider)
+	providerBytes, err := util.CreateKeyValuePairs(kubernetesProvider, "{\n", "}")
 	if err != nil {
 		return err
 	}
 	providersBlock.Body().SetAttributeRaw("kubernetes", getBytesTokens(providerBytes))
 	return nil
-}
-
-func createKeyValuePairs(m map[string]string) ([]byte, error) {
-	b := new(bytes.Buffer)
-	b.Write([]byte("{\n"))
-	for key, value := range m {
-		_, err := fmt.Fprintf(b, "%s=\"%s\"\n", key, value)
-		if err != nil {
-			return nil, err
-		}
-	}
-	b.Write([]byte("}"))
-	return bytes.TrimRight(b.Bytes(), ", "), nil
 }
 
 func getTokens(value interface{}) hclwrite.Tokens {

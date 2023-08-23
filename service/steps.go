@@ -5,6 +5,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,4 +53,17 @@ func createArgoCDFiles(step model.Steps, config model.Config, codeCommit CodeCom
 		codeCommit.PutFile(fmt.Sprintf("%s-%s/%s-values.yaml", config.Prefix, step.Name, module.Name),
 			yamlBytes)
 	}
+}
+
+func CreateBackendConf(bucket string, dynamoDBTable string, codeCommit CodeCommit) {
+	bytes, err := util.CreateKeyValuePairs(map[string]string{
+		"bucket":         bucket,
+		"key":            "terraform.tfstate",
+		"dynamodb_table": dynamoDBTable,
+		"encrypt":        "true",
+	}, "", "")
+	if err != nil {
+		common.Logger.Fatalf("Failed to convert backend config values: %s", err)
+	}
+	codeCommit.PutFile("backend.conf", bytes)
 }

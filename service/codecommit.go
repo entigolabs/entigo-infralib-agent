@@ -19,29 +19,29 @@ type CodeCommit interface {
 
 type codeCommit struct {
 	codecommit     *codecommit.Client
-	repo           *string
+	Repo           *string
+	Branch         *string
 	repoMetadata   *types.RepositoryMetadata
-	branch         *string
 	parentCommitId *string
 }
 
 func NewCodeCommit(awsConfig aws.Config, repoName string, branchName string) CodeCommit {
 	return &codeCommit{
 		codecommit: codecommit.NewFromConfig(awsConfig),
-		repo:       aws.String(repoName),
-		branch:     aws.String(branchName),
+		Repo:       aws.String(repoName),
+		Branch:     aws.String(branchName),
 	}
 }
 
 func (c *codeCommit) CreateRepository() error {
 	input := &codecommit.CreateRepositoryInput{
-		RepositoryName: c.repo,
+		RepositoryName: c.Repo,
 	}
 	result, err := c.codecommit.CreateRepository(context.Background(), input)
 	if err != nil {
 		var awsError *types.RepositoryNameExistsException
 		if errors.As(err, &awsError) {
-			common.Logger.Printf("Repository %s already exists. Continuing...\n", *c.repo)
+			common.Logger.Printf("Repository %s already exists. Continuing...\n", *c.Repo)
 			c.parentCommitId, err = c.GetLatestCommitId()
 			c.repoMetadata = c.GetRepoMetadata()
 			return err
@@ -61,7 +61,7 @@ func (c *codeCommit) GetRepoMetadata() *types.RepositoryMetadata {
 		return c.repoMetadata
 	}
 	result, err := c.codecommit.GetRepository(context.Background(), &codecommit.GetRepositoryInput{
-		RepositoryName: c.repo,
+		RepositoryName: c.Repo,
 	})
 	if err != nil {
 		common.Logger.Fatalf("Failed to get CodeCommit repository: %s", err)
@@ -71,8 +71,8 @@ func (c *codeCommit) GetRepoMetadata() *types.RepositoryMetadata {
 
 func (c *codeCommit) GetLatestCommitId() (*string, error) {
 	input := &codecommit.GetBranchInput{
-		RepositoryName: c.repo,
-		BranchName:     c.branch,
+		RepositoryName: c.Repo,
+		BranchName:     c.Branch,
 	}
 
 	result, err := c.codecommit.GetBranch(context.Background(), input)
@@ -86,9 +86,9 @@ func (c *codeCommit) GetLatestCommitId() (*string, error) {
 func (c *codeCommit) PutFile(file string, content []byte) {
 	common.Logger.Printf("Adding file %s to repository\n", file)
 	putFileInput := &codecommit.PutFileInput{
-		BranchName:     c.branch,
+		BranchName:     c.Branch,
 		CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
-		RepositoryName: c.repo,
+		RepositoryName: c.Repo,
 		FileContent:    content,
 		FilePath:       aws.String(file),
 		ParentCommitId: c.parentCommitId,
