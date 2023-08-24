@@ -58,7 +58,7 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 	}
 	_, err = b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
-		TimeoutInMinutes: aws.Int32(5),
+		TimeoutInMinutes: aws.Int32(480),
 		ServiceRole:      aws.String(roleArn),
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{

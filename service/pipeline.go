@@ -209,6 +209,10 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	if err != nil {
 		return err
 	}
+	err = p.disableStageTransition(pipelineName, "Approve")
+	if err != nil {
+		return err
+	}
 	err = p.disableStageTransition(pipelineName, "ApplyDestroy")
 	return err
 }
@@ -341,6 +345,10 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 	if err != nil && errors.As(err, &awsError) {
 		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return nil
+	}
+	err = p.disableStageTransition(pipelineName, "Approve")
+	if err != nil {
+		return err
 	}
 	err = p.disableStageTransition(pipelineName, "ArgoCDDestroy")
 	return err
