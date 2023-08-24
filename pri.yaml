@@ -55,7 +55,8 @@ steps:
           repository: "https://github.com/entigolabs/entigo-infralib-release.git"
           depends_on: |
             [module.eks]
-          branch: local.current_version
+          branch: |
+            local.current_version
           path: "modules/k8s/argocd"
           values: |
             <<EOT
