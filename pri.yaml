@@ -23,14 +23,7 @@ steps:
             ["10.175.0.0/26", "10.175.0.64/26", "10.175.0.128/26"]
           intra_subnets: |
             []
-      - name: dns
-        source: aws/route53
-        version: stable
-        inputs:
-          vpc_prefix: "ep-network-vpc"
-          parent_zone_id: "Z07983041XRLSLZUTHHDY"
-          depends_on: |
-            [module.vpc]
+
   - name: infrastructure
     type: terraform
     workspace: test
@@ -38,6 +31,12 @@ steps:
     vpc_prefix: ep-network-vpc
     approve: minor
     modules:
+      - name: dns
+        source: aws/route53
+        version: stable
+        inputs:
+          vpc_prefix: "ep-network-vpc"
+          parent_zone_id: "Z07983041XRLSLZUTHHDY"
       - name: eks
         source: aws/eks
         version: stable
