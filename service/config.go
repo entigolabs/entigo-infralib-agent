@@ -23,14 +23,13 @@ func GetConfig(configFile string) model.Config {
 }
 
 func validateConfig(config model.Config) {
-	moduleNames := model.NewSet[string]()
+	stepWorkspaces := model.NewSet[string]()
 	for _, step := range config.Steps {
-		for _, module := range step.Modules {
-			if moduleNames.Contains(module.Name) {
-				common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name %s is not unique",
-					module.Name)})
-			}
-			moduleNames.Add(module.Name)
+		stepWorkspace := fmt.Sprintf("%s-%s", step.Name, step.Workspace)
+		if stepWorkspaces.Contains(stepWorkspace) {
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace combination %s is not unique",
+				stepWorkspace)})
 		}
+		stepWorkspaces.Add(stepWorkspace)
 	}
 }

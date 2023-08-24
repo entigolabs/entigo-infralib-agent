@@ -152,19 +152,28 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbA
 func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
-		Resource: []string{s3Arn},
+		Resource: []string{s3Arn, fmt.Sprintf("%s/*", s3Arn)},
 		Action: []string{
 			"s3:*",
 		},
 	}, {
 		Effect:   "Allow",
-		Resource: []string{repoArn},
+		Resource: []string{repoArn, fmt.Sprintf("%s/*", repoArn)},
 		Action: []string{
 			"codecommit:GetCommit",
-			"codecommit:ListBranches",
-			"codecommit:GetRepository",
 			"codecommit:GetBranch",
-			"codecommit:GitPull",
+			"codecommit:GetRepository",
+			"codecommit:UploadArchive",
+			"codecommit:GetUploadArchiveStatus",
+			"codecommit:CancelUploadArchive",
+		},
+	}, {
+		Effect:   "Allow",
+		Resource: []string{"*"},
+		Action: []string{
+			"codebuild:StartBuild",
+			"codebuild:BatchGetBuilds",
+			"codebuild:StopBuild",
 		},
 	}}
 }

@@ -84,6 +84,7 @@ steps:
             
   - name: applications
     type: argocd-apps
+    workspace: test
     version: stable
     vpc_prefix: ep-vpc
     modules:

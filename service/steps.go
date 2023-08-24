@@ -135,7 +135,7 @@ func (s *steps) CreateStepsPipelines() {
 
 	for _, step := range s.config.Steps {
 		stepName := fmt.Sprintf("%s-%s", s.config.Prefix, step.Name)
-		projectName := fmt.Sprintf("%s-%s", s.awsPrefix, stepName)
+		projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 		err = codeBuild.CreateProject(projectName, *buildRole.Arn, logGroup, logStream, s3Arn, *repoMetadata.CloneUrlHttp)
 		if err != nil {
 			common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
@@ -172,12 +172,12 @@ func (s *steps) createTerraformFiles(step model.Steps, releaseTag string) {
 	if err != nil {
 		common.Logger.Fatalf("Failed to create terraform provider: %s", err)
 	}
-	s.codeCommit.PutFile(fmt.Sprintf("%s-%s/provider.tf", s.config.Prefix, step.Name), provider)
+	s.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", s.config.Prefix, step.Name, step.Workspace), provider)
 	main, err := terraform.GetTerraformMain(step, s.config.Source, releaseTag)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create terraform main: %s", err)
 	}
-	s.codeCommit.PutFile(fmt.Sprintf("%s-%s/main.tf", s.config.Prefix, step.Name), main)
+	s.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", s.config.Prefix, step.Name, step.Workspace), main)
 }
 
 func (s *steps) createArgoCDFiles(step model.Steps) {
@@ -190,7 +190,7 @@ func (s *steps) createArgoCDFiles(step model.Steps) {
 		if err != nil {
 			common.Logger.Fatalf("Failed to marshal helm values: %s", err)
 		}
-		s.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s-values.yaml", s.config.Prefix, step.Name, module.Name),
+		s.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s-values.yaml", s.config.Prefix, step.Name, step.Workspace, module.Name),
 			yamlBytes)
 	}
 }
