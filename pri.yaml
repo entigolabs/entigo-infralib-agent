@@ -60,8 +60,6 @@ steps:
           values: |
             <<EOT
             argocd:
-              crds:
-                install: false
               server:
                 config:
                   url: https://argocd.runner-main-biz-int.infralib.entigo.io
