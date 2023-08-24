@@ -3,11 +3,14 @@ package service
 import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
+	"strings"
+	"time"
 )
 
 type Steps interface {
@@ -127,6 +130,9 @@ func (s *steps) CreateStepsPipelines() {
 	} else {
 		pipelineRole = iam.GetRole(pipelineRoleName)
 	}
+	time.Sleep(5 * time.Second) // Wait for roles to be available
+
+	ssm := NewSSM(s.awsConfig)
 
 	codeBuild := NewBuilder(s.awsConfig)
 	codePipeline := NewPipeline(s.awsConfig, *repoMetadata.RepositoryName, s.branch, *pipelineRole.Arn, bucket)
@@ -134,7 +140,12 @@ func (s *steps) CreateStepsPipelines() {
 	for _, step := range s.config.Steps {
 		stepName := fmt.Sprintf("%s-%s", s.config.Prefix, step.Name)
 		projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
-		err = codeBuild.CreateProject(projectName, *buildRole.Arn, logGroup, logStream, s3Arn, *repoMetadata.CloneUrlHttp)
+
+		var vpcConfig *types.VpcConfig = nil
+		if step.VpcPrefix != "" {
+			vpcConfig = getVpcConfig(ssm, step.VpcPrefix, step.Workspace)
+		}
+		err = codeBuild.CreateProject(projectName, *buildRole.Arn, logGroup, logStream, s3Arn, *repoMetadata.CloneUrlHttp, vpcConfig)
 		if err != nil {
 			common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
 		}
@@ -150,6 +161,10 @@ func (s *steps) CreateStepsPipelines() {
 			if err != nil {
 				common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 			}
+			err = codePipeline.WaitPipelineExecution(projectName, 30)
+			if err != nil {
+				common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
+			}
 		case "argocd-apps":
 			err = codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
 			if err != nil {
@@ -159,7 +174,32 @@ func (s *steps) CreateStepsPipelines() {
 			if err != nil {
 				common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 			}
+			err = codePipeline.WaitPipelineExecution(projectName, 30)
+			if err != nil {
+				common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
+			}
 		}
+	}
+}
+
+func getVpcConfig(ssm SSM, vpcPrefix string, workspace string) *types.VpcConfig {
+	common.Logger.Printf("Getting VPC config for %s-%s\n", vpcPrefix, workspace)
+	vpcId, err := ssm.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/vpc_id", vpcPrefix, workspace))
+	if err != nil {
+		common.Logger.Fatalf("Failed to get VPC ID: %s", err)
+	}
+	subnetIds, err := ssm.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/private_subnets", vpcPrefix, workspace))
+	if err != nil {
+		common.Logger.Fatalf("Failed to get subnet IDs: %s", err)
+	}
+	securityGroupIds, err := ssm.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/pipeline_security_group", vpcPrefix, workspace))
+	if err != nil {
+		common.Logger.Fatalf("Failed to get security group IDs: %s", err)
+	}
+	return &types.VpcConfig{
+		SecurityGroupIds: strings.Split(securityGroupIds, ","),
+		Subnets:          strings.Split(subnetIds, ","),
+		VpcId:            aws.String(vpcId),
 	}
 }
 

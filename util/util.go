@@ -21,7 +21,3 @@ func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]b
 	}
 	return bytes.TrimRight(b.Bytes(), ", "), nil
 }
-
-func NewInt32(x int32) *int32 {
-	return &x
-}

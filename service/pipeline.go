@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/util"
+	"time"
 )
 
 type Pipeline interface {
@@ -15,6 +15,7 @@ type Pipeline interface {
 	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	WaitPipelineExecution(pipelineName string, delay int) error
 }
 
 type pipeline struct {
@@ -55,7 +56,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 						Version:  aws.String("1"),
 					},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        util.NewInt32(1),
+					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
 						"RepositoryName":       p.repo,
 						"BranchName":           p.branch,
@@ -76,7 +77,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 					},
 					InputArtifacts:  []types.InputArtifact{{Name: aws.String("source_output")}},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:        util.NewInt32(2),
+					RunOrder:        aws.Int32(2),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
@@ -95,7 +96,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 						Version:  aws.String("1"),
 					},
 					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}, {Name: aws.String("Plan")}},
-					RunOrder:       util.NewInt32(3),
+					RunOrder:       aws.Int32(3),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
@@ -135,7 +136,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 						Version:  aws.String("1"),
 					},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        util.NewInt32(1),
+					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
 						"RepositoryName":       p.repo,
 						"BranchName":           p.branch,
@@ -156,7 +157,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					},
 					InputArtifacts:  []types.InputArtifact{{Name: aws.String("source_output")}},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("Plan")}},
-					RunOrder:        util.NewInt32(2),
+					RunOrder:        aws.Int32(2),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
@@ -174,7 +175,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 						Provider: aws.String("Manual"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: util.NewInt32(3),
+					RunOrder: aws.Int32(3),
 				}},
 			}, {
 				Name: aws.String("ApplyDestroy"),
@@ -187,7 +188,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 						Version:  aws.String("1"),
 					},
 					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}, {Name: aws.String("Plan")}},
-					RunOrder:       util.NewInt32(4),
+					RunOrder:       aws.Int32(4),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
@@ -227,7 +228,7 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 						Version:  aws.String("1"),
 					},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        util.NewInt32(1),
+					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
 						"RepositoryName":       p.repo,
 						"BranchName":           p.branch,
@@ -247,7 +248,7 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 						Version:  aws.String("1"),
 					},
 					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       util.NewInt32(2),
+					RunOrder:       aws.Int32(2),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
@@ -287,7 +288,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 						Version:  aws.String("1"),
 					},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        util.NewInt32(1),
+					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
 						"RepositoryName":       p.repo,
 						"BranchName":           p.branch,
@@ -306,7 +307,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 						Provider: aws.String("Manual"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: util.NewInt32(2),
+					RunOrder: aws.Int32(2),
 				}},
 			}, {
 				Name: aws.String("ArgoCDDestroy"),
@@ -319,7 +320,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 						Version:  aws.String("1"),
 					},
 					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       util.NewInt32(3),
+					RunOrder:       aws.Int32(3),
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
@@ -337,4 +338,46 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 		return nil
 	}
 	return err
+}
+
+func (p *pipeline) WaitPipelineExecution(pipelineName string, delay int) error {
+	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for ctx.Err() == nil {
+		state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
+			Name: aws.String(pipelineName),
+		})
+		if err != nil {
+			return err
+		}
+		if state != nil && state.StageStates != nil {
+			successes := 0
+			for _, stage := range state.StageStates {
+				if stage.LatestExecution == nil {
+					break
+				}
+				switch stage.LatestExecution.Status {
+				case types.StageExecutionStatusInProgress:
+					continue
+				case types.StageExecutionStatusCancelled:
+					return errors.New("pipeline execution cancelled")
+				case types.StageExecutionStatusFailed:
+					return errors.New("pipeline execution failed")
+				case types.StageExecutionStatusStopped:
+					return errors.New("pipeline execution stopped")
+				case types.StageExecutionStatusStopping:
+					continue
+				case types.StageExecutionStatusSucceeded:
+					successes++
+				}
+			}
+			if successes == len(state.StageStates) {
+				common.Logger.Printf("Pipeline %s completed successfully\n", pipelineName)
+				return nil
+			}
+		}
+		time.Sleep(time.Duration(delay) * time.Second)
+	}
+	return ctx.Err()
 }

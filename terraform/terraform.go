@@ -35,27 +35,31 @@ func GetTerraformMain(step model.Steps, config model.Config, releaseTag string) 
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", config.Source, module.Source, releaseTag)))
 		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", config.Prefix, step.Name, module.Name)))
-		if module.Inputs == nil {
+		addInputs(module.Inputs, moduleBody)
+	}
+	return file.Bytes(), nil
+}
+
+func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
+	if inputs == nil {
+		return
+	}
+	for name, value := range inputs {
+		if value == nil {
 			continue
 		}
-		for name, value := range module.Inputs {
-			if value == nil {
-				continue
-			}
-			switch v := value.(type) {
-			default:
+		switch v := value.(type) {
+		default:
+			moduleBody.SetAttributeRaw(name, getTokens(v))
+		case string:
+			if strings.Contains(v, "\n") {
+				v = strings.TrimRight(v, "\n")
 				moduleBody.SetAttributeRaw(name, getTokens(v))
-			case string:
-				if strings.Contains(v, "\n") {
-					v = strings.TrimRight(v, "\n")
-					moduleBody.SetAttributeRaw(name, getTokens(v))
-				} else {
-					moduleBody.SetAttributeValue(name, cty.StringVal(v))
-				}
+			} else {
+				moduleBody.SetAttributeValue(name, cty.StringVal(v))
 			}
 		}
 	}
-	return file.Bytes(), nil
 }
 
 func injectEKS(body *hclwrite.Body, step model.Steps) error {

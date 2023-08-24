@@ -3,7 +3,7 @@ module github.com/entigolabs/entigo-infralib-agent
 go 1.20
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.20.3
+	github.com/aws/aws-sdk-go-v2 v1.21.0
 	github.com/aws/aws-sdk-go-v2/config v1.18.34
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.23.3
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.21.4
@@ -12,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.21.4
 	github.com/aws/aws-sdk-go-v2/service/iam v1.22.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.38.4
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.37.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.21.3
 	github.com/google/go-github/v54 v54.0.0
 	github.com/hashicorp/hcl/v2 v2.17.0
@@ -27,8 +28,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.13 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.33 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.13.9 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.40 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.34 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.41 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.40 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.1.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.9.14 // indirect

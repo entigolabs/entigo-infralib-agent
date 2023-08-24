@@ -48,14 +48,6 @@ steps:
           eks_db_max_size: 0
           cluster_enabled_log_types: |
             []
-      - name: helm
-        source: aws/helm
-        version: stable
-        depends_on:
-        - eks
-        inputs:
-          chart: "k8s/argocd"
-          version: "stable"
             
   - name: applications
     type: argocd-apps

@@ -8,12 +8,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
 )
 
 type Builder interface {
-	CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string) error
+	CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, vpcConfig *types.VpcConfig) error
 }
 
 type BuildSpec struct {
@@ -51,7 +50,7 @@ func NewBuilder(awsConfig aws.Config) Builder {
 	}
 }
 
-func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string) error {
+func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, vpcConfig *types.VpcConfig) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	buildSpec, err := yaml.Marshal(createBuildSpec())
 	if err != nil {
@@ -59,7 +58,7 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 	}
 	_, err = b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
-		TimeoutInMinutes: util.NewInt32(5),
+		TimeoutInMinutes: aws.Int32(5),
 		ServiceRole:      aws.String(roleArn),
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
@@ -91,10 +90,11 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		},
 		Source: &types.ProjectSource{
 			Type:          types.SourceTypeCodecommit,
-			GitCloneDepth: util.NewInt32(1),
+			GitCloneDepth: aws.Int32(1),
 			Buildspec:     aws.String(string(buildSpec)),
 			Location:      &repoURL,
 		},
+		VpcConfig: vpcConfig,
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
