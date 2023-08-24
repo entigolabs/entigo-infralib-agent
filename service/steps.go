@@ -27,13 +27,14 @@ type steps struct {
 	branch     string
 }
 
-func NewSteps(config model.Config, awsConfig aws.Config, accountId string, flags *common.Flags) Steps {
+func NewSteps(awsConfig aws.Config, accountId string, flags *common.Flags) Steps {
+	codeCommit := setupCodeCommit(awsConfig, accountId, flags.AWSPrefix, flags.Branch)
 	return &steps{
-		config:     config,
+		config:     getConfig(flags.Config, codeCommit),
 		awsConfig:  awsConfig,
 		awsPrefix:  flags.AWSPrefix,
 		accountId:  accountId,
-		codeCommit: setupCodeCommit(awsConfig, accountId, flags.AWSPrefix, flags.Branch),
+		codeCommit: codeCommit,
 		branch:     flags.Branch,
 	}
 }
@@ -47,6 +48,25 @@ func setupCodeCommit(awsConfig aws.Config, accountID string, prefix string, bran
 	}
 	codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis is the README file."))
 	return codeCommit
+}
+
+func getConfig(configFile string, codeCommit CodeCommit) model.Config {
+	if configFile != "" {
+		config := GetConfig(configFile)
+		bytes, err := yaml.Marshal(config)
+		if err != nil {
+			common.Logger.Fatalf("Failed to marshal config: %s", err)
+		}
+		codeCommit.PutFile("config.yaml", bytes)
+		return config
+	}
+	bytes := codeCommit.GetFile("config.yaml")
+	var config model.Config
+	err := yaml.Unmarshal(bytes, &config)
+	if err != nil {
+		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
+	}
+	return config
 }
 
 func (s *steps) CreateStepsFiles() {
