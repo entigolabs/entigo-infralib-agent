@@ -54,7 +54,7 @@ steps:
         inputs:
           repository: "https://github.com/entigolabs/entigo-infralib-release.git"
           depends_on: |
-            [modules.eks]
+            [module.eks]
           branch: "main"
           path: "modules/k8s/argocd"
           values: |
