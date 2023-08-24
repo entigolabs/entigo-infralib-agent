@@ -15,6 +15,7 @@ type CodeCommit interface {
 	GetLatestCommitId() (*string, error)
 	GetRepoMetadata() *types.RepositoryMetadata
 	PutFile(file string, content []byte)
+	GetFile(file string) []byte
 }
 
 type codeCommit struct {
@@ -105,4 +106,17 @@ func (c *codeCommit) PutFile(file string, content []byte) {
 		}
 	}
 	c.parentCommitId = putFileOutput.CommitId
+}
+
+func (c *codeCommit) GetFile(file string) []byte {
+	common.Logger.Printf("Getting file %s from repository\n", file)
+	output, err := c.codecommit.GetFile(context.Background(), &codecommit.GetFileInput{
+		CommitSpecifier: c.branch,
+		RepositoryName:  c.repo,
+		FilePath:        aws.String(file),
+	})
+	if err != nil {
+		common.Logger.Fatalf("Failed to get %s from repository: %s", file, err)
+	}
+	return output.FileContent
 }

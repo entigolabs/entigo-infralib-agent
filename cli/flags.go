@@ -50,7 +50,7 @@ var configFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "set config file",
 	Destination: &flags.Config,
-	Required:    true,
+	Required:    false,
 }
 
 var branchFlag = cli.StringFlag{
