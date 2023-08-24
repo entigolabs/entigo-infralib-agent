@@ -56,10 +56,8 @@ func (s *steps) CreateStepsFiles() {
 		switch step.Type {
 		case "terraform":
 			s.createTerraformFiles(step, releaseTag)
-			break
 		case "argocd-apps":
 			s.createArgoCDFiles(step)
-			break
 		}
 	}
 }
@@ -152,7 +150,6 @@ func (s *steps) CreateStepsPipelines() {
 			if err != nil {
 				common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 			}
-			break
 		case "argocd-apps":
 			err = codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
 			if err != nil {
@@ -162,7 +159,6 @@ func (s *steps) CreateStepsPipelines() {
 			if err != nil {
 				common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 			}
-			break
 		}
 	}
 }
@@ -173,7 +169,7 @@ func (s *steps) createTerraformFiles(step model.Steps, releaseTag string) {
 		common.Logger.Fatalf("Failed to create terraform provider: %s", err)
 	}
 	s.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", s.config.Prefix, step.Name, step.Workspace), provider)
-	main, err := terraform.GetTerraformMain(step, s.config.Source, releaseTag)
+	main, err := terraform.GetTerraformMain(step, s.config, releaseTag)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create terraform main: %s", err)
 	}

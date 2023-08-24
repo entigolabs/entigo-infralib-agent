@@ -109,7 +109,7 @@ func createBuildSpec() BuildSpec {
 		Version: "0.2",
 		Phases: Phases{
 			Install: Install{
-				Commands: []string{"env", "find ."},
+				Commands: []string{"env", "find *"},
 			},
 			Build: Build{
 				Commands: []string{"/usr/bin/entrypoint.sh"},

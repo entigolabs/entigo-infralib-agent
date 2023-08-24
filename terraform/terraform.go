@@ -1,5 +1,6 @@
 package terraform
 
+import "C"
 import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -9,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"os"
+	"strings"
 )
 
 func GetTerraformProvider(step model.Steps) ([]byte, error) {
@@ -24,14 +26,15 @@ func GetTerraformProvider(step model.Steps) ([]byte, error) {
 	return hclwrite.Format(file.Bytes()), nil
 }
 
-func GetTerraformMain(step model.Steps, source string, releaseTag string) ([]byte, error) {
+func GetTerraformMain(step model.Steps, config model.Config, releaseTag string) ([]byte, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 	for _, module := range step.Modules {
 		newModule := body.AppendNewBlock("module", []string{module.Name})
 		moduleBody := newModule.Body()
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", source, module.Source, releaseTag)))
+			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", config.Source, module.Source, releaseTag)))
+		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", config.Prefix, step.Name, module.Name)))
 		if module.Inputs == nil {
 			continue
 		}
@@ -39,7 +42,17 @@ func GetTerraformMain(step model.Steps, source string, releaseTag string) ([]byt
 			if value == nil {
 				continue
 			}
-			moduleBody.SetAttributeRaw(name, getTokens(value))
+			switch v := value.(type) {
+			default:
+				moduleBody.SetAttributeRaw(name, getTokens(v))
+			case string:
+				if strings.Contains(v, "\n") {
+					v = strings.TrimRight(v, "\n")
+					moduleBody.SetAttributeRaw(name, getTokens(v))
+				} else {
+					moduleBody.SetAttributeValue(name, cty.StringVal(v))
+				}
+			}
 		}
 	}
 	return file.Bytes(), nil
