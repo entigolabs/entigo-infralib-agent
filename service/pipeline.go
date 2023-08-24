@@ -205,6 +205,11 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return nil
 	}
+	err = p.disableStageTransition(pipelineName, "Destroy")
+	if err != nil {
+		return err
+	}
+	err = p.disableStageTransition(pipelineName, "ApplyDestroy")
 	return err
 }
 
@@ -337,6 +342,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return nil
 	}
+	err = p.disableStageTransition(pipelineName, "ArgoCDDestroy")
 	return err
 }
 
@@ -380,4 +386,14 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, delay int) error {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	return ctx.Err()
+}
+
+func (p *pipeline) disableStageTransition(pipelineName string, stage string) error {
+	_, err := p.codePipeline.DisableStageTransition(context.Background(), &codepipeline.DisableStageTransitionInput{
+		PipelineName:   aws.String(pipelineName),
+		StageName:      aws.String(stage),
+		Reason:         aws.String("Disable pipeline transition to prevent accidental destruction of infrastructure"),
+		TransitionType: types.StageTransitionTypeInbound,
+	})
+	return err
 }
