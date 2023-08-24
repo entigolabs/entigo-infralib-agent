@@ -48,6 +48,27 @@ steps:
           eks_db_max_size: 0
           cluster_enabled_log_types: |
             []
+      - name: argocd
+        source: aws/helm
+        version: stable
+        inputs:
+          repository: "https://github.com/entigolabs/entigo-infralib-release.git"
+          depends_on: |
+            [modules.eks]
+          branch: "main"
+          path: "modules/k8s/argocd"
+          values: |
+            <<EOT
+            argocd:
+              crds:
+                install: false
+              server:
+                config:
+                  url: https://argocd.runner-main-biz-int.infralib.entigo.io
+                ingress:
+                  hosts:
+                  - argocd.runner-main-biz-int.infralib.entigo.io
+            EOT
             
   - name: applications
     type: argocd-apps
