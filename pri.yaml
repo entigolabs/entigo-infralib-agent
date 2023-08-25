@@ -49,7 +49,7 @@ steps:
           cluster_enabled_log_types: |
             []
       - name: argocd
-        source: aws/helm
+        source: aws/helm-git
         version: stable
         inputs:
           repository: "https://github.com/entigolabs/entigo-infralib-release.git"
