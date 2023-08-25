@@ -214,7 +214,11 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 		return err
 	}
 	err = p.disableStageTransition(pipelineName, "ApplyDestroy")
-	return err
+	if err != nil {
+		return err
+	}
+	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
+	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
 func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
@@ -351,7 +355,11 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 		return err
 	}
 	err = p.disableStageTransition(pipelineName, "ArgoCDDestroy")
-	return err
+	if err != nil {
+		return err
+	}
+	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
+	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
 func (p *pipeline) WaitPipelineExecution(pipelineName string, delay int) error {
@@ -404,4 +412,29 @@ func (p *pipeline) disableStageTransition(pipelineName string, stage string) err
 		TransitionType: types.StageTransitionTypeInbound,
 	})
 	return err
+}
+
+func (p *pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount int32) error {
+	executions, err := p.codePipeline.ListPipelineExecutions(context.Background(), &codepipeline.ListPipelineExecutionsInput{
+		PipelineName: aws.String(pipelineName),
+		MaxResults:   aws.Int32(latestCount),
+	})
+	if err != nil {
+		return err
+	}
+	for _, execution := range executions.PipelineExecutionSummaries {
+		if execution.Status != types.PipelineExecutionStatusInProgress {
+			continue
+		}
+		_, err = p.codePipeline.StopPipelineExecution(context.Background(), &codepipeline.StopPipelineExecutionInput{
+			PipelineName:        aws.String(pipelineName),
+			PipelineExecutionId: execution.PipelineExecutionId,
+			Abandon:             true,
+			Reason:              aws.String("Abandon pipeline execution to prevent accidental destruction of infrastructure"),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

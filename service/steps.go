@@ -172,7 +172,7 @@ func (s *steps) CreateStepsPipelines() {
 
 		switch step.Type {
 		case "terraform":
-			s.createBackendConf(bucket, *dynamoDBTable.TableName, stepName)
+			s.createBackendConf(bucket, *dynamoDBTable.TableName, stepName) // TODO This should be together with other codecommit files
 			err = codePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace)
 			if err != nil {
 				common.Logger.Fatalf("Failed to create CodePipeline: %s", err)

@@ -29,6 +29,8 @@ func GetTerraformProvider(step model.Steps) ([]byte, error) {
 func GetTerraformMain(step model.Steps, config model.Config, releaseTag string) ([]byte, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
+	newLocals := body.AppendNewBlock("locals", []string{})
+	newLocals.Body().SetAttributeValue("current_version", cty.StringVal(releaseTag))
 	for _, module := range step.Modules {
 		newModule := body.AppendNewBlock("module", []string{module.Name})
 		moduleBody := newModule.Body()
@@ -77,7 +79,12 @@ func injectEKS(body *hclwrite.Body, step model.Steps) error {
 	if err != nil {
 		return err
 	}
-	body.AppendBlock(file.Body().Blocks()[0])
+	for _, block := range file.Body().Blocks() {
+		if block == nil {
+			continue
+		}
+		body.AppendBlock(block)
+	}
 	body.AppendNewline()
 	terraformBlock := body.FirstMatchingBlock("terraform", []string{})
 	if terraformBlock == nil {
