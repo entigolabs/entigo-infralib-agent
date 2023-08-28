@@ -63,7 +63,7 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String("public.ecr.aws/a3z4f8w3/entigo-infralib-base:latest"),
+			Image:                    aws.String("public.ecr.aws/entigolabs/entigo-infralib-base:latest"),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables: []types.EnvironmentVariable{{

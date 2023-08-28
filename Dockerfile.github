@@ -1,0 +1,3 @@
+FROM alpine:3
+COPY bin/ei-agent /usr/bin/
+CMD ei-agent run

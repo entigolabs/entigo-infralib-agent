@@ -1,6 +1,5 @@
 package terraform
 
-import "C"
 import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
