@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type Config struct {
 	Prefix  string  `yaml:"prefix"`
 	Source  string  `yaml:"source"`
@@ -27,7 +29,14 @@ type Modules struct {
 type Approve string
 
 const (
-	approveMinor  Approve = "minor"
-	approveMajor          = "major"
-	approveAlways         = "always"
+	ApproveMinor  Approve = "minor"
+	ApproveMajor          = "major"
+	ApproveAlways         = "always"
+	ApproveNever          = "never"
 )
+
+type State struct {
+	Version            string    `yaml:"version"`
+	VersionPublishedAt time.Time `yaml:"version_published_at"`
+	VersionAppliedAt   time.Time `yaml:"applied_at"`
+}

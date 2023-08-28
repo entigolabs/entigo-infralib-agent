@@ -12,7 +12,7 @@ import (
 )
 
 type Builder interface {
-	CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, vpcConfig *types.VpcConfig) error
+	CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error
 }
 
 type BuildSpec struct {
@@ -50,7 +50,7 @@ func NewBuilder(awsConfig aws.Config) Builder {
 	}
 }
 
-func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, vpcConfig *types.VpcConfig) error {
+func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	buildSpec, err := yaml.Marshal(createBuildSpec())
 	if err != nil {
@@ -75,6 +75,12 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 			}, {
 				Name:  aws.String("COMMAND"),
 				Value: aws.String("plan"),
+			}, {
+				Name:  aws.String("TF_VAR_prefix"),
+				Value: aws.String(stepName),
+			}, {
+				Name:  aws.String("WORKSPACE"),
+				Value: aws.String(workspace),
 			}},
 		},
 		LogsConfig: &types.LogsConfig{

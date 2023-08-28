@@ -30,7 +30,8 @@ func updateSpecificFlags(baseFlags []cli.Flag) []cli.Flag {
 	return append(baseFlags,
 		&configFlag,
 		&branchFlag,
-		&awsPrefixFlag)
+		&awsPrefixFlag,
+		&versionFlag)
 }
 
 var loggingFlag = cli.StringFlag{
@@ -72,5 +73,15 @@ var awsPrefixFlag = cli.StringFlag{
 	Value:       "entigo-infralib",
 	Usage:       "prefix used when creating aws resources",
 	Destination: &flags.AWSPrefix,
+	Required:    false,
+}
+
+var versionFlag = cli.StringFlag{
+	Name:        "init-version",
+	Aliases:     []string{"iv"},
+	EnvVars:     []string{"INIT_VERSION"},
+	Value:       "",
+	Usage:       "initial version to install, only applies to first run",
+	Destination: &flags.InitVersion,
 	Required:    false,
 }

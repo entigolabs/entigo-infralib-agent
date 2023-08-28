@@ -5,6 +5,7 @@ type Flags struct {
 	Config       string
 	Branch       string
 	AWSPrefix    string
+	InitVersion  string
 }
 
 func (f *Flags) Setup(cmd Command) error {

@@ -12,8 +12,5 @@ func Run(flags *common.Flags) {
 	accountID := stsService.GetAccountID()
 
 	steps := service.NewSteps(awsConfig, accountID, flags)
-
-	steps.CreateStepsFiles()
-	steps.CreateStepsPipelines()
-	// TODO update entigo-infralib-state.yaml with applied release tag after successful run
+	steps.ProcessSteps()
 }

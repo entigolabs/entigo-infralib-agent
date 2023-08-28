@@ -116,6 +116,10 @@ func (c *codeCommit) GetFile(file string) []byte {
 		FilePath:        aws.String(file),
 	})
 	if err != nil {
+		var awsError *types.FileDoesNotExistException
+		if errors.As(err, &awsError) {
+			return nil
+		}
 		common.Logger.Fatalf("Failed to get %s from repository: %s", file, err)
 	}
 	return output.FileContent
