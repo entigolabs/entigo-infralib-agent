@@ -9,5 +9,8 @@ RUN go build \
     main.go
 
 FROM alpine:3
+COPY --from=build /go/ei-agent/base.tf /etc/ei-agent/
+COPY --from=build /go/ei-agent/eks.tf /etc/ei-agent/
 COPY --from=build /go/ei-agent/bin/ei-agent /usr/bin/
+WORKDIR /etc/ei-agent
 CMD ei-agent run
