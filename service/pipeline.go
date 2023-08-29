@@ -3,15 +3,19 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"regexp"
+	"strings"
 	"time"
 )
 
 const approveStageName = "Approve"
 const approveActionName = "Approval"
+const planName = "Plan"
 
 type Pipeline interface {
 	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) error
@@ -28,15 +32,21 @@ type pipeline struct {
 	branch       string
 	roleArn      string
 	bucket       string
+	cloudWatch   CloudWatch
+	logGroup     string
+	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn string, bucket string) Pipeline {
+func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) Pipeline {
 	return &pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
 		repo:         repo,
 		branch:       branch,
 		roleArn:      roleArn,
 		bucket:       bucket,
+		cloudWatch:   cloudWatch,
+		logGroup:     logGroup,
+		logStream:    logStream,
 	}
 }
 
@@ -74,9 +84,9 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 				},
 				},
 			}, {
-				Name: aws.String("Plan"),
+				Name: aws.String(planName),
 				Actions: []types.ActionDeclaration{{
-					Name: aws.String("Plan"),
+					Name: aws.String(planName),
 					ActionTypeId: &types.ActionTypeId{
 						Category: types.ActionCategoryBuild,
 						Owner:    types.ActionOwnerAws,
@@ -400,6 +410,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, 
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var noChanges *bool
 	for ctx.Err() == nil {
 		state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
 			Name: aws.String(pipelineName),
@@ -416,7 +427,13 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, 
 				switch stage.LatestExecution.Status {
 				case types.StageExecutionStatusInProgress:
 					if *stage.StageName == approveStageName {
-						if autoApprove {
+						if noChanges == nil {
+							noChanges, err = p.hasTerraformNotChanged(state)
+							if err != nil {
+								return err
+							}
+						}
+						if *noChanges || autoApprove {
 							err = p.approveStage(pipelineName, stage)
 							if err != nil {
 								return err
@@ -448,11 +465,63 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, 
 	return ctx.Err()
 }
 
+func (p *pipeline) hasTerraformNotChanged(state *codepipeline.GetPipelineStateOutput) (*bool, error) {
+	codeBuildRunId, err := getCodeBuildRunId(state)
+	if err != nil {
+		return nil, err
+	}
+	logs, err := p.cloudWatch.GetLogs(p.logGroup, fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId), 50)
+	if err != nil {
+		return nil, err
+	}
+	re := regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
+	for _, log := range logs {
+		matches := re.FindStringSubmatch(log)
+		if matches != nil {
+			common.Logger.Print(log)
+			changed := matches[2]
+			destroyed := matches[3]
+			if changed != "0" || destroyed != "0" {
+				return aws.Bool(false), nil
+			} else {
+				return aws.Bool(true), nil
+			}
+		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") {
+			common.Logger.Print(log)
+			return aws.Bool(true), nil
+		}
+	}
+	return nil, fmt.Errorf("couldn't find terraform plan output from logs")
+}
+
+func getCodeBuildRunId(state *codepipeline.GetPipelineStateOutput) (string, error) {
+	for _, stage := range state.StageStates {
+		if *stage.StageName != planName || stage.ActionStates == nil {
+			continue
+		}
+		for _, action := range stage.ActionStates {
+			if *action.ActionName != planName || action.LatestExecution == nil {
+				continue
+			}
+			externalExecutionId := action.LatestExecution.ExternalExecutionId
+			if externalExecutionId == nil {
+				return "", fmt.Errorf("couldn't get plan action external execution id")
+			}
+			parts := strings.Split(*externalExecutionId, ":")
+			if len(parts) != 2 {
+				return "", fmt.Errorf("couldn't parse plan action external execution id from %s", *externalExecutionId)
+			}
+			return parts[1], nil
+		}
+	}
+	return "", fmt.Errorf("couldn't find a terraform plan action")
+}
+
 func (p *pipeline) approveStage(projectName string, stage types.StageState) error {
 	common.Logger.Printf("Approving stage %s\n", approveStageName)
 	token := getApprovalToken(stage)
 	if token == nil {
-		common.Logger.Printf("No approval token found, please approve manually\n", approveStageName)
+		common.Logger.Printf("No approval token found, please wait or approve manually\n")
 		return nil
 	}
 	_, err := p.codePipeline.PutApprovalResult(context.Background(), &codepipeline.PutApprovalResultInput{

@@ -13,6 +13,7 @@ import (
 type CloudWatch interface {
 	CreateLogGroup(logGroupName string) (string, error)
 	CreateLogStream(logGroupName string, logStreamName string) error
+	GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error)
 }
 
 type cloudWatch struct {
@@ -66,4 +67,20 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 		return nil
 	}
 	return err
+}
+
+func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error) {
+	response, err := c.cloudwatchlogs.GetLogEvents(context.Background(), &cloudwatchlogs.GetLogEventsInput{
+		LogGroupName:  aws.String(logGroupName),
+		LogStreamName: aws.String(logStreamName),
+		Limit:         aws.Int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var logs []string
+	for _, event := range response.Events {
+		logs = append(logs, *event.Message)
+	}
+	return logs, nil
 }

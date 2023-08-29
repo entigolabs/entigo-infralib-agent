@@ -122,7 +122,7 @@ func setupResources(awsConfig aws.Config, accountId string, prefix string, branc
 	ssm := NewSSM(awsConfig)
 
 	codeBuild := NewBuilder(awsConfig)
-	codePipeline := NewPipeline(awsConfig, *repoMetadata.RepositoryName, branch, *pipelineRole.Arn, bucket)
+	codePipeline := NewPipeline(awsConfig, *repoMetadata.RepositoryName, branch, *pipelineRole.Arn, bucket, cloudwatch, logGroup, logStream)
 
 	return awsResources{
 		codeCommit:    codeCommit,
