@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func GetTerraformProvider(step model.Steps) ([]byte, error) {
+func GetTerraformProvider(step model.Step) ([]byte, error) {
 	file, err := ReadTerraformFile("base.tf")
 	if err != nil {
 		return nil, err
@@ -25,27 +25,15 @@ func GetTerraformProvider(step model.Steps) ([]byte, error) {
 	return hclwrite.Format(file.Bytes()), nil
 }
 
-func GetTerraformMain(step model.Steps, config model.Config, releaseTag string) ([]byte, error) {
-	file := hclwrite.NewEmptyFile()
-	body := file.Body()
-	newLocals := body.AppendNewBlock("locals", []string{})
-	newLocals.Body().SetAttributeValue("current_version", cty.StringVal(releaseTag))
-	for _, module := range step.Modules {
-		newModule := body.AppendNewBlock("module", []string{module.Name})
-		moduleBody := newModule.Body()
-		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", config.Source, module.Source, releaseTag)))
-		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", config.Prefix, step.Name, module.Name)))
-		addInputs(module.Inputs, moduleBody)
-	}
-	return file.Bytes(), nil
-}
-
-func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
+func AddInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body, branch string) {
 	if inputs == nil {
 		return
 	}
 	for name, value := range inputs {
+		if name == "branch" {
+			moduleBody.SetAttributeValue(name, cty.StringVal(branch))
+			continue
+		}
 		if value == nil {
 			continue
 		}
@@ -63,7 +51,7 @@ func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 	}
 }
 
-func injectEKS(body *hclwrite.Body, step model.Steps) error {
+func injectEKS(body *hclwrite.Body, step model.Step) error {
 	hasEKSModule := false
 	for _, module := range step.Modules {
 		if module.Name == "eks" {

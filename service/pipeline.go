@@ -23,7 +23,7 @@ type Pipeline interface {
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	StartPipelineExecution(pipelineName string) error
-	WaitPipelineExecution(pipelineName string, autoApprove bool, delay int) error
+	WaitPipelineExecution(pipelineName string, autoApprove bool, delay int, stepType string) error
 }
 
 type pipeline struct {
@@ -52,7 +52,7 @@ func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn strin
 
 func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
 	if p.pipelineExists(pipelineName) {
-		common.Logger.Printf("Pipeline %s already exists. Starting execution...\n", projectName)
+		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return p.startPipelineExecutionIfNeeded(pipelineName)
 	}
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
@@ -248,7 +248,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 
 func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
 	if p.pipelineExists(pipelineName) {
-		common.Logger.Printf("Pipeline %s already exists. Starting execution...\n", projectName)
+		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return p.startPipelineExecutionIfNeeded(pipelineName)
 	}
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
@@ -406,8 +406,9 @@ func (p *pipeline) StartPipelineExecution(pipelineName string) error {
 	return err
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, delay int) error {
+func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, delay int, stepType string) error {
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
+	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var noChanges *bool
@@ -418,47 +419,51 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, 
 		if err != nil {
 			return err
 		}
-		if state != nil && state.StageStates != nil {
-			successes := 0
-			for _, stage := range state.StageStates {
-				if stage.LatestExecution == nil {
-					break
-				}
-				switch stage.LatestExecution.Status {
-				case types.StageExecutionStatusInProgress:
-					if *stage.StageName == approveStageName {
-						if noChanges == nil {
+		successes := 0
+	stages:
+		for _, stage := range state.StageStates {
+			if stage.LatestExecution == nil {
+				break
+			}
+			switch stage.LatestExecution.Status {
+			case types.StageExecutionStatusInProgress:
+				if *stage.StageName == approveStageName {
+					if noChanges == nil {
+						switch stepType {
+						case "terraform":
 							noChanges, err = p.hasTerraformNotChanged(state)
 							if err != nil {
 								return err
 							}
-						}
-						if *noChanges || autoApprove {
-							err = p.approveStage(pipelineName, stage)
-							if err != nil {
-								return err
-							}
-						} else {
-							common.Logger.Printf("Waiting for approval of pipeline %s\n", pipelineName)
+						case "argocd-apps":
+							noChanges = aws.Bool(false)
 						}
 					}
-					continue
-				case types.StageExecutionStatusCancelled:
-					return errors.New("pipeline execution cancelled")
-				case types.StageExecutionStatusFailed:
-					return errors.New("pipeline execution failed")
-				case types.StageExecutionStatusStopped:
-					return errors.New("pipeline execution stopped")
-				case types.StageExecutionStatusStopping:
-					continue
-				case types.StageExecutionStatusSucceeded:
-					successes++
+					if *noChanges || autoApprove {
+						err = p.approveStage(pipelineName, stage)
+						if err != nil {
+							return err
+						}
+					} else {
+						common.Logger.Printf("Waiting for approval of pipeline %s\n", pipelineName)
+					}
 				}
+				break stages
+			case types.StageExecutionStatusCancelled:
+				return errors.New("pipeline execution cancelled")
+			case types.StageExecutionStatusFailed:
+				return errors.New("pipeline execution failed")
+			case types.StageExecutionStatusStopped:
+				return errors.New("pipeline execution stopped")
+			case types.StageExecutionStatusStopping:
+				continue
+			case types.StageExecutionStatusSucceeded:
+				successes++
 			}
-			if successes == len(state.StageStates) {
-				common.Logger.Printf("Pipeline %s completed successfully\n", pipelineName)
-				return nil
-			}
+		}
+		if successes == len(state.StageStates) {
+			common.Logger.Printf("Pipeline %s completed successfully\n", pipelineName)
+			return nil
 		}
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
@@ -518,7 +523,6 @@ func getCodeBuildRunId(state *codepipeline.GetPipelineStateOutput) (string, erro
 }
 
 func (p *pipeline) approveStage(projectName string, stage types.StageState) error {
-	common.Logger.Printf("Approving stage %s\n", approveStageName)
 	token := getApprovalToken(stage)
 	if token == nil {
 		common.Logger.Printf("No approval token found, please wait or approve manually\n")
@@ -534,6 +538,9 @@ func (p *pipeline) approveStage(projectName string, stage types.StageState) erro
 			Summary: aws.String("Approved by entigo-infralib-agent"),
 		},
 	})
+	if err == nil {
+		common.Logger.Printf("Approved stage %s\n", approveStageName)
+	}
 	return err
 }
 

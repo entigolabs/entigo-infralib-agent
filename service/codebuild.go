@@ -96,7 +96,7 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		},
 		Source: &types.ProjectSource{
 			Type:          types.SourceTypeCodecommit,
-			GitCloneDepth: aws.Int32(1),
+			GitCloneDepth: aws.Int32(0), // full clone
 			Buildspec:     aws.String(string(buildSpec)),
 			Location:      &repoURL,
 		},
