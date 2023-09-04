@@ -396,15 +396,18 @@ func (s *steps) createTerraformFiles(step model.Steps, releaseTag string) {
 func (s *steps) createArgoCDFiles(step model.Steps) {
 	for _, module := range step.Modules {
 		inputs := module.Inputs
+		var bytes []byte
 		if len(inputs) == 0 {
-			continue
+			bytes = []byte{}
+		} else {
+			var err error
+			bytes, err = yaml.Marshal(inputs)
+			if err != nil {
+				common.Logger.Fatalf("Failed to marshal helm values: %s", err)
+			}
 		}
-		yamlBytes, err := yaml.Marshal(inputs)
-		if err != nil {
-			common.Logger.Fatalf("Failed to marshal helm values: %s", err)
-		}
-		s.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s-values.yaml", s.config.Prefix, step.Name, step.Workspace, module.Name),
-			yamlBytes)
+		s.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/%s/values.yaml", s.config.Prefix, step.Name,
+			step.Workspace, module.Name, module.Source), bytes)
 	}
 }
 
