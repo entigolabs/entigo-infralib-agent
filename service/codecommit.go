@@ -11,7 +11,7 @@ import (
 )
 
 type CodeCommit interface {
-	CreateRepository() error
+	CreateRepository() (bool, error)
 	GetLatestCommitId() (*string, error)
 	GetRepoMetadata() *types.RepositoryMetadata
 	PutFile(file string, content []byte)
@@ -34,7 +34,7 @@ func NewCodeCommit(awsConfig aws.Config, repoName string, branchName string) Cod
 	}
 }
 
-func (c *codeCommit) CreateRepository() error {
+func (c *codeCommit) CreateRepository() (bool, error) {
 	input := &codecommit.CreateRepositoryInput{
 		RepositoryName: c.repo,
 	}
@@ -45,15 +45,15 @@ func (c *codeCommit) CreateRepository() error {
 			common.Logger.Printf("Repository %s already exists. Continuing...\n", *c.repo)
 			c.parentCommitId, err = c.GetLatestCommitId()
 			c.repoMetadata = c.GetRepoMetadata()
-			return err
+			return false, err
 		} else {
 			common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
-			return err
+			return false, err
 		}
 	} else {
 		common.Logger.Printf("Repository created with name: %s\n", *result.RepositoryMetadata.RepositoryName)
 		c.repoMetadata = result.RepositoryMetadata
-		return nil
+		return true, nil
 	}
 }
 

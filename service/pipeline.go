@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/google/uuid"
 	"regexp"
 	"strings"
 	"time"
@@ -18,12 +19,12 @@ const approveActionName = "Approval"
 const planName = "Plan"
 
 type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
-	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
-	StartPipelineExecution(pipelineName string) error
-	WaitPipelineExecution(pipelineName string, autoApprove bool, delay int, stepType string) error
+	StartPipelineExecution(pipelineName string) (*string, error)
+	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType string) error
 }
 
 type pipeline struct {
@@ -50,10 +51,10 @@ func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn strin
 	}
 }
 
-func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
+func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error) {
 	if p.pipelineExists(pipelineName) {
 		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
-		return p.startPipelineExecutionIfNeeded(pipelineName)
+		return p.StartPipelineExecution(pipelineName)
 	}
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
@@ -138,7 +139,10 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 			},
 		},
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return p.getNewPipelineExecutionId(pipelineName)
 }
 
 func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
@@ -246,10 +250,10 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
+func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error) {
 	if p.pipelineExists(pipelineName) {
 		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
-		return p.startPipelineExecutionIfNeeded(pipelineName)
+		return p.StartPipelineExecution(pipelineName)
 	}
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
@@ -314,7 +318,10 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 			},
 		},
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return p.getNewPipelineExecutionId(pipelineName)
 }
 
 func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
@@ -398,80 +405,130 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *pipeline) StartPipelineExecution(pipelineName string) error {
+func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
-	_, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
-		Name: aws.String(pipelineName),
+	execution, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
+		Name:               aws.String(pipelineName),
+		ClientRequestToken: aws.String(uuid.New().String()),
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return execution.PipelineExecutionId, nil
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, autoApprove bool, delay int, stepType string) error {
+func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType string) error {
+	if executionId == nil {
+		return fmt.Errorf("execution id is nil")
+	}
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
-	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var noChanges *bool
 	for ctx.Err() == nil {
-		state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
-			Name: aws.String(pipelineName),
+		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
+			PipelineName:        aws.String(pipelineName),
+			PipelineExecutionId: executionId,
 		})
 		if err != nil {
 			return err
 		}
-		successes := 0
-	stages:
-		for _, stage := range state.StageStates {
-			if stage.LatestExecution == nil {
-				break
-			}
-			switch stage.LatestExecution.Status {
-			case types.StageExecutionStatusInProgress:
-				if *stage.StageName == approveStageName {
-					if noChanges == nil {
-						switch stepType {
-						case "terraform":
-							noChanges, err = p.hasTerraformNotChanged(state)
-							if err != nil {
-								return err
-							}
-						case "argocd-apps":
-							noChanges = aws.Bool(false)
-						}
-					}
-					if *noChanges || autoApprove {
-						err = p.approveStage(pipelineName, stage)
-						if err != nil {
-							return err
-						}
-					} else {
-						common.Logger.Printf("Waiting for approval of pipeline %s\n", pipelineName)
-					}
-				}
-				break stages
-			case types.StageExecutionStatusCancelled:
-				return errors.New("pipeline execution cancelled")
-			case types.StageExecutionStatusFailed:
-				return errors.New("pipeline execution failed")
-			case types.StageExecutionStatusStopped:
-				return errors.New("pipeline execution stopped")
-			case types.StageExecutionStatusStopping:
-				continue
-			case types.StageExecutionStatusSucceeded:
-				successes++
-			}
+		if execution.PipelineExecution.Status != types.PipelineExecutionStatusInProgress {
+			return getExecutionResult(execution.PipelineExecution.Status)
 		}
-		if successes == len(state.StageStates) {
-			common.Logger.Printf("Pipeline %s completed successfully\n", pipelineName)
-			return nil
+		executionsList, err := p.codePipeline.ListActionExecutions(context.Background(), &codepipeline.ListActionExecutionsInput{
+			PipelineName: aws.String(pipelineName),
+			Filter:       &types.ActionExecutionFilter{PipelineExecutionId: executionId},
+		})
+		if err != nil {
+			return err
+		}
+		noChanges, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, stepType, noChanges, autoApprove)
+		if err != nil {
+			return err
 		}
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	return ctx.Err()
 }
 
-func (p *pipeline) hasTerraformNotChanged(state *codepipeline.GetPipelineStateOutput) (*bool, error) {
-	codeBuildRunId, err := getCodeBuildRunId(state)
+func (p *pipeline) getNewPipelineExecutionId(pipelineName string) (*string, error) {
+	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
+	executions, err := p.codePipeline.ListPipelineExecutions(context.Background(), &codepipeline.ListPipelineExecutionsInput{
+		PipelineName: aws.String(pipelineName),
+	})
+	if err != nil {
+		return nil, err
+	}
+	summaries := executions.PipelineExecutionSummaries
+	if len(summaries) == 0 {
+		return nil, fmt.Errorf("couldn't find a pipeline execution id")
+	}
+	var oldestExecutionId *string
+	var oldestStartTime *time.Time
+	for _, execution := range summaries {
+		if oldestStartTime == nil || execution.StartTime.Before(*oldestStartTime) {
+			oldestExecutionId = execution.PipelineExecutionId
+			oldestStartTime = execution.StartTime
+		}
+	}
+	return oldestExecutionId, nil
+}
+
+func getExecutionResult(status types.PipelineExecutionStatus) error {
+	switch status {
+	case types.PipelineExecutionStatusCancelled:
+		return errors.New("pipeline execution cancelled")
+	case types.PipelineExecutionStatusFailed:
+		return errors.New("pipeline execution failed")
+	case types.PipelineExecutionStatusStopped:
+		return errors.New("pipeline execution stopped")
+	case types.PipelineExecutionStatusStopping:
+		return errors.New("pipeline execution stopping")
+	case types.PipelineExecutionStatusSuperseded:
+		return errors.New("pipeline execution superseded")
+	case types.PipelineExecutionStatusSucceeded:
+		return nil
+	}
+	return fmt.Errorf("unknown pipeline execution status %s", status)
+}
+
+func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType string, noChanges *bool, autoApprove bool) (*bool, error) {
+	for _, action := range actions {
+		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
+			action.Status != types.ActionExecutionStatusInProgress {
+			continue
+		}
+		var err error
+		noChanges, err = p.hasNotChanged(noChanges, actions, stepType)
+		if err != nil {
+			return nil, err
+		}
+		if *noChanges || autoApprove {
+			err = p.approveStage(pipelineName)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			common.Logger.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+		}
+	}
+	return noChanges, nil
+}
+
+func (p *pipeline) hasNotChanged(noChanges *bool, actions []types.ActionExecutionDetail, stepType string) (*bool, error) {
+	if noChanges != nil {
+		return noChanges, nil
+	}
+	switch stepType {
+	case "terraform":
+		return p.hasTerraformNotChanged(actions)
+	}
+	return aws.Bool(false), nil
+}
+
+func (p *pipeline) hasTerraformNotChanged(actions []types.ActionExecutionDetail) (*bool, error) {
+	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
 	}
@@ -499,37 +556,32 @@ func (p *pipeline) hasTerraformNotChanged(state *codepipeline.GetPipelineStateOu
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs")
 }
 
-func getCodeBuildRunId(state *codepipeline.GetPipelineStateOutput) (string, error) {
-	for _, stage := range state.StageStates {
-		if *stage.StageName != planName || stage.ActionStates == nil {
+func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
+	for _, action := range actions {
+		if *action.ActionName != planName {
 			continue
 		}
-		for _, action := range stage.ActionStates {
-			if *action.ActionName != planName || action.LatestExecution == nil {
-				continue
-			}
-			externalExecutionId := action.LatestExecution.ExternalExecutionId
-			if externalExecutionId == nil {
-				return "", fmt.Errorf("couldn't get plan action external execution id")
-			}
-			parts := strings.Split(*externalExecutionId, ":")
-			if len(parts) != 2 {
-				return "", fmt.Errorf("couldn't parse plan action external execution id from %s", *externalExecutionId)
-			}
-			return parts[1], nil
+		if action.Output == nil || action.Output.ExecutionResult == nil || action.Output.ExecutionResult.ExternalExecutionId == nil {
+			return "", fmt.Errorf("couldn't get plan action external execution id")
 		}
+		externalExecutionId := action.Output.ExecutionResult.ExternalExecutionId
+		parts := strings.Split(*externalExecutionId, ":")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("couldn't parse plan action external execution id from %s", *externalExecutionId)
+		}
+		return parts[1], nil
 	}
 	return "", fmt.Errorf("couldn't find a terraform plan action")
 }
 
-func (p *pipeline) approveStage(projectName string, stage types.StageState) error {
-	token := getApprovalToken(stage)
+func (p *pipeline) approveStage(pipelineName string) error {
+	token := p.getApprovalToken(pipelineName)
 	if token == nil {
 		common.Logger.Printf("No approval token found, please wait or approve manually\n")
 		return nil
 	}
 	_, err := p.codePipeline.PutApprovalResult(context.Background(), &codepipeline.PutApprovalResultInput{
-		PipelineName: aws.String(projectName),
+		PipelineName: aws.String(pipelineName),
 		StageName:    aws.String(approveStageName),
 		ActionName:   aws.String(approveActionName),
 		Token:        token,
@@ -579,27 +631,6 @@ func (p *pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount
 	return nil
 }
 
-func (p *pipeline) startPipelineExecutionIfNeeded(name string) error {
-	state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
-		Name: aws.String(name),
-	})
-	if err != nil {
-		return err
-	}
-	if state == nil || state.StageStates == nil {
-		return nil
-	}
-	for _, stage := range state.StageStates {
-		if stage.LatestExecution == nil {
-			continue
-		}
-		if stage.LatestExecution.Status == types.StageExecutionStatusInProgress {
-			return nil
-		}
-	}
-	return p.StartPipelineExecution(name)
-}
-
 func (p *pipeline) pipelineExists(pipelineName string) bool {
 	_, err := p.codePipeline.GetPipeline(context.Background(), &codepipeline.GetPipelineInput{
 		Name: aws.String(pipelineName),
@@ -617,18 +648,27 @@ func getEnvironmentVariables(command string, stepName string, workspace string) 
 	return "[{\"name\":\"COMMAND\",\"value\":\"" + command + "\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]"
 }
 
-func getApprovalToken(stage types.StageState) *string {
-	if stage.ActionStates == nil {
+func (p *pipeline) getApprovalToken(pipelineName string) *string {
+	state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
+		Name: aws.String(pipelineName),
+	})
+	if err != nil {
 		return nil
 	}
-	for _, action := range stage.ActionStates {
-		if *action.ActionName != approveActionName {
+	for _, stage := range state.StageStates {
+		if *stage.StageName != approveStageName {
 			continue
 		}
-		if action.LatestExecution == nil {
-			return nil
+		for _, action := range stage.ActionStates {
+			if *action.ActionName != approveActionName {
+				continue
+			}
+			if action.LatestExecution == nil {
+				return nil
+			}
+			return action.LatestExecution.Token
 		}
-		return action.LatestExecution.Token
+		break
 	}
 	return nil
 }

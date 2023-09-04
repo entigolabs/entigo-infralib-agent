@@ -50,7 +50,7 @@ func NewUpdater(awsConfig aws.Config, accountId string, flags *common.Flags) Upd
 	if state == nil {
 		state = createState(config)
 	} else {
-		AddNewSteps(config, state)
+		UpdateSteps(config, state)
 	}
 	validateConfig(config, state)
 	return &updater{
@@ -96,6 +96,7 @@ func setupResources(awsConfig aws.Config, accountId string, prefix string, branc
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
 	}})
+	anyRoleCreated := false
 	if buildRole != nil {
 		err = iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
 		if err != nil {
@@ -107,6 +108,7 @@ func setupResources(awsConfig aws.Config, accountId string, prefix string, branc
 		if err != nil {
 			common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 		}
+		anyRoleCreated = true
 	} else {
 		buildRole = iam.GetRole(buildRoleName)
 	}
@@ -123,11 +125,14 @@ func setupResources(awsConfig aws.Config, accountId string, prefix string, branc
 		if err != nil {
 			common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
 		}
+		anyRoleCreated = true
 	} else {
 		pipelineRole = iam.GetRole(pipelineRoleName)
 	}
-	common.Logger.Println("Waiting for roles to be available...")
-	time.Sleep(10 * time.Second)
+	if anyRoleCreated {
+		common.Logger.Println("Waiting for roles to be available...")
+		time.Sleep(10 * time.Second)
+	}
 
 	ssm := NewSSM(awsConfig)
 
@@ -151,11 +156,13 @@ func setupResources(awsConfig aws.Config, accountId string, prefix string, branc
 func setupCodeCommit(awsConfig aws.Config, accountID string, prefix string, branch string) CodeCommit {
 	repoName := fmt.Sprintf("%s-%s", prefix, accountID)
 	codeCommit := NewCodeCommit(awsConfig, repoName, branch)
-	err := codeCommit.CreateRepository()
+	created, err := codeCommit.CreateRepository()
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
 	}
-	codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis is the README file."))
+	if created {
+		codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis repository is used to apply Entigo infralib modules."))
+	}
 	return codeCommit
 }
 
@@ -334,7 +341,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 }
 
 func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool) {
-	err := u.resources.codePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace)
+	executionId, err := u.resources.codePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 	}
@@ -342,14 +349,14 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	if err != nil {
 		common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 	}
-	err = u.resources.codePipeline.WaitPipelineExecution(projectName, autoApprove, 30, step.Type)
+	err = u.resources.codePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
 	}
 }
 
 func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) {
-	err := u.resources.codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
+	executionId, err := u.resources.codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 	}
@@ -357,7 +364,7 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 	if err != nil {
 		common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 	}
-	err = u.resources.codePipeline.WaitPipelineExecution(projectName, autoApprove, 30, step.Type)
+	err = u.resources.codePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
 	}
@@ -365,12 +372,12 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep) {
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
-	err := u.resources.codePipeline.StartPipelineExecution(projectName)
+	executionId, err := u.resources.codePipeline.StartPipelineExecution(projectName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to start pipeline execution: %s", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	err = u.resources.codePipeline.WaitPipelineExecution(projectName, autoApprove, 30, step.Type)
+	err = u.resources.codePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
 	}

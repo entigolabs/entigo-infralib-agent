@@ -26,6 +26,10 @@ func GetConfig(configFile string) model.Config {
 
 func validateConfig(config model.Config, state *model.State) {
 	stepWorkspaces := model.NewSet[string]()
+	configVersion := config.Version
+	if configVersion == "" {
+		configVersion = StableVersion
+	}
 	for _, step := range config.Steps {
 		stepWorkspace := fmt.Sprintf("%s-%s", step.Name, step.Workspace)
 		if stepWorkspaces.Contains(stepWorkspace) {
@@ -33,27 +37,35 @@ func validateConfig(config model.Config, state *model.State) {
 				stepWorkspace)})
 		}
 		stepWorkspaces.Add(stepWorkspace)
-		validateConfigVersions(step, state)
+		stepVersion := step.Version
+		if stepVersion == "" {
+			stepVersion = configVersion
+		}
+		validateConfigVersions(step, state, stepVersion)
 	}
 }
 
-func validateConfigVersions(step model.Step, state *model.State) {
+func validateConfigVersions(step model.Step, state *model.State, stepVersion string) {
 	stepState := GetStepState(state, step)
 	if stepState == nil {
 		return
 	}
 	for _, module := range step.Modules {
 		stateModule := GetModuleState(stepState, module.Name)
-		if stateModule == nil || stateModule.Version == nil || module.Version == "" || module.Version == StableVersion {
+		moduleVersionString := module.Version
+		if moduleVersionString == "" {
+			moduleVersionString = stepVersion
+		}
+		if stateModule == nil || stateModule.Version == nil || moduleVersionString == StableVersion {
 			continue
 		}
-		moduleVersion, err := version.NewVersion(module.Version)
+		moduleVersion, err := version.NewVersion(moduleVersionString)
 		if err != nil {
 			common.Logger.Fatalf("failed to parse module version %s: %s\n", module.Version, err)
 		}
 		if moduleVersion.LessThan(stateModule.Version) {
 			common.Logger.Fatalf("config module %s version %s is less than state version %s\n", module.Name,
-				module.Version, stateModule.Version)
+				moduleVersionString, stateModule.Version)
 		}
 	}
 }
@@ -76,7 +88,12 @@ func GetModuleState(stepState *model.StateStep, moduleName string) *model.StateM
 	return nil
 }
 
-func AddNewSteps(config model.Config, state *model.State) {
+func UpdateSteps(config model.Config, state *model.State) {
+	removeUnusedSteps(config, state)
+	addNewSteps(config, state)
+}
+
+func addNewSteps(config model.Config, state *model.State) {
 	for _, step := range config.Steps {
 		stepState := GetStepState(state, step)
 		if stepState == nil {
@@ -95,6 +112,22 @@ func AddNewSteps(config model.Config, state *model.State) {
 				}
 				stepState.Modules = append(stepState.Modules, stateModule)
 			}
+		}
+	}
+}
+
+func removeUnusedSteps(config model.Config, state *model.State) {
+	for i := len(state.Steps) - 1; i >= 0; i-- {
+		stepState := state.Steps[i]
+		stepFound := false
+		for _, step := range config.Steps {
+			if stepState.Name == step.Name && stepState.Workspace == step.Workspace {
+				stepFound = true
+				break
+			}
+		}
+		if !stepFound {
+			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
 		}
 	}
 }
