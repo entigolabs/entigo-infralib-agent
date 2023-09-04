@@ -76,19 +76,19 @@ steps:
     vpc_prefix: ep-network-vpc
     modules:
       - name: aws-alb
-        source: k8s/aws-alb
+        source: aws-alb
         version: stable
       - name: crossplane
-        source: k8s/crossplane
+        source: crossplane
         version: stable
       - name: external-dns
-        source: k8s/external-dns
+        source: external-dns
         version: stable
       - name: istio-base
-        source: k8s/istio-base
+        source: istio-base
         version: stable
       - name: istio-istiod
-        source: k8s/istio-istiod
+        source: istio-istiod
         version: stable
         inputs:
           domain: "*.ep-test.infralib.entigo.io"

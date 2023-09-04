@@ -553,15 +553,18 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 			executePipeline = true
 		}
 		inputs := module.Inputs
+		var bytes []byte
 		if len(inputs) == 0 {
-			continue
+			bytes = []byte{}
+		} else {
+			var err error
+			bytes, err = yaml.Marshal(inputs)
+			if err != nil {
+				common.Logger.Fatalf("Failed to marshal helm values: %s", err)
+			}
 		}
-		yamlBytes, err := yaml.Marshal(inputs)
-		if err != nil {
-			common.Logger.Fatalf("Failed to marshal helm values: %s", err)
-		}
-		u.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s-values.yaml", u.config.Prefix, step.Name, step.Workspace, module.Name),
-			yamlBytes)
+		u.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+			step.Workspace, module.Name, module.Source), bytes)
 	}
 	return executePipeline
 }
