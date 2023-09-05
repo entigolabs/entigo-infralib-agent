@@ -19,7 +19,15 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            core.setOutput('new_version',  'v0.3.1');
+            const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
+            const versionString = '' + latestStableRelease.data.tag_name;
+            const regex = /^v(\d+)\.(\d+)\.(\d+)$/;
+            const match = versionString.match(regex);
+            const major = parseInt(match[1], 10);
+            const minor = parseInt(match[2], 10);
+            const patch = parseInt(match[3], 10) + 1;
+            const new_version = `v${major}.${minor}.${patch}`
+            core.setOutput('new_version',  new_version);
 
       - name: Setup Go
         uses: actions/setup-go@v4
@@ -42,9 +50,9 @@ jobs:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
           aws-region: us-east-1
         run: |
-          echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin && docker build -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} . && docker push entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin && docker build -f Dockerfile.github -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} . && docker push entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
           aws ecr-public get-login-password --region us-east-1 | docker login -u AWS --password-stdin public.ecr.aws/entigolabs
-          docker tag entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} && docker push public.ecr.aws/entigolabs/entigo-infralib-entigo:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          docker tag entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} && docker push public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
           docker tag entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} entigolabs/entigo-infralib-agent:latest && docker push entigolabs/entigo-infralib-agent:latest
           docker tag public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} public.ecr.aws/entigolabs/entigo-infralib-agent:latest && docker push public.ecr.aws/entigolabs/entigo-infralib-agent:latest
 
