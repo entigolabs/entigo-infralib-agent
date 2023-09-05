@@ -38,7 +38,7 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build -ldflags '-extldflags "-static"' -o bin/ei-agent main.go
+          go build -ldflags '-linkmode external -extldflags "-static"' -o bin/ei-agent main.go
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
