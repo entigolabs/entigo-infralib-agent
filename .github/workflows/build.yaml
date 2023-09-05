@@ -27,7 +27,7 @@ jobs:
             const minor = parseInt(match[2], 10);
             const patch = parseInt(match[3], 10) + 1;
             const new_version = `v${major}.${minor}.${patch}`
-            core.setOutput('new_version',  new_release);
+            core.setOutput('new_version',  new_version);
 
       - name: Setup Go
         uses: actions/setup-go@v4
