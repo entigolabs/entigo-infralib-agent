@@ -19,15 +19,7 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
-            const versionString = '' + latestStableRelease.data.tag_name;
-            const regex = /^v(\d+)\.(\d+)\.(\d+)$/;
-            const match = versionString.match(regex);
-            const major = parseInt(match[1], 10);
-            const minor = parseInt(match[2], 10);
-            const patch = parseInt(match[3], 10) + 1;
-            const new_version = `v${major}.${minor}.${patch}`
-            core.setOutput('new_version',  new_version);
+            core.setOutput('new_version',  'v0.3.1');
 
       - name: Setup Go
         uses: actions/setup-go@v4
