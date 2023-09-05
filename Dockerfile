@@ -3,7 +3,7 @@ WORKDIR /go/ei-agent
 COPY go.* ./
 RUN go mod download
 COPY . ./
-RUN go build -v -o bin/ei-agent main.go
+RUN GOOS=linux GOARCH=amd64 go build -ldflags '-extldflags "-static"' -o bin/ei-agent main.go
 
 FROM alpine:3
 WORKDIR /etc/ei-agent
