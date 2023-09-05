@@ -14,7 +14,7 @@ import (
 type Github interface {
 	GetLatestReleaseTag() (*Release, error)
 	GetReleaseByTag(tag string) (*Release, error)
-	GetNewerReleases(publishedAt time.Time) ([]Release, error)
+	GetNewerReleases(after time.Time, until time.Time) ([]Release, error)
 }
 
 type githubClient struct {
@@ -63,7 +63,7 @@ func (g *githubClient) GetReleaseByTag(tag string) (*Release, error) {
 	}, nil
 }
 
-func (g *githubClient) GetNewerReleases(publishedAt time.Time) ([]Release, error) {
+func (g *githubClient) GetNewerReleases(after time.Time, until time.Time) ([]Release, error) {
 	newReleases := make([]Release, 0)
 	options := &github.ListOptions{Page: 1}
 	for {
@@ -72,7 +72,10 @@ func (g *githubClient) GetNewerReleases(publishedAt time.Time) ([]Release, error
 			return nil, err
 		}
 		for _, release := range releases {
-			if release.GetPublishedAt().After(publishedAt) {
+			if release.GetPublishedAt().After(until) {
+				continue
+			}
+			if !release.GetPublishedAt().Before(after) {
 				newReleases = append(newReleases, Release{
 					Tag:         release.GetTagName(),
 					PublishedAt: release.GetPublishedAt().Time,

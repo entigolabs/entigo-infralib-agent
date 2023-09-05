@@ -1,6 +1,6 @@
 FROM alpine:3
+WORKDIR /etc/ei-agent
 COPY base.tf /etc/ei-agent/
 COPY eks.tf /etc/ei-agent/
 COPY bin/ei-agent /usr/bin/
-WORKDIR /etc/ei-agent
 CMD ei-agent run

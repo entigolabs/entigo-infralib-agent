@@ -11,6 +11,6 @@ func Run(flags *common.Flags) {
 
 	accountID := stsService.GetAccountID()
 
-	steps := service.NewSteps(awsConfig, accountID, flags)
-	steps.ProcessSteps()
+	updater := service.NewUpdater(awsConfig, accountID, flags)
+	updater.ProcessSteps()
 }

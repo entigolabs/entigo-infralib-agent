@@ -1,0 +1,71 @@
+name: Build and release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Get latest release
+        id: get_latest_release
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.setOutput('new_version',  'v0.3.1');
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      - name: Build the go application
+        run: |
+          go build -o bin/ei-agent main.go
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Build and push image
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          aws-region: us-east-1
+        run: |
+          echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin && docker build -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} . && docker push entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          aws ecr-public get-login-password --region us-east-1 | docker login -u AWS --password-stdin public.ecr.aws/entigolabs
+          docker tag entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} && docker push public.ecr.aws/entigolabs/entigo-infralib-entigo:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          docker tag entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} entigolabs/entigo-infralib-agent:latest && docker push entigolabs/entigo-infralib-agent:latest
+          docker tag public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} public.ecr.aws/entigolabs/entigo-infralib-agent:latest && docker push public.ecr.aws/entigolabs/entigo-infralib-agent:latest
+
+      - name: Authenticate with GitHub CLI
+        run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event_name == 'push' }}
+
+      - name: Create Release
+        id: create_release
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -m "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}"
+          git push origin ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          RELEASE_URL=$(gh release create ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          --title "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}" \
+          --generate-notes \
+          --draft=false \
+          --latest=false \
+          --prerelease=true)
+          echo "RELEASE_URL=$RELEASE_URL" >> $GITHUB_ENV
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event_name == 'push' }}
