@@ -1,4 +1,4 @@
-package updater
+package agent
 
 import (
 	"github.com/entigolabs/entigo-infralib-agent/common"

@@ -35,6 +35,7 @@ type awsResources struct {
 	codePipeline  Pipeline
 	codeBuild     Builder
 	ssm           SSM
+	awsPrefix     string
 	bucket        string
 	s3Arn         string
 	dynamoDBTable *dynamoDBTypes.TableDescription
@@ -144,6 +145,7 @@ func setupResources(awsConfig aws.Config, accountId string, prefix string, branc
 		codePipeline:  codePipeline,
 		codeBuild:     codeBuild,
 		ssm:           ssm,
+		awsPrefix:     prefix,
 		bucket:        bucket,
 		s3Arn:         s3Arn,
 		dynamoDBTable: dynamoDBTable,
@@ -222,6 +224,7 @@ func createState(config model.Config) *model.State {
 }
 
 func (u *updater) ProcessSteps() {
+	u.createAgentPipeline()
 	releases := u.getReleases()
 
 	firstRun := true
@@ -274,6 +277,14 @@ func (u *updater) ProcessSteps() {
 	}
 }
 
+func (u *updater) createAgentPipeline() {
+	agent := NewAgent(u.resources)
+	err := agent.CreatePipeline(u.config.AgentVersion)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create agent pipeline: %s", err)
+	}
+}
+
 func (u *updater) getStepState(step model.Step) *model.StateStep {
 	stepState := GetStepState(u.state, step)
 	if stepState == nil {
@@ -285,12 +296,12 @@ func (u *updater) getStepState(step model.Step) *model.StateStep {
 func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
 	executePipelines := false
 	switch step.Type {
-	case "terraform":
+	case model.StepTypeTerraform:
 		changed := u.createTerraformFiles(step, stepState, releaseTag, stepSemver)
 		if changed {
 			executePipelines = true
 		}
-	case "argocd-apps":
+	case model.StepTypeArgoCD:
 		changed := u.createArgoCDFiles(step, stepState, releaseTag, stepSemver)
 		if changed {
 			executePipelines = true
@@ -302,12 +313,12 @@ func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, r
 func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
 	executePipeline := false
 	switch step.Type {
-	case "terraform":
+	case model.StepTypeTerraform:
 		changed := u.createTerraformMain(step, stepState, releaseTag, stepSemver)
 		if changed {
 			executePipeline = true
 		}
-	case "argocd-apps":
+	case model.StepTypeArgoCD:
 		for _, module := range step.Modules {
 			_, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve) // Update state version and auto approve
 			if changed {
@@ -333,9 +344,9 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	autoApprove := getAutoApprove(stepState)
 
 	switch step.Type {
-	case "terraform":
+	case model.StepTypeTerraform:
 		u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove)
-	case "argocd-apps":
+	case model.StepTypeArgoCD:
 		u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove)
 	}
 }

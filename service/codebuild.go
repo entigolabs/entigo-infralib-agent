@@ -13,6 +13,9 @@ import (
 
 type Builder interface {
 	CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error
+	CreateAgentProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, image string) error
+	GetProject(projectName string) (*types.Project, error)
+	UpdateProjectImage(projectName string, image string) error
 }
 
 type BuildSpec struct {
@@ -41,22 +44,20 @@ type Artifacts struct {
 type builder struct {
 	codeBuild *codebuild.Client
 	region    *string
+	buildSpec *string
 }
 
 func NewBuilder(awsConfig aws.Config) Builder {
 	return &builder{
 		codeBuild: codebuild.NewFromConfig(awsConfig),
 		region:    &awsConfig.Region,
+		buildSpec: buildSpec(),
 	}
 }
 
 func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
-	buildSpec, err := yaml.Marshal(createBuildSpec())
-	if err != nil {
-		return err
-	}
-	_, err = b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
+	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
 		ServiceRole:      aws.String(roleArn),
@@ -66,22 +67,7 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 			Image:                    aws.String("public.ecr.aws/entigolabs/entigo-infralib-base:latest"),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-			EnvironmentVariables: []types.EnvironmentVariable{{
-				Name:  aws.String("PROJECT_NAME"),
-				Value: aws.String(projectName),
-			}, {
-				Name:  aws.String("AWS_REGION"),
-				Value: b.region,
-			}, {
-				Name:  aws.String("COMMAND"),
-				Value: aws.String("plan"),
-			}, {
-				Name:  aws.String("TF_VAR_prefix"),
-				Value: aws.String(stepName),
-			}, {
-				Name:  aws.String("WORKSPACE"),
-				Value: aws.String(workspace),
-			}},
+			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, workspace),
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
@@ -97,7 +83,7 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		Source: &types.ProjectSource{
 			Type:          types.SourceTypeCodecommit,
 			GitCloneDepth: aws.Int32(0), // full clone
-			Buildspec:     aws.String(string(buildSpec)),
+			Buildspec:     b.buildSpec,
 			Location:      &repoURL,
 		},
 		VpcConfig: vpcConfig,
@@ -110,8 +96,86 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 	return err
 }
 
-func createBuildSpec() BuildSpec {
-	return BuildSpec{
+func (b *builder) getEnvironmentVariables(projectName string, stepName string, workspace string) []types.EnvironmentVariable {
+	return []types.EnvironmentVariable{{
+		Name:  aws.String("PROJECT_NAME"),
+		Value: aws.String(projectName),
+	}, {
+		Name:  aws.String("AWS_REGION"),
+		Value: b.region,
+	}, {
+		Name:  aws.String("COMMAND"),
+		Value: aws.String("plan"),
+	}, {
+		Name:  aws.String("TF_VAR_prefix"),
+		Value: aws.String(stepName),
+	}, {
+		Name:  aws.String("WORKSPACE"),
+		Value: aws.String(workspace),
+	}}
+}
+
+func (b *builder) CreateAgentProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, image string) error {
+	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
+	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
+		Name:             aws.String(projectName),
+		TimeoutInMinutes: aws.Int32(480),
+		ServiceRole:      aws.String(roleArn),
+		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
+		Environment: &types.ProjectEnvironment{
+			ComputeType:              types.ComputeTypeBuildGeneral1Small,
+			Image:                    aws.String(image),
+			Type:                     types.EnvironmentTypeLinuxContainer,
+			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
+		},
+		LogsConfig: &types.LogsConfig{
+			CloudWatchLogs: &types.CloudWatchLogsConfig{
+				Status:     types.LogsConfigStatusTypeEnabled,
+				GroupName:  aws.String(logGroup),
+				StreamName: aws.String(streamName),
+			},
+			S3Logs: &types.S3LogsConfig{
+				Status:   types.LogsConfigStatusTypeEnabled,
+				Location: aws.String(fmt.Sprintf("%s/build-log-%s", bucketArn, projectName)),
+			},
+		},
+		Source: &types.ProjectSource{
+			Type:      types.SourceTypeNoSource,
+			Buildspec: agentBuildSpec(),
+		},
+	})
+	return err
+}
+
+func (b *builder) GetProject(projectName string) (*types.Project, error) {
+	projects, err := b.codeBuild.BatchGetProjects(context.Background(), &codebuild.BatchGetProjectsInput{
+		Names: []string{projectName},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(projects.Projects) != 1 {
+		return nil, nil
+	}
+	return &projects.Projects[0], nil
+}
+
+func (b *builder) UpdateProjectImage(projectName string, image string) error {
+	common.Logger.Printf("Updating CodeBuild project %s image to %s\n", projectName, image)
+	_, err := b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
+		Name: aws.String(projectName),
+		Environment: &types.ProjectEnvironment{
+			ComputeType:              types.ComputeTypeBuildGeneral1Small,
+			Image:                    aws.String(image),
+			Type:                     types.EnvironmentTypeLinuxContainer,
+			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
+		},
+	})
+	return err
+}
+
+func buildSpec() *string {
+	spec := BuildSpec{
 		Version: "0.2",
 		Phases: Phases{
 			Install: Install{
@@ -125,4 +189,29 @@ func createBuildSpec() BuildSpec {
 			Files: []string{"tf.tar.gz"},
 		},
 	}
+	return buildSpecYaml(spec)
+}
+
+func agentBuildSpec() *string {
+	spec := BuildSpec{
+		Version: "0.2",
+		Phases: Phases{
+			Build: Build{
+				Commands: []string{"/usr/bin/ei-agent run"},
+			},
+		},
+		Artifacts: Artifacts{
+			Files: []string{"**/*"},
+		},
+	}
+	return buildSpecYaml(spec)
+}
+
+func buildSpecYaml(spec BuildSpec) *string {
+	buildSpec, err := yaml.Marshal(spec)
+	if err != nil {
+		common.Logger.Fatalf("Failed to marshal buildspec: %s", err)
+	}
+	specString := string(buildSpec)
+	return &specString
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/google/uuid"
 	"regexp"
 	"strings"
@@ -23,8 +24,9 @@ type Pipeline interface {
 	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateAgentPipeline(pipelineName string, projectName string, bucket string) error
 	StartPipelineExecution(pipelineName string) (*string, error)
-	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType string) error
+	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error
 }
 
 type pipeline struct {
@@ -405,6 +407,78 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
+func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, bucket string) error {
+	if p.pipelineExists(pipelineName) {
+		return nil
+	}
+	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
+	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
+		Pipeline: &types.PipelineDeclaration{
+			Name:    aws.String(pipelineName),
+			RoleArn: aws.String(p.roleArn),
+			ArtifactStore: &types.ArtifactStore{
+				Location: aws.String(p.bucket),
+				Type:     types.ArtifactStoreTypeS3,
+			}, Stages: []types.StageDeclaration{{
+				Name: aws.String("Source"),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String("Source"),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("S3"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        aws.Int32(1),
+					Configuration: map[string]string{
+						"S3Bucket":             bucket,
+						"S3ObjectKey":          agentSource,
+						"PollForSourceChanges": "false",
+					},
+				},
+				},
+			}, {
+				Name: aws.String(approveStageName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(approveActionName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryApproval,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("Manual"),
+						Version:  aws.String("1"),
+					},
+					RunOrder: aws.Int32(2),
+				}},
+			}, {
+				Name: aws.String("AgentRun"),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String("AgentRun"),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryBuild,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeBuild"),
+						Version:  aws.String("1"),
+					},
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:       aws.Int32(3),
+					Configuration: map[string]string{
+						"ProjectName":   projectName,
+						"PrimarySource": "source_output",
+					},
+				},
+				},
+			},
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
+	return p.stopLatestPipelineExecutions(pipelineName, 1)
+}
+
 func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
@@ -417,7 +491,7 @@ func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) 
 	return execution.PipelineExecutionId, nil
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType string) error {
+func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
@@ -493,7 +567,7 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType string, noChanges *bool, autoApprove bool) (*bool, error) {
+func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, noChanges *bool, autoApprove bool) (*bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -516,12 +590,12 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 	return noChanges, nil
 }
 
-func (p *pipeline) hasNotChanged(noChanges *bool, actions []types.ActionExecutionDetail, stepType string) (*bool, error) {
+func (p *pipeline) hasNotChanged(noChanges *bool, actions []types.ActionExecutionDetail, stepType model.StepType) (*bool, error) {
 	if noChanges != nil {
 		return noChanges, nil
 	}
 	switch stepType {
-	case "terraform":
+	case model.StepTypeTerraform:
 		return p.hasTerraformNotChanged(actions)
 	}
 	return aws.Bool(false), nil
