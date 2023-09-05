@@ -19,23 +19,26 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
-            const versionString = '' + latestStableRelease.data.tag_name;
-            const regex = /^v(\d+)\.(\d+)\.(\d+)$/;
-            const match = versionString.match(regex);
-            const major = parseInt(match[1], 10);
-            const minor = parseInt(match[2], 10);
-            const patch = parseInt(match[3], 10) + 1;
-            const new_version = `v${major}.${minor}.${patch}`
-            core.setOutput('new_version',  new_version);
+#            const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
+#            const versionString = '' + latestStableRelease.data.tag_name;
+#            const regex = /^v(\d+)\.(\d+)\.(\d+)$/;
+#            const match = versionString.match(regex);
+#            const major = parseInt(match[1], 10);
+#            const minor = parseInt(match[2], 10);
+#            const patch = parseInt(match[3], 10) + 1;
+#            const new_version = `v${major}.${minor}.${patch}`
+            core.setOutput('new_version',  'v0.3.2'); # TODO Enable this after non-prerelease release
 
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
       - name: Build the go application
+        env:
+          GOOS: linux
+          GOARCH: amd64
         run: |
-          go build -o bin/ei-agent main.go
+          go build -ldflags="-w -s" -o bin/ei-agent main.go
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -72,7 +75,7 @@ jobs:
           --generate-notes \
           --draft=false \
           --latest=false \
-          --prerelease=true)
+          --prerelease=false)
           echo "RELEASE_URL=$RELEASE_URL" >> $GITHUB_ENV
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
