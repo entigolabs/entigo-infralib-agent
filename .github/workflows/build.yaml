@@ -19,7 +19,15 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            core.setOutput('new_version',  'v0.3.2');
+            const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
+            const versionString = '' + latestStableRelease.data.tag_name;
+            const regex = /^v(\d+)\.(\d+)\.(\d+)$/;
+            const match = versionString.match(regex);
+            const major = parseInt(match[1], 10);
+            const minor = parseInt(match[2], 10);
+            const patch = parseInt(match[3], 10) + 1;
+            const new_version = `v${major}.${minor}.${patch}`
+            core.setOutput('new_version',  new_release);
 
       - name: Setup Go
         uses: actions/setup-go@v4
@@ -30,7 +38,7 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build -ldflags="-w -s" -o bin/ei-agent main.go
+          go build -ldflags '-extldflags "-static"' -o bin/ei-agent main.go
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
