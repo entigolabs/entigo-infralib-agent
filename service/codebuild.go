@@ -197,7 +197,7 @@ func agentBuildSpec() *string {
 		Version: "0.2",
 		Phases: Phases{
 			Build: Build{
-				Commands: []string{"/usr/bin/ei-agent run"},
+				Commands: []string{"cd /etc/ei-agent && /usr/bin/ei-agent run"},
 			},
 		},
 		Artifacts: Artifacts{
