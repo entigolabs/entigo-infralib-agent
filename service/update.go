@@ -2,9 +2,6 @@ package service
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
-	dynamoDBTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
@@ -25,29 +22,15 @@ type Updater interface {
 
 type updater struct {
 	config        model.Config
-	resources     awsResources
+	resources     AWSResources
 	state         *model.State
 	stableRelease *version.Version
 }
 
-type awsResources struct {
-	codeCommit    CodeCommit
-	codePipeline  Pipeline
-	codeBuild     Builder
-	ssm           SSM
-	awsPrefix     string
-	bucket        string
-	s3Arn         string
-	dynamoDBTable *dynamoDBTypes.TableDescription
-	logGroup      string
-	logStream     string
-	buildRoleArn  string
-}
-
-func NewUpdater(awsConfig aws.Config, accountId string, flags *common.Flags) Updater {
-	resources := setupResources(awsConfig, accountId, flags.AWSPrefix, flags.Branch)
-	config := getConfig(flags.Config, resources.codeCommit)
-	state := getLatestState(resources.codeCommit)
+func NewUpdater(flags *common.Flags) Updater {
+	resources := SetupAWSResources(flags.AWSPrefix, flags.Branch)
+	config := GetConfig(flags.Config, resources.CodeCommit)
+	state := getLatestState(resources.CodeCommit)
 	if state == nil {
 		state = createState(config)
 	} else {
@@ -59,135 +42,6 @@ func NewUpdater(awsConfig aws.Config, accountId string, flags *common.Flags) Upd
 		resources: resources,
 		state:     state,
 	}
-}
-
-func setupResources(awsConfig aws.Config, accountId string, prefix string, branch string) awsResources {
-	codeCommit := setupCodeCommit(awsConfig, accountId, prefix, branch)
-	repoMetadata := codeCommit.GetRepoMetadata()
-
-	s3 := NewS3(awsConfig)
-	bucket := fmt.Sprintf("%s-%s", prefix, accountId)
-	s3Arn, err := s3.CreateBucket(bucket)
-	if err != nil {
-		common.Logger.Fatalf("Failed to create S3 bucket: %s", err)
-	}
-
-	dynamoDBTable, err := CreateDynamoDBTable(awsConfig, fmt.Sprintf("%s-%s", prefix, accountId))
-	if err != nil {
-		common.Logger.Fatalf("Failed to create DynamoDB table: %s", err)
-	}
-
-	cloudwatch := NewCloudWatch(awsConfig)
-	logGroup := fmt.Sprintf("log-%s", prefix)
-	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
-	if err != nil {
-		common.Logger.Fatalf("Failed to create CloudWatch log group: %s", err)
-	}
-	logStream := fmt.Sprintf("log-%s", prefix)
-	err = cloudwatch.CreateLogStream(logGroup, logStream)
-	if err != nil {
-		common.Logger.Fatalf("Failed to create CloudWatch log stream: %s", err)
-	}
-
-	iam := NewIAM(awsConfig)
-
-	buildRoleName := fmt.Sprintf("%s-build", prefix)
-	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
-		Effect:    "Allow",
-		Action:    []string{"sts:AssumeRole"},
-		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
-	}})
-	anyRoleCreated := false
-	if buildRole != nil {
-		err = iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
-		if err != nil {
-			common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
-		}
-		buildPolicy := iam.CreatePolicy(buildRoleName,
-			CodeBuildPolicy(logGroupArn, s3Arn, *repoMetadata.Arn, *dynamoDBTable.TableArn))
-		err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
-		if err != nil {
-			common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
-		}
-		anyRoleCreated = true
-	} else {
-		buildRole = iam.GetRole(buildRoleName)
-	}
-
-	pipelineRoleName := fmt.Sprintf("%s-pipeline", prefix)
-	pipelineRole := iam.CreateRole(pipelineRoleName, []PolicyStatement{{
-		Effect:    "Allow",
-		Action:    []string{"sts:AssumeRole"},
-		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
-	}})
-	if pipelineRole != nil {
-		pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn, *repoMetadata.Arn))
-		err = iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
-		if err != nil {
-			common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
-		}
-		anyRoleCreated = true
-	} else {
-		pipelineRole = iam.GetRole(pipelineRoleName)
-	}
-	if anyRoleCreated {
-		common.Logger.Println("Waiting for roles to be available...")
-		time.Sleep(10 * time.Second)
-	}
-
-	ssm := NewSSM(awsConfig)
-
-	codeBuild := NewBuilder(awsConfig)
-	codePipeline := NewPipeline(awsConfig, *repoMetadata.RepositoryName, branch, *pipelineRole.Arn, bucket, cloudwatch, logGroup, logStream)
-
-	return awsResources{
-		codeCommit:    codeCommit,
-		codePipeline:  codePipeline,
-		codeBuild:     codeBuild,
-		ssm:           ssm,
-		awsPrefix:     prefix,
-		bucket:        bucket,
-		s3Arn:         s3Arn,
-		dynamoDBTable: dynamoDBTable,
-		logGroup:      logGroup,
-		logStream:     logStream,
-		buildRoleArn:  *buildRole.Arn,
-	}
-}
-
-func setupCodeCommit(awsConfig aws.Config, accountID string, prefix string, branch string) CodeCommit {
-	repoName := fmt.Sprintf("%s-%s", prefix, accountID)
-	codeCommit := NewCodeCommit(awsConfig, repoName, branch)
-	created, err := codeCommit.CreateRepository()
-	if err != nil {
-		common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
-	}
-	if created {
-		codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis repository is used to apply Entigo infralib modules."))
-	}
-	return codeCommit
-}
-
-func getConfig(configFile string, codeCommit CodeCommit) model.Config {
-	if configFile != "" {
-		config := GetConfig(configFile)
-		bytes, err := yaml.Marshal(config)
-		if err != nil {
-			common.Logger.Fatalf("Failed to marshal config: %s", err)
-		}
-		codeCommit.PutFile("config.yaml", bytes)
-		return config
-	}
-	bytes := codeCommit.GetFile("config.yaml")
-	if bytes == nil {
-		common.Logger.Fatalf("Config file not found")
-	}
-	var config model.Config
-	err := yaml.Unmarshal(bytes, &config)
-	if err != nil {
-		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
-	}
-	return config
 }
 
 func getLatestState(codeCommit CodeCommit) *model.State {
@@ -224,7 +78,7 @@ func createState(config model.Config) *model.State {
 }
 
 func (u *updater) ProcessSteps() {
-	u.createAgentPipeline()
+	u.updateAgentCodeBuild()
 	releases := u.getReleases()
 
 	firstRun := true
@@ -277,11 +131,11 @@ func (u *updater) ProcessSteps() {
 	}
 }
 
-func (u *updater) createAgentPipeline() {
+func (u *updater) updateAgentCodeBuild() {
 	agent := NewAgent(u.resources)
-	err := agent.CreatePipeline(u.config.AgentVersion)
+	err := agent.UpdateProjectImage(u.config.AgentVersion)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create agent pipeline: %s", err)
+		common.Logger.Fatalf("Failed to update agent codebuild: %s", err)
 	}
 }
 
@@ -330,14 +184,13 @@ func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, r
 }
 
 func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep) {
-	repoMetadata := u.resources.codeCommit.GetRepoMetadata()
+	repoMetadata := u.resources.CodeCommit.GetRepoMetadata()
 
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 
-	vpcConfig := u.getVpcConfig(step.VpcPrefix, step.Workspace)
-	err := u.resources.codeBuild.CreateProject(projectName, u.resources.buildRoleArn, u.resources.logGroup,
-		u.resources.logStream, u.resources.s3Arn, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, vpcConfig)
+	vpcConfig := u.resources.SSM.GetVpcConfig(step.VpcPrefix, step.Workspace)
+	err := u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, vpcConfig)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
 	}
@@ -352,30 +205,30 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 }
 
 func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool) {
-	executionId, err := u.resources.codePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace)
+	executionId, err := u.resources.CodePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 	}
-	err = u.resources.codePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
+	err = u.resources.CodePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 	}
-	err = u.resources.codePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
 	}
 }
 
 func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) {
-	executionId, err := u.resources.codePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
+	executionId, err := u.resources.CodePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
 	}
-	err = u.resources.codePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
+	err = u.resources.CodePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
 	}
-	err = u.resources.codePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
 	}
@@ -383,12 +236,12 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep) {
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
-	executionId, err := u.resources.codePipeline.StartPipelineExecution(projectName)
+	executionId, err := u.resources.CodePipeline.StartPipelineExecution(projectName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to start pipeline execution: %s", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	err = u.resources.codePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
 	}
@@ -529,36 +382,12 @@ func getNewerVersion(newestVersion string, moduleVersion string) string {
 	}
 }
 
-func (u *updater) getVpcConfig(vpcPrefix string, workspace string) *types.VpcConfig {
-	if vpcPrefix == "" {
-		return nil
-	}
-	common.Logger.Printf("Getting VPC config for %s-%s\n", vpcPrefix, workspace)
-	vpcId, err := u.resources.ssm.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/vpc_id", vpcPrefix, workspace))
-	if err != nil {
-		common.Logger.Fatalf("Failed to get VPC ID: %s", err)
-	}
-	subnetIds, err := u.resources.ssm.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/private_subnets", vpcPrefix, workspace))
-	if err != nil {
-		common.Logger.Fatalf("Failed to get subnet IDs: %s", err)
-	}
-	securityGroupIds, err := u.resources.ssm.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/pipeline_security_group", vpcPrefix, workspace))
-	if err != nil {
-		common.Logger.Fatalf("Failed to get security group IDs: %s", err)
-	}
-	return &types.VpcConfig{
-		SecurityGroupIds: strings.Split(securityGroupIds, ","),
-		Subnets:          strings.Split(subnetIds, ","),
-		VpcId:            aws.String(vpcId),
-	}
-}
-
 func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
 	provider, err := terraform.GetTerraformProvider(step)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create terraform provider: %s", err)
 	}
-	u.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
+	u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
 	u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name))
 	return u.createTerraformMain(step, stepState, releaseTag, stepSemver)
 }
@@ -581,7 +410,7 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 				common.Logger.Fatalf("Failed to marshal helm values: %s", err)
 			}
 		}
-		u.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
 			step.Workspace, module.Name, module.Source), bytes)
 	}
 	return executePipeline
@@ -589,15 +418,15 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 
 func (u *updater) createBackendConf(path string) {
 	bytes, err := util.CreateKeyValuePairs(map[string]string{
-		"bucket":         u.resources.bucket,
+		"Bucket":         u.resources.Bucket,
 		"key":            fmt.Sprintf("%s/terraform.tfstate", path),
-		"dynamodb_table": *u.resources.dynamoDBTable.TableName,
+		"dynamodb_table": u.resources.DynamoDBTable,
 		"encrypt":        "true",
 	}, "", "")
 	if err != nil {
 		common.Logger.Fatalf("Failed to convert backend config values: %s", err)
 	}
-	u.resources.codeCommit.PutFile(fmt.Sprintf("%s/backend.conf", path), bytes)
+	u.resources.CodeCommit.PutFile(fmt.Sprintf("%s/backend.conf", path), bytes)
 }
 
 func (u *updater) putStateFile() {
@@ -605,7 +434,7 @@ func (u *updater) putStateFile() {
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal state: %s", err)
 	}
-	u.resources.codeCommit.PutFile(stateFile, bytes)
+	u.resources.CodeCommit.PutFile(stateFile, bytes)
 }
 
 func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
@@ -625,7 +454,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		terraform.AddInputs(module.Inputs, moduleBody, moduleVersion)
 	}
 	if changed {
-		u.resources.codeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
+		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
 	}
 	return changed
 }

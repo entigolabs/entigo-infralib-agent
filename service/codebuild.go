@@ -12,8 +12,8 @@ import (
 )
 
 type Builder interface {
-	CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error
-	CreateAgentProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, image string) error
+	CreateProject(projectName string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error
+	CreateAgentProject(projectName string, image string) error
 	GetProject(projectName string) (*types.Project, error)
 	UpdateProjectImage(projectName string, image string) error
 }
@@ -42,25 +42,33 @@ type Artifacts struct {
 }
 
 type builder struct {
-	codeBuild *codebuild.Client
-	region    *string
-	buildSpec *string
+	codeBuild    *codebuild.Client
+	region       *string
+	buildRoleArn string
+	logGroup     string
+	logStream    string
+	bucketArn    string
+	buildSpec    *string
 }
 
-func NewBuilder(awsConfig aws.Config) Builder {
+func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string) Builder {
 	return &builder{
-		codeBuild: codebuild.NewFromConfig(awsConfig),
-		region:    &awsConfig.Region,
-		buildSpec: buildSpec(),
+		codeBuild:    codebuild.NewFromConfig(awsConfig),
+		region:       &awsConfig.Region,
+		buildRoleArn: buildRoleArn,
+		logGroup:     logGroup,
+		logStream:    logStream,
+		bucketArn:    bucketArn,
+		buildSpec:    buildSpec(),
 	}
 }
 
-func (b *builder) CreateProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error {
+func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
-		ServiceRole:      aws.String(roleArn),
+		ServiceRole:      aws.String(b.buildRoleArn),
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
@@ -72,12 +80,12 @@ func (b *builder) CreateProject(projectName string, roleArn string, logGroup str
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
 				Status:     types.LogsConfigStatusTypeEnabled,
-				GroupName:  aws.String(logGroup),
-				StreamName: aws.String(streamName),
+				GroupName:  aws.String(b.logGroup),
+				StreamName: aws.String(b.logStream),
 			},
 			S3Logs: &types.S3LogsConfig{
 				Status:   types.LogsConfigStatusTypeEnabled,
-				Location: aws.String(fmt.Sprintf("%s/build-log-%s", bucketArn, projectName)),
+				Location: aws.String(fmt.Sprintf("%s/build-log-%s", b.bucketArn, projectName)),
 			},
 		},
 		Source: &types.ProjectSource{
@@ -115,12 +123,12 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string, w
 	}}
 }
 
-func (b *builder) CreateAgentProject(projectName string, roleArn string, logGroup string, streamName string, bucketArn string, image string) error {
+func (b *builder) CreateAgentProject(projectName string, image string) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
-		ServiceRole:      aws.String(roleArn),
+		ServiceRole:      aws.String(b.buildRoleArn),
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
@@ -131,12 +139,12 @@ func (b *builder) CreateAgentProject(projectName string, roleArn string, logGrou
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
 				Status:     types.LogsConfigStatusTypeEnabled,
-				GroupName:  aws.String(logGroup),
-				StreamName: aws.String(streamName),
+				GroupName:  aws.String(b.logGroup),
+				StreamName: aws.String(b.logStream),
 			},
 			S3Logs: &types.S3LogsConfig{
 				Status:   types.LogsConfigStatusTypeEnabled,
-				Location: aws.String(fmt.Sprintf("%s/build-log-%s", bucketArn, projectName)),
+				Location: aws.String(fmt.Sprintf("%s/build-log-%s", b.bucketArn, projectName)),
 			},
 		},
 		Source: &types.ProjectSource{

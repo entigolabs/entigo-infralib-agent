@@ -409,7 +409,9 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 
 func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, bucket string) error {
 	if p.pipelineExists(pipelineName) {
-		return nil
+		common.Logger.Printf("Pipeline %s already exists. Starting execution...\n", projectName)
+		_, err := p.StartPipelineExecution(pipelineName)
+		return err
 	}
 	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
@@ -472,11 +474,7 @@ func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, 
 			},
 		},
 	})
-	if err != nil {
-		return err
-	}
-	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-	return p.stopLatestPipelineExecutions(pipelineName, 1)
+	return err
 }
 
 func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) {

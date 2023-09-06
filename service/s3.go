@@ -29,7 +29,7 @@ func NewS3(awsConfig aws.Config) S3 {
 }
 
 func (s *s3) CreateBucket(bucketName string) (string, error) {
-	common.Logger.Printf("Creating S3 bucket %s\n", bucketName)
+	common.Logger.Printf("Creating S3 Bucket %s\n", bucketName)
 	_, err := s.awsS3.CreateBucket(context.Background(), &awsS3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 		ACL:    types.BucketCannedACLPrivate,

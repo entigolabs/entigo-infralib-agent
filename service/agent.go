@@ -3,23 +3,26 @@ package service
 import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
 const repoURL = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 const agentSource = "agent-source.zip"
+const LatestAgentImage = "latest"
 
 type Agent interface {
 	CreatePipeline(version string) error
+	UpdateProjectImage(version string) error
 }
 
 type agent struct {
 	name      string
-	resources awsResources
+	resources AWSResources
 }
 
-func NewAgent(resources awsResources) Agent {
+func NewAgent(resources AWSResources) Agent {
 	return &agent{
-		name:      resources.awsPrefix + "-agent",
+		name:      resources.AwsPrefix + "-agent",
 		resources: resources,
 	}
 }
@@ -29,31 +32,55 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	return a.resources.codePipeline.CreateAgentPipeline(a.name, a.name, a.resources.bucket)
+	err = a.resources.CodePipeline.CreateAgentPipeline(a.name, a.name, a.resources.Bucket)
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Created Agent pipeline, approve the pipeline execution to continue\n", a.name)
+	return nil
 }
 
 func (a *agent) createCodeBuild(version string) error {
-	project, err := a.resources.codeBuild.GetProject(a.name)
+	project, err := a.resources.CodeBuild.GetProject(a.name)
 	if err != nil {
 		return err
 	}
 	if project != nil {
 		return a.updateProjectImage(project, version)
 	}
-	return a.resources.codeBuild.CreateAgentProject(a.name, a.resources.buildRoleArn, a.resources.logGroup, a.resources.logStream, a.resources.bucket, repoURL+":"+version)
+	return a.resources.CodeBuild.CreateAgentProject(a.name, repoURL+":"+version)
 }
 
-func (a *agent) updateProjectImage(project *types.Project, version string) error {
-	if *project.Environment.Image == repoURL+":"+version {
-		return nil
-	}
-	err := a.resources.codeBuild.UpdateProjectImage(*project.Name, repoURL+":"+version)
+func (a *agent) UpdateProjectImage(version string) error {
+	project, err := a.resources.CodeBuild.GetProject(a.name)
 	if err != nil {
 		return err
 	}
-	_, err = a.resources.codePipeline.StartPipelineExecution(a.name)
-	if err != nil {
-		return fmt.Errorf("agent codeBuild project updated, failed to start another execution: %w", err)
+	if project == nil {
+		return fmt.Errorf("agent CodeBuild project not found")
 	}
-	return fmt.Errorf("agent codeBuild project updated, started another execution")
+	err = a.updateProjectImage(project, version)
+	if err != nil {
+		return err
+	}
+	_, err = a.resources.CodePipeline.StartPipelineExecution(a.name)
+	if err != nil {
+		return fmt.Errorf("failed to start another execution: %w", err)
+	}
+	return fmt.Errorf("started another execution with updated image")
+}
+
+func (a *agent) updateProjectImage(project *types.Project, version string) error {
+	if version == "" {
+		version = LatestAgentImage
+	}
+	if *project.Environment.Image == repoURL+":"+version {
+		return nil
+	}
+	err := a.resources.CodeBuild.UpdateProjectImage(*project.Name, repoURL+":"+version)
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Updated Agent CodeBuild project %s image to %s\n", *project.Name, repoURL+":"+version)
+	return nil
 }
