@@ -11,7 +11,29 @@ import (
 
 const StableVersion = "stable"
 
-func GetConfig(configFile string) model.Config {
+func GetConfig(configFile string, codeCommit CodeCommit) model.Config {
+	if configFile != "" {
+		config := GetLocalConfig(configFile)
+		bytes, err := yaml.Marshal(config)
+		if err != nil {
+			common.Logger.Fatalf("Failed to marshal config: %s", err)
+		}
+		codeCommit.PutFile("config.yaml", bytes)
+		return config
+	}
+	bytes := codeCommit.GetFile("config.yaml")
+	if bytes == nil {
+		common.Logger.Fatalf("Config file not found")
+	}
+	var config model.Config
+	err := yaml.Unmarshal(bytes, &config)
+	if err != nil {
+		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
+	}
+	return config
+}
+
+func GetLocalConfig(configFile string) model.Config {
 	fileBytes, err := os.ReadFile(configFile)
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
@@ -71,6 +93,9 @@ func validateConfigVersions(step model.Step, state *model.State, stepVersion str
 }
 
 func GetStepState(state *model.State, step model.Step) *model.StateStep {
+	if state == nil {
+		return nil
+	}
 	for _, stateStep := range state.Steps {
 		if stateStep.Name == step.Name && stateStep.Workspace == step.Workspace {
 			return stateStep

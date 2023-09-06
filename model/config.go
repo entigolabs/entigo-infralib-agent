@@ -6,15 +6,16 @@ import (
 )
 
 type Config struct {
-	Prefix  string `yaml:"prefix"`
-	Source  string `yaml:"source"`
-	Version string `yaml:"version"`
-	Steps   []Step `yaml:"steps"`
+	Prefix       string `yaml:"prefix"`
+	Source       string `yaml:"source"`
+	Version      string `yaml:"version"`
+	AgentVersion string `yaml:"agent_version"`
+	Steps        []Step `yaml:"steps"`
 }
 
 type Step struct {
 	Name      string   `yaml:"name"`
-	Type      string   `yaml:"type"`
+	Type      StepType `yaml:"type"`
 	Workspace string   `yaml:"workspace"`
 	Approve   Approve  `yaml:"approve,omitempty"`
 	Modules   []Module `yaml:"modules"`
@@ -28,6 +29,14 @@ type Module struct {
 	Version string                 `yaml:"version"`
 	Inputs  map[string]interface{} `yaml:"inputs,omitempty"`
 }
+
+type StepType string
+
+const (
+	StepTypeTerraform StepType = "terraform"
+	StepTypeArgoCD             = "argocd-apps"
+	StepTypeAgent              = "agent"
+)
 
 type Approve string
 

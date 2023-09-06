@@ -7,14 +7,23 @@ import (
 
 func cliCommands() []*cli.Command {
 	return []*cli.Command{
-		&updateCommand,
+		&runCommand,
+		&bootstrapCommand,
 	}
 }
 
-var updateCommand = cli.Command{
+var runCommand = cli.Command{
 	Name:    "run",
 	Aliases: []string{""},
 	Usage:   "run agent",
-	Action:  action(common.UpdateCommand),
-	Flags:   cliFlags(common.UpdateCommand),
+	Action:  action(common.RunCommand),
+	Flags:   cliFlags(common.RunCommand),
+}
+
+var bootstrapCommand = cli.Command{
+	Name:    "bootstrap",
+	Aliases: []string{"bs"},
+	Usage:   "bootstraps agent codepipeline and codebuild",
+	Action:  action(common.BootstrapCommand),
+	Flags:   cliFlags(common.BootstrapCommand),
 }

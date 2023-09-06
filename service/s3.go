@@ -1,6 +1,8 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,7 +29,7 @@ func NewS3(awsConfig aws.Config) S3 {
 }
 
 func (s *s3) CreateBucket(bucketName string) (string, error) {
-	common.Logger.Printf("Creating S3 bucket %s\n", bucketName)
+	common.Logger.Printf("Creating S3 Bucket %s\n", bucketName)
 	_, err := s.awsS3.CreateBucket(context.Background(), &awsS3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 		ACL:    types.BucketCannedACLPrivate,
@@ -45,11 +47,38 @@ func (s *s3) CreateBucket(bucketName string) (string, error) {
 			return "", err
 		}
 	}
-	_, err = s.awsS3.PutBucketVersioning(context.Background(), &awsS3.PutBucketVersioningInput{
+	err = s.putBucketVersioning(bucketName)
+	if err != nil {
+		return "", err
+	}
+	err = s.createDummyZip(bucketName)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("arn:aws:s3:::%s", bucketName), nil
+}
+
+func (s *s3) putBucketVersioning(bucketName string) error {
+	_, err := s.awsS3.PutBucketVersioning(context.Background(), &awsS3.PutBucketVersioningInput{
 		Bucket: aws.String(bucketName),
 		VersioningConfiguration: &types.VersioningConfiguration{
 			Status: types.BucketVersioningStatusEnabled,
 		},
 	})
-	return fmt.Sprintf("arn:aws:s3:::%s", bucketName), nil
+	return err
+}
+
+func (s *s3) createDummyZip(bucketName string) error {
+	buffer := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(buffer)
+	err := zipWriter.Close()
+	if err != nil {
+		return err
+	}
+	_, err = s.awsS3.PutObject(context.Background(), &awsS3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(agentSource),
+		Body:   bytes.NewReader(buffer.Bytes()),
+	})
+	return err
 }

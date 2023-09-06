@@ -16,7 +16,5 @@ func (f *Flags) Setup(cmd Command) error {
 }
 
 func (f *Flags) cmdSpecificSetup(cmd Command) {
-	switch cmd {
-	case UpdateCommand: // currently empty
-	}
+	// currently empty
 }

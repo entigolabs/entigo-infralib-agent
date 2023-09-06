@@ -15,22 +15,14 @@ func cliFlags(cmd common.Command) []cli.Flag {
 func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 	return append(flags,
 		&loggingFlag,
+		&configFlag,
+		&branchFlag,
+		&awsPrefixFlag,
 	)
 }
 
 func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
-	switch cmd {
-	case common.UpdateCommand:
-		baseFlags = updateSpecificFlags(baseFlags)
-	}
 	return baseFlags
-}
-
-func updateSpecificFlags(baseFlags []cli.Flag) []cli.Flag {
-	return append(baseFlags,
-		&configFlag,
-		&branchFlag,
-		&awsPrefixFlag)
 }
 
 var loggingFlag = cli.StringFlag{

@@ -3,7 +3,8 @@ package common
 type Command int
 
 const (
-	UpdateCommand Command = iota
+	RunCommand Command = iota
+	BootstrapCommand
 )
 
 type LoggingLevel int

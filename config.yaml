@@ -1,6 +1,7 @@
 prefix: ep
 source: https://github.com/entigolabs/entigo-infralib-release
 version: stable
+agent_version: latest
 steps:
   - name: network
     type: terraform
