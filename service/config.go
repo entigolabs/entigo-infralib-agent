@@ -1,12 +1,14 @@
 package service
 
 import (
+	"dario.cat/mergo"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 	"os"
+	"reflect"
 )
 
 const StableVersion = "stable"
@@ -44,6 +46,14 @@ func GetLocalConfig(configFile string) model.Config {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
 	return config
+}
+
+func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
+	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: err})
+	}
+	return patchConfig
 }
 
 func validateConfig(config model.Config, state *model.State) {
@@ -155,4 +165,84 @@ func removeUnusedSteps(config model.Config, state *model.State) {
 			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
 		}
 	}
+}
+
+type stepsTransformer struct {
+}
+
+func (st stepsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
+	if typ != reflect.TypeOf([]model.Step{}) {
+		return nil
+	}
+	return func(dst, src reflect.Value) error {
+		if !dst.CanSet() {
+			return fmt.Errorf("cannot set step dst")
+		}
+		source := src.Interface().([]model.Step)
+		target := dst.Interface().([]model.Step)
+		for i, step := range target {
+			sourceStep := getSourceStep(step, source)
+			if sourceStep == nil {
+				continue
+			}
+			err := mergo.Merge(sourceStep, step, mergo.WithOverride, mergo.WithTransformers(modulesTransformer{}))
+			if err != nil {
+				return err
+			}
+			target[i] = *sourceStep
+		}
+		dst.Set(reflect.ValueOf(target))
+		return nil
+	}
+}
+
+func getSourceStep(dstStep model.Step, sourceSteps []model.Step) *model.Step {
+	for _, step := range sourceSteps {
+		if step.Name == dstStep.Name && step.Workspace == dstStep.Workspace {
+			return &step
+		}
+	}
+	return nil
+}
+
+type modulesTransformer struct {
+}
+
+func (mt modulesTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
+	if typ != reflect.TypeOf([]model.Module{}) {
+		return nil
+	}
+	return func(dst, src reflect.Value) error {
+		if !dst.CanSet() {
+			return fmt.Errorf("cannot set module dst")
+		}
+		target := src.Interface().([]model.Module)
+		source := dst.Interface().([]model.Module)
+		if len(target) == 0 {
+			dst.Set(reflect.ValueOf(source))
+			return nil
+		}
+		for i, module := range target {
+			sourceModule := getSourceModule(module, source)
+			if sourceModule == nil {
+				continue
+			}
+			err := mergo.Merge(sourceModule, module, mergo.WithOverride)
+			if err != nil {
+				return err
+			}
+			target[i] = *sourceModule
+		}
+		dst.Set(reflect.ValueOf(target))
+		return nil
+	}
+}
+
+func getSourceModule(dstModule model.Module, sourceModules []model.Module) *model.Module {
+	for _, module := range sourceModules {
+		if module.Name == dstModule.Name {
+			return &module
+		}
+	}
+	return nil
 }

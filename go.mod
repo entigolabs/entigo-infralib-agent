@@ -3,6 +3,7 @@ module github.com/entigolabs/entigo-infralib-agent
 go 1.21
 
 require (
+	dario.cat/mergo v1.0.0
 	github.com/aws/aws-sdk-go-v2 v1.21.0
 	github.com/aws/aws-sdk-go-v2/config v1.18.38
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.23.5

@@ -36,7 +36,7 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("Created Agent pipeline, approve the pipeline execution to continue\n", a.name)
+	common.Logger.Println("Created Agent pipeline, approve the pipeline execution to continue")
 	return nil
 }
 

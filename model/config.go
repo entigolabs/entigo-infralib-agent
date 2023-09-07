@@ -35,7 +35,6 @@ type StepType string
 const (
 	StepTypeTerraform StepType = "terraform"
 	StepTypeArgoCD             = "argocd-apps"
-	StepTypeAgent              = "agent"
 )
 
 type Approve string
