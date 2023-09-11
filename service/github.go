@@ -15,6 +15,7 @@ type Github interface {
 	GetLatestReleaseTag() (*Release, error)
 	GetReleaseByTag(tag string) (*Release, error)
 	GetNewerReleases(after time.Time, until time.Time) ([]Release, error)
+	GetRawFileContent(path string, release string) (string, error)
 }
 
 type githubClient struct {
@@ -89,6 +90,25 @@ func (g *githubClient) GetNewerReleases(after time.Time, until time.Time) ([]Rel
 		}
 		options.Page = response.NextPage
 	}
+}
+
+func (g *githubClient) GetRawFileContent(path string, release string) (string, error) {
+	common.Logger.Printf("Getting raw file content %s/%s/%s with reference %s\n", g.owner, g.repo, path, release)
+	fileContent, _, _, err := g.client.Repositories.GetContents(context.Background(), g.owner, g.repo, path,
+		&github.RepositoryContentGetOptions{
+			Ref: release,
+		})
+	if err != nil {
+		return "", err
+	}
+	if fileContent == nil {
+		return "", fmt.Errorf("no file found for %s/%s with path %s", g.owner, g.repo, path)
+	}
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return "", err
+	}
+	return content, nil
 }
 
 func sortReleasesByPublishedAt(releases []Release) []Release {

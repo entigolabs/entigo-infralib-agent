@@ -36,7 +36,7 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	common.Logger.Println("Approve the pipeline execution to continue")
+	common.Logger.Println("Agent pipeline execution started")
 	return nil
 }
 
@@ -46,7 +46,8 @@ func (a *agent) createCodeBuild(version string) error {
 		return err
 	}
 	if project != nil {
-		return a.updateProjectImage(project, version)
+		_, err = a.updateProjectImage(project, version)
+		return err
 	}
 	return a.resources.CodeBuild.CreateAgentProject(a.name, repoURL+":"+version)
 }
@@ -59,9 +60,12 @@ func (a *agent) UpdateProjectImage(version string) error {
 	if project == nil {
 		return fmt.Errorf("agent CodeBuild project not found")
 	}
-	err = a.updateProjectImage(project, version)
+	updated, err := a.updateProjectImage(project, version)
 	if err != nil {
 		return err
+	}
+	if !updated {
+		return nil
 	}
 	_, err = a.resources.CodePipeline.StartPipelineExecution(a.name)
 	if err != nil {
@@ -70,17 +74,17 @@ func (a *agent) UpdateProjectImage(version string) error {
 	return fmt.Errorf("started another execution with updated image")
 }
 
-func (a *agent) updateProjectImage(project *types.Project, version string) error {
+func (a *agent) updateProjectImage(project *types.Project, version string) (bool, error) {
 	if version == "" {
 		version = LatestAgentImage
 	}
 	if *project.Environment.Image == repoURL+":"+version {
-		return nil
+		return false, nil
 	}
 	err := a.resources.CodeBuild.UpdateProjectImage(*project.Name, repoURL+":"+version)
 	if err != nil {
-		return err
+		return false, err
 	}
 	common.Logger.Printf("Updated Agent CodeBuild project %s image to %s\n", *project.Name, repoURL+":"+version)
-	return nil
+	return true, nil
 }

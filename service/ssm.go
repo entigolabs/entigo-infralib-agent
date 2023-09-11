@@ -12,7 +12,7 @@ import (
 
 type SSM interface {
 	GetParameter(name string) (string, error)
-	GetVpcConfig(vpcPrefix string, workspace string) *types.VpcConfig
+	GetVpcConfig(prefix string, vpcPrefix string, workspace string) *types.VpcConfig
 }
 
 type ssm struct {
@@ -36,10 +36,11 @@ func (s ssm) GetParameter(name string) (string, error) {
 	return *result.Parameter.Value, nil
 }
 
-func (s ssm) GetVpcConfig(vpcPrefix string, workspace string) *types.VpcConfig {
+func (s ssm) GetVpcConfig(prefix string, vpcPrefix string, workspace string) *types.VpcConfig {
 	if vpcPrefix == "" {
 		return nil
 	}
+	vpcPrefix = fmt.Sprintf("%s-%s", prefix, vpcPrefix)
 	common.Logger.Printf("Getting VPC config for %s-%s\n", vpcPrefix, workspace)
 	vpcId, err := s.GetParameter(fmt.Sprintf("/entigo-infralib/%s-%s/vpc/vpc_id", vpcPrefix, workspace))
 	if err != nil {

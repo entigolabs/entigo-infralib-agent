@@ -86,16 +86,14 @@ func (c *codeCommit) GetLatestCommitId() (*string, error) {
 
 func (c *codeCommit) PutFile(file string, content []byte) {
 	common.Logger.Printf("Adding file %s to repository\n", file)
-	putFileInput := &codecommit.PutFileInput{
+	putFileOutput, err := c.codecommit.PutFile(context.Background(), &codecommit.PutFileInput{
 		BranchName:     c.branch,
 		CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
 		RepositoryName: c.repo,
 		FileContent:    content,
 		FilePath:       aws.String(file),
 		ParentCommitId: c.parentCommitId,
-	}
-
-	putFileOutput, err := c.codecommit.PutFile(context.Background(), putFileInput)
+	})
 	if err != nil {
 		var awsError *types.SameFileContentException
 		if errors.As(err, &awsError) {

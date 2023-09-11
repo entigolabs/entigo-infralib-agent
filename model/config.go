@@ -6,28 +6,35 @@ import (
 )
 
 type Config struct {
-	BaseConfig   string `yaml:"base_config"`
-	Prefix       string `yaml:"prefix"`
-	Source       string `yaml:"source"`
-	Version      string `yaml:"version"`
-	AgentVersion string `yaml:"agent_version"`
-	Steps        []Step `yaml:"steps"`
+	BaseConfig   BaseConfig `yaml:"base_config"`
+	Prefix       string     `yaml:"prefix,omitempty"`
+	Source       string     `yaml:"source"`
+	Version      string     `yaml:"version,omitempty"`
+	AgentVersion string     `yaml:"agent_version,omitempty"`
+	Steps        []Step     `yaml:"steps,omitempty"`
+}
+
+type BaseConfig struct {
+	Version string `yaml:"version,omitempty"`
+	Profile string `yaml:"profile"`
 }
 
 type Step struct {
 	Name      string   `yaml:"name"`
-	Type      StepType `yaml:"type"`
+	Type      StepType `yaml:"type,omitempty"`
 	Workspace string   `yaml:"workspace"`
 	Approve   Approve  `yaml:"approve,omitempty"`
-	Modules   []Module `yaml:"modules"`
+	Remove    bool     `yaml:"remove,omitempty"`
 	Version   string   `yaml:"version,omitempty"`
 	VpcPrefix string   `yaml:"vpc_prefix,omitempty"`
+	Modules   []Module `yaml:"modules,omitempty"`
 }
 
 type Module struct {
 	Name    string                 `yaml:"name"`
-	Source  string                 `yaml:"source"`
-	Version string                 `yaml:"version"`
+	Source  string                 `yaml:"source,omitempty"`
+	Version string                 `yaml:"version,omitempty"`
+	Remove  bool                   `yaml:"remove,omitempty"`
 	Inputs  map[string]interface{} `yaml:"inputs,omitempty"`
 }
 

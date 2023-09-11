@@ -7,8 +7,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
-	"io"
-	"net/http"
 	"os"
 	"reflect"
 )
@@ -50,44 +48,14 @@ func GetLocalConfig(configFile string) model.Config {
 	return config
 }
 
-func GetConfigFromUrl(url string) model.Config {
-	bytes := GetFileFromUrl(url)
-	var config model.Config
-	err := yaml.Unmarshal(bytes, &config)
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	return config
-}
-
-func GetFileFromUrl(url string) []byte {
-	resp, err := http.Get(url)
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			common.Logger.Println(&common.PrefixedError{Reason: err})
-		}
-	}(resp.Body)
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	return body
-}
-
-func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
-	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	return patchConfig
-}
-
-func validateConfig(config model.Config, state *model.State) {
+func ValidateConfig(config model.Config, state *model.State) {
 	stepWorkspaces := model.NewSet[string]()
+	if config.Source == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
+	}
+	if config.BaseConfig.Profile == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config base config profile is not set")})
+	}
 	configVersion := config.Version
 	if configVersion == "" {
 		configVersion = StableVersion
@@ -197,6 +165,14 @@ func removeUnusedSteps(config model.Config, state *model.State) {
 	}
 }
 
+func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
+	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: err})
+	}
+	return patchConfig
+}
+
 type stepsTransformer struct {
 }
 
@@ -205,34 +181,57 @@ func (st stepsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.V
 		return nil
 	}
 	return func(dst, src reflect.Value) error {
-		if !dst.CanSet() {
-			return fmt.Errorf("cannot set step dst")
+		target := src.Interface().([]model.Step)
+		source := dst.Interface().([]model.Step)
+		if len(target) == 0 {
+			dst.Set(reflect.ValueOf(source))
+			return nil
 		}
-		source := src.Interface().([]model.Step)
-		target := dst.Interface().([]model.Step)
-		for i, step := range target {
-			sourceStep := getSourceStep(step, source)
-			if sourceStep == nil {
+		result := make([]model.Step, 0)
+		for _, step := range source {
+			patchStep := getPatchStep(step, target)
+			if patchStep == nil {
+				result = append(result, step)
 				continue
 			}
-			err := mergo.Merge(sourceStep, step, mergo.WithOverride, mergo.WithTransformers(modulesTransformer{}))
+			if patchStep.Remove {
+				continue
+			}
+			err := mergo.Merge(&step, *patchStep, mergo.WithOverride, mergo.WithTransformers(modulesTransformer{}))
 			if err != nil {
 				return err
 			}
-			target[i] = *sourceStep
+			result = append(result, step)
 		}
-		dst.Set(reflect.ValueOf(target))
+		result = addNewPatchSteps(source, target, result)
+		dst.Set(reflect.ValueOf(result))
 		return nil
 	}
 }
 
-func getSourceStep(dstStep model.Step, sourceSteps []model.Step) *model.Step {
-	for _, step := range sourceSteps {
+func getPatchStep(dstStep model.Step, patchSteps []model.Step) *model.Step {
+	for _, step := range patchSteps {
 		if step.Name == dstStep.Name && step.Workspace == dstStep.Workspace {
 			return &step
 		}
 	}
 	return nil
+}
+
+func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result []model.Step) []model.Step {
+	for _, patchStep := range patchSteps {
+		found := false
+		for _, sourceStep := range sourceSteps {
+			if patchStep.Name == sourceStep.Name && patchStep.Workspace == sourceStep.Workspace {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, patchStep)
+		}
+	}
+	return result
 }
 
 type modulesTransformer struct {
@@ -243,36 +242,81 @@ func (mt modulesTransformer) Transformer(typ reflect.Type) func(dst, src reflect
 		return nil
 	}
 	return func(dst, src reflect.Value) error {
-		if !dst.CanSet() {
-			return fmt.Errorf("cannot set module dst")
-		}
 		target := src.Interface().([]model.Module)
 		source := dst.Interface().([]model.Module)
 		if len(target) == 0 {
 			dst.Set(reflect.ValueOf(source))
 			return nil
 		}
-		for i, module := range target {
-			sourceModule := getSourceModule(module, source)
-			if sourceModule == nil {
+		result := make([]model.Module, 0)
+		for _, module := range source {
+			patchModule := getPatchModule(module, target)
+			if patchModule == nil {
+				result = append(result, module)
 				continue
 			}
-			err := mergo.Merge(sourceModule, module, mergo.WithOverride)
+			if patchModule.Remove {
+				continue
+			}
+			err := mergo.Merge(&module, *patchModule, mergo.WithOverride, mergo.WithTransformers(inputsTransformer{}))
 			if err != nil {
 				return err
 			}
-			target[i] = *sourceModule
+			result = append(result, module)
 		}
-		dst.Set(reflect.ValueOf(target))
+		result = addNewPatchModules(source, target, result)
+		dst.Set(reflect.ValueOf(result))
 		return nil
 	}
 }
 
-func getSourceModule(dstModule model.Module, sourceModules []model.Module) *model.Module {
-	for _, module := range sourceModules {
+func getPatchModule(dstModule model.Module, patchModules []model.Module) *model.Module {
+	for _, module := range patchModules {
 		if module.Name == dstModule.Name {
 			return &module
 		}
 	}
 	return nil
+}
+
+func addNewPatchModules(sourceModules []model.Module, patchModules []model.Module, result []model.Module) []model.Module {
+	for _, patchModule := range patchModules {
+		found := false
+		for _, sourceModule := range sourceModules {
+			if patchModule.Name == sourceModule.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, patchModule)
+		}
+	}
+	return result
+}
+
+type inputsTransformer struct {
+}
+
+func (it inputsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
+	if typ != reflect.TypeOf(map[string]interface{}{}) {
+		return nil
+	}
+	return func(dst, src reflect.Value) error {
+		target := src.Interface().(map[string]interface{})
+		source := dst.Interface().(map[string]interface{})
+		if len(target) == 0 {
+			dst.Set(reflect.ValueOf(source))
+			return nil
+		}
+		if len(source) == 0 {
+			dst.Set(reflect.ValueOf(target))
+			return nil
+		}
+		for key, value := range target {
+			source[key] = value
+		}
+		dst.Set(reflect.ValueOf(source))
+		return nil
+	}
 }
