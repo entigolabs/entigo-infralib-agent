@@ -30,6 +30,10 @@ type updater struct {
 func NewUpdater(flags *common.Flags) Updater {
 	resources := SetupAWSResources(flags.AWSPrefix, flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
+	if config.BaseConfig != "" {
+		baseConfig := GetConfigFromUrl(config.BaseConfig)
+		config = MergeConfig(baseConfig, config)
+	}
 	state := getLatestState(resources.CodeCommit)
 	if state == nil {
 		state = createState(config)

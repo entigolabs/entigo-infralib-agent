@@ -81,6 +81,7 @@ bin/ei-agent run --config=config.yaml --branch=main --aws-prefix=entigo-infralib
 Config is provided with a yaml file:
 
 ```yaml
+base_config: string
 prefix: string
 source: https://github.com/entigolabs/entigo-infralib-release
 version: stable | semver
@@ -99,6 +100,7 @@ steps:
 ```
 Config version is overwritten by step version which in turn is overwritten by module version.
 
+* base_config - base config file url, used for merging client config into
 * prefix - prefix used for CodeCommit folders/files and terraform resources
 * source - source repository for Entigo Infralib terraform modules
 * version - version of Entigo Infralib terraform modules to use

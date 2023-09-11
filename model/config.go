@@ -6,6 +6,7 @@ import (
 )
 
 type Config struct {
+	BaseConfig   string `yaml:"base_config"`
 	Prefix       string `yaml:"prefix"`
 	Source       string `yaml:"source"`
 	Version      string `yaml:"version"`

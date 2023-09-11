@@ -7,6 +7,8 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
+	"io"
+	"net/http"
 	"os"
 	"reflect"
 )
@@ -46,6 +48,34 @@ func GetLocalConfig(configFile string) model.Config {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
 	return config
+}
+
+func GetConfigFromUrl(url string) model.Config {
+	bytes := GetFileFromUrl(url)
+	var config model.Config
+	err := yaml.Unmarshal(bytes, &config)
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: err})
+	}
+	return config
+}
+
+func GetFileFromUrl(url string) []byte {
+	resp, err := http.Get(url)
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: err})
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			common.Logger.Println(&common.PrefixedError{Reason: err})
+		}
+	}(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: err})
+	}
+	return body
 }
 
 func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
