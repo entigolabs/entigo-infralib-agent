@@ -23,6 +23,7 @@ type Updater interface {
 type updater struct {
 	config        model.Config
 	resources     AWSResources
+	github        Github
 	state         *model.State
 	stableRelease *version.Version
 }
@@ -30,18 +31,57 @@ type updater struct {
 func NewUpdater(flags *common.Flags) Updater {
 	resources := SetupAWSResources(flags.AWSPrefix, flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
+	github := NewGithub(config.Source)
+	if config.BaseConfig.Profile != "" {
+		config = mergeBaseConfig(config, resources.CodeCommit, github)
+	}
 	state := getLatestState(resources.CodeCommit)
 	if state == nil {
 		state = createState(config)
 	} else {
 		UpdateSteps(config, state)
 	}
-	validateConfig(config, state)
+	ValidateConfig(config, state)
 	return &updater{
 		config:    config,
 		resources: resources,
+		github:    github,
 		state:     state,
 	}
+}
+
+func mergeBaseConfig(config model.Config, codeCommit CodeCommit, github Github) model.Config {
+	release := config.BaseConfig.Version
+	if release == "" {
+		if config.Version != "" {
+			release = config.Version
+		} else {
+			release = StableVersion
+		}
+	}
+	if release == StableVersion {
+		latestRelease, err := github.GetLatestReleaseTag()
+		if err != nil {
+			common.Logger.Fatalf("Failed to get latest release: %s", err)
+		}
+		release = latestRelease.Tag
+	}
+	rawBaseConfig, err := github.GetRawFileContent(fmt.Sprintf("profiles/%s.conf", config.BaseConfig.Profile), release)
+	if err != nil {
+		common.Logger.Fatalf("Failed to get base config: %s", err)
+	}
+	var baseConfig model.Config
+	err = yaml.Unmarshal([]byte(rawBaseConfig), &baseConfig)
+	if err != nil {
+		common.Logger.Fatalf("Failed to unmarshal base config: %s", err)
+	}
+	config = MergeConfig(config, baseConfig)
+	bytes, err := yaml.Marshal(config)
+	if err != nil {
+		common.Logger.Fatalf("Failed to marshal config: %s", err)
+	}
+	codeCommit.PutFile("merged_config.yaml", bytes)
+	return config
 }
 
 func getLatestState(codeCommit CodeCommit) *model.State {
@@ -189,7 +229,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 
-	vpcConfig := u.resources.SSM.GetVpcConfig(step.VpcPrefix, step.Workspace)
+	vpcConfig := u.resources.SSM.GetVpcConfig(u.config.Prefix, step.VpcPrefix, step.Workspace)
 	err := u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, vpcConfig)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
@@ -257,10 +297,9 @@ func getAutoApprove(state *model.StateStep) bool {
 }
 
 func (u *updater) getReleases() []Release {
-	githubClient := NewGithub(u.config.Source)
 	oldestVersion := u.getOldestVersion()
 	newestVersion := u.getNewestVersion()
-	latestRelease, err := githubClient.GetLatestReleaseTag()
+	latestRelease, err := u.github.GetLatestReleaseTag()
 	if err != nil {
 		common.Logger.Fatalf("Failed to get latest release: %s", err)
 	}
@@ -273,7 +312,7 @@ func (u *updater) getReleases() []Release {
 		common.Logger.Printf("Latest release is %s\n", latestRelease.Tag)
 		return []Release{*latestRelease}
 	}
-	oldestRelease, err := githubClient.GetReleaseByTag(oldestVersion)
+	oldestRelease, err := u.github.GetReleaseByTag(oldestVersion)
 	if err != nil {
 		common.Logger.Fatalf("Failed to get oldest release %s: %s", oldestVersion, err)
 	}
@@ -281,14 +320,14 @@ func (u *updater) getReleases() []Release {
 	if newestVersion == StableVersion {
 		newestRelease = latestRelease
 	} else {
-		newestRelease, err = githubClient.GetReleaseByTag(newestVersion)
+		newestRelease, err = u.github.GetReleaseByTag(newestVersion)
 		if err != nil {
 			common.Logger.Fatalf("Failed to get newest release %s: %s", newestVersion, err)
 		}
 	}
 	common.Logger.Printf("Oldest module version is %s\n", oldestRelease.Tag)
 	common.Logger.Printf("Newest assigned module version is %s\n", newestRelease.Tag)
-	releases, err := githubClient.GetNewerReleases(oldestRelease.PublishedAt, newestRelease.PublishedAt)
+	releases, err := u.github.GetNewerReleases(oldestRelease.PublishedAt, newestRelease.PublishedAt)
 	if err != nil {
 		common.Logger.Fatalf("Failed to get newer releases: %s", err)
 	}
@@ -418,7 +457,7 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 
 func (u *updater) createBackendConf(path string) {
 	bytes, err := util.CreateKeyValuePairs(map[string]string{
-		"Bucket":         u.resources.Bucket,
+		"bucket":         u.resources.Bucket,
 		"key":            fmt.Sprintf("%s/terraform.tfstate", path),
 		"dynamodb_table": u.resources.DynamoDBTable,
 		"encrypt":        "true",

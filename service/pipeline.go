@@ -441,18 +441,6 @@ func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, 
 				},
 				},
 			}, {
-				Name: aws.String(approveStageName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(approveActionName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryApproval,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("Manual"),
-						Version:  aws.String("1"),
-					},
-					RunOrder: aws.Int32(2),
-				}},
-			}, {
 				Name: aws.String("AgentRun"),
 				Actions: []types.ActionDeclaration{{
 					Name: aws.String("AgentRun"),
@@ -463,7 +451,7 @@ func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, 
 						Version:  aws.String("1"),
 					},
 					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       aws.Int32(3),
+					RunOrder:       aws.Int32(2),
 					Configuration: map[string]string{
 						"ProjectName":   projectName,
 						"PrimarySource": "source_output",
