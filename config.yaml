@@ -11,16 +11,7 @@ steps:
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
       - name: argocd
         inputs:
-          values: |
-            <<EOT
-            argocd:
-              server:
-                config:
-                  url: https://argocd.runner-main-biz-int.infralib.entigo.io
-                ingress:
-                  hosts:
-                  - argocd.runner-main-biz-int.infralib.entigo.io
-            EOT
+          hostname: "argocd.runner-main-biz-int.infralib.entigo.io"
   - name: applications
     workspace: test
     modules:

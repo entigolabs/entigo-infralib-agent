@@ -1,7 +1,8 @@
-package service
+package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/google/go-github/v54/github"
@@ -99,10 +100,14 @@ func (g *githubClient) GetRawFileContent(path string, release string) (string, e
 			Ref: release,
 		})
 	if err != nil {
+		var githubError *github.ErrorResponse
+		if errors.As(err, &githubError) && githubError.Response.StatusCode == 404 {
+			return "", FileNotFoundError{fileName: path}
+		}
 		return "", err
 	}
 	if fileContent == nil {
-		return "", fmt.Errorf("no file found for %s/%s with path %s", g.owner, g.repo, path)
+		return "", FileNotFoundError{fileName: path}
 	}
 	content, err := fileContent.GetContent()
 	if err != nil {
@@ -138,4 +143,12 @@ func getGithubOwnerAndRepo(repoURL string) (string, string, error) {
 type Release struct {
 	Tag         string
 	PublishedAt time.Time
+}
+
+type FileNotFoundError struct {
+	fileName string
+}
+
+func (e FileNotFoundError) Error() string {
+	return fmt.Sprintf("file %s not found", e.fileName)
 }

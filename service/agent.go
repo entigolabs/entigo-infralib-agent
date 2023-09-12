@@ -58,7 +58,8 @@ func (a *agent) UpdateProjectImage(version string) error {
 		return err
 	}
 	if project == nil {
-		return fmt.Errorf("agent CodeBuild project not found")
+		common.Logger.Printf("Agent CodeBuild project not found\n")
+		return nil
 	}
 	updated, err := a.updateProjectImage(project, version)
 	if err != nil {
