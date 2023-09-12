@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -23,7 +24,8 @@ type Updater interface {
 type updater struct {
 	config        model.Config
 	resources     AWSResources
-	github        Github
+	github        github.Github
+	terraform     terraform.Terraform
 	state         *model.State
 	stableRelease *version.Version
 }
@@ -31,9 +33,9 @@ type updater struct {
 func NewUpdater(flags *common.Flags) Updater {
 	resources := SetupAWSResources(flags.AWSPrefix, flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
-	github := NewGithub(config.Source)
+	githubClient := github.NewGithub(config.Source)
 	if config.BaseConfig.Profile != "" {
-		config = mergeBaseConfig(config, resources.CodeCommit, github)
+		config = mergeBaseConfig(config, resources.CodeCommit, githubClient)
 	}
 	state := getLatestState(resources.CodeCommit)
 	if state == nil {
@@ -45,12 +47,13 @@ func NewUpdater(flags *common.Flags) Updater {
 	return &updater{
 		config:    config,
 		resources: resources,
-		github:    github,
+		github:    githubClient,
+		terraform: terraform.NewTerraform(githubClient),
 		state:     state,
 	}
 }
 
-func mergeBaseConfig(config model.Config, codeCommit CodeCommit, github Github) model.Config {
+func mergeBaseConfig(config model.Config, codeCommit CodeCommit, githubClient github.Github) model.Config {
 	release := config.BaseConfig.Version
 	if release == "" {
 		if config.Version != "" {
@@ -60,13 +63,13 @@ func mergeBaseConfig(config model.Config, codeCommit CodeCommit, github Github) 
 		}
 	}
 	if release == StableVersion {
-		latestRelease, err := github.GetLatestReleaseTag()
+		latestRelease, err := githubClient.GetLatestReleaseTag()
 		if err != nil {
 			common.Logger.Fatalf("Failed to get latest release: %s", err)
 		}
 		release = latestRelease.Tag
 	}
-	rawBaseConfig, err := github.GetRawFileContent(fmt.Sprintf("profiles/%s.conf", config.BaseConfig.Profile), release)
+	rawBaseConfig, err := githubClient.GetRawFileContent(fmt.Sprintf("profiles/%s.conf", config.BaseConfig.Profile), release)
 	if err != nil {
 		common.Logger.Fatalf("Failed to get base config: %s", err)
 	}
@@ -208,7 +211,7 @@ func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, r
 	executePipeline := false
 	switch step.Type {
 	case model.StepTypeTerraform:
-		changed := u.createTerraformMain(step, stepState, releaseTag, stepSemver)
+		changed := u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
 		if changed {
 			executePipeline = true
 		}
@@ -296,7 +299,7 @@ func getAutoApprove(state *model.StateStep) bool {
 	return true
 }
 
-func (u *updater) getReleases() []Release {
+func (u *updater) getReleases() []github.Release {
 	oldestVersion := u.getOldestVersion()
 	newestVersion := u.getNewestVersion()
 	latestRelease, err := u.github.GetLatestReleaseTag()
@@ -310,13 +313,13 @@ func (u *updater) getReleases() []Release {
 	u.stableRelease = latestSemver
 	if oldestVersion == StableVersion {
 		common.Logger.Printf("Latest release is %s\n", latestRelease.Tag)
-		return []Release{*latestRelease}
+		return []github.Release{*latestRelease}
 	}
 	oldestRelease, err := u.github.GetReleaseByTag(oldestVersion)
 	if err != nil {
 		common.Logger.Fatalf("Failed to get oldest release %s: %s", oldestVersion, err)
 	}
-	var newestRelease *Release
+	var newestRelease *github.Release
 	if newestVersion == StableVersion {
 		newestRelease = latestRelease
 	} else {
@@ -422,13 +425,21 @@ func getNewerVersion(newestVersion string, moduleVersion string) string {
 }
 
 func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
-	provider, err := terraform.GetTerraformProvider(step)
+	u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name))
+	return u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
+}
+
+func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
+	changed, moduleVersions := u.createTerraformMain(step, stepState, releaseTag, stepSemver)
+	if !changed {
+		return false
+	}
+	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create terraform provider: %s", err)
 	}
 	u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
-	u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name))
-	return u.createTerraformMain(step, stepState, releaseTag, stepSemver)
+	return changed
 }
 
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
@@ -476,10 +487,11 @@ func (u *updater) putStateFile() {
 	u.resources.CodeCommit.PutFile(stateFile, bytes)
 }
 
-func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
+func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, map[string]string) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 	changed := false
+	moduleVersions := make(map[string]string)
 	for _, module := range step.Modules {
 		moduleVersion, moduleChanged := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve)
 		if moduleChanged {
@@ -491,11 +503,12 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", u.config.Source, module.Source, moduleVersion)))
 		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, module.Name)))
 		terraform.AddInputs(module.Inputs, moduleBody, moduleVersion)
+		moduleVersions[module.Name] = moduleVersion
 	}
 	if changed {
 		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
 	}
-	return changed
+	return changed, moduleVersions
 }
 
 func (u *updater) getModuleVersion(module model.Module, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, approve model.Approve) (string, bool) {
