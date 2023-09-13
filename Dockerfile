@@ -7,5 +7,6 @@ RUN GOOS=linux GOARCH=amd64 go build -ldflags '-extldflags "-static"' -o bin/ei-
 
 FROM alpine:3
 WORKDIR /etc/ei-agent
+COPY --from=build /go/ei-agent/app.yaml /etc/ei-agent/
 COPY --from=build /go/ei-agent/bin/ei-agent /usr/bin/
 CMD ei-agent run
