@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -216,11 +217,9 @@ func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, r
 			executePipeline = true
 		}
 	case model.StepTypeArgoCD:
-		for _, module := range step.Modules {
-			_, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve) // Update state version and auto approve
-			if changed {
-				executePipeline = true
-			}
+		changed := u.updateArgoCDFiles(step, stepState, releaseTag, stepSemver)
+		if changed {
+			executePipeline = true
 		}
 	}
 	return executePipeline
@@ -445,7 +444,7 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
 	executePipeline := false
 	for _, module := range step.Modules {
-		_, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve) // Update state version and auto approve
+		moduleVersion, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve)
 		if changed {
 			executePipeline = true
 		}
@@ -460,8 +459,22 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 				common.Logger.Fatalf("Failed to marshal helm values: %s", err)
 			}
 		}
-		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
-			step.Workspace, module.Name, module.Source), bytes)
+		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+			step.Workspace, module.Name), bytes)
+		u.createArgoCDApp(module, step, moduleVersion)
+	}
+	return executePipeline
+}
+
+func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
+	executePipeline := false
+	for _, module := range step.Modules {
+		moduleVersion, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve)
+		if !changed {
+			continue
+		}
+		executePipeline = true
+		u.createArgoCDApp(module, step, moduleVersion)
 	}
 	return executePipeline
 }
@@ -509,6 +522,16 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
 	}
 	return changed, moduleVersions
+}
+
+func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string) {
+	appFilePath := fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name, step.Workspace, module.Name)
+	appBytes, err := argocd.GetApplication(module, *u.resources.CodeCommit.GetRepoMetadata().CloneUrlSsh, moduleVersion, appFilePath)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create application file: %s", err)
+	}
+	u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+		step.Workspace, module.Name), appBytes)
 }
 
 func (u *updater) getModuleVersion(module model.Module, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, approve model.Approve) (string, bool) {
