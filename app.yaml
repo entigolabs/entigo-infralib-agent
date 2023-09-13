@@ -20,8 +20,7 @@ spec:
           - 'values.yaml'
           - '$codeRepo/${valuesFilePath}'
   syncPolicy:
-    syncPolicy:
-      automated:
-        selfHeal: true
-      syncOptions:
-        - CreateNamespace=true
+    automated:
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
