@@ -6,9 +6,7 @@ import (
 	"strings"
 )
 
-const sshPrefix = "ssh://"
-
-func GetApplication(module model.Module, repoSSHUrl string, version string, valuesFilePath string) ([]byte, error) {
+func GetApplicationFile(module model.Module, repoSSHUrl string, version string, valuesFilePath string) ([]byte, error) {
 	file, err := os.ReadFile("app.yaml")
 	if err != nil {
 		return nil, err

@@ -6,7 +6,8 @@ import (
 )
 
 func Bootstrap(flags *common.Flags) {
-	resources := service.SetupAWSResources(flags.AWSPrefix, flags.Branch)
+	awsService := service.NewAWS(flags.AWSPrefix)
+	resources := awsService.SetupAWSResources(flags.Branch)
 	config := service.GetConfig(flags.Config, resources.CodeCommit)
 	if config.AgentVersion == "" {
 		config.AgentVersion = service.LatestAgentImage

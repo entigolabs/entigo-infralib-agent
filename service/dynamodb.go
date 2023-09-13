@@ -10,7 +10,6 @@ import (
 )
 
 func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
-	common.Logger.Printf("Creating DynamoDB table %s\n", tableName)
 	dynamodbClient := dynamodb.NewFromConfig(awsConfig)
 	table, err := dynamodbClient.CreateTable(context.Background(), &dynamodb.CreateTableInput{
 		TableName:   aws.String(tableName),
@@ -28,12 +27,12 @@ func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDe
 		var resourceError *types.ResourceInUseException
 		var tableError *types.TableAlreadyExistsException
 		if errors.As(err, &tableError) || errors.As(err, &resourceError) {
-			common.Logger.Printf("DynamoDB table %s already exists. Continuing...\n", tableName)
 			return GetDynamoDBTable(dynamodbClient, tableName)
 		} else {
 			return nil, err
 		}
 	}
+	common.Logger.Printf("Created DynamoDB table %s\n", tableName)
 	return table.TableDescription, nil
 }
 

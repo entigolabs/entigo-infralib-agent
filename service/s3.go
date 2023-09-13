@@ -29,7 +29,6 @@ func NewS3(awsConfig aws.Config) S3 {
 }
 
 func (s *s3) CreateBucket(bucketName string) (string, error) {
-	common.Logger.Printf("Creating S3 Bucket %s\n", bucketName)
 	_, err := s.awsS3.CreateBucket(context.Background(), &awsS3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 		ACL:    types.BucketCannedACLPrivate,
@@ -41,12 +40,12 @@ func (s *s3) CreateBucket(bucketName string) (string, error) {
 		var existsError *types.BucketAlreadyExists
 		var ownedError *types.BucketAlreadyOwnedByYou
 		if errors.As(err, &existsError) || errors.As(err, &ownedError) {
-			common.Logger.Printf("Bucket %s already exists. Continuing...\n", bucketName)
 			return fmt.Sprintf("arn:aws:s3:::%s", bucketName), nil
 		} else {
 			return "", err
 		}
 	}
+	common.Logger.Printf("Created S3 Bucket %s\n", bucketName)
 	err = s.putBucketVersioning(bucketName)
 	if err != nil {
 		return "", err

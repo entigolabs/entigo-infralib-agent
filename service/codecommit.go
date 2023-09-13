@@ -13,9 +13,11 @@ import (
 type CodeCommit interface {
 	CreateRepository() (bool, error)
 	GetLatestCommitId() (*string, error)
+	UpdateLatestCommitId() error
 	GetRepoMetadata() *types.RepositoryMetadata
 	PutFile(file string, content []byte)
 	GetFile(file string) []byte
+	CheckFolderExists(folder string) bool
 }
 
 type codeCommit struct {
@@ -42,7 +44,6 @@ func (c *codeCommit) CreateRepository() (bool, error) {
 	if err != nil {
 		var awsError *types.RepositoryNameExistsException
 		if errors.As(err, &awsError) {
-			common.Logger.Printf("Repository %s already exists. Continuing...\n", *c.repo)
 			c.parentCommitId, err = c.GetLatestCommitId()
 			c.repoMetadata = c.GetRepoMetadata()
 			return false, err
@@ -71,21 +72,26 @@ func (c *codeCommit) GetRepoMetadata() *types.RepositoryMetadata {
 }
 
 func (c *codeCommit) GetLatestCommitId() (*string, error) {
-	input := &codecommit.GetBranchInput{
+	result, err := c.codecommit.GetBranch(context.Background(), &codecommit.GetBranchInput{
 		RepositoryName: c.repo,
 		BranchName:     c.branch,
-	}
-
-	result, err := c.codecommit.GetBranch(context.Background(), input)
+	})
 	if err != nil {
 		return nil, err
 	}
-
 	return result.Branch.CommitId, nil
 }
 
+func (c *codeCommit) UpdateLatestCommitId() error {
+	commitId, err := c.GetLatestCommitId()
+	if err != nil {
+		return err
+	}
+	c.parentCommitId = commitId
+	return nil
+}
+
 func (c *codeCommit) PutFile(file string, content []byte) {
-	common.Logger.Printf("Adding file %s to repository\n", file)
 	putFileOutput, err := c.codecommit.PutFile(context.Background(), &codecommit.PutFileInput{
 		BranchName:     c.branch,
 		CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
@@ -97,12 +103,12 @@ func (c *codeCommit) PutFile(file string, content []byte) {
 	if err != nil {
 		var awsError *types.SameFileContentException
 		if errors.As(err, &awsError) {
-			common.Logger.Printf("%s already exists in repository. Continuing...\n", file)
 			return
 		} else {
 			common.Logger.Fatalf("Failed to put file %s to repository: %s", file, err)
 		}
 	}
+	common.Logger.Printf("Added file %s to repository\n", file)
 	c.parentCommitId = putFileOutput.CommitId
 }
 
@@ -121,4 +127,20 @@ func (c *codeCommit) GetFile(file string) []byte {
 		common.Logger.Fatalf("Failed to get %s from repository: %s", file, err)
 	}
 	return output.FileContent
+}
+
+func (c *codeCommit) CheckFolderExists(folder string) bool {
+	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
+		CommitSpecifier: c.branch,
+		RepositoryName:  c.repo,
+		FolderPath:      aws.String(folder),
+	})
+	if err != nil {
+		var awsError *types.FolderDoesNotExistException
+		if errors.As(err, &awsError) {
+			return false
+		}
+		common.Logger.Fatalf("Failed to get %s from repository: %s", folder, err)
+	}
+	return len(output.Files) > 0 || len(output.SubFolders) > 0
 }

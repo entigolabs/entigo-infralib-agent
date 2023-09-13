@@ -121,7 +121,27 @@ func GetModuleState(stepState *model.StateStep, moduleName string) *model.StateM
 	return nil
 }
 
-func UpdateSteps(config model.Config, state *model.State) {
+func createState(config model.Config) *model.State {
+	steps := make([]*model.StateStep, 0)
+	for _, step := range config.Steps {
+		modules := make([]*model.StateModule, 0)
+		for _, module := range step.Modules {
+			modules = append(modules, &model.StateModule{
+				Name: module.Name,
+			})
+		}
+		steps = append(steps, &model.StateStep{
+			Name:      step.Name,
+			Workspace: step.Workspace,
+			Modules:   modules,
+		})
+	}
+	return &model.State{
+		Steps: steps,
+	}
+}
+
+func updateSteps(config model.Config, state *model.State) {
 	removeUnusedSteps(config, state)
 	addNewSteps(config, state)
 }

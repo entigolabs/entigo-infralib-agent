@@ -23,3 +23,8 @@ steps:
           domain: "*.ep-test.infralib.entigo.io"
           altdomain:
             - "*.something.ep-test.infralib.entigo.io"
+  - name: mycustomtf
+    type: terraform-custom
+    workspace: test
+    vpc_prefix: network-vpc
+    approve: never

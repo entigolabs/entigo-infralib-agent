@@ -2,9 +2,9 @@ package github
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/go-github/v54/github"
 	"net/url"
 	"sort"
@@ -16,8 +16,10 @@ type Github interface {
 	GetLatestReleaseTag() (*Release, error)
 	GetReleaseByTag(tag string) (*Release, error)
 	GetNewerReleases(after time.Time, until time.Time) ([]Release, error)
-	GetRawFileContent(path string, release string) (string, error)
+	GetRawFileContent(path string, release string) ([]byte, error)
 }
+
+const rawGithubUrl = "https://raw.githubusercontent.com"
 
 type githubClient struct {
 	client *github.Client
@@ -93,27 +95,17 @@ func (g *githubClient) GetNewerReleases(after time.Time, until time.Time) ([]Rel
 	}
 }
 
-func (g *githubClient) GetRawFileContent(path string, release string) (string, error) {
+func (g *githubClient) GetRawFileContent(path string, release string) ([]byte, error) {
 	common.Logger.Printf("Getting raw file content %s/%s/%s with reference %s\n", g.owner, g.repo, path, release)
-	fileContent, _, _, err := g.client.Repositories.GetContents(context.Background(), g.owner, g.repo, path,
-		&github.RepositoryContentGetOptions{
-			Ref: release,
-		})
+	fileUrl := fmt.Sprintf("%s/%s/%s/%s/%s", rawGithubUrl, g.owner, g.repo, release, path)
+	fileContent, err := util.GetFileFromUrl(fileUrl)
 	if err != nil {
-		var githubError *github.ErrorResponse
-		if errors.As(err, &githubError) && githubError.Response.StatusCode == 404 {
-			return "", FileNotFoundError{fileName: path}
-		}
-		return "", err
+		return nil, err
 	}
 	if fileContent == nil {
-		return "", FileNotFoundError{fileName: path}
+		return nil, FileNotFoundError{fileName: path}
 	}
-	content, err := fileContent.GetContent()
-	if err != nil {
-		return "", err
-	}
-	return content, nil
+	return fileContent, nil
 }
 
 func sortReleasesByPublishedAt(releases []Release) []Release {
