@@ -20,14 +20,15 @@ type BaseConfig struct {
 }
 
 type Step struct {
-	Name      string   `yaml:"name"`
-	Type      StepType `yaml:"type,omitempty"`
-	Workspace string   `yaml:"workspace"`
-	Approve   Approve  `yaml:"approve,omitempty"`
-	Remove    bool     `yaml:"remove,omitempty"`
-	Version   string   `yaml:"version,omitempty"`
-	VpcPrefix string   `yaml:"vpc_prefix,omitempty"`
-	Modules   []Module `yaml:"modules,omitempty"`
+	Name         string   `yaml:"name"`
+	Type         StepType `yaml:"type,omitempty"`
+	Workspace    string   `yaml:"workspace"`
+	Approve      Approve  `yaml:"approve,omitempty"`
+	Remove       bool     `yaml:"remove,omitempty"`
+	Version      string   `yaml:"version,omitempty"`
+	VpcPrefix    string   `yaml:"vpc_prefix,omitempty"`
+	ArgoCDPrefix string   `yaml:"argocd_prefix,omitempty"`
+	Modules      []Module `yaml:"modules,omitempty"`
 }
 
 type Module struct {
@@ -41,8 +42,9 @@ type Module struct {
 type StepType string
 
 const (
-	StepTypeTerraform StepType = "terraform"
-	StepTypeArgoCD             = "argocd-apps"
+	StepTypeTerraform       StepType = "terraform"
+	StepTypeArgoCD                   = "argocd-apps"
+	StepTypeTerraformCustom          = "terraform-custom"
 )
 
 type Approve string

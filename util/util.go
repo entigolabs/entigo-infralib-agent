@@ -3,7 +3,10 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/hashicorp/go-version"
+	"io"
+	"net/http"
 )
 
 func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]byte, error) {
@@ -47,4 +50,25 @@ func GetNewestVersion(versions []string) (string, error) {
 		}
 	}
 	return newestVersionSemver.Original(), nil
+}
+
+func GetFileFromUrl(fileUrl string) ([]byte, error) {
+	resp, err := http.Get(fileUrl)
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func(Body io.ReadCloser) {
+		err = Body.Close()
+		if err != nil {
+			common.Logger.Printf("Failed to close response body: %s", err)
+		}
+	}(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }

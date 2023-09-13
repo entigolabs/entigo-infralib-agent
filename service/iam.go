@@ -41,7 +41,6 @@ func NewIAM(config aws.Config) IAM {
 }
 
 func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *types.Role {
-	common.Logger.Printf("Creating IAM role: %s\n", roleName)
 	result, err := i.iamClient.CreateRole(context.Background(), &iam.CreateRoleInput{
 		AssumeRolePolicyDocument: getPolicy(statement),
 		RoleName:                 aws.String(roleName),
@@ -49,12 +48,12 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
 		if errors.As(err, &awsError) {
-			common.Logger.Printf("Role %s already exists. Continuing...\n", roleName)
 			return nil
 		} else {
 			common.Logger.Fatalf("Failed to create role %s: %s", roleName, err)
 		}
 	}
+	common.Logger.Printf("Created IAM role: %s\n", roleName)
 	return result.Role
 }
 
@@ -67,7 +66,6 @@ func (i *identity) GetRole(roleName string) *types.Role {
 }
 
 func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy {
-	common.Logger.Printf("Creating IAM policy: %s\n", policyName)
 	result, err := i.iamClient.CreatePolicy(context.Background(), &iam.CreatePolicyInput{
 		PolicyDocument: getPolicy(statement),
 		PolicyName:     aws.String(policyName),
@@ -75,12 +73,12 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
 		if errors.As(err, &awsError) {
-			common.Logger.Printf("Policy %s already exists. Continuing...\n", policyName)
 			return nil
 		} else {
 			common.Logger.Fatalf("Failed to create policy %s: %s", policyName, err)
 		}
 	}
+	common.Logger.Printf("Created IAM policy: %s\n", policyName)
 	return result.Policy
 }
 
@@ -128,17 +126,7 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbA
 			"s3:GetBucketLocation",
 			"s3:ListBucket",
 		},
-	}, {
-		Effect:   "Allow",
-		Resource: []string{repoArn},
-		Action: []string{
-			"codecommit:GetCommit",
-			"codecommit:ListBranches",
-			"codecommit:GetRepository",
-			"codecommit:GetBranch",
-			"codecommit:GitPull",
-		},
-	}, {
+	}, CodeBuildRepoPolicy(repoArn), {
 		Effect:   "Allow",
 		Resource: []string{dynamodbArn},
 		Action: []string{
@@ -149,6 +137,20 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbA
 	}}
 }
 
+func CodeBuildRepoPolicy(repoArn string) PolicyStatement {
+	return PolicyStatement{
+		Effect:   "Allow",
+		Resource: []string{repoArn},
+		Action: []string{
+			"codecommit:GetCommit",
+			"codecommit:ListBranches",
+			"codecommit:GetRepository",
+			"codecommit:GetBranch",
+			"codecommit:GitPull",
+		},
+	}
+}
+
 func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
@@ -156,7 +158,19 @@ func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
 		Action: []string{
 			"s3:*",
 		},
-	}, {
+	}, CodePipelineRepoPolicy(repoArn), {
+		Effect:   "Allow",
+		Resource: []string{"*"},
+		Action: []string{
+			"codebuild:StartBuild",
+			"codebuild:BatchGetBuilds",
+			"codebuild:StopBuild",
+		},
+	}}
+}
+
+func CodePipelineRepoPolicy(repoArn string) PolicyStatement {
+	return PolicyStatement{
 		Effect:   "Allow",
 		Resource: []string{repoArn, fmt.Sprintf("%s/*", repoArn)},
 		Action: []string{
@@ -167,13 +181,5 @@ func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
 			"codecommit:GetUploadArchiveStatus",
 			"codecommit:CancelUploadArchive",
 		},
-	}, {
-		Effect:   "Allow",
-		Resource: []string{"*"},
-		Action: []string{
-			"codebuild:StartBuild",
-			"codebuild:BatchGetBuilds",
-			"codebuild:StopBuild",
-		},
-	}}
+	}
 }

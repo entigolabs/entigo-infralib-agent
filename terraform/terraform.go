@@ -21,6 +21,7 @@ const versionsFile = "versions.tf"
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]string) ([]byte, error)
+	GetEmptyTerraformProvider(version string) ([]byte, error)
 }
 
 type terraform struct {
@@ -64,6 +65,14 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 		for _, providerBlock := range providerBlocks {
 			baseBody.AppendBlock(providerBlock)
 		}
+	}
+	return hclwrite.Format(file.Bytes()), nil
+}
+
+func (t *terraform) GetEmptyTerraformProvider(version string) ([]byte, error) {
+	file, err := t.getTerraformFile(providerPath, baseFile, version)
+	if err != nil {
+		return nil, err
 	}
 	return hclwrite.Format(file.Bytes()), nil
 }
@@ -168,10 +177,17 @@ func ReadTerraformFile(fileName string) (*hclwrite.File, error) {
 	return hclFile, nil
 }
 
-func UnmarshalTerraformFile(fileName string, fileContent string) (*hclwrite.File, error) {
-	hclFile, diags := hclwrite.ParseConfig([]byte(fileContent), fileName, hcl.InitialPos)
+func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File, error) {
+	hclFile, diags := hclwrite.ParseConfig(fileContent, fileName, hcl.InitialPos)
 	if diags.HasErrors() {
 		return nil, diags
 	}
 	return hclFile, nil
+}
+
+func GetMockTerraformMain() []byte {
+	file := hclwrite.NewEmptyFile()
+	output := file.Body().AppendNewBlock("output", []string{"hello_world"})
+	output.Body().SetAttributeValue("value", cty.StringVal("Hello, World!"))
+	return hclwrite.Format(file.Bytes())
 }

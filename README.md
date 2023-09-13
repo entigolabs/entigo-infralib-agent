@@ -90,11 +90,13 @@ version: stable | semver
 agent_version: latest | semver
 steps:
   - name: string
-    type: terraform | argocd-apps
+    type: terraform | argocd-apps | terraform-custom 
     workspace: string
     approve: minor | major | never | always
     version: stable | semver
     remove: bool
+    vpc_prefix: string
+    argocd_prefix: string
     modules:
       - name: string
         source: string
@@ -102,22 +104,24 @@ steps:
         remove: bool
         inputs: map[string]string
 ```
-Config version is overwritten by step version which in turn is overwritten by module version.
+Config version is overwritten by step version which in turn is overwritten by module version. Default version is **stable**.
 
 * base_config - base config, pulled from source
   * version - version of Entigo Infralib base config
-  * profile - name of the config file without a suffix
+  * profile - name of the config file without a suffix, empty string means no base config is used
 * prefix - prefix used for CodeCommit folders/files and terraform resources
 * source - source repository for Entigo Infralib terraform modules
 * version - version of Entigo Infralib terraform modules to use
 * agent_version - image version of Entigo Infralib Agent to use
-* remove - whether to remove the step during merge or not, default **false**
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
   * workspace - terraform workspace to use
   * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver
   * version - version of Entigo Infralib terraform modules to use
+  * remove - whether to remove the step during merge or not, default **false**
+  * vpc_prefix - whether to attach a vpc to codebuild or not, used for getting vpc config from SSM
+  * argocd_prefix - for argocd-apps steps for getting a repoUrl which will be used for cloning
   * modules - list of modules to apply
     * name - name of the module
     * source - source of the terraform module

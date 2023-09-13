@@ -9,6 +9,9 @@ steps:
         inputs:
           vpc_prefix: "ep-network-vpc"
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
+      - name: eks
+        inputs:
+          eks_cluster_public: true
       - name: argocd
         inputs:
           hostname: "argocd.runner-main-biz-int.infralib.entigo.io"
@@ -20,3 +23,8 @@ steps:
           domain: "*.ep-test.infralib.entigo.io"
           altdomain:
             - "*.something.ep-test.infralib.entigo.io"
+  - name: mycustomtf
+    type: terraform-custom
+    workspace: test
+    vpc_prefix: network-vpc
+    approve: never

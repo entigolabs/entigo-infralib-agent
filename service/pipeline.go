@@ -20,8 +20,8 @@ const approveActionName = "Approval"
 const planName = "Plan"
 
 type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
+	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) (*string, error)
+	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateAgentPipeline(pipelineName string, projectName string, bucket string) error
@@ -53,12 +53,14 @@ func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn strin
 	}
 }
 
-func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error) {
+func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) (*string, error) {
 	if p.pipelineExists(pipelineName) {
-		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return p.StartPipelineExecution(pipelineName)
 	}
-	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
+	repo := p.repo
+	if customRepo != "" {
+		repo = customRepo
+	}
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -79,7 +81,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
 					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
-						"RepositoryName":       p.repo,
+						"RepositoryName":       repo,
 						"BranchName":           p.branch,
 						"PollForSourceChanges": "false",
 						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
@@ -144,11 +146,15 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	if err != nil {
 		return nil, err
 	}
+	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
-func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
-	common.Logger.Printf("Creating destroy CodePipeline %s\n", pipelineName)
+func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error {
+	repo := p.repo
+	if customRepo != "" {
+		repo = customRepo
+	}
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -169,7 +175,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
 					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
-						"RepositoryName":       p.repo,
+						"RepositoryName":       repo,
 						"BranchName":           p.branch,
 						"PollForSourceChanges": "false",
 						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
@@ -233,9 +239,9 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	})
 	var awsError *types.PipelineNameInUseException
 	if err != nil && errors.As(err, &awsError) {
-		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return nil
 	}
+	common.Logger.Printf("Created destroy CodePipeline %s\n", pipelineName)
 	err = p.disableStageTransition(pipelineName, "Destroy")
 	if err != nil {
 		return err
@@ -254,10 +260,8 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 
 func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error) {
 	if p.pipelineExists(pipelineName) {
-		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return p.StartPipelineExecution(pipelineName)
 	}
-	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -323,11 +327,11 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 	if err != nil {
 		return nil, err
 	}
+	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
 func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error {
-	common.Logger.Printf("Creating destroy CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -395,6 +399,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
 		return nil
 	}
+	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
 	err = p.disableStageTransition(pipelineName, "Approve")
 	if err != nil {
 		return err
@@ -409,11 +414,9 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 
 func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, bucket string) error {
 	if p.pipelineExists(pipelineName) {
-		common.Logger.Printf("Pipeline %s already exists. Starting execution...\n", projectName)
 		_, err := p.StartPipelineExecution(pipelineName)
 		return err
 	}
-	common.Logger.Printf("Creating CodePipeline %s\n", pipelineName)
 	_, err := p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -462,6 +465,7 @@ func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, 
 			},
 		},
 	})
+	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
 	return err
 }
 

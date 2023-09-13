@@ -64,7 +64,6 @@ func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logS
 }
 
 func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error {
-	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -98,9 +97,9 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		common.Logger.Printf("Project %s already exists. Continuing...\n", projectName)
 		return nil
 	}
+	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
 }
 
