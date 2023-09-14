@@ -4,6 +4,23 @@ base_config:
 steps:
   - name: infrastructure
     workspace: test
+    provider:
+      aws:
+        ignore_tags:
+          key_prefixes:
+          - ignorebeginning
+          keys:
+          - ignorekey
+          - barkey
+        default_tags:
+          this: here
+      kubernetes:
+        ignore_annotations:
+        - wooogooo
+        - anohterannotation
+        ignore_labels:
+        -  some.tag.key
+        -  anothertag
     modules:
       - name: dns
         inputs:
