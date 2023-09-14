@@ -6,6 +6,7 @@ import (
 )
 
 func Run(flags *common.Flags) {
+	common.PrintVersion()
 	updater := service.NewUpdater(flags)
 	updater.ProcessSteps()
 }
