@@ -489,6 +489,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var noChanges *bool
+	var approved *bool
 	for ctx.Err() == nil {
 		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
@@ -507,7 +508,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 		if err != nil {
 			return err
 		}
-		noChanges, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, stepType, noChanges, autoApprove)
+		noChanges, approved, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, stepType, noChanges, approved, autoApprove)
 		if err != nil {
 			return err
 		}
@@ -557,7 +558,7 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, noChanges *bool, autoApprove bool) (*bool, error) {
+func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, noChanges *bool, approved *bool, autoApprove bool) (*bool, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -566,18 +567,22 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 		var err error
 		noChanges, err = p.hasNotChanged(noChanges, actions, stepType)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if *noChanges || autoApprove {
+			if approved != nil && *approved {
+				return noChanges, approved, nil
+			}
 			err = p.approveStage(pipelineName)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
+			approved = aws.Bool(true)
 		} else {
 			common.Logger.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 		}
 	}
-	return noChanges, nil
+	return noChanges, approved, nil
 }
 
 func (p *pipeline) hasNotChanged(noChanges *bool, actions []types.ActionExecutionDetail, stepType model.StepType) (*bool, error) {
@@ -612,7 +617,8 @@ func (p *pipeline) hasTerraformNotChanged(actions []types.ActionExecutionDetail)
 			} else {
 				return aws.Bool(true), nil
 			}
-		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") {
+		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") ||
+			strings.HasPrefix(log, "You can apply this plan to save these new output values") {
 			common.Logger.Print(log)
 			return aws.Bool(true), nil
 		}
