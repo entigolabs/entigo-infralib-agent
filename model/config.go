@@ -68,7 +68,8 @@ type StateStep struct {
 }
 
 type StateModule struct {
-	Name        string           `yaml:"name"`
-	Version     *version.Version `yaml:"version,omitempty"`
-	AutoApprove bool             `yaml:"-"` // always omit
+	Name           string           `yaml:"name"`
+	Version        *version.Version `yaml:"version,omitempty"`
+	AppliedVersion *version.Version `yaml:"applied_version,omitempty"`
+	AutoApprove    bool             `yaml:"-"` // always omit
 }

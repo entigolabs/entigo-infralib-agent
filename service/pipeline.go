@@ -490,6 +490,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 	defer cancel()
 	var noChanges *bool
 	var approved *bool
+	time.Sleep(time.Duration(delay) * time.Second)
 	for ctx.Err() == nil {
 		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
@@ -570,12 +571,12 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 		var err error
 		noChanges, err = p.hasNotChanged(noChanges, actions, stepType)
 		if err != nil {
-			return nil, nil, err
+			return noChanges, approved, err
 		}
 		if *noChanges || autoApprove {
 			err = p.approveStage(pipelineName)
 			if err != nil {
-				return nil, nil, err
+				return noChanges, approved, err
 			}
 			approved = aws.Bool(true)
 		} else {
