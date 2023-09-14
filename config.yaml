@@ -13,7 +13,8 @@ steps:
           - ignorekey
           - barkey
         default_tags:
-          this: here
+          tags:
+            this: here
       kubernetes:
         ignore_annotations:
         - wooogooo
