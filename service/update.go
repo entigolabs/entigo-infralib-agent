@@ -237,7 +237,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	case model.StepTypeTerraform:
 		u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, "")
 	case model.StepTypeArgoCD:
-		u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove)
+		//u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove) Temporarily disabled to save time
 	case model.StepTypeTerraformCustom:
 		u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, *repoMetadata.RepositoryName)
 	}
@@ -283,6 +283,9 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 }
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep) {
+	if step.Type == model.StepTypeArgoCD {
+		return // Temporarily disabled to save time
+	}
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	executionId, err := u.resources.CodePipeline.StartPipelineExecution(projectName)
 	if err != nil {

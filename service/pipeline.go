@@ -564,15 +564,15 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 			action.Status != types.ActionExecutionStatusInProgress {
 			continue
 		}
+		if approved != nil && *approved {
+			return noChanges, approved, nil
+		}
 		var err error
 		noChanges, err = p.hasNotChanged(noChanges, actions, stepType)
 		if err != nil {
 			return nil, nil, err
 		}
 		if *noChanges || autoApprove {
-			if approved != nil && *approved {
-				return noChanges, approved, nil
-			}
 			err = p.approveStage(pipelineName)
 			if err != nil {
 				return nil, nil, err
