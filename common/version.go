@@ -30,20 +30,8 @@ func (v Version) String() string {
 
 // GetVersion returns the version information
 func getVersion() Version {
-	var versionStr string
-
-	if gitCommit != "" && gitTag != "" {
-		versionStr = gitTag
-	} else {
-		versionStr = "v" + version
-		if len(gitCommit) >= 7 {
-			versionStr += "+" + gitCommit[0:7]
-		} else {
-			versionStr += "+unknown"
-		}
-	}
 	return Version{
-		Version:   versionStr,
+		Version:   version,
 		BuildDate: buildDate,
 		GitCommit: gitCommit,
 		GitTag:    gitTag,
