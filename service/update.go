@@ -658,10 +658,10 @@ func getModuleAutoApprove(moduleVersion *version.Version, releaseTag *version.Ve
 	releaseSegments := releaseTag.Segments()
 	moduleSegments := moduleVersion.Segments()
 	if approve == model.ApproveMajor {
-		return releaseSegments[0] > moduleSegments[0]
+		return moduleSegments[0] >= releaseSegments[0]
 	}
 	if approve == model.ApproveMinor {
-		return releaseSegments[0] > moduleSegments[0] || releaseSegments[1] > moduleSegments[1]
+		return moduleSegments[0] >= releaseSegments[0] && moduleSegments[1] >= releaseSegments[1]
 	}
 	return false
 }

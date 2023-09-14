@@ -105,6 +105,7 @@ steps:
         inputs: map[string]string
 ```
 Config version is overwritten by step version which in turn is overwritten by module version. Default version is **stable**.
+During merging, step name and workspace are used for identifying parent steps, modules are identified by name.
 
 * base_config - base config, pulled from source
   * version - version of Entigo Infralib base config
@@ -117,7 +118,7 @@ Config version is overwritten by step version which in turn is overwritten by mo
   * name - name of the step
   * type - type of the step
   * workspace - terraform workspace to use
-  * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver
+  * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
   * version - version of Entigo Infralib terraform modules to use
   * remove - whether to remove the step during merge or not, default **false**
   * vpc_prefix - whether to attach a vpc to codebuild or not, used for getting vpc config from SSM
