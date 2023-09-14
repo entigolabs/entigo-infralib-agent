@@ -4,6 +4,24 @@ base_config:
 steps:
   - name: infrastructure
     workspace: test
+    provider:
+      aws:
+        ignore_tags:
+          key_prefixes:
+          - ignorebeginning
+          keys:
+          - ignorekey
+          - barkey
+        default_tags:
+          tags:
+            this: here
+      kubernetes:
+        ignore_annotations:
+        - wooogooo
+        - anohterannotation
+        ignore_labels:
+        -  some.tag.key
+        -  anothertag
     modules:
       - name: dns
         inputs:
@@ -14,7 +32,9 @@ steps:
           eks_cluster_public: true
       - name: argocd
         inputs:
-          hostname: "argocd.runner-main-biz-int.infralib.entigo.io"
+          hostname: "argocd.ep-infrastructure-dns-test.infralib.entigo.io"
+          ingress_group_name: "external"
+          ingress_scheme: "internet-facing"
   - name: applications
     workspace: test
     modules:
