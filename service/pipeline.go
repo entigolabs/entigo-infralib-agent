@@ -490,8 +490,8 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 	defer cancel()
 	var noChanges *bool
 	var approved *bool
-	time.Sleep(time.Duration(delay) * time.Second)
 	for ctx.Err() == nil {
+		time.Sleep(time.Duration(delay) * time.Second)
 		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
 			PipelineExecutionId: executionId,
@@ -513,7 +513,6 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 		if err != nil {
 			return err
 		}
-		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	return ctx.Err()
 }
@@ -574,11 +573,10 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 			return noChanges, approved, err
 		}
 		if *noChanges || autoApprove {
-			err = p.approveStage(pipelineName)
+			approved, err = p.approveStage(pipelineName)
 			if err != nil {
 				return noChanges, approved, err
 			}
-			approved = aws.Bool(true)
 		} else {
 			common.Logger.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 		}
@@ -645,11 +643,11 @@ func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 	return "", fmt.Errorf("couldn't find a terraform plan action")
 }
 
-func (p *pipeline) approveStage(pipelineName string) error {
+func (p *pipeline) approveStage(pipelineName string) (*bool, error) {
 	token := p.getApprovalToken(pipelineName)
 	if token == nil {
 		common.Logger.Printf("No approval token found, please wait or approve manually\n")
-		return nil
+		return aws.Bool(false), nil
 	}
 	_, err := p.codePipeline.PutApprovalResult(context.Background(), &codepipeline.PutApprovalResultInput{
 		PipelineName: aws.String(pipelineName),
@@ -661,10 +659,11 @@ func (p *pipeline) approveStage(pipelineName string) error {
 			Summary: aws.String("Approved by entigo-infralib-agent"),
 		},
 	})
-	if err == nil {
-		common.Logger.Printf("Approved stage %s\n", approveStageName)
+	if err != nil {
+		return nil, err
 	}
-	return err
+	common.Logger.Printf("Approved stage %s\n", approveStageName)
+	return aws.Bool(true), nil
 }
 
 func (p *pipeline) disableStageTransition(pipelineName string, stage string) error {
