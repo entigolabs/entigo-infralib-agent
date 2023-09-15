@@ -198,11 +198,31 @@ func removeUnusedSteps(config model.Config, state *model.State) {
 		for _, step := range config.Steps {
 			if stepState.Name == step.Name && stepState.Workspace == step.Workspace {
 				stepFound = true
+				removeUnusedModules(step, stepState)
 				break
 			}
 		}
 		if !stepFound {
 			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
+		}
+	}
+}
+
+func removeUnusedModules(step model.Step, stepState *model.StateStep) {
+	for i := len(stepState.Modules) - 1; i >= 0; i-- {
+		moduleState := stepState.Modules[i]
+		moduleFound := false
+		for _, module := range step.Modules {
+			if moduleState.Name == module.Name {
+				moduleFound = true
+				break
+			}
+		}
+		if moduleFound {
+			break
+		}
+		if !moduleFound {
+			stepState.Modules = append(stepState.Modules[:i], stepState.Modules[i+1:]...)
 		}
 	}
 }
