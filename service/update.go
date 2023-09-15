@@ -451,12 +451,16 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
 	executePipeline := false
+	var clusterOIDC string
+	if step.EksPrefix != "" {
+		clusterOIDC = u.resources.SSM.GetClusterOIDC(u.config.Prefix, step.EksPrefix, step.Workspace)
+	}
 	for _, module := range step.Modules {
 		moduleVersion, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve)
 		if changed {
 			executePipeline = true
 		}
-		inputs := module.Inputs
+		inputs := u.addEksInputs(module.Inputs, step.EksPrefix, clusterOIDC)
 		var bytes []byte
 		if len(inputs) == 0 {
 			bytes = []byte{}
@@ -473,6 +477,19 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 		u.createArgoCDApp(module, step, argoRepoUrl, moduleVersion)
 	}
 	return executePipeline
+}
+
+func (u *updater) addEksInputs(inputs map[string]interface{}, eksPrefix string, clusterOIDC string) map[string]interface{} {
+	if eksPrefix == "" {
+		return inputs
+	}
+	if inputs == nil || len(inputs) == 0 {
+		inputs = make(map[string]interface{})
+	}
+	inputs["awsAccount"] = u.resources.AccountId
+	inputs["awsRegion"] = u.resources.Region
+	inputs["clusterOIDC"] = clusterOIDC
+	return inputs
 }
 
 func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {

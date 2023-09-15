@@ -32,6 +32,8 @@ type AWSResources struct {
 	AwsPrefix     string
 	Bucket        string
 	DynamoDBTable string
+	AccountId     string
+	Region        string
 }
 
 func NewAWS(awsPrefix string) AWS {
@@ -75,6 +77,8 @@ func (a *awsService) SetupAWSResources(branch string) AWSResources {
 		AwsPrefix:     a.awsPrefix,
 		Bucket:        bucket,
 		DynamoDBTable: *dynamoDBTable.TableName,
+		AccountId:     a.accountId,
+		Region:        a.awsConfig.Region,
 	}
 	return a.resources
 }
