@@ -218,9 +218,6 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep) {
 				break
 			}
 		}
-		if moduleFound {
-			break
-		}
 		if !moduleFound {
 			stepState.Modules = append(stepState.Modules[:i], stepState.Modules[i+1:]...)
 		}
