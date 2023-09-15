@@ -14,6 +14,7 @@ type SSM interface {
 	GetParameter(name string) (string, error)
 	GetVpcConfig(prefix string, vpcPrefix string, workspace string) *types.VpcConfig
 	GetArgoCDRepoUrl(prefix string, argoCDPrefix string, workspace string) string
+	GetClusterOIDC(prefix string, eksPrefix string, workspace string) string
 }
 
 type ssm struct {
@@ -72,4 +73,16 @@ func (s *ssm) GetArgoCDRepoUrl(prefix string, argoCDPrefix string, workspace str
 		common.Logger.Fatalf("failed to get argoCD repourl: %s", err)
 	}
 	return repoUrl
+}
+
+func (s *ssm) GetClusterOIDC(prefix string, eksPrefix string, workspace string) string {
+	if eksPrefix == "" {
+		common.Logger.Fatalf("eksPrefix is missing")
+	}
+	eksPrefix = fmt.Sprintf("%s-%s-%s", prefix, eksPrefix, workspace)
+	clusterOIDC, err := s.GetParameter(fmt.Sprintf("/entigo-infralib/%s/eks/oidc", eksPrefix))
+	if err != nil {
+		common.Logger.Fatalf("failed to get cluster OIDC: %s", err)
+	}
+	return clusterOIDC
 }

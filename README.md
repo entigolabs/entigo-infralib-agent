@@ -133,6 +133,7 @@ During merging, step name and workspace are used for identifying parent steps, m
   * remove - whether to remove the step during merge or not, default **false**
   * vpc_prefix - whether to attach a vpc to codebuild or not, used for getting vpc config from SSM
   * argocd_prefix - for argocd-apps steps for getting a repoUrl which will be used for cloning
+  * eks_prefix - for argocd-apps steps for getting cluster OIDC value for values.yaml
   * modules - list of modules to apply
     * name - name of the module
     * source - source of the terraform module

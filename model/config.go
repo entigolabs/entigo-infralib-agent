@@ -28,6 +28,7 @@ type Step struct {
 	Version      string   `yaml:"version,omitempty"`
 	VpcPrefix    string   `yaml:"vpc_prefix,omitempty"`
 	ArgoCDPrefix string   `yaml:"argocd_prefix,omitempty"`
+	EksPrefix    string   `yaml:"eks_prefix,omitempty"`
 	Provider     Provider `yaml:"provider,omitempty"`
 	Modules      []Module `yaml:"modules,omitempty"`
 }
