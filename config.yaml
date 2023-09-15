@@ -38,7 +38,7 @@ steps:
   - name: applications
     workspace: test
     modules:
-      - name: istio-istiod
+      - name: istio-gateway
         inputs:
           domain: "*.ep-test.infralib.entigo.io"
           altdomain:
