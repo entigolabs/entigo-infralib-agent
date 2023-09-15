@@ -28,7 +28,52 @@ type Step struct {
 	Version      string   `yaml:"version,omitempty"`
 	VpcPrefix    string   `yaml:"vpc_prefix,omitempty"`
 	ArgoCDPrefix string   `yaml:"argocd_prefix,omitempty"`
+	Provider     Provider `yaml:"provider,omitempty"`
 	Modules      []Module `yaml:"modules,omitempty"`
+}
+
+type Provider struct {
+	Aws        AwsProvider        `yaml:"aws"`
+	Kubernetes KubernetesProvider `yaml:"kubernetes"`
+}
+
+type AwsProvider struct {
+	IgnoreTags  AwsIgnoreTags  `yaml:"ignore_tags,omitempty"`
+	DefaultTags AwsDefaultTags `yaml:"default_tags,omitempty"`
+}
+
+type AwsIgnoreTags struct {
+	KeyPrefixes []string `yaml:"key_prefixes,omitempty"`
+	Keys        []string `yaml:"keys,omitempty"`
+}
+
+type AwsDefaultTags struct {
+	Tags map[string]string `yaml:"tags,omitempty"`
+}
+
+type KubernetesProvider struct {
+	IgnoreAnnotations []string `yaml:"ignore_annotations,omitempty"`
+	IgnoreLabels      []string `yaml:"ignore_labels,omitempty"`
+}
+
+func (p Provider) IsEmpty() bool {
+	return p.Aws.IsEmpty() && p.Kubernetes.IsEmpty()
+}
+
+func (a AwsProvider) IsEmpty() bool {
+	return a.IgnoreTags.IsEmpty() && a.DefaultTags.IsEmpty()
+}
+
+func (i AwsIgnoreTags) IsEmpty() bool {
+	return len(i.KeyPrefixes) == 0 && len(i.Keys) == 0
+}
+
+func (d AwsDefaultTags) IsEmpty() bool {
+	return len(d.Tags) == 0
+}
+
+func (k KubernetesProvider) IsEmpty() bool {
+	return len(k.IgnoreAnnotations) == 0 && len(k.IgnoreLabels) == 0
 }
 
 type Module struct {
