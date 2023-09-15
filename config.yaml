@@ -40,9 +40,9 @@ steps:
     modules:
       - name: istio-gateway
         inputs:
-          domain: "*.ep-test.infralib.entigo.io"
+          domain: "*.ep-infrastructure-dns-test.infralib.entigo.io"
           altdomain:
-            - "*.something.ep-test.infralib.entigo.io"
+            - "*.something.ep-infrastructure-dns-test.infralib.entigo.io"
   - name: mycustomtf
     type: terraform-custom
     workspace: test
