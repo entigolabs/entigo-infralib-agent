@@ -455,6 +455,7 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 	if step.EksPrefix != "" {
 		clusterOIDC = u.resources.SSM.GetClusterOIDC(u.config.Prefix, step.EksPrefix, step.Workspace)
 	}
+	activeModules := model.NewSet[string]()
 	for _, module := range step.Modules {
 		moduleVersion, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve)
 		if changed {
@@ -475,7 +476,9 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 			step.Workspace, module.Name), bytes)
 		argoRepoUrl := u.resources.SSM.GetArgoCDRepoUrl(u.config.Prefix, step.ArgoCDPrefix, step.Workspace)
 		u.createArgoCDApp(module, step, argoRepoUrl, moduleVersion)
+		activeModules.Add(module.Name)
 	}
+	u.removeUnusedArgoCDApps(step, activeModules)
 	return executePipeline
 }
 
@@ -636,6 +639,20 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 	u.customCC.PutFile(fmt.Sprintf("%s/provider.tf", workspacePath), providerBytes)
 	mainBytes := terraform.GetMockTerraformMain()
 	u.customCC.PutFile(fmt.Sprintf("%s/main.tf", workspacePath), mainBytes)
+}
+
+func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) {
+	files := u.resources.CodeCommit.ListFolderFiles(fmt.Sprintf("%s-%s/%s/app-of-apps", u.config.Prefix, step.Name, step.Workspace))
+	for _, file := range files {
+		file = strings.TrimSuffix(file, ".yaml")
+		if modules.Contains(file) {
+			continue
+		}
+		u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+			step.Workspace, file))
+		u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+			step.Workspace, file))
+	}
 }
 
 func getFormattedVersion(version *version.Version) string {

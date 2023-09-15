@@ -17,7 +17,9 @@ type CodeCommit interface {
 	GetRepoMetadata() *types.RepositoryMetadata
 	PutFile(file string, content []byte)
 	GetFile(file string) []byte
+	DeleteFile(file string)
 	CheckFolderExists(folder string) bool
+	ListFolderFiles(folder string) []string
 }
 
 type codeCommit struct {
@@ -129,6 +131,25 @@ func (c *codeCommit) GetFile(file string) []byte {
 	return output.FileContent
 }
 
+func (c *codeCommit) DeleteFile(file string) {
+	deleteFileOutput, err := c.codecommit.DeleteFile(context.Background(), &codecommit.DeleteFileInput{
+		BranchName:     c.branch,
+		CommitMessage:  aws.String(fmt.Sprintf("Delete %s", file)),
+		RepositoryName: c.repo,
+		FilePath:       aws.String(file),
+		ParentCommitId: c.parentCommitId,
+	})
+	if err != nil {
+		var awsError *types.FileDoesNotExistException
+		if errors.As(err, &awsError) {
+			return
+		}
+		common.Logger.Fatalf("Failed to delete %s from repository: %s", file, err)
+	}
+	common.Logger.Printf("Deleted file %s from repository\n", file)
+	c.parentCommitId = deleteFileOutput.CommitId
+}
+
 func (c *codeCommit) CheckFolderExists(folder string) bool {
 	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
 		CommitSpecifier: c.branch,
@@ -143,4 +164,24 @@ func (c *codeCommit) CheckFolderExists(folder string) bool {
 		common.Logger.Fatalf("Failed to get %s from repository: %s", folder, err)
 	}
 	return len(output.Files) > 0 || len(output.SubFolders) > 0
+}
+
+func (c *codeCommit) ListFolderFiles(folder string) []string {
+	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
+		CommitSpecifier: c.branch,
+		RepositoryName:  c.repo,
+		FolderPath:      aws.String(folder),
+	})
+	if err != nil {
+		var awsError *types.FolderDoesNotExistException
+		if errors.As(err, &awsError) {
+			return []string{}
+		}
+		common.Logger.Fatalf("Failed to get %s from repository: %s", folder, err)
+	}
+	files := make([]string, 0)
+	for _, file := range output.Files {
+		files = append(files, *file.RelativePath)
+	}
+	return files
 }
