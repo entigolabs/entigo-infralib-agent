@@ -62,11 +62,7 @@ func NewUpdater(flags *common.Flags) Updater {
 func mergeBaseConfig(config model.Config, codeCommit CodeCommit, githubClient github.Github) model.Config {
 	release := config.BaseConfig.Version
 	if release == "" {
-		if config.Version != "" {
-			release = config.Version
-		} else {
-			release = StableVersion
-		}
+		release = config.Version
 	}
 	if release == StableVersion {
 		latestRelease, err := githubClient.GetLatestReleaseTag()
@@ -118,10 +114,6 @@ func setupCustomCodeCommit(config model.Config, service AWS, branch string) Code
 func (u *updater) ProcessSteps() {
 	u.updateAgentCodeBuild()
 	releases := u.getReleases()
-	if u.config.Version == "" {
-		u.config.Version = StableVersion
-	}
-
 	firstRun := true
 	for _, release := range releases {
 		terraformExecuted := false

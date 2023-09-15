@@ -14,23 +14,29 @@ import (
 const StableVersion = "stable"
 
 func GetConfig(configFile string, codeCommit CodeCommit) model.Config {
+	var config model.Config
 	if configFile != "" {
-		config := GetLocalConfig(configFile)
+		config = GetLocalConfig(configFile)
 		bytes, err := yaml.Marshal(config)
 		if err != nil {
 			common.Logger.Fatalf("Failed to marshal config: %s", err)
 		}
 		codeCommit.PutFile("config.yaml", bytes)
-		return config
+	} else {
+		bytes := codeCommit.GetFile("config.yaml")
+		if bytes == nil {
+			common.Logger.Fatalf("Config file not found")
+		}
+		err := yaml.Unmarshal(bytes, &config)
+		if err != nil {
+			common.Logger.Fatalf("Failed to unmarshal config: %s", err)
+		}
 	}
-	bytes := codeCommit.GetFile("config.yaml")
-	if bytes == nil {
-		common.Logger.Fatalf("Config file not found")
+	if config.Source == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
 	}
-	var config model.Config
-	err := yaml.Unmarshal(bytes, &config)
-	if err != nil {
-		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
+	if config.Version == "" {
+		config.Version = StableVersion
 	}
 	return config
 }
@@ -50,17 +56,11 @@ func GetLocalConfig(configFile string) model.Config {
 
 func ValidateConfig(config model.Config, state *model.State) {
 	stepWorkspaces := model.NewSet[string]()
-	if config.Source == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
-	}
-	if config.BaseConfig.Profile == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config base config profile is not set")})
-	}
-	configVersion := config.Version
-	if configVersion == "" {
-		configVersion = StableVersion
+	if config.Prefix == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
 	for _, step := range config.Steps {
+		validateStep(step)
 		stepWorkspace := fmt.Sprintf("%s-%s", step.Name, step.Workspace)
 		if stepWorkspaces.Contains(stepWorkspace) {
 			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace combination %s is not unique",
@@ -69,9 +69,21 @@ func ValidateConfig(config model.Config, state *model.State) {
 		stepWorkspaces.Add(stepWorkspace)
 		stepVersion := step.Version
 		if stepVersion == "" {
-			stepVersion = configVersion
+			stepVersion = config.Version
 		}
 		validateConfigVersions(step, state, stepVersion)
+	}
+}
+
+func validateStep(step model.Step) {
+	if step.Name == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
+	}
+	if step.Workspace == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace is not set")})
+	}
+	if step.Type == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set")})
 	}
 }
 
@@ -81,6 +93,7 @@ func validateConfigVersions(step model.Step, state *model.State, stepVersion str
 		return
 	}
 	for _, module := range step.Modules {
+		validateModule(module)
 		stateModule := GetModuleState(stepState, module.Name)
 		moduleVersionString := module.Version
 		if moduleVersionString == "" {
@@ -97,6 +110,15 @@ func validateConfigVersions(step model.Step, state *model.State, stepVersion str
 			common.Logger.Fatalf("config module %s version %s is less than state version %s\n", module.Name,
 				moduleVersionString, stateModule.Version)
 		}
+	}
+}
+
+func validateModule(module model.Module) {
+	if module.Name == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set")})
+	}
+	if module.Source == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module source is not set")})
 	}
 }
 
