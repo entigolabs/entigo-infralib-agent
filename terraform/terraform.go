@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/github"
@@ -11,6 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -18,6 +20,7 @@ const providerPath = "providers"
 const moduleTemplate = "modules/%s"
 const baseFile = "base.tf"
 const versionsFile = "versions.tf"
+const awsTagsRegex = `(\w+)\s*=\s*"([^"]+)"`
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]string) ([]byte, error)
@@ -63,6 +66,10 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 		providersBlock.Body().SetAttributeRaw(name, attribute.Expr().BuildTokens(nil))
 		providerBlocks := t.getProviderBlocks(name, providersVersion)
 		for _, providerBlock := range providerBlocks {
+			err = addProviderValues(name, providerBlock.Body(), step.Provider)
+			if err != nil {
+				return nil, err
+			}
 			baseBody.AppendBlock(providerBlock)
 		}
 	}
@@ -124,6 +131,120 @@ func (t *terraform) getProviderBlocks(providerName string, version string) []*hc
 		return nil
 	}
 	return providerFile.Body().Blocks()
+}
+
+func addProviderValues(providerType string, body *hclwrite.Body, stepProvider model.Provider) error {
+	if stepProvider.IsEmpty() {
+		return nil
+	}
+	switch providerType {
+	case "aws":
+		return addAwsProviderValues(body, stepProvider.Aws)
+	case "kubernetes":
+		return addKubernetesProviderValues(body, stepProvider.Kubernetes)
+	}
+	return nil
+}
+
+func addAwsProviderValues(body *hclwrite.Body, awsProvider model.AwsProvider) error {
+	if awsProvider.IsEmpty() {
+		return nil
+	}
+	err := addAwsProviderIgnoreTags(body, awsProvider.IgnoreTags)
+	if err != nil {
+		return err
+	}
+	return addAwsProviderDefaultTags(body, awsProvider.DefaultTags)
+}
+
+func addAwsProviderIgnoreTags(body *hclwrite.Body, ignoreTags model.AwsIgnoreTags) error {
+	if ignoreTags.IsEmpty() {
+		return nil
+	}
+	ignoreTagsBlock := body.FirstMatchingBlock("ignore_tags", []string{})
+	if ignoreTagsBlock == nil {
+		ignoreTagsBlock = hclwrite.NewBlock("ignore_tags", []string{})
+	} else {
+		body.RemoveBlock(ignoreTagsBlock)
+	}
+	ignoreTagsBody := ignoreTagsBlock.Body()
+	err := addProviderBodyArray(ignoreTagsBody, "key_prefixes", ignoreTags.KeyPrefixes)
+	if err != nil {
+		return err
+	}
+	err = addProviderBodyArray(ignoreTagsBody, "keys", ignoreTags.Keys)
+	if err != nil {
+		return err
+	}
+	body.AppendBlock(ignoreTagsBlock)
+	return nil
+}
+
+func addAwsProviderDefaultTags(body *hclwrite.Body, defaultTags model.AwsDefaultTags) error {
+	if defaultTags.IsEmpty() {
+		return nil
+	}
+	defaultTagsBlock := body.FirstMatchingBlock("default_tags", []string{})
+	if defaultTagsBlock == nil {
+		defaultTagsBlock = hclwrite.NewBlock("default_tags", []string{})
+	} else {
+		body.RemoveBlock(defaultTagsBlock)
+	}
+	defaultTagsBody := defaultTagsBlock.Body()
+	tagsAttr, found := defaultTagsBody.Attributes()["tags"]
+	tags := make(map[string]string)
+	if !found {
+		tags = defaultTags.Tags
+	} else {
+		tokens := tagsAttr.Expr().BuildTokens(nil)
+		re := regexp.MustCompile(awsTagsRegex)
+		matches := re.FindAllStringSubmatch(string(tokens.Bytes()), -1)
+		for _, match := range matches {
+			tags[match[1]] = match[2]
+		}
+		for key, value := range defaultTags.Tags {
+			tags[key] = value
+		}
+	}
+	pairs, err := util.CreateKeyValuePairs(tags, "{\n", "}")
+	if err != nil {
+		return err
+	}
+	defaultTagsBody.SetAttributeRaw("tags", getBytesTokens(pairs))
+	body.AppendBlock(defaultTagsBlock)
+	return nil
+}
+
+func addKubernetesProviderValues(body *hclwrite.Body, kubernetes model.KubernetesProvider) error {
+	err := addProviderBodyArray(body, "ignore_annotations", kubernetes.IgnoreAnnotations)
+	if err != nil {
+		return err
+	}
+	return addProviderBodyArray(body, "ignore_labels", kubernetes.IgnoreLabels)
+}
+
+func addProviderBodyArray(body *hclwrite.Body, attributeName string, values []string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	attribute, found := body.Attributes()[attributeName]
+	var tags []string
+	if !found {
+		tags = values
+	} else {
+		tokens := attribute.Expr().BuildTokens(nil)
+		err := json.Unmarshal(tokens.Bytes(), &tags)
+		if err != nil {
+			return err
+		}
+		tags = append(tags, values...)
+	}
+	bytes, err := json.Marshal(tags)
+	if err != nil {
+		return err
+	}
+	body.SetAttributeRaw(attributeName, getBytesTokens(bytes))
+	return nil
 }
 
 func AddInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body, branch string) {

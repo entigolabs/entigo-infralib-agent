@@ -103,6 +103,16 @@ steps:
         version: stable | semver
         remove: bool
         inputs: map[string]string
+    provider:
+      aws:
+        ignore_tags:
+          key_prefixes: []string
+          keys: []string
+        default_tags:
+          tags: map[string]string
+      kubernetes:
+        ignore_annotations: []string
+        ignore_labels: []string
 ```
 Config version is overwritten by step version which in turn is overwritten by module version. Default version is **stable**.
 During merging, step name and workspace are used for identifying parent steps, modules are identified by name.
@@ -127,5 +137,8 @@ During merging, step name and workspace are used for identifying parent steps, m
     * name - name of the module
     * source - source of the terraform module
     * version - version of the module to use
-    * remove - whether to remove the step during merge or not, default **false**
+    * remove - whether to remove the module during merge or not, default **false**
     * inputs - map of inputs for the module, string values need to be quoted, complex values need to be as multiline strings with |
+  * provider - provider values to add
+    * aws - aws provider default and ignore tags to add
+    * kubernetes - kubernetes provider ignore annotations and labels to add

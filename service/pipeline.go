@@ -646,7 +646,7 @@ func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 func (p *pipeline) approveStage(pipelineName string) (*bool, error) {
 	token := p.getApprovalToken(pipelineName)
 	if token == nil {
-		common.Logger.Printf("No approval token found, please wait or approve manually\n")
+		common.Logger.Printf("No approval token found yet, please wait or approve manually\n")
 		return aws.Bool(false), nil
 	}
 	_, err := p.codePipeline.PutApprovalResult(context.Background(), &codepipeline.PutApprovalResultInput{
