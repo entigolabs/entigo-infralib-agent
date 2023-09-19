@@ -8,20 +8,17 @@ steps:
       aws:
         ignore_tags:
           key_prefixes:
-          - ignorebeginning
+          - ignorebeginningoftag
           keys:
-          - ignorekey
-          - barkey
+          - ignoretag
         default_tags:
           tags:
-            this: here
+            hat-migrated: hat-x
       kubernetes:
         ignore_annotations:
-        - wooogooo
-        - anohterannotation
+        - ignoreannotation
         ignore_labels:
-        -  some.tag.key
-        -  anothertag
+        -  ignorelabel
     modules:
       - name: dns
         inputs:
@@ -30,21 +27,23 @@ steps:
       - name: eks
         inputs:
           eks_cluster_public: true
+  - name: helm
+    workspace: test
+    modules:
       - name: argocd
         inputs:
           hostname: "argocd.ep-infrastructure-dns-test.infralib.entigo.io"
           ingress_group_name: "external"
           ingress_scheme: "internet-facing"
+  - name: mycustomtf
+    type: terraform-custom
+    workspace: test
+    vpc_prefix: network-vpc
+    approve: never
   - name: applications
     workspace: test
     modules:
       - name: istio-gateway
         inputs:
           domain: "*.ep-infrastructure-dns-test.infralib.entigo.io"
-          altdomain:
-            - "*.something.ep-infrastructure-dns-test.infralib.entigo.io"
-  - name: mycustomtf
-    type: terraform-custom
-    workspace: test
-    vpc_prefix: network-vpc
-    approve: never
+
