@@ -32,10 +32,6 @@ spec:
   - group: admissionregistration.k8s.io
     kind: ValidatingWebhookConfiguration
     jqPathExpressions:
-    - .webhooks[]?.clientConfig.caBundle
-  - group: admissionregistration.k8s.io
-    kind: ValidatingWebhookConfiguration
-    jqPathExpressions:
     - .webhooks[]?.clientConfig.service.name
   - group: apiextensions.k8s.io
     kind: CustomResourceDefinition
