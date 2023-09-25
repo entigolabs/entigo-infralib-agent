@@ -1,5 +1,6 @@
 FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.21-alpine AS build
 WORKDIR /go/ei-agent
+RUN apk add build-base
 COPY go.* ./
 RUN go mod download
 COPY . ./
@@ -9,7 +10,7 @@ RUN set +x; if [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
       GOOS=linux GOARCH=arm64 go build -ldflags "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
                            -X github.com/entigolabs/entigo-infralib-agent/common.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
                            -X github.com/entigolabs/entigo-infralib-agent/common.gitCommit=${GITHUB_SHA} \
-          -linkmode external -extldflags -static" -o bin/ei-agent main.go; \
+           -extldflags -static" -o bin/ei-agent main.go; \
     elif [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
       GOOS=linux GOARCH=amd64 go build -ldflags "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
                            -X github.com/entigolabs/entigo-infralib-agent/common.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
