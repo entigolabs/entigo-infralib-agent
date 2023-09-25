@@ -1,0 +1,23 @@
+source: https://github.com/entigolabs/entigo-infralib-release
+base_config:
+  profile: pri
+steps:
+  - name: network
+    workspace: test
+    modules:
+      - name: vpc
+        inputs:
+          azs: 3
+          vpc_cidr: "10.185.0.0/18"
+  - name: infrastructure
+    workspace: test
+    modules:
+      - name: dns
+        inputs:
+          parent_zone_id: "Z07983041XRLSLZUTHHDY"
+  - name: helm
+    workspace: test
+    modules:
+      - name: argocd
+        inputs:
+          hostname: "argocd.infralib.entigo.io"
