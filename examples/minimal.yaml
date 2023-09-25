@@ -1,0 +1,134 @@
+source: https://github.com/entigolabs/entigo-infralib-release
+base_config:
+  profile: minimal
+prefix: min
+version: stable
+agent_version: latest
+steps:
+  - name: nw
+    type: terraform
+    workspace: dev
+    provider:
+      aws:
+        default_tags:
+          tags:
+            team: networking
+    approve: minor
+    modules:
+      - name: main
+        source: aws/vpc
+        version: stable
+        inputs:
+          vpc_cidr: "10.175.0.0/16"
+          one_nat_gateway_per_az: false
+          azs: 2
+          intra_subnets: |
+            []
+          elasticache_subnets: |
+            []
+          database_subnets: |
+            []
+      - name: second
+        source: aws/vpc
+        version: stable
+        inputs:
+          vpc_cidr: "10.176.0.0/16"
+          one_nat_gateway_per_az: false
+          azs: 3
+          intra_subnets: |
+            []
+          elasticache_subnets: |
+            []
+          database_subnets: |
+            []
+
+  - name: infra
+    type: terraform
+    workspace: dev
+    provider:
+      aws:
+        default_tags:
+          tags:
+            team: infrastructure
+    version: stable
+    vpc_prefix: nw-main
+    approve: minor
+    modules:
+      - name: dns
+        source: aws/route53
+        version: stable
+        inputs:
+          parent_zone_id: "Z07983041XRLSLZUTHHDY"
+          public_subdomain_name: "minimal"
+          create_private: false
+      - name: eks
+        source: aws/eks
+        version: stable
+        inputs:
+          vpc_prefix: "min-nw-main"
+          eks_cluster_public: true
+          eks_main_min_size: 3
+          eks_main_max_size: 6
+          eks_spot_max_size: 0
+          eks_db_max_size: 0
+          cluster_enabled_log_types: |
+            []
+  - name: helm
+    type: terraform
+    workspace: dev
+    version: stable
+    vpc_prefix: nw-main
+    provider:
+      aws:
+        default_tags:
+          tags:
+            team: devops
+    approve: major
+    modules:
+      - name: argocd
+        source: aws/argocd
+        version: stable
+        inputs:
+          branch: "main"
+          namespace: "argocd"
+          name: "argocd"
+          argocd_apps_name: "min-applications"
+          ingress_group_name: "external"
+          ingress_scheme: "internet-facing"
+          hostname: "argocd.minimal.infralib.entigo.io"
+  - name: applications
+    type: argocd-apps
+    workspace: dev
+    version: stable
+    vpc_prefix: nw-main
+    argocd_prefix: helm-argocd
+    eks_prefix: infrastructure-eks
+    modules:
+      - name: aws-alb
+        source: aws-alb
+        version: stable
+        inputs:
+          aws-load-balancer-controller:
+            clusterName: min-infra-eks-dev
+      - name: crossplane-system
+        source: crossplane
+        version: stable
+      - name: external-dns
+        source: external-dns
+        version: stable
+      - name: istio-base
+        source: istio-base
+        version: stable
+      - name: istio-system
+        source: istio-istiod
+        version: stable
+      - name: istio-gateway
+        source: istio-gateway
+        version: stable
+        inputs:
+          domain: "*.minimal.infralib.entigo.io"
+  - name: additional
+    type: terraform-custom
+    workspace: dev
+    vpc_prefix: nw-second
+    approve: never

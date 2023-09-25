@@ -4,21 +4,6 @@ base_config:
 steps:
   - name: infrastructure
     workspace: test
-    provider:
-      aws:
-        ignore_tags:
-          key_prefixes:
-          - ignorebeginningoftag
-          keys:
-          - ignoretag
-        default_tags:
-          tags:
-            hat-migrated: hat-x
-      kubernetes:
-        ignore_annotations:
-        - ignoreannotation
-        ignore_labels:
-        -  ignorelabel
     modules:
       - name: dns
         inputs:
