@@ -4,7 +4,7 @@ RUN apk add build-base
 COPY go.* ./
 RUN go mod download
 COPY . ./
-ARG GITHUB_SHA=main VERSION=latest TARGETPLATFORM
+ARG GITHUB_SHA=main VERSION=latest TARGETPLATFORM=linux/amd64
 
 RUN set +x; if [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
       GOOS=linux GOARCH=arm64 go build -ldflags "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
