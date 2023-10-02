@@ -71,7 +71,7 @@ func ValidateConfig(config model.Config, state *model.State) {
 		if stepVersion == "" {
 			stepVersion = config.Version
 		}
-		validateConfigVersions(step, state, stepVersion)
+		validateConfigModules(step, state, stepVersion)
 	}
 }
 
@@ -80,20 +80,20 @@ func validateStep(step model.Step) {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
 	}
 	if step.Workspace == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace is not set")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace is not set for step %s", step.Name)})
 	}
 	if step.Type == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s", step.Name)})
 	}
 }
 
-func validateConfigVersions(step model.Step, state *model.State, stepVersion string) {
+func validateConfigModules(step model.Step, state *model.State, stepVersion string) {
 	stepState := GetStepState(state, step)
-	if stepState == nil {
-		return
-	}
 	for _, module := range step.Modules {
-		validateModule(module)
+		validateModule(module, step.Name)
+		if stepState == nil {
+			continue
+		}
 		stateModule := GetModuleState(stepState, module.Name)
 		moduleVersionString := module.Version
 		if moduleVersionString == "" {
@@ -104,7 +104,7 @@ func validateConfigVersions(step model.Step, state *model.State, stepVersion str
 		}
 		moduleVersion, err := version.NewVersion(moduleVersionString)
 		if err != nil {
-			common.Logger.Fatalf("failed to parse module version %s: %s\n", module.Version, err)
+			common.Logger.Fatalf("failed to parse module version %s for module %s: %s\n", module.Version, module.Name, err)
 		}
 		if moduleVersion.LessThan(stateModule.Version) {
 			common.Logger.Fatalf("config module %s version %s is less than state version %s\n", module.Name,
@@ -113,12 +113,12 @@ func validateConfigVersions(step model.Step, state *model.State, stepVersion str
 	}
 }
 
-func validateModule(module model.Module) {
+func validateModule(module model.Module, stepName string) {
 	if module.Name == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", stepName)})
 	}
 	if module.Source == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module source is not set")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module source is not set for module %s in step %s", module.Name, stepName)})
 	}
 }
 
@@ -287,6 +287,10 @@ func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result 
 			}
 		}
 		if !found {
+			if patchStep.Remove {
+				common.Logger.Printf("unable to remove the step %s because it does not exist in base config\n", patchStep.Name)
+				continue
+			}
 			result = append(result, patchStep)
 		}
 	}
@@ -348,6 +352,10 @@ func addNewPatchModules(sourceModules []model.Module, patchModules []model.Modul
 			}
 		}
 		if !found {
+			if patchModule.Remove {
+				common.Logger.Printf("unable to remove the module %s because it does not exist in base config\n", patchModule.Name)
+				continue
+			}
 			result = append(result, patchModule)
 		}
 	}
