@@ -274,14 +274,21 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 		return // Temporarily disabled to save time
 	}
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
+	vpcConfig := u.resources.SSM.GetVpcConfig(u.config.Prefix, step.VpcPrefix, step.Workspace)
+	if vpcConfig != nil {
+		err := u.resources.CodeBuild.UpdateProjectVpc(projectName, vpcConfig)
+		if err != nil {
+			common.Logger.Fatalf("Failed to update CodeBuild project %s VPC: %s", projectName, err)
+		}
+	}
 	executionId, err := u.resources.CodePipeline.StartPipelineExecution(projectName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to start pipeline execution: %s", err)
+		common.Logger.Fatalf("Failed to start pipeline %s execution: %s", projectName, err)
 	}
 	autoApprove := getAutoApprove(stepState)
 	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
-		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
+		common.Logger.Fatalf("Failed to wait for pipeline %s execution: %s", projectName, err)
 	}
 }
 

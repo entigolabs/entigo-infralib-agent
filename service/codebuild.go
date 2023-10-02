@@ -16,6 +16,7 @@ type Builder interface {
 	CreateAgentProject(projectName string, image string) error
 	GetProject(projectName string) (*types.Project, error)
 	UpdateProjectImage(projectName string, image string) error
+	UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfig) error
 }
 
 type BuildSpec struct {
@@ -97,6 +98,12 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
+		if vpcConfig != nil {
+			err = b.UpdateProjectVpc(projectName, vpcConfig)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
@@ -178,6 +185,30 @@ func (b *builder) UpdateProjectImage(projectName string, image string) error {
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 		},
 	})
+	return err
+}
+
+func (b *builder) UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfig) error {
+	if vpcConfig == nil || vpcConfig.VpcId == nil {
+		return nil
+	}
+	project, err := b.GetProject(projectName)
+	if err != nil {
+		return err
+	}
+	if project == nil {
+		return fmt.Errorf("project %s not found", projectName)
+	}
+	if project.VpcConfig != nil && project.VpcConfig.VpcId != nil && *project.VpcConfig.VpcId == *vpcConfig.VpcId {
+		return nil
+	}
+	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
+		Name:      aws.String(projectName),
+		VpcConfig: vpcConfig,
+	})
+	if err != nil {
+		common.Logger.Printf("updated CodeBuild project %s VPC to %s\n", projectName, *vpcConfig.VpcId)
+	}
 	return err
 }
 
