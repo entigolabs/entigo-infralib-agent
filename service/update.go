@@ -14,6 +14,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -114,14 +115,15 @@ func setupCustomCodeCommit(config model.Config, service AWS, branch string) Code
 func (u *updater) ProcessSteps() {
 	u.updateAgentCodeBuild()
 	releases := u.getReleases()
-	firstRun := true
+	firstRunDone := make(map[string]bool)
 	for _, release := range releases {
 		terraformExecuted := false
+		wg := new(sync.WaitGroup)
 		for _, step := range u.config.Steps {
 			stepSemVer := u.getStepSemVer(step)
 			stepState := u.getStepState(step)
 			var executePipelines bool
-			if firstRun {
+			if !firstRunDone[step.Name] {
 				executePipelines = u.createStepFiles(step, stepState, release, stepSemVer)
 			} else {
 				executePipelines = u.updateStepFiles(step, stepState, release, stepSemVer, terraformExecuted)
@@ -129,11 +131,10 @@ func (u *updater) ProcessSteps() {
 					terraformExecuted = true
 				}
 			}
-			u.applyRelease(firstRun, executePipelines, step, stepState, release)
+			u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, wg)
+			firstRunDone[step.Name] = true
 		}
-		if firstRun {
-			firstRun = false
-		}
+		wg.Wait()
 	}
 }
 
@@ -152,11 +153,32 @@ func (u *updater) getStepSemVer(step model.Step) *version.Version {
 	return stepSemVer
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version) {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, wg *sync.WaitGroup) {
 	if !executePipelines {
 		return
 	}
 	u.putPlannedStateFile()
+	if firstRun && appliedVersionMatchesRelease(stepState, release) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			u.executePipeline(firstRun, step, stepState, release)
+		}()
+	} else {
+		u.executePipeline(firstRun, step, stepState, release)
+	}
+}
+
+func appliedVersionMatchesRelease(stepState *model.StateStep, release *version.Version) bool {
+	for _, moduleState := range stepState.Modules {
+		if moduleState.AppliedVersion == nil || !moduleState.AppliedVersion.Equal(release) {
+			return false
+		}
+	}
+	return true
+}
+
+func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, release *version.Version) {
 	common.Logger.Printf("applying version %s for step %s\n", release.Original(), step.Name)
 	if firstRun {
 		u.createExecuteStepPipelines(step, stepState)
@@ -242,30 +264,30 @@ func (u *updater) getRepoMetadata(stepType model.StepType) *ccTypes.RepositoryMe
 func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, customRepo string) {
 	executionId, err := u.resources.CodePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace, customRepo)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
+		common.Logger.Fatalf("Failed to create CodePipeline %s: %s", projectName, err)
 	}
 	err = u.resources.CodePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace, customRepo)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
+		common.Logger.Fatalf("Failed to create destroy CodePipeline %s: %s", projectName, err)
 	}
 	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
-		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
+		common.Logger.Fatalf("Failed to wait for pipeline %s execution: %s", projectName, err)
 	}
 }
 
 func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) {
 	executionId, err := u.resources.CodePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create CodePipeline: %s", err)
+		common.Logger.Fatalf("Failed to create CodePipeline %s: %s", projectName, err)
 	}
 	err = u.resources.CodePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create destroy CodePipeline: %s", err)
+		common.Logger.Fatalf("Failed to create destroy CodePipeline %s: %s", projectName, err)
 	}
 	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
-		common.Logger.Fatalf("Failed to wait for pipeline execution: %s", err)
+		common.Logger.Fatalf("Failed to wait for pipeline %s execution: %s", projectName, err)
 	}
 }
 
@@ -545,10 +567,6 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep) {
 	bytes, err := yaml.Marshal(u.state)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal state: %s", err)
-	}
-	err = u.resources.CodeCommit.UpdateLatestCommitId()
-	if err != nil {
-		common.Logger.Fatalf("Failed to update latest commit id: %s", err)
 	}
 	u.resources.CodeCommit.PutFile(stateFile, bytes)
 }

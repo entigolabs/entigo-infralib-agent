@@ -13,7 +13,6 @@ import (
 type CodeCommit interface {
 	CreateRepository() (bool, error)
 	GetLatestCommitId() (*string, error)
-	UpdateLatestCommitId() error
 	GetRepoMetadata() *types.RepositoryMetadata
 	PutFile(file string, content []byte)
 	GetFile(file string) []byte
@@ -84,7 +83,7 @@ func (c *codeCommit) GetLatestCommitId() (*string, error) {
 	return result.Branch.CommitId, nil
 }
 
-func (c *codeCommit) UpdateLatestCommitId() error {
+func (c *codeCommit) updateLatestCommitId() error {
 	commitId, err := c.GetLatestCommitId()
 	if err != nil {
 		return err
@@ -94,24 +93,33 @@ func (c *codeCommit) UpdateLatestCommitId() error {
 }
 
 func (c *codeCommit) PutFile(file string, content []byte) {
-	putFileOutput, err := c.codecommit.PutFile(context.Background(), &codecommit.PutFileInput{
-		BranchName:     c.branch,
-		CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
-		RepositoryName: c.repo,
-		FileContent:    content,
-		FilePath:       aws.String(file),
-		ParentCommitId: c.parentCommitId,
-	})
-	if err != nil {
-		var awsError *types.SameFileContentException
-		if errors.As(err, &awsError) {
-			return
-		} else {
+	for {
+		putFileOutput, err := c.codecommit.PutFile(context.Background(), &codecommit.PutFileInput{
+			BranchName:     c.branch,
+			CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
+			RepositoryName: c.repo,
+			FileContent:    content,
+			FilePath:       aws.String(file),
+			ParentCommitId: c.parentCommitId,
+		})
+		if err != nil {
+			var sameFileError *types.SameFileContentException
+			var commitIdError *types.ParentCommitIdOutdatedException
+			if errors.As(err, &sameFileError) {
+				return
+			} else if errors.As(err, &commitIdError) {
+				err = c.updateLatestCommitId()
+				if err != nil {
+					common.Logger.Fatalf("Failed to update latest commit id: %s", err)
+				}
+				continue
+			}
 			common.Logger.Fatalf("Failed to put file %s to repository: %s", file, err)
 		}
+		common.Logger.Printf("Added file %s to repository\n", file)
+		c.parentCommitId = putFileOutput.CommitId
+		return
 	}
-	common.Logger.Printf("Added file %s to repository\n", file)
-	c.parentCommitId = putFileOutput.CommitId
 }
 
 func (c *codeCommit) GetFile(file string) []byte {
@@ -132,22 +140,33 @@ func (c *codeCommit) GetFile(file string) []byte {
 }
 
 func (c *codeCommit) DeleteFile(file string) {
-	deleteFileOutput, err := c.codecommit.DeleteFile(context.Background(), &codecommit.DeleteFileInput{
-		BranchName:     c.branch,
-		CommitMessage:  aws.String(fmt.Sprintf("Delete %s", file)),
-		RepositoryName: c.repo,
-		FilePath:       aws.String(file),
-		ParentCommitId: c.parentCommitId,
-	})
-	if err != nil {
-		var awsError *types.FileDoesNotExistException
-		if errors.As(err, &awsError) {
-			return
+	for {
+		deleteFileOutput, err := c.codecommit.DeleteFile(context.Background(), &codecommit.DeleteFileInput{
+			BranchName:     c.branch,
+			CommitMessage:  aws.String(fmt.Sprintf("Delete %s", file)),
+			RepositoryName: c.repo,
+			FilePath:       aws.String(file),
+			ParentCommitId: c.parentCommitId,
+		})
+		if err != nil {
+			var awsError *types.FileDoesNotExistException
+			var commitIdError *types.ParentCommitIdOutdatedException
+			if errors.As(err, &awsError) {
+				return
+			} else if errors.As(err, &commitIdError) {
+				err = c.updateLatestCommitId()
+				if err != nil {
+					common.Logger.Fatalf("Failed to update latest commit id: %s", err)
+				}
+				continue
+			} else {
+				common.Logger.Fatalf("Failed to delete %s from repository: %s", file, err)
+			}
 		}
-		common.Logger.Fatalf("Failed to delete %s from repository: %s", file, err)
+		common.Logger.Printf("Deleted file %s from repository\n", file)
+		c.parentCommitId = deleteFileOutput.CommitId
+		return
 	}
-	common.Logger.Printf("Deleted file %s from repository\n", file)
-	c.parentCommitId = deleteFileOutput.CommitId
 }
 
 func (c *codeCommit) CheckFolderExists(folder string) bool {
