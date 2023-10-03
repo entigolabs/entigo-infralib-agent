@@ -151,6 +151,9 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 }
 
 func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error {
+	if p.pipelineExists(pipelineName) {
+		return nil
+	}
 	repo := p.repo
 	if customRepo != "" {
 		repo = customRepo
@@ -237,9 +240,8 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 			},
 		},
 	})
-	var awsError *types.PipelineNameInUseException
-	if err != nil && errors.As(err, &awsError) {
-		return nil
+	if err != nil {
+		return err
 	}
 	common.Logger.Printf("Created destroy CodePipeline %s\n", pipelineName)
 	err = p.disableStageTransition(pipelineName, "Destroy")
@@ -568,7 +570,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 			return noChanges, approved, nil
 		}
 		var err error
-		noChanges, err = p.hasNotChanged(noChanges, actions, stepType)
+		noChanges, err = p.hasNotChanged(pipelineName, noChanges, actions, stepType)
 		if err != nil {
 			return noChanges, approved, err
 		}
@@ -584,18 +586,18 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 	return noChanges, approved, nil
 }
 
-func (p *pipeline) hasNotChanged(noChanges *bool, actions []types.ActionExecutionDetail, stepType model.StepType) (*bool, error) {
+func (p *pipeline) hasNotChanged(pipelineName string, noChanges *bool, actions []types.ActionExecutionDetail, stepType model.StepType) (*bool, error) {
 	if noChanges != nil {
 		return noChanges, nil
 	}
 	switch stepType {
 	case model.StepTypeTerraform:
-		return p.hasTerraformNotChanged(actions)
+		return p.hasTerraformNotChanged(pipelineName, actions)
 	}
 	return aws.Bool(false), nil
 }
 
-func (p *pipeline) hasTerraformNotChanged(actions []types.ActionExecutionDetail) (*bool, error) {
+func (p *pipeline) hasTerraformNotChanged(pipelineName string, actions []types.ActionExecutionDetail) (*bool, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -608,7 +610,7 @@ func (p *pipeline) hasTerraformNotChanged(actions []types.ActionExecutionDetail)
 	for _, log := range logs {
 		matches := re.FindStringSubmatch(log)
 		if matches != nil {
-			common.Logger.Print(log)
+			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
 			changed := matches[2]
 			destroyed := matches[3]
 			if changed != "0" || destroyed != "0" {
@@ -618,11 +620,11 @@ func (p *pipeline) hasTerraformNotChanged(actions []types.ActionExecutionDetail)
 			}
 		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") ||
 			strings.HasPrefix(log, "You can apply this plan to save these new output values") {
-			common.Logger.Print(log)
+			common.Logger.Print("Pipeline %s: %s", pipelineName, log)
 			return aws.Bool(true), nil
 		}
 	}
-	return nil, fmt.Errorf("couldn't find terraform plan output from logs")
+	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
 }
 
 func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
@@ -646,7 +648,7 @@ func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 func (p *pipeline) approveStage(pipelineName string) (*bool, error) {
 	token := p.getApprovalToken(pipelineName)
 	if token == nil {
-		common.Logger.Printf("No approval token found yet, please wait or approve manually\n")
+		common.Logger.Printf("No approval token found yet for %s, please wait or approve manually\n", pipelineName)
 		return aws.Bool(false), nil
 	}
 	_, err := p.codePipeline.PutApprovalResult(context.Background(), &codepipeline.PutApprovalResultInput{
@@ -662,7 +664,7 @@ func (p *pipeline) approveStage(pipelineName string) (*bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	common.Logger.Printf("Approved stage %s\n", approveStageName)
+	common.Logger.Printf("Approved stage %s for %s\n", approveStageName, pipelineName)
 	return aws.Bool(true), nil
 }
 
