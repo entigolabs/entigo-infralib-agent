@@ -25,13 +25,15 @@ type Updater interface {
 }
 
 type updater struct {
-	config        model.Config
-	resources     AWSResources
-	github        github.Github
-	terraform     terraform.Terraform
-	customCC      CodeCommit
-	state         *model.State
-	stableRelease *version.Version
+	config                 model.Config
+	patchConfig            model.Config
+	resources              AWSResources
+	github                 github.Github
+	terraform              terraform.Terraform
+	customCC               CodeCommit
+	state                  *model.State
+	stableRelease          *version.Version
+	baseConfigReleaseLimit *version.Version
 }
 
 func NewUpdater(flags *common.Flags) Updater {
@@ -39,40 +41,51 @@ func NewUpdater(flags *common.Flags) Updater {
 	resources := awsService.SetupAWSResources(flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
 	githubClient := github.NewGithub(config.Source)
-	if config.BaseConfig.Profile != "" {
-		config = mergeBaseConfig(config, resources.CodeCommit, githubClient)
-	}
-	state := getLatestState(resources.CodeCommit)
-	if state == nil {
-		state = createState(config)
-	} else {
-		updateSteps(config, state)
-	}
-	ValidateConfig(config, state)
 	customCodeCommit := setupCustomCodeCommit(config, awsService, flags.Branch)
+	stableRelease := getLatestRelease(githubClient)
 	return &updater{
-		config:    config,
-		resources: resources,
-		github:    githubClient,
-		terraform: terraform.NewTerraform(githubClient),
-		customCC:  customCodeCommit,
-		state:     state,
+		config:                 config,
+		patchConfig:            config,
+		resources:              resources,
+		github:                 githubClient,
+		terraform:              terraform.NewTerraform(githubClient),
+		customCC:               customCodeCommit,
+		state:                  getLatestState(resources.CodeCommit),
+		stableRelease:          stableRelease,
+		baseConfigReleaseLimit: getBaseConfigReleaseLimit(config, stableRelease),
 	}
 }
 
-func mergeBaseConfig(config model.Config, codeCommit CodeCommit, githubClient github.Github) model.Config {
-	release := config.BaseConfig.Version
-	if release == "" {
-		release = config.Version
+func getLatestRelease(githubClient github.Github) *version.Version {
+	latestRelease, err := githubClient.GetLatestReleaseTag()
+	if err != nil {
+		common.Logger.Fatalf("Failed to get latest release: %s", err)
 	}
-	if release == StableVersion {
-		latestRelease, err := githubClient.GetLatestReleaseTag()
-		if err != nil {
-			common.Logger.Fatalf("Failed to get latest release: %s", err)
-		}
-		release = latestRelease.Tag
+	latestSemver, err := version.NewVersion(latestRelease.Tag)
+	if err != nil {
+		common.Logger.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
 	}
-	rawBaseConfig, err := githubClient.GetRawFileContent(fmt.Sprintf("profiles/%s.conf", config.BaseConfig.Profile), release)
+	return latestSemver
+}
+
+func getBaseConfigReleaseLimit(config model.Config, stableRelease *version.Version) *version.Version {
+	releaseLimit := config.BaseConfig.Version
+	if releaseLimit == "" || releaseLimit == StableVersion {
+		return stableRelease
+	}
+	limitSemver, err := version.NewVersion(releaseLimit)
+	if err != nil {
+		common.Logger.Fatalf("Failed to parse base config release version %s: %s", releaseLimit, err)
+	}
+	return limitSemver
+}
+
+func (u *updater) mergeBaseConfig(release *version.Version) {
+	if release.GreaterThan(u.baseConfigReleaseLimit) {
+		return
+	}
+	rawBaseConfig, err := u.github.GetRawFileContent(fmt.Sprintf("profiles/%s.conf", u.patchConfig.BaseConfig.Profile),
+		release.Original())
 	if err != nil {
 		common.Logger.Fatalf("Failed to get base config: %s", err)
 	}
@@ -81,19 +94,20 @@ func mergeBaseConfig(config model.Config, codeCommit CodeCommit, githubClient gi
 	if err != nil {
 		common.Logger.Fatalf("Failed to unmarshal base config: %s", err)
 	}
-	config = MergeConfig(config, baseConfig)
+	config := MergeConfig(u.patchConfig, baseConfig)
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
 	}
-	codeCommit.PutFile("merged_config.yaml", bytes)
-	return config
+	u.resources.CodeCommit.PutFile("merged_config.yaml", bytes)
+	u.config = config
+	u.state.BaseConfig.Version = release
 }
 
 func getLatestState(codeCommit CodeCommit) *model.State {
 	file := codeCommit.GetFile(stateFile)
 	if file == nil {
-		return nil
+		return &model.State{}
 	}
 	var state model.State
 	err := yaml.Unmarshal(file, &state)
@@ -117,6 +131,14 @@ func (u *updater) ProcessSteps() {
 	releases := u.getReleases()
 	firstRunDone := make(map[string]bool)
 	for _, release := range releases {
+		if u.config.BaseConfig.Profile != "" {
+			u.mergeBaseConfig(release)
+			updateState(u.config, u.state)
+			ValidateConfig(u.config, u.state)
+		}
+		if u.releaseNewerThanConfigVersions(release) {
+			break
+		}
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
 		for _, step := range u.config.Steps {
@@ -135,7 +157,27 @@ func (u *updater) ProcessSteps() {
 			firstRunDone[step.Name] = true
 		}
 		wg.Wait()
+		if u.state.BaseConfig.AppliedVersion != u.state.BaseConfig.Version {
+			u.state.BaseConfig.AppliedVersion = u.state.BaseConfig.Version
+			u.putStateFile()
+		}
 	}
+}
+
+func (u *updater) releaseNewerThanConfigVersions(release *version.Version) bool {
+	newestVersion := u.getNewestVersion()
+	if newestVersion == StableVersion {
+		return false
+	}
+	newestSemVer, err := version.NewVersion(newestVersion)
+	if err != nil {
+		common.Logger.Fatalf("Failed to parse newest version %s: %s", newestVersion, err)
+	}
+	if release.GreaterThan(newestSemVer) {
+		common.Logger.Printf("Newest required module version is %s", newestVersion)
+		return true
+	}
+	return false
 }
 
 func (u *updater) getStepSemVer(step model.Step) *version.Version {
@@ -157,7 +199,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !executePipelines {
 		return
 	}
-	u.putPlannedStateFile()
+	u.putStateFile()
 	if firstRun && appliedVersionMatchesRelease(stepState, release) {
 		wg.Add(1)
 		go func() {
@@ -325,36 +367,17 @@ func getAutoApprove(state *model.StateStep) bool {
 
 func (u *updater) getReleases() []*version.Version {
 	oldestVersion := u.getOldestVersion()
-	newestVersion := u.getNewestVersion()
-	latestRelease, err := u.github.GetLatestReleaseTag()
-	if err != nil {
-		common.Logger.Fatalf("Failed to get latest release: %s", err)
-	}
-	latestSemver, err := version.NewVersion(latestRelease.Tag)
-	if err != nil {
-		common.Logger.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
-	}
-	u.stableRelease = latestSemver
+	latestRelease := u.stableRelease
 	if oldestVersion == StableVersion {
-		common.Logger.Printf("Latest release is %s\n", latestRelease.Tag)
-		return toVersions([]github.Release{*latestRelease})
+		common.Logger.Printf("Latest release is %s\n", latestRelease.Original())
+		return []*version.Version{latestRelease}
 	}
 	oldestRelease, err := u.github.GetReleaseByTag(oldestVersion)
 	if err != nil {
 		common.Logger.Fatalf("Failed to get oldest release %s: %s", oldestVersion, err)
 	}
-	var newestRelease *github.Release
-	if newestVersion == StableVersion {
-		newestRelease = latestRelease
-	} else {
-		newestRelease, err = u.github.GetReleaseByTag(newestVersion)
-		if err != nil {
-			common.Logger.Fatalf("Failed to get newest release %s: %s", newestVersion, err)
-		}
-	}
 	common.Logger.Printf("Oldest module version is %s\n", oldestRelease.Tag)
-	common.Logger.Printf("Newest assigned module version is %s\n", newestRelease.Tag)
-	releases, err := u.github.GetNewerReleases(oldestRelease.PublishedAt, newestRelease.PublishedAt)
+	releases, err := u.github.GetNewerReleases(oldestRelease.PublishedAt)
 	if err != nil {
 		common.Logger.Fatalf("Failed to get newer releases: %s", err)
 	}
@@ -551,7 +574,7 @@ func (u *updater) createBackendConf(path string, codeCommit CodeCommit) {
 	codeCommit.PutFile(fmt.Sprintf("%s/backend.conf", path), bytes)
 }
 
-func (u *updater) putPlannedStateFile() {
+func (u *updater) putStateFile() {
 	bytes, err := yaml.Marshal(u.state)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal state: %s", err)

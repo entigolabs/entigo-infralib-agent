@@ -620,7 +620,7 @@ func (p *pipeline) hasTerraformNotChanged(pipelineName string, actions []types.A
 			}
 		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") ||
 			strings.HasPrefix(log, "You can apply this plan to save these new output values") {
-			common.Logger.Print("Pipeline %s: %s", pipelineName, log)
+			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
 			return aws.Bool(true), nil
 		}
 	}

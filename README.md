@@ -118,7 +118,7 @@ Config version is overwritten by step version which in turn is overwritten by mo
 During merging, step name and workspace are used for identifying parent steps, modules are identified by name.
 
 * base_config - base config, pulled from source
-  * version - version of Entigo Infralib base config
+  * version - highest version of Entigo Infralib base config
   * profile - name of the config file without a suffix, empty string means no base config is used
 * prefix - prefix used for CodeCommit folders/files and terraform resources
 * source - source repository for Entigo Infralib terraform modules

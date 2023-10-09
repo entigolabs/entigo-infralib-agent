@@ -143,7 +143,16 @@ func GetModuleState(stepState *model.StateStep, moduleName string) *model.StateM
 	return nil
 }
 
-func createState(config model.Config) *model.State {
+func updateState(config model.Config, state *model.State) {
+	if len(state.Steps) == 0 {
+		createState(config, state)
+		return
+	}
+	removeUnusedSteps(config, state)
+	addNewSteps(config, state)
+}
+
+func createState(config model.Config, state *model.State) {
 	steps := make([]*model.StateStep, 0)
 	for _, step := range config.Steps {
 		modules := make([]*model.StateModule, 0)
@@ -158,14 +167,7 @@ func createState(config model.Config) *model.State {
 			Modules:   modules,
 		})
 	}
-	return &model.State{
-		Steps: steps,
-	}
-}
-
-func updateSteps(config model.Config, state *model.State) {
-	removeUnusedSteps(config, state)
-	addNewSteps(config, state)
+	state.Steps = steps
 }
 
 func addNewSteps(config model.Config, state *model.State) {
@@ -224,6 +226,7 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep) {
 	}
 }
 
+// TODO Confusing patch and base config naming
 func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
 	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
 	if err != nil {
