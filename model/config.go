@@ -103,7 +103,13 @@ const (
 )
 
 type State struct {
-	Steps []*StateStep `yaml:"steps"`
+	BaseConfig StateConfig  `yaml:"base_config"`
+	Steps      []*StateStep `yaml:"steps"`
+}
+
+type StateConfig struct {
+	Version        *version.Version `yaml:"version,omitempty"`
+	AppliedVersion *version.Version `yaml:"applied_version,omitempty"`
 }
 
 type StateStep struct {
