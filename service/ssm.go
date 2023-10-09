@@ -6,15 +6,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	awsSSM "github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"strings"
 )
 
 type SSM interface {
-	GetParameter(name string) (string, error)
+	GetParameter(name string) (*ssmTypes.Parameter, error)
 	GetVpcConfig(prefix string, vpcPrefix string, workspace string) *types.VpcConfig
-	GetArgoCDRepoUrl(prefix string, argoCDPrefix string, workspace string) string
-	GetClusterOIDC(prefix string, eksPrefix string, workspace string) string
 }
 
 type ssm struct {
@@ -27,15 +26,15 @@ func NewSSM(awsConfig aws.Config) SSM {
 	}
 }
 
-func (s *ssm) GetParameter(name string) (string, error) {
+func (s *ssm) GetParameter(name string) (*ssmTypes.Parameter, error) {
 	result, err := s.ssmClient.GetParameter(context.Background(), &awsSSM.GetParameterInput{
 		Name:           aws.String(name),
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return *result.Parameter.Value, nil
+	return result.Parameter, nil
 }
 
 func (s *ssm) GetVpcConfig(prefix string, vpcPrefix string, workspace string) *types.VpcConfig {
@@ -57,32 +56,8 @@ func (s *ssm) GetVpcConfig(prefix string, vpcPrefix string, workspace string) *t
 		common.Logger.Fatalf("Failed to get security group IDs: %s", err)
 	}
 	return &types.VpcConfig{
-		SecurityGroupIds: strings.Split(securityGroupIds, ","),
-		Subnets:          strings.Split(subnetIds, ","),
-		VpcId:            aws.String(vpcId),
+		SecurityGroupIds: strings.Split(*securityGroupIds.Value, ","),
+		Subnets:          strings.Split(*subnetIds.Value, ","),
+		VpcId:            aws.String(*vpcId.Value),
 	}
-}
-
-func (s *ssm) GetArgoCDRepoUrl(prefix string, argoCDPrefix string, workspace string) string {
-	if argoCDPrefix == "" {
-		common.Logger.Fatalf("argoCDPrefix is missing")
-	}
-	argoCDPrefix = fmt.Sprintf("%s-%s-%s", prefix, argoCDPrefix, workspace)
-	repoUrl, err := s.GetParameter(fmt.Sprintf("/entigo-infralib/%s/argocd/repo_url", argoCDPrefix))
-	if err != nil {
-		common.Logger.Fatalf("failed to get argoCD repourl: %s", err)
-	}
-	return repoUrl
-}
-
-func (s *ssm) GetClusterOIDC(prefix string, eksPrefix string, workspace string) string {
-	if eksPrefix == "" {
-		common.Logger.Fatalf("eksPrefix is missing")
-	}
-	eksPrefix = fmt.Sprintf("%s-%s-%s", prefix, eksPrefix, workspace)
-	clusterOIDC, err := s.GetParameter(fmt.Sprintf("/entigo-infralib/%s/eks/oidc", eksPrefix))
-	if err != nil {
-		common.Logger.Fatalf("failed to get cluster OIDC: %s", err)
-	}
-	return clusterOIDC
 }

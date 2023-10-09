@@ -1,24 +1,24 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ${moduleName}
+  name: {{moduleName}}
 spec:
   destination:
     server: https://kubernetes.default.svc
-    namespace: ${moduleName}
+    namespace: {{moduleName}}
   project: default
   sources:
-    - repoURL: '${codeRepoSSHUrl}'
+    - repoURL: '{{codeRepoSSHUrl}}'
       targetRevision: 'main'
       ref: codeRepo
     - repoURL: "https://github.com/entigolabs/entigo-infralib-release.git"
-      targetRevision: '${moduleVersion}'
-      path: "modules/k8s/${moduleSource}"
+      targetRevision: '{{moduleVersion}}'
+      path: "modules/k8s/{{moduleSource}}"
       helm:
         ignoreMissingValueFiles: true
         valueFiles:
           - 'values.yaml'
-          - '$codeRepo/${valuesFilePath}'
+          - '$codeRepo/{{valuesFilePath}}'
   syncPolicy:
     automated:
       selfHeal: true

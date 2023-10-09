@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -199,7 +200,9 @@ func (b *builder) UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfi
 	if project == nil {
 		return fmt.Errorf("project %s not found", projectName)
 	}
-	if project.VpcConfig != nil && project.VpcConfig.VpcId != nil && *project.VpcConfig.VpcId == *vpcConfig.VpcId {
+	if project.VpcConfig != nil && project.VpcConfig.VpcId != nil && *project.VpcConfig.VpcId == *vpcConfig.VpcId &&
+		util.EqualLists(project.VpcConfig.Subnets, vpcConfig.Subnets) &&
+		util.EqualLists(project.VpcConfig.SecurityGroupIds, vpcConfig.SecurityGroupIds) {
 		return nil
 	}
 	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{

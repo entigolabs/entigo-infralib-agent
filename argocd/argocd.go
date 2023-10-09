@@ -11,7 +11,7 @@ func GetApplicationFile(module model.Module, repoSSHUrl string, version string, 
 	if err != nil {
 		return nil, err
 	}
-	replacer := strings.NewReplacer("${moduleName}", module.Name, "${codeRepoSSHUrl}", repoSSHUrl,
-		"${moduleVersion}", version, "${moduleSource}", module.Source, "${valuesFilePath}", valuesFilePath)
+	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{codeRepoSSHUrl}}", repoSSHUrl,
+		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{valuesFilePath}}", valuesFilePath)
 	return []byte(replacer.Replace(string(file))), nil
 }

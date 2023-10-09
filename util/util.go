@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"io"
 	"net/http"
+	"strings"
 )
 
 func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]byte, error) {
@@ -71,4 +72,30 @@ func GetFileFromUrl(fileUrl string) ([]byte, error) {
 		return nil, err
 	}
 	return body, nil
+}
+
+func ToList(value string) []string {
+	if value == "" || value == "[]" {
+		return []string{}
+	}
+	quotes := ""
+	if strings.Contains(value, "\"") {
+		quotes = "\""
+	}
+	value = strings.Trim(value, "\n")
+	value = strings.TrimPrefix(value, fmt.Sprintf("[%s", quotes))
+	value = strings.TrimSuffix(value, fmt.Sprintf("%s]", quotes))
+	return strings.Split(value, fmt.Sprintf("%s,%s", quotes, quotes))
+}
+
+func EqualLists(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

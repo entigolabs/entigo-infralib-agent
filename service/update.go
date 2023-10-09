@@ -2,6 +2,8 @@ package service
 
 import (
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	ccTypes "github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -13,12 +15,16 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
+	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
 const stateFile = "state.yaml"
+
+const replaceRegex = `{{(.*?)}}`
 
 type Updater interface {
 	ProcessSteps()
@@ -27,6 +33,7 @@ type Updater interface {
 type updater struct {
 	config                 model.Config
 	patchConfig            model.Config
+	awsService             AWS
 	resources              AWSResources
 	github                 github.Github
 	terraform              terraform.Terraform
@@ -41,15 +48,14 @@ func NewUpdater(flags *common.Flags) Updater {
 	resources := awsService.SetupAWSResources(flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
 	githubClient := github.NewGithub(config.Source)
-	customCodeCommit := setupCustomCodeCommit(config, awsService, flags.Branch)
 	stableRelease := getLatestRelease(githubClient)
 	return &updater{
 		config:                 config,
 		patchConfig:            config,
+		awsService:             awsService,
 		resources:              resources,
 		github:                 githubClient,
 		terraform:              terraform.NewTerraform(githubClient),
-		customCC:               customCodeCommit,
 		state:                  getLatestState(resources.CodeCommit),
 		stableRelease:          stableRelease,
 		baseConfigReleaseLimit: getBaseConfigReleaseLimit(config, stableRelease),
@@ -117,13 +123,15 @@ func getLatestState(codeCommit CodeCommit) *model.State {
 	return &state
 }
 
-func setupCustomCodeCommit(config model.Config, service AWS, branch string) CodeCommit {
-	for _, step := range config.Steps {
+func (u *updater) setupCustomCodeCommit() {
+	if u.customCC != nil {
+		return
+	}
+	for _, step := range u.config.Steps {
 		if step.Type == model.StepTypeTerraformCustom {
-			return service.SetupCustomCodeCommit(branch)
+			u.customCC = u.awsService.SetupCustomCodeCommit("main")
 		}
 	}
-	return nil
 }
 
 func (u *updater) ProcessSteps() {
@@ -139,6 +147,8 @@ func (u *updater) ProcessSteps() {
 		if u.releaseNewerThanConfigVersions(release) {
 			break
 		}
+		u.replaceConfigValues()
+		u.setupCustomCodeCommit()
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
 		for _, step := range u.config.Steps {
@@ -277,7 +287,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 
-	vpcConfig := u.resources.SSM.GetVpcConfig(u.config.Prefix, step.VpcPrefix, step.Workspace)
+	vpcConfig := getVpcConfig(step)
 	err := u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, vpcConfig)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CodeBuild project: %s", err)
@@ -291,6 +301,17 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 		//u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove) Temporarily disabled to save time
 	case model.StepTypeTerraformCustom:
 		u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, *repoMetadata.RepositoryName)
+	}
+}
+
+func getVpcConfig(step model.Step) *types.VpcConfig {
+	if step.VpcId == "" {
+		return nil
+	}
+	return &types.VpcConfig{
+		VpcId:            aws.String(step.VpcId),
+		Subnets:          util.ToList(step.VpcSubnetIds),
+		SecurityGroupIds: util.ToList(step.VpcSecurityGroupIds),
 	}
 }
 
@@ -338,7 +359,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 		return // Temporarily disabled to save time
 	}
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
-	vpcConfig := u.resources.SSM.GetVpcConfig(u.config.Prefix, step.VpcPrefix, step.Workspace)
+	vpcConfig := getVpcConfig(step)
 	if vpcConfig != nil {
 		err := u.resources.CodeBuild.UpdateProjectVpc(projectName, vpcConfig)
 		if err != nil {
@@ -503,17 +524,13 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
 	executePipeline := false
-	var clusterOIDC string
-	if step.EksPrefix != "" {
-		clusterOIDC = u.resources.SSM.GetClusterOIDC(u.config.Prefix, step.EksPrefix, step.Workspace)
-	}
 	activeModules := model.NewSet[string]()
 	for _, module := range step.Modules {
 		moduleVersion, changed := u.getModuleVersion(module, stepState, releaseTag, stepSemver, step.Approve)
 		if changed {
 			executePipeline = true
 		}
-		inputs := u.addEksInputs(module.Inputs, step.EksPrefix, clusterOIDC)
+		inputs := module.Inputs
 		var bytes []byte
 		if len(inputs) == 0 {
 			bytes = []byte{}
@@ -526,25 +543,11 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 		}
 		u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
 			step.Workspace, module.Name), bytes)
-		argoRepoUrl := u.resources.SSM.GetArgoCDRepoUrl(u.config.Prefix, step.ArgoCDPrefix, step.Workspace)
-		u.createArgoCDApp(module, step, argoRepoUrl, moduleVersion)
+		u.createArgoCDApp(module, step, moduleVersion)
 		activeModules.Add(module.Name)
 	}
 	u.removeUnusedArgoCDApps(step, activeModules)
 	return executePipeline
-}
-
-func (u *updater) addEksInputs(inputs map[string]interface{}, eksPrefix string, clusterOIDC string) map[string]interface{} {
-	if eksPrefix == "" {
-		return inputs
-	}
-	if inputs == nil || len(inputs) == 0 {
-		inputs = make(map[string]interface{})
-	}
-	inputs["awsAccount"] = u.resources.AccountId
-	inputs["awsRegion"] = u.resources.Region
-	inputs["clusterOIDC"] = clusterOIDC
-	return inputs
 }
 
 func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) bool {
@@ -555,8 +558,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 			continue
 		}
 		executePipeline = true
-		argoRepoUrl := u.resources.SSM.GetArgoCDRepoUrl(u.config.Prefix, step.ArgoCDPrefix, step.Workspace)
-		u.createArgoCDApp(module, step, argoRepoUrl, moduleVersion)
+		u.createArgoCDApp(module, step, moduleVersion)
 	}
 	return executePipeline
 }
@@ -618,9 +620,9 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 	return changed, moduleVersions
 }
 
-func (u *updater) createArgoCDApp(module model.Module, step model.Step, argoRepoUrl string, moduleVersion string) {
+func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string) {
 	appFilePath := fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name, step.Workspace, module.Name)
-	appBytes, err := argocd.GetApplicationFile(module, argoRepoUrl, moduleVersion, appFilePath)
+	appBytes, err := argocd.GetApplicationFile(module, step.RepoUrl, moduleVersion, appFilePath)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create application file: %s", err)
 	}
@@ -701,6 +703,95 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
 			step.Workspace, file))
 	}
+}
+
+func (u *updater) replaceConfigValues() {
+	re := regexp.MustCompile(replaceRegex)
+	for stepIndex, step := range u.config.Steps {
+		modifiedStep, err := u.replaceConfigValue(step, nil, re)
+		if err != nil {
+			common.Logger.Fatalf("%s", err)
+		}
+		u.config.Steps[stepIndex] = modifiedStep.(model.Step)
+		for moduleIndex, module := range step.Modules {
+			modifiedModule, err := u.replaceConfigValue(step, &module, re)
+			if err != nil {
+				common.Logger.Fatalf("%s", err)
+			}
+			u.config.Steps[stepIndex].Modules[moduleIndex] = modifiedModule.(model.Module)
+			for key, value := range module.Inputs {
+				if _, ok := value.(string); !ok {
+					continue
+				}
+				modifiedValue, err := u.getReplaceConfigValue(step, value.(string), re)
+				if err != nil {
+					common.Logger.Fatalf("%s", err)
+				}
+				u.config.Steps[stepIndex].Modules[moduleIndex].Inputs[key] = modifiedValue
+			}
+		}
+	}
+}
+
+func (u *updater) replaceConfigValue(step model.Step, module *model.Module, re *regexp.Regexp) (interface{}, error) {
+	var reflection reflect.Value
+	if module == nil {
+		reflection = reflect.ValueOf(&step).Elem()
+	} else {
+		reflection = reflect.ValueOf(module).Elem()
+	}
+	for i := 0; i < reflection.NumField(); i++ {
+		field := reflection.Field(i)
+		if field.Kind() != reflect.String {
+			continue
+		}
+		value := field.String()
+		if value == "" {
+			continue
+		}
+		modifiedValue, err := u.getReplaceConfigValue(step, value, re)
+		if err != nil {
+			return nil, err
+		}
+		field.SetString(modifiedValue)
+	}
+	if module == nil {
+		return step, nil
+	}
+	return *module, nil
+}
+
+func (u *updater) getReplaceConfigValue(step model.Step, value string, re *regexp.Regexp) (string, error) {
+	matches := re.FindAllStringSubmatch(value, -1)
+	if matches == nil || len(matches) == 0 {
+		return value, nil
+	}
+	for _, match := range matches {
+		if len(match) != 2 {
+			return value, fmt.Errorf("failed to parse replace tag match %s for step %s", match[0], step.Name)
+		}
+		replaceTag := match[0]
+		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
+		if strings.EqualFold(replaceKey[:strings.Index(replaceKey, ".")], string(model.ReplaceTypeSSM)) {
+			parameterName := getSSMParameterName(u.config.Prefix, step, replaceKey)
+			parameter, err := u.resources.SSM.GetParameter(parameterName)
+			if err != nil {
+				return value, fmt.Errorf("failed to get SSM parameter %s for step %s: %s", parameterName, step.Name, err)
+			}
+			value = strings.Replace(value, replaceTag, *parameter.Value, 1)
+		} else {
+			return value, fmt.Errorf("unknown replace type in tag %s for step %s", match[0], step.Name)
+		}
+	}
+	return value, nil
+}
+
+func getSSMParameterName(prefix string, step model.Step, replaceKey string) string {
+	// {{ .ssm.{step.name}.{module.name}/oidc }} -> /entigo-infralib/config.prefix-step.name-module.name-parentStep.workspace/oidc
+	parts := strings.Split(replaceKey, ".")
+	keys := replaceKey[strings.Index(replaceKey, "/")+1:]
+	return fmt.Sprintf("/entigo-infralib/%s-%s-%s-%s/%s", prefix, parts[1],
+		parts[2][:strings.Index(parts[2], "/")], step.Workspace, keys)
 }
 
 func getFormattedVersion(version *version.Version) string {

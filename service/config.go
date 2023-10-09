@@ -85,6 +85,12 @@ func validateStep(step model.Step) {
 	if step.Type == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s", step.Name)})
 	}
+	if step.VpcId != "" && (step.VpcSubnetIds == "" || step.VpcSecurityGroupIds == "") {
+		common.Logger.Fatalf("VPC ID is set for step %s but subnet IDs or security group IDs are not", step.Name)
+	}
+	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
+		common.Logger.Fatalf("VPC ID is not set for step %s", step.Name)
+	}
 }
 
 func validateConfigModules(step model.Step, state *model.State, stepVersion string) {
