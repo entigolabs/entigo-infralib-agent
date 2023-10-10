@@ -51,7 +51,11 @@ steps:
           tags:
             team: infrastructure
     version: stable
-    vpc_prefix: nw-main
+    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+    vpc_subnet_ids: |
+      [{{ .ssm.nw.main.private_subnets }}]
+    vpc_security_group_ids: |
+      [{{ .ssm.nw.main.pipeline_security_group }}]
     approve: minor
     modules:
       - name: dns
@@ -65,7 +69,13 @@ steps:
         source: aws/eks
         version: stable
         inputs:
-          vpc_prefix: "min-nw-main"
+          vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+          private_subnets: |
+            [{{ .ssm.nw.main.private_subnets }}]
+          public_subnets: |
+            [{{ .ssm.nw.main.public_subnets }}]
+          eks_api_access_cidrs: |
+            [{{ .ssm.nw.main.private_subnet_cidrs }}]
           eks_cluster_public: true
           eks_main_min_size: 3
           eks_main_max_size: 6
@@ -77,45 +87,67 @@ steps:
     type: terraform
     workspace: dev
     version: stable
-    vpc_prefix: nw-main
+    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+    vpc_subnet_ids: |
+      [{{ .ssm.nw.main.private_subnets }}]
+    vpc_security_group_ids: |
+      [{{ .ssm.nw.main.pipeline_security_group }}]
     provider:
+      inputs:
+        eks_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
       aws:
         default_tags:
           tags:
             team: devops
     approve: major
     modules:
+      - name: crossplane
+        source: aws/crossplane
+        version: stable
+        inputs:
+          eks_oidc_provider: "{{ .ssm.infra.eks.oidc_provider }}"
+          eks_oidc_provider_arn: "{{ .ssm.infra.eks.oidc_provider_arn }}"
+          eks_region: "{{ .ssm.infra.eks.region }}"
+          eks_account: "{{ .ssm.infra.eks.account }}"
       - name: argocd
         source: aws/argocd
         version: stable
         inputs:
-          branch: "main"
+          branch: "{{ .agent.version.helm.argocd }}"
           namespace: "argocd"
           name: "argocd"
-          argocd_apps_name: "min-applications"
+          argocd_apps_name: "{{ .config.prefix }}-applications"
           ingress_group_name: "external"
           ingress_scheme: "internet-facing"
-          hostname: "argocd.minimal.infralib.entigo.io"
+          hostname: "argocd.{{ ssm.infra.dns.int_domain }}"
   - name: applications
     type: argocd-apps
     workspace: dev
     version: stable
-    vpc_prefix: nw-main
-    argocd_prefix: helm-argocd
-    eks_prefix: infrastructure-eks
+    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+    vpc_subnet_ids: |
+      [{{ .ssm.nw.main.private_subnets }}]
+    vpc_security_group_ids: |
+      [{{ .ssm.nw.main.pipeline_security_group }}]
+    repo_url: "{{ .ssm.helm.argocd.repo_url }}"
     modules:
       - name: aws-alb
         source: aws-alb
         version: stable
         inputs:
+          awsAccount: "{{ .ssm.infra.eks.account }}"
+          clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
           aws-load-balancer-controller:
-            clusterName: min-infra-eks-dev
+            clusterName: "{{ .ssm.infra.eks.cluster_name }}"
       - name: crossplane-system
         source: crossplane
         version: stable
       - name: external-dns
         source: external-dns
         version: stable
+        inputs:
+          awsAccount: "{{ .ssm.infra.eks.account }}"
+          clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
       - name: istio-base
         source: istio-base
         version: stable
@@ -126,7 +158,7 @@ steps:
         source: istio-gateway
         version: stable
         inputs:
-          domain: "*.minimal.infralib.entigo.io"
+          domain: "*.{{ ssm.infra.dns.pub_domain }}"
   - name: additional
     type: terraform-custom
     workspace: dev

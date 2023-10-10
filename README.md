@@ -13,6 +13,7 @@ Executes CodePipelines which apply the specified Entigo infralib terraform modul
     * [Bootstrap](#bootstrap)
     * [Run](#run)
 * [Config](#config)
+  * [Overriding config values](#overriding-config-values)
 
 ## Compiling Source
 
@@ -95,8 +96,10 @@ steps:
     approve: minor | major | never | always
     version: stable | semver
     remove: bool
-    vpc_prefix: string
-    argocd_prefix: string
+    vpc_id: string
+    vpc_subnet_ids: multiline string
+    vpc_security_group_ids: multiline string
+    repo_url: string
     modules:
       - name: string
         source: string
@@ -104,6 +107,7 @@ steps:
         remove: bool
         inputs: map[string]string
     provider:
+      inputs: map[string]string
       aws:
         ignore_tags:
           key_prefixes: []string
@@ -114,6 +118,8 @@ steps:
         ignore_annotations: []string
         ignore_labels: []string
 ```
+Complex values need to be as multiline strings with | symbol.
+
 Config version is overwritten by step version which in turn is overwritten by module version. Default version is **stable**.
 During merging, step name and workspace are used for identifying parent steps, modules are identified by name.
 
@@ -131,15 +137,29 @@ During merging, step name and workspace are used for identifying parent steps, m
   * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
   * version - version of Entigo Infralib terraform modules to use
   * remove - whether to remove the step during merge or not, default **false**
-  * vpc_prefix - whether to attach a vpc to codebuild or not, used for getting vpc config from SSM
-  * argocd_prefix - for argocd-apps steps for getting a repoUrl which will be used for cloning
-  * eks_prefix - for argocd-apps steps for getting cluster OIDC value for values.yaml
+  * vpc_id - vpc id for code build
+  * vpc_subnet_ids - vpc subnet ids for code build
+  * vpc_security_group_ids - vpc security group ids for code build
+  * repo_url - for argocd-apps steps, repo to use for cloning
   * modules - list of modules to apply
     * name - name of the module
     * source - source of the terraform module
     * version - version of the module to use
     * remove - whether to remove the module during merge or not, default **false**
-    * inputs - map of inputs for the module, string values need to be quoted, complex values need to be as multiline strings with |
+    * inputs - map of inputs for the module, string values need to be quoted
   * provider - provider values to add
+    * inputs - variables for provider tf file
     * aws - aws provider default and ignore tags to add
     * kubernetes - kubernetes provider ignore annotations and labels to add
+
+### Overriding config values
+
+Step, module and input field values can be overwritten by using replacement tags `{{ }}`.
+
+Replacement tags can be overwritten by values that are stored in the AWS SSM Parameter Store, config itself or custom agent logic.
+
+For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep.workspace/key-1/key-2`.
+
+Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
+
+Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`.

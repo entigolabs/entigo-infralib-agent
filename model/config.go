@@ -20,22 +20,24 @@ type BaseConfig struct {
 }
 
 type Step struct {
-	Name         string   `yaml:"name"`
-	Type         StepType `yaml:"type,omitempty"`
-	Workspace    string   `yaml:"workspace"`
-	Approve      Approve  `yaml:"approve,omitempty"`
-	Remove       bool     `yaml:"remove,omitempty"`
-	Version      string   `yaml:"version,omitempty"`
-	VpcPrefix    string   `yaml:"vpc_prefix,omitempty"`
-	ArgoCDPrefix string   `yaml:"argocd_prefix,omitempty"`
-	EksPrefix    string   `yaml:"eks_prefix,omitempty"`
-	Provider     Provider `yaml:"provider,omitempty"`
-	Modules      []Module `yaml:"modules,omitempty"`
+	Name                string   `yaml:"name"`
+	Type                StepType `yaml:"type,omitempty"`
+	Workspace           string   `yaml:"workspace"`
+	Approve             Approve  `yaml:"approve,omitempty"`
+	Remove              bool     `yaml:"remove,omitempty"`
+	Version             string   `yaml:"version,omitempty"`
+	VpcId               string   `yaml:"vpc_id,omitempty"`
+	VpcSubnetIds        string   `yaml:"vpc_subnet_ids,omitempty"`
+	VpcSecurityGroupIds string   `yaml:"vpc_security_group_ids,omitempty"`
+	RepoUrl             string   `yaml:"repo_url,omitempty"`
+	Provider            Provider `yaml:"provider,omitempty"`
+	Modules             []Module `yaml:"modules,omitempty"`
 }
 
 type Provider struct {
-	Aws        AwsProvider        `yaml:"aws"`
-	Kubernetes KubernetesProvider `yaml:"kubernetes"`
+	Inputs     map[string]interface{} `yaml:"inputs,omitempty"`
+	Aws        AwsProvider            `yaml:"aws"`
+	Kubernetes KubernetesProvider     `yaml:"kubernetes"`
 }
 
 type AwsProvider struct {
@@ -91,6 +93,20 @@ const (
 	StepTypeTerraform       StepType = "terraform"
 	StepTypeArgoCD                   = "argocd-apps"
 	StepTypeTerraformCustom          = "terraform-custom"
+)
+
+type ReplaceType string
+
+const (
+	ReplaceTypeSSM    ReplaceType = "ssm"
+	ReplaceTypeConfig             = "config"
+	ReplaceTypeAgent              = "agent"
+)
+
+type AgentReplaceType string
+
+const (
+	AgentReplaceTypeVersion AgentReplaceType = "version"
 )
 
 type Approve string

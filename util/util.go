@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/hashicorp/go-version"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"io"
 	"net/http"
+	"reflect"
+	"strings"
 )
 
 func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]byte, error) {
@@ -71,4 +75,51 @@ func GetFileFromUrl(fileUrl string) ([]byte, error) {
 		return nil, err
 	}
 	return body, nil
+}
+
+func ToList(value string) []string {
+	if value == "" || value == "[]" {
+		return []string{}
+	}
+	quotes := ""
+	if strings.Contains(value, "\"") {
+		quotes = "\""
+	}
+	value = strings.Trim(value, "\n")
+	value = strings.TrimPrefix(value, fmt.Sprintf("[%s", quotes))
+	value = strings.TrimSuffix(value, fmt.Sprintf("%s]", quotes))
+	return strings.Split(value, fmt.Sprintf("%s,%s", quotes, quotes))
+}
+
+func EqualLists(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func GetValueFromStruct(keyWithDots string, object interface{}) (string, error) {
+	keySlice := strings.Split(keyWithDots, ".")
+	v := reflect.ValueOf(object)
+	for _, key := range keySlice {
+		key = strings.ReplaceAll(key, "_", " ")
+		key = cases.Title(language.English, cases.Compact).String(key)
+		key = strings.ReplaceAll(key, " ", "")
+		for v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if v.Kind() != reflect.Struct {
+			return "", fmt.Errorf("only accepts structs; got %T", v)
+		}
+		v = v.FieldByName(key)
+	}
+	if v.Kind() != reflect.String {
+		return "", fmt.Errorf("found value with key %s is not a string, got %T", keyWithDots, v)
+	}
+	return v.String(), nil
 }

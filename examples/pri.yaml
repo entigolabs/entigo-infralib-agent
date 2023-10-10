@@ -20,4 +20,4 @@ steps:
     modules:
       - name: argocd
         inputs:
-          hostname: "argocd.infralib.entigo.io"
+          hostname: "argocd.{{ ssm.infrastructure.dns.int_domain }}"
