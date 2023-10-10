@@ -93,6 +93,8 @@ steps:
     vpc_security_group_ids: |
       [{{ .ssm.nw.main.pipeline_security_group }}]
     provider:
+      inputs:
+        eks_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
       aws:
         default_tags:
           tags:
