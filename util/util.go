@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/hashicorp/go-version"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 )
 
@@ -98,4 +101,25 @@ func EqualLists(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func GetValueFromStruct(keyWithDots string, object interface{}) (string, error) {
+	keySlice := strings.Split(keyWithDots, ".")
+	v := reflect.ValueOf(object)
+	for _, key := range keySlice {
+		key = strings.ReplaceAll(key, "_", " ")
+		key = cases.Title(language.English, cases.Compact).String(key)
+		key = strings.ReplaceAll(key, " ", "")
+		for v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if v.Kind() != reflect.Struct {
+			return "", fmt.Errorf("only accepts structs; got %T", v)
+		}
+		v = v.FieldByName(key)
+	}
+	if v.Kind() != reflect.String {
+		return "", fmt.Errorf("found value with key %s is not a string, got %T", keyWithDots, v)
+	}
+	return v.String(), nil
 }

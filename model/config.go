@@ -35,8 +35,9 @@ type Step struct {
 }
 
 type Provider struct {
-	Aws        AwsProvider        `yaml:"aws"`
-	Kubernetes KubernetesProvider `yaml:"kubernetes"`
+	Inputs     map[string]interface{} `yaml:"inputs,omitempty"`
+	Aws        AwsProvider            `yaml:"aws"`
+	Kubernetes KubernetesProvider     `yaml:"kubernetes"`
 }
 
 type AwsProvider struct {
@@ -97,7 +98,15 @@ const (
 type ReplaceType string
 
 const (
-	ReplaceTypeSSM ReplaceType = "ssm"
+	ReplaceTypeSSM    ReplaceType = "ssm"
+	ReplaceTypeConfig             = "config"
+	ReplaceTypeAgent              = "agent"
+)
+
+type AgentReplaceType string
+
+const (
+	AgentReplaceTypeVersion AgentReplaceType = "version"
 )
 
 type Approve string

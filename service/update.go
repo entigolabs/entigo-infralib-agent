@@ -15,7 +15,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
-	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -90,7 +89,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	if release.GreaterThan(u.baseConfigReleaseLimit) {
 		return
 	}
-	rawBaseConfig, err := u.github.GetRawFileContent(fmt.Sprintf("profiles/%s.conf", u.patchConfig.BaseConfig.Profile),
+	rawBaseConfig, err := u.github.GetRawFileContent(fmt.Sprintf("profiles/%s.yaml", u.patchConfig.BaseConfig.Profile),
 		release.Original())
 	if err != nil {
 		common.Logger.Fatalf("Failed to get base config: %s", err)
@@ -147,11 +146,11 @@ func (u *updater) ProcessSteps() {
 		if u.releaseNewerThanConfigVersions(release) {
 			break
 		}
-		u.replaceConfigValues()
 		u.setupCustomCodeCommit()
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
 		for _, step := range u.config.Steps {
+			step = u.replaceConfigStepValues(step)
 			stepSemVer := u.getStepSemVer(step)
 			stepState := u.getStepState(step)
 			var executePipelines bool
@@ -611,7 +610,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", u.config.Source, module.Source, moduleVersion)))
 		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, module.Name)))
-		terraform.AddInputs(module.Inputs, moduleBody, moduleVersion)
+		terraform.AddInputs(module.Inputs, moduleBody)
 		moduleVersions[module.Name] = moduleVersion
 	}
 	if changed {
@@ -705,93 +704,85 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 	}
 }
 
-func (u *updater) replaceConfigValues() {
+func (u *updater) replaceConfigStepValues(step model.Step) model.Step {
+	stepYaml, err := yaml.Marshal(step)
+	if err != nil {
+		common.Logger.Fatalf("Failed to convert step %s to yaml, error: %s", step.Name, err)
+	}
+	modifiedStepYaml, err := u.replaceStepYamlValues(step, string(stepYaml))
+	if err != nil {
+		common.Logger.Fatalf("Failed to replace tags in step %s, error: %s", step.Name, err)
+	}
+	var modifiedStep model.Step
+	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
+	if err != nil {
+		common.Logger.Fatalf("Failed to unmarshal modified step %s yaml, error: %s", step.Name, err)
+	}
+	return modifiedStep
+}
+
+func (u *updater) replaceStepYamlValues(step model.Step, configYaml string) (string, error) {
 	re := regexp.MustCompile(replaceRegex)
-	for stepIndex, step := range u.config.Steps {
-		modifiedStep, err := u.replaceConfigValue(step, nil, re)
-		if err != nil {
-			common.Logger.Fatalf("%s", err)
-		}
-		u.config.Steps[stepIndex] = modifiedStep.(model.Step)
-		for moduleIndex, module := range step.Modules {
-			modifiedModule, err := u.replaceConfigValue(step, &module, re)
-			if err != nil {
-				common.Logger.Fatalf("%s", err)
-			}
-			u.config.Steps[stepIndex].Modules[moduleIndex] = modifiedModule.(model.Module)
-			for key, value := range module.Inputs {
-				if _, ok := value.(string); !ok {
-					continue
-				}
-				modifiedValue, err := u.getReplaceConfigValue(step, value.(string), re)
-				if err != nil {
-					common.Logger.Fatalf("%s", err)
-				}
-				u.config.Steps[stepIndex].Modules[moduleIndex].Inputs[key] = modifiedValue
-			}
-		}
-	}
-}
-
-func (u *updater) replaceConfigValue(step model.Step, module *model.Module, re *regexp.Regexp) (interface{}, error) {
-	var reflection reflect.Value
-	if module == nil {
-		reflection = reflect.ValueOf(&step).Elem()
-	} else {
-		reflection = reflect.ValueOf(module).Elem()
-	}
-	for i := 0; i < reflection.NumField(); i++ {
-		field := reflection.Field(i)
-		if field.Kind() != reflect.String {
-			continue
-		}
-		value := field.String()
-		if value == "" {
-			continue
-		}
-		modifiedValue, err := u.getReplaceConfigValue(step, value, re)
-		if err != nil {
-			return nil, err
-		}
-		field.SetString(modifiedValue)
-	}
-	if module == nil {
-		return step, nil
-	}
-	return *module, nil
-}
-
-func (u *updater) getReplaceConfigValue(step model.Step, value string, re *regexp.Regexp) (string, error) {
-	matches := re.FindAllStringSubmatch(value, -1)
+	matches := re.FindAllStringSubmatch(configYaml, -1)
 	if matches == nil || len(matches) == 0 {
-		return value, nil
+		return configYaml, nil
 	}
 	for _, match := range matches {
 		if len(match) != 2 {
-			return value, fmt.Errorf("failed to parse replace tag match %s for step %s", match[0], step.Name)
+			return "", fmt.Errorf("failed to parse replace tag match %s", match[0])
 		}
 		replaceTag := match[0]
 		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-		if strings.EqualFold(replaceKey[:strings.Index(replaceKey, ".")], string(model.ReplaceTypeSSM)) {
+		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
+		switch replaceType {
+		case string(model.ReplaceTypeSSM):
 			parameterName := getSSMParameterName(u.config.Prefix, step, replaceKey)
 			parameter, err := u.resources.SSM.GetParameter(parameterName)
 			if err != nil {
-				return value, fmt.Errorf("failed to get SSM parameter %s for step %s: %s", parameterName, step.Name, err)
+				return "", fmt.Errorf("failed to get SSM parameter %s: %s", parameterName, err)
 			}
-			value = strings.Replace(value, replaceTag, *parameter.Value, 1)
-		} else {
-			return value, fmt.Errorf("unknown replace type in tag %s for step %s", match[0], step.Name)
+			configYaml = strings.Replace(configYaml, replaceTag, *parameter.Value, 1)
+		case model.ReplaceTypeConfig:
+			configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
+			configValue, err := util.GetValueFromStruct(configKey, u.config)
+			if err != nil {
+				return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
+			}
+			configYaml = strings.Replace(configYaml, replaceTag, configValue, 1)
+		case model.ReplaceTypeAgent:
+			key := replaceKey[strings.Index(replaceKey, ".")+1:]
+			agentValue, err := u.getReplacementAgentValue(step, key)
+			if err != nil {
+				return "", fmt.Errorf("failed to get agent value %s: %s", key, err)
+			}
+			configYaml = strings.Replace(configYaml, replaceTag, agentValue, 1)
+		default:
+			return "", fmt.Errorf("unknown replace type in tag %s", match[0])
 		}
 	}
-	return value, nil
+	return configYaml, nil
+}
+
+func (u *updater) getReplacementAgentValue(step model.Step, key string) (string, error) {
+	parts := strings.Split(key, ".")
+	if parts[0] == string(model.AgentReplaceTypeVersion) {
+		stepState := GetStepState(u.state, model.Step{Name: parts[1], Workspace: step.Workspace})
+		if stepState == nil {
+			return "", fmt.Errorf("failed to get state for step %s", parts[1])
+		}
+		moduleState := GetModuleState(stepState, parts[2])
+		if moduleState == nil {
+			return "", fmt.Errorf("failed to get state for module %s", parts[2])
+		}
+		return getFormattedVersion(moduleState.Version), nil
+	}
+	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
 
 func getSSMParameterName(prefix string, step model.Step, replaceKey string) string {
-	// {{ .ssm.{step.name}.{module.name}/oidc }} -> /entigo-infralib/config.prefix-step.name-module.name-parentStep.workspace/oidc
+	// {{ .ssm.{step.name}.{module.name}.oidc }} -> /entigo-infralib/config.prefix-step.name-module.name-parentStep.workspace/oidc
 	parts := strings.Split(replaceKey, ".")
-	keys := replaceKey[strings.Index(replaceKey, "/")+1:]
-	return fmt.Sprintf("/entigo-infralib/%s-%s-%s-%s/%s", prefix, parts[1],
-		parts[2][:strings.Index(parts[2], "/")], step.Workspace, keys)
+	return fmt.Sprintf("/entigo-infralib/%s-%s-%s-%s/%s", prefix, parts[1], parts[2], step.Workspace, parts[3])
 }
 
 func getFormattedVersion(version *version.Version) string {

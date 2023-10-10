@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -62,16 +63,9 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 		return nil, err
 	}
 	baseBody := file.Body()
-	for name, attribute := range providersAttributes {
-		providersBlock.Body().SetAttributeRaw(name, attribute.Expr().BuildTokens(nil))
-		providerBlocks := t.getProviderBlocks(name, providersVersion)
-		for _, providerBlock := range providerBlocks {
-			err = addProviderValues(name, providerBlock.Body(), step.Provider)
-			if err != nil {
-				return nil, err
-			}
-			baseBody.AppendBlock(providerBlock)
-		}
+	err = t.addProviderAttributes(baseBody, providersBlock, providersAttributes, providersVersion, step)
+	if err != nil {
+		return nil, err
 	}
 	return hclwrite.Format(file.Bytes()), nil
 }
@@ -131,6 +125,29 @@ func (t *terraform) getProviderBlocks(providerName string, version string) []*hc
 		return nil
 	}
 	return providerFile.Body().Blocks()
+}
+
+func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, providersVersion string, step model.Step) error {
+	providerInputs := step.Provider.Inputs
+	if providerInputs == nil {
+		providerInputs = make(map[string]interface{})
+	}
+	for name, attribute := range providersAttributes {
+		providersBlock.Body().SetAttributeRaw(name, attribute.Expr().BuildTokens(nil))
+		providerBlocks := t.getProviderBlocks(name, providersVersion)
+		for _, providerBlock := range providerBlocks {
+			err := addProviderValues(name, providerBlock.Body(), step.Provider)
+			if err != nil {
+				return err
+			}
+			addProviderInputs(providerInputs, providerBlock)
+			baseBody.AppendBlock(providerBlock)
+		}
+	}
+	if len(providerInputs) > 0 {
+		common.PrintWarning(fmt.Sprintf("WARNING! Unknown provider inputs: %v for step %s", providerInputs, step.Name))
+	}
+	return nil
 }
 
 func addProviderValues(providerType string, body *hclwrite.Body, stepProvider model.Provider) error {
@@ -247,15 +264,28 @@ func addProviderBodyArray(body *hclwrite.Body, attributeName string, values []st
 	return nil
 }
 
-func AddInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body, branch string) {
+func addProviderInputs(providerInputs map[string]interface{}, providerBlock *hclwrite.Block) {
+	if providerBlock.Type() != "variable" {
+		return
+	}
+	value, found := providerInputs[providerBlock.Labels()[0]]
+	if found {
+		if valueString, ok := value.(string); ok {
+			if strings.Contains(valueString, "\n") {
+				valueString = strings.TrimRight(valueString, "\n")
+			}
+			value = fmt.Sprintf("\"%s\"", valueString)
+		}
+		providerBlock.Body().SetAttributeRaw("default", getTokens(value))
+		delete(providerInputs, providerBlock.Labels()[0])
+	}
+}
+
+func AddInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 	if inputs == nil {
 		return
 	}
 	for name, value := range inputs {
-		if name == "branch" {
-			moduleBody.SetAttributeValue(name, cty.StringVal(branch))
-			continue
-		}
 		if value == nil {
 			continue
 		}

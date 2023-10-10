@@ -107,6 +107,7 @@ steps:
         remove: bool
         inputs: map[string]string
     provider:
+      inputs: map[string]string
       aws:
         ignore_tags:
           key_prefixes: []string
@@ -147,6 +148,7 @@ During merging, step name and workspace are used for identifying parent steps, m
     * remove - whether to remove the module during merge or not, default **false**
     * inputs - map of inputs for the module, string values need to be quoted
   * provider - provider values to add
+    * inputs - variables for provider tf file
     * aws - aws provider default and ignore tags to add
     * kubernetes - kubernetes provider ignore annotations and labels to add
 
@@ -154,6 +156,10 @@ During merging, step name and workspace are used for identifying parent steps, m
 
 Step, module and input field values can be overwritten by using replacement tags `{{ }}`.
 
-Currently, replacement tags can only be overwritten by values that are stored in the AWS SSM Parameter Store.
+Replacement tags can be overwritten by values that are stored in the AWS SSM Parameter Store, config itself or custom agent logic.
 
-For example, `{{ .ssm.stepName.moduleName/vpc_id }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep.workspace/vpc_id`.
+For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep.workspace/key-1/key-2`.
+
+Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
+
+Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`.
