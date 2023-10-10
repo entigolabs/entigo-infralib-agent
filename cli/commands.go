@@ -9,6 +9,7 @@ func cliCommands() []*cli.Command {
 	return []*cli.Command{
 		&runCommand,
 		&bootstrapCommand,
+		&mergeCommand,
 	}
 }
 
@@ -26,4 +27,12 @@ var bootstrapCommand = cli.Command{
 	Usage:   "bootstraps agent codepipeline and codebuild",
 	Action:  action(common.BootstrapCommand),
 	Flags:   cliFlags(common.BootstrapCommand),
+}
+
+var mergeCommand = cli.Command{
+	Name:    "merge",
+	Aliases: []string{"mg"},
+	Usage:   "dry merge base and patch configs",
+	Action:  action(common.MergeCommand),
+	Flags:   cliFlags(common.MergeCommand),
 }

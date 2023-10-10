@@ -3,6 +3,7 @@ package common
 type Flags struct {
 	LoggingLevel string
 	Config       string
+	BaseConfig   string
 	Branch       string
 	AWSPrefix    string
 }

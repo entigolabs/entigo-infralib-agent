@@ -5,6 +5,7 @@ type Command int
 const (
 	RunCommand Command = iota
 	BootstrapCommand
+	MergeCommand
 )
 
 type LoggingLevel int

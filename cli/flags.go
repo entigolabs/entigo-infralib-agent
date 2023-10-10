@@ -22,6 +22,10 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 }
 
 func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
+	switch cmd {
+	case common.MergeCommand:
+		baseFlags = append(baseFlags, &baseConfigFlag)
+	}
 	return baseFlags
 }
 
@@ -43,6 +47,16 @@ var configFlag = cli.StringFlag{
 	Usage:       "set config file",
 	Destination: &flags.Config,
 	Required:    false,
+}
+
+var baseConfigFlag = cli.StringFlag{
+	Name:        "base-config",
+	Aliases:     []string{"bc"},
+	EnvVars:     []string{"BASE_CONFIG"},
+	Value:       "",
+	Usage:       "set base config file",
+	Destination: &flags.BaseConfig,
+	Required:    true,
 }
 
 var branchFlag = cli.StringFlag{

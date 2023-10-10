@@ -12,6 +12,7 @@ Executes CodePipelines which apply the specified Entigo infralib terraform modul
 * [Commands](#commands)
     * [Bootstrap](#bootstrap)
     * [Run](#run)
+    * [Merge](#merge)
 * [Config](#config)
   * [Overriding config values](#overriding-config-values)
 
@@ -75,6 +76,19 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent run --config=config.yaml --branch=main --aws-prefix=entigo-infralib
+```
+
+### merge
+
+Merges given base and patch config files and validates the result. Merged config is printed to stdout.
+
+OPTIONS:
+* base-config - base config file path and name [$BASE_CONFIG]
+* config - patch config file path and name [$CONFIG]
+
+Example
+```bash
+bin/ei-agent merge --base-config=base.yaml --config=patch.yaml
 ```
 
 ## Config
