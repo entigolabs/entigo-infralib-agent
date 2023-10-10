@@ -29,5 +29,5 @@ steps:
     modules:
       - name: istio-gateway
         inputs:
-          domain: "*.{{ ssm.infrastructure.dns.ext_domain }}"
+          domain: "*.{{ ssm.infrastructure.dns.pub_domain }}"
 

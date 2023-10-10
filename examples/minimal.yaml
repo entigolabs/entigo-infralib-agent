@@ -158,7 +158,7 @@ steps:
         source: istio-gateway
         version: stable
         inputs:
-          domain: "*.{{ ssm.infra.dns.ext_domain }}"
+          domain: "*.{{ ssm.infra.dns.pub_domain }}"
   - name: additional
     type: terraform-custom
     workspace: dev
