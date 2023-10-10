@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
+	"github.com/entigolabs/entigo-infralib-agent/commands/merge"
 	agentRun "github.com/entigolabs/entigo-infralib-agent/commands/run"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/urfave/cli/v2"
@@ -24,6 +25,8 @@ func run(cmd common.Command) {
 		agentRun.Run(flags)
 	case common.BootstrapCommand:
 		bootstrap.Bootstrap(flags)
+	case common.MergeCommand:
+		merge.Merge(flags)
 	default:
 		common.Logger.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
 	}
