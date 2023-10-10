@@ -7,7 +7,6 @@ steps:
     modules:
       - name: dns
         inputs:
-          vpc_prefix: "ep-network-vpc"
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
       - name: eks
         inputs:
@@ -17,7 +16,7 @@ steps:
     modules:
       - name: argocd
         inputs:
-          hostname: "argocd.ep-infrastructure-dns-test.infralib.entigo.io"
+          hostname: "argocd.{{ ssm.infrastructure.dns.int_domain }}"
           ingress_group_name: "external"
           ingress_scheme: "internet-facing"
   - name: mycustomtf
@@ -30,5 +29,5 @@ steps:
     modules:
       - name: istio-gateway
         inputs:
-          domain: "*.ep-infrastructure-dns-test.infralib.entigo.io"
+          domain: "*.{{ ssm.infrastructure.dns.ext_domain }}"
 
