@@ -51,11 +51,11 @@ steps:
           tags:
             team: infrastructure
     version: stable
-    vpc_id: "{{ .ssm.nw.vpc.vpc_id }}"
+    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.nw.vpc.private_subnets }}]
+      [{{ .ssm.nw.main.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.nw.vpc.pipeline_security_group }}]
+      [{{ .ssm.nw.main.pipeline_security_group }}]
     approve: minor
     modules:
       - name: dns
@@ -69,13 +69,13 @@ steps:
         source: aws/eks
         version: stable
         inputs:
-          vpc_id: "{{ .ssm.nw.vpc.vpc_id }}"
+          vpc_id: "{{ .ssm.nw.main.vpc_id }}"
           private_subnets: |
-            [{{ .ssm.nw.vpc.private_subnets }}]
+            [{{ .ssm.nw.main.private_subnets }}]
           public_subnets: |
-            [{{ .ssm.nw.vpc.public_subnets }}]
+            [{{ .ssm.nw.main.public_subnets }}]
           eks_api_access_cidrs: |
-            [{{ .ssm.nw.vpc.private_subnet_cidrs }}]
+            [{{ .ssm.nw.main.private_subnet_cidrs }}]
           eks_cluster_public: true
           eks_main_min_size: 3
           eks_main_max_size: 6
@@ -87,11 +87,11 @@ steps:
     type: terraform
     workspace: dev
     version: stable
-    vpc_id: "{{ .ssm.nw.vpc.vpc_id }}"
+    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.nw.vpc.private_subnets }}]
+      [{{ .ssm.nw.main.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.nw.vpc.pipeline_security_group }}]
+      [{{ .ssm.nw.main.pipeline_security_group }}]
     provider:
       aws:
         default_tags:
@@ -122,11 +122,11 @@ steps:
     type: argocd-apps
     workspace: dev
     version: stable
-    vpc_id: "{{ .ssm.nw.vpc.vpc_id }}"
+    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.nw.vpc.private_subnets }}]
+      [{{ .ssm.nw.main.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.nw.vpc.pipeline_security_group }}]
+      [{{ .ssm.nw.main.pipeline_security_group }}]
     repo_url: "{{ .ssm.helm.argocd.repo_url }}"
     modules:
       - name: aws-alb
