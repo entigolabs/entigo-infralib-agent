@@ -1,4 +1,5 @@
 source: https://github.com/entigolabs/entigo-infralib-release
+prefix: ep
 base_config:
   profile: biz
 steps:
