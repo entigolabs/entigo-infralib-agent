@@ -1,7 +1,7 @@
 source: https://github.com/entigolabs/entigo-infralib-release
 base_config:
   profile: minimal
-prefix: min
+prefix: ep
 version: stable
 agent_version: latest
 steps:
@@ -63,6 +63,7 @@ steps:
         version: stable
         inputs:
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
+          vpc_id: "{{ ssm.network.vpc.vpc_id }}"
           public_subdomain_name: "minimal"
           create_private: false
       - name: eks
