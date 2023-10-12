@@ -1,4 +1,5 @@
 source: https://github.com/entigolabs/entigo-infralib-release
+prefix: ep
 base_config:
   profile: pri
 steps:
@@ -15,9 +16,4 @@ steps:
       - name: dns
         inputs:
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
-  - name: helm
-    workspace: test
-    modules:
-      - name: argocd
-        inputs:
-          hostname: "argocd.{{ ssm.infrastructure.dns.int_domain }}"
+
