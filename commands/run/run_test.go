@@ -12,7 +12,7 @@ func TestRun(t *testing.T) {
 		awsPrefix = "entigo-infralib-test"
 	}
 	flags := &common.Flags{
-		Config:    "test/profile.yaml",
+		Config:    "../../test/profile.yaml",
 		Branch:    "main",
 		AWSPrefix: awsPrefix,
 	}
