@@ -25,5 +25,5 @@ jobs:
           AWS_PREFIX: entigo-infralib-test-${{ github.event.pull_request.head.ref }}
         run: |
           PR_BRANCH=${{ github.event.pull_request.head.ref }} && \
-          sed -i "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile.yaml && \
+          sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile.yaml && \
           go test ./...

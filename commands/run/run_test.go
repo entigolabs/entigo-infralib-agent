@@ -1,7 +1,6 @@
 package run
 
 import (
-	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/test"
 	"os"
@@ -14,7 +13,6 @@ func TestRun(t *testing.T) {
 	if awsPrefix == "" {
 		awsPrefix = "entigo-infralib-test"
 	}
-	fmt.Println(os.Getwd())
 	flags := &common.Flags{
 		Config:    "test/profile.yaml",
 		Branch:    "main",
