@@ -3,7 +3,7 @@ prefix: ep
 base_config:
   profile: biz
 steps:
-  - name: infrastructure
+  - name: infra
     workspace: test
     modules:
       - name: dns
