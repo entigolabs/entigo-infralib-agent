@@ -11,9 +11,9 @@ import (
 	"runtime"
 )
 
-func ChangeRunDir(relativePath string) {
+func ChangeRunDir() {
 	_, filename, _, _ := runtime.Caller(0)
-	dir := path.Join(path.Dir(filename), relativePath)
+	dir := path.Join(path.Dir(filename), "..")
 	err := os.Chdir(dir)
 	if err != nil {
 		panic(err)
