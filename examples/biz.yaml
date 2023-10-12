@@ -1,4 +1,5 @@
 source: https://github.com/entigolabs/entigo-infralib-release
+prefix: ep
 base_config:
   profile: biz
 steps:
@@ -16,18 +17,12 @@ steps:
     modules:
       - name: argocd
         inputs:
-          hostname: "argocd.{{ ssm.infrastructure.dns.int_domain }}"
           ingress_group_name: "external"
           ingress_scheme: "internet-facing"
   - name: mycustomtf
+    before: helm
     type: terraform-custom
     workspace: test
     vpc_prefix: network-vpc
     approve: never
-  - name: applications
-    workspace: test
-    modules:
-      - name: istio-gateway
-        inputs:
-          domain: "*.{{ ssm.infrastructure.dns.pub_domain }}"
 
