@@ -1,7 +1,7 @@
+prefix: at
 source: https://github.com/entigolabs/entigo-infralib-release
 base_config:
   profile: minimal
-prefix: at
 version: stable
 agent_version: latest
 steps:

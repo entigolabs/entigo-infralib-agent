@@ -17,20 +17,9 @@ func GetConfig(configFile string, codeCommit CodeCommit) model.Config {
 	var config model.Config
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
-		bytes, err := yaml.Marshal(config)
-		if err != nil {
-			common.Logger.Fatalf("Failed to marshal config: %s", err)
-		}
-		codeCommit.PutFile("config.yaml", bytes)
+		PutConfig(codeCommit, config)
 	} else {
-		bytes := codeCommit.GetFile("config.yaml")
-		if bytes == nil {
-			common.Logger.Fatalf("Config file not found")
-		}
-		err := yaml.Unmarshal(bytes, &config)
-		if err != nil {
-			common.Logger.Fatalf("Failed to unmarshal config: %s", err)
-		}
+		config = GetRemoteConfig(codeCommit)
 	}
 	if config.Source == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
@@ -50,6 +39,27 @@ func GetLocalConfig(configFile string) model.Config {
 	err = yaml.Unmarshal(fileBytes, &config)
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
+	}
+	return config
+}
+
+func PutConfig(codeCommit CodeCommit, config model.Config) {
+	bytes, err := yaml.Marshal(config)
+	if err != nil {
+		common.Logger.Fatalf("Failed to marshal config: %s", err)
+	}
+	codeCommit.PutFile("config.yaml", bytes)
+}
+
+func GetRemoteConfig(codeCommit CodeCommit) model.Config {
+	bytes := codeCommit.GetFile("config.yaml")
+	if bytes == nil {
+		common.Logger.Fatalf("Config file not found")
+	}
+	var config model.Config
+	err := yaml.Unmarshal(bytes, &config)
+	if err != nil {
+		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
 	}
 	return config
 }
