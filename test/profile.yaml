@@ -1,0 +1,44 @@
+prefix: at
+source: https://github.com/entigolabs/entigo-infralib-release
+base_config:
+  profile: minimal
+version: stable
+agent_version: latest
+steps:
+  - name: infra
+    type: terraform
+    workspace: test
+    provider:
+      aws:
+        default_tags:
+          tags:
+            team: infrastructure
+    version: stable
+    approve: minor
+    modules:
+      - name: dns
+        source: aws/route53
+        version: stable
+        inputs:
+          parent_zone_id: "Z07983041XRLSLZUTHHDY"
+          public_subdomain_name: "agenttest"
+          create_private: false
+          create_public: false
+          create_cert: false
+  - name: applications
+    type: argocd-apps
+    workspace: test
+    version: stable
+    repo_url: "test_repo_url"
+    modules:
+      - name: external-dns
+        source: external-dns
+        version: stable
+        inputs:
+          stepvalue: "{{ ssm.infra.dns.int_domain }}"
+          configvalue: "{{ .config.prefix }}"
+  - name: additional
+    before: applications
+    type: terraform-custom
+    workspace: test
+    approve: never

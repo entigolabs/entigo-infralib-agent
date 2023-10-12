@@ -14,7 +14,7 @@ import (
 
 type Builder interface {
 	CreateProject(projectName string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error
-	CreateAgentProject(projectName string, image string) error
+	CreateAgentProject(projectName string, awsPrefix string, image string) error
 	GetProject(projectName string) (*types.Project, error)
 	UpdateProjectImage(projectName string, image string) error
 	UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfig) error
@@ -130,7 +130,7 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string, w
 	}}
 }
 
-func (b *builder) CreateAgentProject(projectName string, image string) error {
+func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image string) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
@@ -142,6 +142,12 @@ func (b *builder) CreateAgentProject(projectName string, image string) error {
 			Image:                    aws.String(image),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
+			EnvironmentVariables: []types.EnvironmentVariable{
+				{
+					Name:  aws.String(common.AwsPrefixEnv),
+					Value: aws.String(awsPrefix),
+				},
+			},
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{

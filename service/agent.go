@@ -17,12 +17,14 @@ type Agent interface {
 
 type agent struct {
 	name      string
+	awsPrefix string
 	resources AWSResources
 }
 
 func NewAgent(resources AWSResources) Agent {
 	return &agent{
 		name:      resources.AwsPrefix + "-agent",
+		awsPrefix: resources.AwsPrefix,
 		resources: resources,
 	}
 }
@@ -49,7 +51,7 @@ func (a *agent) createCodeBuild(version string) error {
 		_, err = a.updateProjectImage(project, version)
 		return err
 	}
-	return a.resources.CodeBuild.CreateAgentProject(a.name, repoURL+":"+version)
+	return a.resources.CodeBuild.CreateAgentProject(a.name, a.awsPrefix, repoURL+":"+version)
 }
 
 func (a *agent) UpdateProjectImage(version string) error {
