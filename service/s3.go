@@ -29,12 +29,16 @@ func NewS3(awsConfig aws.Config) S3 {
 }
 
 func (s *s3) CreateBucket(bucketName string) (string, error) {
-	_, err := s.awsS3.CreateBucket(context.Background(), &awsS3.CreateBucketInput{
-		Bucket: aws.String(bucketName),
-		ACL:    types.BucketCannedACLPrivate,
-		CreateBucketConfiguration: &types.CreateBucketConfiguration{
+	var createBucketConfiguration *types.CreateBucketConfiguration = nil
+	if s.region != "us-east-1" {
+		createBucketConfiguration = &types.CreateBucketConfiguration{
 			LocationConstraint: types.BucketLocationConstraint(s.region),
-		},
+		}
+	}
+	_, err := s.awsS3.CreateBucket(context.Background(), &awsS3.CreateBucketInput{
+		Bucket:                    aws.String(bucketName),
+		ACL:                       types.BucketCannedACLPrivate,
+		CreateBucketConfiguration: createBucketConfiguration,
 	})
 	if err != nil {
 		var existsError *types.BucketAlreadyExists
