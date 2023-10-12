@@ -6,7 +6,19 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
 	"math/rand"
+	"os"
+	"path"
+	"runtime"
 )
+
+func ChangeRunDir(relativePath string) {
+	_, filename, _, _ := runtime.Caller(0)
+	dir := path.Join(path.Dir(filename), relativePath)
+	err := os.Chdir(dir)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func AddFakeConfigTypes() {
 	gofakeit.AddFuncLookup("version", gofakeit.Info{
