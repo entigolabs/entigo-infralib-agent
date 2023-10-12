@@ -43,7 +43,7 @@ type updater struct {
 }
 
 func NewUpdater(flags *common.Flags) Updater {
-	awsService := NewAWS(flags.AWSPrefix)
+	awsService := NewAWS(strings.ToLower(flags.AWSPrefix))
 	resources := awsService.SetupAWSResources(flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
 	githubClient := github.NewGithub(config.Source)
