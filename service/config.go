@@ -92,7 +92,7 @@ func validateStep(step model.Step, steps []model.Step) {
 		common.Logger.Fatalf("VPC ID is not set for step %s-%s", step.Name, step.Workspace)
 	}
 	if step.Before != "" {
-		_, referencedStep := findStep(step, steps)
+		_, referencedStep := findStep(model.Step{Name: step.Before, Workspace: step.Workspace}, steps)
 		if referencedStep == nil {
 			common.Logger.Fatalf("before step %s does not exist for step %s-%s", step.Before, step.Name, step.Workspace)
 		} else if referencedStep.Remove {
