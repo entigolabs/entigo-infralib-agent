@@ -73,7 +73,7 @@ var branchFlag = cli.StringFlag{
 var awsPrefixFlag = cli.StringFlag{
 	Name:        "aws-prefix",
 	Aliases:     []string{"ap"},
-	EnvVars:     []string{"AWS_PREFIX"},
+	EnvVars:     []string{common.AwsPrefixEnv},
 	DefaultText: "entigo-infralib",
 	Value:       "entigo-infralib",
 	Usage:       "prefix used when creating aws resources",

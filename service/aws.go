@@ -135,12 +135,12 @@ func (a *awsService) createDynamoDBTable() *types.TableDescription {
 
 func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
 	cloudwatch := NewCloudWatch(a.awsConfig)
-	logGroup := fmt.Sprintf("log-%s", a.awsPrefix)
+	logGroup := fmt.Sprintf("%s-log", a.awsPrefix)
 	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CloudWatch log group: %s", err)
 	}
-	logStream := fmt.Sprintf("log-%s", a.awsPrefix)
+	logStream := fmt.Sprintf("%s-log", a.awsPrefix)
 	err = cloudwatch.CreateLogStream(logGroup, logStream)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CloudWatch log stream: %s", err)
@@ -151,7 +151,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
 	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.awsPrefix, logGroupArn, s3Arn, repoArn, dynamoDBTableArn)
-	pipelineRoleArn, pipelineRoleCreated := createPipelineRole(iam, a.awsPrefix, s3Arn, repoArn)
+	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn, repoArn)
 
 	if buildRoleCreated || pipelineRoleCreated {
 		common.Logger.Println("Waiting for roles to be available...")
@@ -162,7 +162,7 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn st
 }
 
 func (a *awsService) attachRolePolicies(roleArn string) {
-	pipelineRoleName := getPipelineRoleName(a.awsPrefix)
+	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
 	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineRepoPolicy(roleArn)})
 	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
@@ -179,8 +179,8 @@ func (a *awsService) attachRolePolicies(roleArn string) {
 	}
 }
 
-func createPipelineRole(iam IAM, prefix string, s3Arn string, repoArn string) (string, bool) {
-	pipelineRoleName := getPipelineRoleName(prefix)
+func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (string, bool) {
+	pipelineRoleName := a.getPipelineRoleName()
 	pipelineRole := iam.CreateRole(pipelineRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
@@ -198,8 +198,8 @@ func createPipelineRole(iam IAM, prefix string, s3Arn string, repoArn string) (s
 	return *pipelineRole.Arn, true
 }
 
-func getPipelineRoleName(prefix string) string {
-	return fmt.Sprintf("%s-pipeline", prefix)
+func (a *awsService) getPipelineRoleName() string {
+	return fmt.Sprintf("%s-pipeline", a.awsPrefix)
 }
 
 func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {

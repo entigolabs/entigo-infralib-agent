@@ -7,21 +7,21 @@ import (
 
 type Config struct {
 	BaseConfig   BaseConfig `yaml:"base_config"`
-	Prefix       string     `yaml:"prefix,omitempty"`
-	Source       string     `yaml:"source"`
-	Version      string     `yaml:"version,omitempty"`
-	AgentVersion string     `yaml:"agent_version,omitempty"`
-	Steps        []Step     `yaml:"steps,omitempty"`
+	Prefix       string     `yaml:"prefix,omitempty" fake:"{word}"`
+	Source       string     `yaml:"source" fake:"{url}"`
+	Version      string     `yaml:"version,omitempty" fake:"{version}"`
+	AgentVersion string     `yaml:"agent_version,omitempty" fake:"{version}"`
+	Steps        []Step     `yaml:"steps,omitempty" fakesize:"1"`
 }
 
 type BaseConfig struct {
-	Version string `yaml:"version,omitempty"`
-	Profile string `yaml:"profile"`
+	Version string `yaml:"version,omitempty" fake:"{version}"`
+	Profile string `yaml:"profile" fake:"{word}"`
 }
 
 type Step struct {
-	Name                string   `yaml:"name"`
-	Type                StepType `yaml:"type,omitempty"`
+	Name                string   `yaml:"name" fake:"{word}"`
+	Type                StepType `yaml:"type,omitempty" fake:"{stepType}"`
 	Workspace           string   `yaml:"workspace"`
 	Approve             Approve  `yaml:"approve,omitempty"`
 	Remove              bool     `yaml:"remove,omitempty"`
