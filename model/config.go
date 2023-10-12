@@ -23,6 +23,7 @@ type Step struct {
 	Name                string   `yaml:"name"`
 	Type                StepType `yaml:"type,omitempty"`
 	Workspace           string   `yaml:"workspace"`
+	Before              string   `yaml:"before,omitempty"`
 	Approve             Approve  `yaml:"approve,omitempty"`
 	Remove              bool     `yaml:"remove,omitempty"`
 	Version             string   `yaml:"version,omitempty"`
