@@ -107,6 +107,7 @@ steps:
   - name: string
     type: terraform | argocd-apps | terraform-custom 
     workspace: string
+    before: string
     approve: minor | major | never | always
     version: stable | semver
     remove: bool
@@ -148,6 +149,7 @@ During merging, step name and workspace are used for identifying parent steps, m
   * name - name of the step
   * type - type of the step
   * workspace - terraform workspace to use
+  * before - for patch config, name of the step in the same workspace that this step should be executed before
   * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
   * version - version of Entigo Infralib terraform modules to use
   * remove - whether to remove the step during merge or not, default **false**
