@@ -5,36 +5,6 @@ prefix: at
 version: stable
 agent_version: latest
 steps:
-  - name: network
-    type: terraform
-    workspace: test
-    provider:
-      aws:
-        default_tags:
-          tags:
-            team: networking
-        ignore_tags:
-          key_prefixes:
-          - ignoreme
-          keys:
-          - ignoremetoo
-    approve: minor
-    modules:
-      - name: main
-        source: aws/vpc
-        version: stable
-        inputs:
-          vpc_cidr: "10.105.0.0/16"
-          one_nat_gateway_per_az: false
-          enable_nat_gateway: false
-          azs: 1
-          intra_subnets: |
-            []
-          elasticache_subnets: |
-            []
-          database_subnets: |
-            []
-
   - name: infra
     type: terraform
     workspace: test
@@ -44,11 +14,6 @@ steps:
           tags:
             team: infrastructure
     version: stable
-    vpc_id: "{{ .ssm.network.main.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.network.main.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.network.main.pipeline_security_group }}]
     approve: minor
     modules:
       - name: dns
@@ -64,11 +29,6 @@ steps:
     type: argocd-apps
     workspace: test
     version: stable
-    vpc_id: "{{ .ssm.network.main.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.network.main.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.network.main.pipeline_security_group }}]
     repo_url: "test_repo_url"
     modules:
       - name: external-dns
@@ -78,6 +38,7 @@ steps:
           stepvalue: "{{ ssm.infra.dns.int_domain }}"
           configvalue: "{{ .config.prefix }}"
   - name: additional
+    before: applications
     type: terraform-custom
     workspace: test
     approve: never
