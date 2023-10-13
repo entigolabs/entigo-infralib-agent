@@ -352,7 +352,7 @@ func (mt modulesTransformer) Transformer(typ reflect.Type) func(dst, src reflect
 		}
 		result := make([]model.Module, 0)
 		for _, module := range source {
-			patchModule := getPatchModule(module, target)
+			patchModule := getModule(module.Name, target)
 			if patchModule == nil {
 				result = append(result, module)
 				continue
@@ -372,9 +372,9 @@ func (mt modulesTransformer) Transformer(typ reflect.Type) func(dst, src reflect
 	}
 }
 
-func getPatchModule(dstModule model.Module, patchModules []model.Module) *model.Module {
-	for _, module := range patchModules {
-		if module.Name == dstModule.Name {
+func getModule(moduleName string, modules []model.Module) *model.Module {
+	for _, module := range modules {
+		if module.Name == moduleName {
 			return &module
 		}
 	}

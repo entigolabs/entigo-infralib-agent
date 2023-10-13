@@ -772,7 +772,11 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		}
 		stepState := GetStepState(u.state, *referencedStep)
 		stepVersion := u.getStepSemVer(*referencedStep)
-		moduleVersion, _ := u.getModuleVersion(model.Module{Name: parts[2]}, stepState, release, stepVersion, model.ApproveNever)
+		referencedModule := getModule(parts[2], referencedStep.Modules)
+		if referencedModule == nil {
+			return "", fmt.Errorf("failed to find module %s in step %s", parts[2], parts[1])
+		}
+		moduleVersion, _ := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
