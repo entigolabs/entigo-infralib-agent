@@ -23,10 +23,10 @@ steps:
     before: helm
     type: terraform-custom
     workspace: test
-    vpc_id: "{{ .ssm.network.main.vpc_id }}"
+    vpc_id: "{{ .ssm.net.vpc.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.network.main.private_subnets }}]
+      [{{ .ssm.net.vpc.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.network.main.pipeline_security_group }}]
+      [{{ .ssm.net.vpc.pipeline_security_group }}]
     approve: never
 
