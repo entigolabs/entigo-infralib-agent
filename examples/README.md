@@ -22,8 +22,9 @@ docker run --pull always -it --rm -v "$(pwd)/examples/biz.yaml":"/etc/ei-agent/c
 Run removal pipelines in reverse order as they appear in the merged configuration. Remember to remove EBS, ALB, NLB resources and Route53 records before doing that.
 
 For example:
-1) Delete all PV and PVC resources
-2) Delete all ingress resources
+1) Enable all the destroy pipeline transitions
+2) Delete all PV and PVC resources from the EKS cluster
+2) Delete all ingress resources from the EKS cluster
 3) Run helm-destroy
 4) Remove all route53 domains created by external-dns
 5) Run infra-destroy
