@@ -24,9 +24,9 @@ Run removal pipelines in reverse order as they appear in the merged configuratio
 For example:
 1) Enable all the destroy pipeline transitions
 2) Delete all PV and PVC resources from the EKS cluster
-2) Delete all ingress resources from the EKS cluster
-3) Run helm-destroy
-4) Remove all route53 domains created by external-dns
-5) Run infra-destroy
-6) Run net-destroy
-7) Remove agent resources
+3) Delete all ingress resources from the EKS cluster
+4) Run helm-destroy
+5) Remove all route53 domains created by external-dns
+6) Run infra-destroy
+7) Run net-destroy
+8) Remove agent resources
