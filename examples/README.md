@@ -4,6 +4,19 @@ These are example configruations on the client side.
 
 These will work withoyt any modification in the entigo-infralib account. If you want to use your own account then change the DNS configruation accordingly.
 
+== Example usage 
+
+```
+export AWS_ACCESS_KEY_ID=
+export AWS_SECRET_ACCESS_KEY=
+export AWS_SESSION_TOKEN=
+export AWS_REGION="eu-north-1"
+
+#Pri With bootstrap
+docker run --pull always -it --rm -v "$(pwd)/examples/pri.yaml":"/etc/ei-agent/config.yaml" -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY -e AWS_REGION=$AWS_REGION -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN -e CONFIG=/etc/ei-agent/config.yaml entigolabs/entigo-infralib-agent ei-agent bootstrap
+#Biz Without bootstrap
+docker run --pull always -it --rm -v "$(pwd)/examples/biz.yaml":"/etc/ei-agent/config.yaml" -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY -e AWS_REGION=$AWS_REGION -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN -e CONFIG=/etc/ei-agent/config.yaml entigolabs/entigo-infralib-agent
+```
 
 == To remove all created resources
 
