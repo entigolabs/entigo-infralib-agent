@@ -1,5 +1,7 @@
 package common
 
+const AwsPrefixEnv = "AWS_PREFIX"
+
 type Flags struct {
 	LoggingLevel string
 	Config       string

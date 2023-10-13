@@ -43,7 +43,7 @@ type updater struct {
 }
 
 func NewUpdater(flags *common.Flags) Updater {
-	awsService := NewAWS(flags.AWSPrefix)
+	awsService := NewAWS(strings.ToLower(flags.AWSPrefix))
 	resources := awsService.SetupAWSResources(flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
 	githubClient := github.NewGithub(config.Source)
@@ -150,7 +150,7 @@ func (u *updater) ProcessSteps() {
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
 		for _, step := range u.config.Steps {
-			step = u.replaceConfigStepValues(step)
+			step = u.replaceConfigStepValues(step, release)
 			stepSemVer := u.getStepSemVer(step)
 			stepState := u.getStepState(step)
 			var executePipelines bool
@@ -704,12 +704,12 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 	}
 }
 
-func (u *updater) replaceConfigStepValues(step model.Step) model.Step {
+func (u *updater) replaceConfigStepValues(step model.Step, release *version.Version) model.Step {
 	stepYaml, err := yaml.Marshal(step)
 	if err != nil {
 		common.Logger.Fatalf("Failed to convert step %s to yaml, error: %s", step.Name, err)
 	}
-	modifiedStepYaml, err := u.replaceStepYamlValues(step, string(stepYaml))
+	modifiedStepYaml, err := u.replaceStepYamlValues(step, string(stepYaml), release)
 	if err != nil {
 		common.Logger.Fatalf("Failed to replace tags in step %s, error: %s", step.Name, err)
 	}
@@ -721,7 +721,7 @@ func (u *updater) replaceConfigStepValues(step model.Step) model.Step {
 	return modifiedStep
 }
 
-func (u *updater) replaceStepYamlValues(step model.Step, configYaml string) (string, error) {
+func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, release *version.Version) (string, error) {
 	re := regexp.MustCompile(replaceRegex)
 	matches := re.FindAllStringSubmatch(configYaml, -1)
 	if matches == nil || len(matches) == 0 {
@@ -751,7 +751,7 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string) (str
 			configYaml = strings.Replace(configYaml, replaceTag, configValue, 1)
 		case model.ReplaceTypeAgent:
 			key := replaceKey[strings.Index(replaceKey, ".")+1:]
-			agentValue, err := u.getReplacementAgentValue(step, key)
+			agentValue, err := u.getReplacementAgentValue(step, key, release)
 			if err != nil {
 				return "", fmt.Errorf("failed to get agent value %s: %s", key, err)
 			}
@@ -763,18 +763,17 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string) (str
 	return configYaml, nil
 }
 
-func (u *updater) getReplacementAgentValue(step model.Step, key string) (string, error) {
+func (u *updater) getReplacementAgentValue(step model.Step, key string, release *version.Version) (string, error) {
 	parts := strings.Split(key, ".")
 	if parts[0] == string(model.AgentReplaceTypeVersion) {
-		stepState := GetStepState(u.state, model.Step{Name: parts[1], Workspace: step.Workspace})
-		if stepState == nil {
-			return "", fmt.Errorf("failed to get state for step %s", parts[1])
+		_, referencedStep := findStep(model.Step{Name: parts[1], Workspace: step.Workspace}, u.config.Steps)
+		if referencedStep == nil {
+			return "", fmt.Errorf("failed to find step %s", parts[1])
 		}
-		moduleState := GetModuleState(stepState, parts[2])
-		if moduleState == nil {
-			return "", fmt.Errorf("failed to get state for module %s", parts[2])
-		}
-		return getFormattedVersion(moduleState.Version), nil
+		stepState := GetStepState(u.state, *referencedStep)
+		stepVersion := u.getStepSemVer(*referencedStep)
+		moduleVersion, _ := u.getModuleVersion(model.Module{Name: parts[2]}, stepState, release, stepVersion, model.ApproveNever)
+		return moduleVersion, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
