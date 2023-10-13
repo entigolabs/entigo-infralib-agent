@@ -5,7 +5,7 @@ prefix: ep
 version: stable
 agent_version: latest
 steps:
-  - name: nw
+  - name: net
     type: terraform
     workspace: dev
     provider:
@@ -51,11 +51,11 @@ steps:
           tags:
             team: infrastructure
     version: stable
-    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+    vpc_id: "{{ .ssm.net.main.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.nw.main.private_subnets }}]
+      [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.nw.main.pipeline_security_group }}]
+      [{{ .ssm.net.main.pipeline_security_group }}]
     approve: minor
     modules:
       - name: dns
@@ -70,13 +70,13 @@ steps:
         source: aws/eks
         version: stable
         inputs:
-          vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+          vpc_id: "{{ .ssm.net.main.vpc_id }}"
           private_subnets: |
-            [{{ .ssm.nw.main.private_subnets }}]
+            [{{ .ssm.net.main.private_subnets }}]
           public_subnets: |
-            [{{ .ssm.nw.main.public_subnets }}]
+            [{{ .ssm.net.main.public_subnets }}]
           eks_api_access_cidrs: |
-            [{{ .ssm.nw.main.private_subnet_cidrs }}]
+            [{{ .ssm.net.main.private_subnet_cidrs }}]
           eks_cluster_public: true
           eks_main_min_size: 3
           eks_main_max_size: 6
@@ -88,11 +88,11 @@ steps:
     type: terraform
     workspace: dev
     version: stable
-    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+    vpc_id: "{{ .ssm.net.main.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.nw.main.private_subnets }}]
+      [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.nw.main.pipeline_security_group }}]
+      [{{ .ssm.net.main.pipeline_security_group }}]
     provider:
       inputs:
         eks_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
@@ -125,11 +125,11 @@ steps:
     type: argocd-apps
     workspace: dev
     version: stable
-    vpc_id: "{{ .ssm.nw.main.vpc_id }}"
+    vpc_id: "{{ .ssm.net.main.vpc_id }}"
     vpc_subnet_ids: |
-      [{{ .ssm.nw.main.private_subnets }}]
+      [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
-      [{{ .ssm.nw.main.pipeline_security_group }}]
+      [{{ .ssm.net.main.pipeline_security_group }}]
     repo_url: "{{ .ssm.helm.argocd.repo_url }}"
     modules:
       - name: aws-alb
@@ -163,5 +163,5 @@ steps:
   - name: additional
     type: terraform-custom
     workspace: dev
-    vpc_prefix: nw-second
+    vpc_prefix: net-second
     approve: never

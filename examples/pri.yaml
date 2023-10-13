@@ -3,14 +3,14 @@ prefix: ep
 base_config:
   profile: pri
 steps:
-  - name: network
+  - name: net
     workspace: test
     modules:
       - name: vpc
         inputs:
           azs: 3
           vpc_cidr: "10.185.0.0/18"
-  - name: infrastructure
+  - name: infra
     workspace: test
     modules:
       - name: dns
