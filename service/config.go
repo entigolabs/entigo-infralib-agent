@@ -48,16 +48,22 @@ func PutConfig(codeCommit CodeCommit, config model.Config) {
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
 	}
-	codeCommit.PutFile("config.yaml", bytes)
+	err = codeCommit.PutFile("config.yaml", bytes)
+	if err != nil {
+		common.Logger.Fatalf("Failed to put config: %s", err)
+	}
 }
 
 func GetRemoteConfig(codeCommit CodeCommit) model.Config {
-	bytes := codeCommit.GetFile("config.yaml")
+	bytes, err := codeCommit.GetFile("config.yaml")
+	if err != nil {
+		common.Logger.Fatalf("Failed to get config: %s", err)
+	}
 	if bytes == nil {
 		common.Logger.Fatalf("Config file not found")
 	}
 	var config model.Config
-	err := yaml.Unmarshal(bytes, &config)
+	err = yaml.Unmarshal(bytes, &config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
 	}

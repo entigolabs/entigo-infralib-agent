@@ -13,7 +13,7 @@ import (
 
 type AWS interface {
 	SetupAWSResources(branch string) AWSResources
-	SetupCustomCodeCommit(branch string) CodeCommit
+	SetupCustomCodeCommit(branch string) (CodeCommit, error)
 }
 
 type awsService struct {
@@ -38,10 +38,14 @@ type AWSResources struct {
 
 func NewAWS(awsPrefix string) AWS {
 	awsConfig := GetAWSConfig()
+	accountId, err := getAccountId(awsConfig)
+	if err != nil {
+		common.Logger.Fatalf(fmt.Sprintf("%s", err))
+	}
 	return &awsService{
 		awsConfig: awsConfig,
 		awsPrefix: awsPrefix,
-		accountId: getAccountId(awsConfig),
+		accountId: accountId,
 	}
 }
 
@@ -57,8 +61,14 @@ func GetAWSConfig() aws.Config {
 }
 
 func (a *awsService) SetupAWSResources(branch string) AWSResources {
-	codeCommit := a.setupCodeCommit(branch)
-	repoMetadata := codeCommit.GetRepoMetadata()
+	codeCommit, err := a.setupCodeCommit(branch)
+	if err != nil {
+		common.Logger.Fatalf(fmt.Sprintf("%s", err))
+	}
+	repoMetadata, err := codeCommit.GetRepoMetadata()
+	if err != nil {
+		common.Logger.Fatalf(fmt.Sprintf("%s", err))
+	}
 
 	bucket, s3Arn := a.createBucket()
 	dynamoDBTable := a.createDynamoDBTable()
@@ -83,25 +93,28 @@ func (a *awsService) SetupAWSResources(branch string) AWSResources {
 	return a.resources
 }
 
-func getAccountId(awsConfig aws.Config) string {
+func getAccountId(awsConfig aws.Config) (string, error) {
 	stsService := NewSTS(awsConfig)
 	return stsService.GetAccountID()
 }
 
-func (a *awsService) setupCodeCommit(branch string) CodeCommit {
+func (a *awsService) setupCodeCommit(branch string) (CodeCommit, error) {
 	repoName := fmt.Sprintf("%s-%s", a.awsPrefix, a.accountId)
 	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
 	created, err := codeCommit.CreateRepository()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
+		return nil, fmt.Errorf("failed to create CodeCommit repository: %w", err)
 	}
 	if created {
-		codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis repository is used to apply Entigo infralib modules."))
+		err := codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis repository is used to apply Entigo infralib modules."))
+		if err != nil {
+			return nil, err
+		}
 	}
-	return codeCommit
+	return codeCommit, nil
 }
 
-func (a *awsService) SetupCustomCodeCommit(branch string) CodeCommit {
+func (a *awsService) SetupCustomCodeCommit(branch string) (CodeCommit, error) {
 	repoName := fmt.Sprintf("%s-custom-%s", a.awsPrefix, a.accountId)
 	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
 	created, err := codeCommit.CreateRepository()
@@ -109,10 +122,17 @@ func (a *awsService) SetupCustomCodeCommit(branch string) CodeCommit {
 		common.Logger.Fatalf("Failed to create custom CodeCommit repository: %s", err)
 	}
 	if created {
-		codeCommit.PutFile("README.md", []byte("# Entigo infralib custom repository\nThis repository is used to apply client modules."))
-		a.attachRolePolicies(*codeCommit.GetRepoMetadata().Arn)
+		err := codeCommit.PutFile("README.md", []byte("# Entigo infralib custom repository\nThis repository is used to apply client modules."))
+		if err != nil {
+			return nil, err
+		}
+		repoMetadata, err := codeCommit.GetRepoMetadata()
+		if err != nil {
+			return nil, err
+		}
+		a.attachRolePolicies(*repoMetadata.Arn)
 	}
-	return codeCommit
+	return codeCommit, nil
 }
 
 func (a *awsService) createBucket() (string, string) {
