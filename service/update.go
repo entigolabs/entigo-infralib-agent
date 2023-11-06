@@ -5,6 +5,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	ccTypes "github.com/aws/aws-sdk-go-v2/service/codecommit/types"
+	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
@@ -16,6 +17,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +26,8 @@ import (
 const stateFile = "state.yaml"
 
 const replaceRegex = `{{(.*?)}}`
+const parameterIndexRegex = `(\w+)(\[(\d+)(-(\d+))?])?`
+const ssmPrefix = "/entigo-infralib"
 
 type Updater interface {
 	ProcessSteps()
@@ -736,12 +740,11 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		switch replaceType {
 		case string(model.ReplaceTypeSSM):
-			parameterName := getSSMParameterName(u.config.Prefix, step, replaceKey)
-			parameter, err := u.resources.SSM.GetParameter(parameterName)
+			parameter, err := u.getSSMParameter(u.config.Prefix, step, replaceKey)
 			if err != nil {
-				return "", fmt.Errorf("failed to get SSM parameter %s: %s", parameterName, err)
+				return "", err
 			}
-			configYaml = strings.Replace(configYaml, replaceTag, *parameter.Value, 1)
+			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
 		case model.ReplaceTypeConfig:
 			configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
 			configValue, err := util.GetValueFromStruct(configKey, u.config)
@@ -782,10 +785,48 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
 
-func getSSMParameterName(prefix string, step model.Step, replaceKey string) string {
-	// {{ .ssm.{step.name}.{module.name}.oidc }} -> /entigo-infralib/config.prefix-step.name-module.name-parentStep.workspace/oidc
+func (u *updater) getSSMParameter(prefix string, step model.Step, replaceKey string) (string, error) {
 	parts := strings.Split(replaceKey, ".")
-	return fmt.Sprintf("/entigo-infralib/%s-%s-%s-%s/%s", prefix, parts[1], parts[2], step.Workspace, parts[3])
+	if len(parts) != 4 {
+		return "", fmt.Errorf("failed to parse ssm parameter key %s for step %s, got %d split parts instead of 4",
+			replaceKey, step.Name, len(parts))
+	}
+	re := regexp.MustCompile(parameterIndexRegex)
+	match := re.FindStringSubmatch(parts[3])
+	parameterName := fmt.Sprintf("%s/%s-%s-%s-%s/%s", ssmPrefix, prefix, parts[1], parts[2], step.Workspace, match[1])
+	parameter, err := u.resources.SSM.GetParameter(parameterName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get parameter %s: %s", parameterName, err)
+	}
+	if match[2] == "" {
+		return *parameter.Value, nil
+	}
+	if parameter.Type != ssmTypes.ParameterTypeStringList {
+		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", parameterName)
+	}
+	return getSSMParameterValue(match, parameter, replaceKey, parameterName)
+}
+
+func getSSMParameterValue(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {
+	parameters := strings.Split(*parameter.Value, ",")
+	start, err := strconv.Atoi(match[3])
+	if err != nil {
+		return "", fmt.Errorf("failed to parse start index %s of parameter %s: %s", match[3], replaceKey, err)
+	}
+	if start+1 > len(parameters) {
+		return "", fmt.Errorf("start index %d of parameter %s is out of range", start, parameterName)
+	}
+	if match[5] == "" {
+		return strings.Trim(parameters[start], "\""), nil
+	}
+	end, err := strconv.Atoi(match[5])
+	if err != nil {
+		return "", fmt.Errorf("failed to parse end index %s of parameter %s: %s", match[5], replaceKey, err)
+	}
+	if end+1 > len(parameters) {
+		return "", fmt.Errorf("end index %d of parameter %s is out of range", end, parameterName)
+	}
+	return strings.Join(parameters[start:end+1], ","), nil
 }
 
 func getFormattedVersion(version *version.Version) string {
