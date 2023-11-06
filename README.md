@@ -175,6 +175,7 @@ Step, module and input field values can be overwritten by using replacement tags
 Replacement tags can be overwritten by values that are stored in the AWS SSM Parameter Store, config itself or custom agent logic.
 
 For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep.workspace/key-1/key-2`.
+If the parameter type is StringList then it's possible to use an index to get a specific value, e.g `{{ .ssm.stepName.moduleName.key-1/key-2[0] }}` or a slice by using a range, e.g [0-1].
 
 Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
 
