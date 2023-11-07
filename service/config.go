@@ -13,6 +13,20 @@ import (
 
 const StableVersion = "stable"
 
+func GetAwsPrefix(flags *common.Flags) string {
+	if flags.AWSPrefix != "" {
+		return flags.AWSPrefix
+	}
+	if flags.Config == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("aws prefix or config must be provided")})
+	}
+	prefix := GetLocalConfig(flags.Config).Prefix
+	if prefix == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
+	}
+	return prefix
+}
+
 func GetConfig(configFile string, codeCommit CodeCommit) model.Config {
 	var config model.Config
 	if configFile != "" {

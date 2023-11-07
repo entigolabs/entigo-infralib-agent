@@ -34,7 +34,7 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	err = a.resources.CodePipeline.CreateAgentPipeline(a.name, a.name, a.resources.Bucket)
+	err = a.resources.CodePipeline.CreateAgentPipeline(a.awsPrefix, a.name, a.name, a.resources.Bucket)
 	if err != nil {
 		return err
 	}
