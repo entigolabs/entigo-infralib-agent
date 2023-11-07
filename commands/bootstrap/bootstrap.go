@@ -3,10 +3,12 @@ package bootstrap
 import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
+	"strings"
 )
 
 func Bootstrap(flags *common.Flags) {
-	awsService := service.NewAWS(flags.AWSPrefix)
+	prefix := service.GetAwsPrefix(flags)
+	awsService := service.NewAWS(strings.ToLower(prefix))
 	resources := awsService.SetupAWSResources(flags.Branch)
 	config := service.GetConfig(flags.Config, resources.CodeCommit)
 	if config.AgentVersion == "" {
