@@ -782,6 +782,8 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		}
 		moduleVersion, _ := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, nil
+	} else if parts[0] == model.AgentReplaceTypeAccountId {
+		return u.resources.AccountId, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
