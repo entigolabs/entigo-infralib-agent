@@ -13,12 +13,12 @@ import (
 type CodeCommit interface {
 	CreateRepository() (bool, error)
 	GetLatestCommitId() (*string, error)
-	GetRepoMetadata() *types.RepositoryMetadata
-	PutFile(file string, content []byte)
-	GetFile(file string) []byte
-	DeleteFile(file string)
-	CheckFolderExists(folder string) bool
-	ListFolderFiles(folder string) []string
+	GetRepoMetadata() (*types.RepositoryMetadata, error)
+	PutFile(file string, content []byte) error
+	GetFile(file string) ([]byte, error)
+	DeleteFile(file string) error
+	CheckFolderExists(folder string) (bool, error)
+	ListFolderFiles(folder string) ([]string, error)
 }
 
 type codeCommit struct {
@@ -46,7 +46,10 @@ func (c *codeCommit) CreateRepository() (bool, error) {
 		var awsError *types.RepositoryNameExistsException
 		if errors.As(err, &awsError) {
 			c.parentCommitId, err = c.GetLatestCommitId()
-			c.repoMetadata = c.GetRepoMetadata()
+			if err != nil {
+				return false, err
+			}
+			c.repoMetadata, err = c.GetRepoMetadata()
 			return false, err
 		} else {
 			common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
@@ -59,17 +62,17 @@ func (c *codeCommit) CreateRepository() (bool, error) {
 	}
 }
 
-func (c *codeCommit) GetRepoMetadata() *types.RepositoryMetadata {
+func (c *codeCommit) GetRepoMetadata() (*types.RepositoryMetadata, error) {
 	if c.repoMetadata != nil {
-		return c.repoMetadata
+		return c.repoMetadata, nil
 	}
 	result, err := c.codecommit.GetRepository(context.Background(), &codecommit.GetRepositoryInput{
 		RepositoryName: c.repo,
 	})
 	if err != nil {
-		common.Logger.Fatalf("Failed to get CodeCommit repository: %s", err)
+		return nil, fmt.Errorf("failed to get CodeCommit repository: %w", err)
 	}
-	return result.RepositoryMetadata
+	return result.RepositoryMetadata, nil
 }
 
 func (c *codeCommit) GetLatestCommitId() (*string, error) {
@@ -92,7 +95,7 @@ func (c *codeCommit) updateLatestCommitId() error {
 	return nil
 }
 
-func (c *codeCommit) PutFile(file string, content []byte) {
+func (c *codeCommit) PutFile(file string, content []byte) error {
 	for {
 		putFileOutput, err := c.codecommit.PutFile(context.Background(), &codecommit.PutFileInput{
 			BranchName:     c.branch,
@@ -106,23 +109,23 @@ func (c *codeCommit) PutFile(file string, content []byte) {
 			var sameFileError *types.SameFileContentException
 			var commitIdError *types.ParentCommitIdOutdatedException
 			if errors.As(err, &sameFileError) {
-				return
+				return nil
 			} else if errors.As(err, &commitIdError) {
 				err = c.updateLatestCommitId()
 				if err != nil {
-					common.Logger.Fatalf("Failed to update latest commit id: %s", err)
+					return fmt.Errorf("failed to update latest commit id: %w", err)
 				}
 				continue
 			}
-			common.Logger.Fatalf("Failed to put file %s to repository: %s", file, err)
+			return fmt.Errorf("failed to put file %s to repository: %w", file, err)
 		}
 		common.Logger.Printf("Added file %s to repository\n", file)
 		c.parentCommitId = putFileOutput.CommitId
-		return
+		return nil
 	}
 }
 
-func (c *codeCommit) GetFile(file string) []byte {
+func (c *codeCommit) GetFile(file string) ([]byte, error) {
 	common.Logger.Printf("Getting file %s from repository\n", file)
 	output, err := c.codecommit.GetFile(context.Background(), &codecommit.GetFileInput{
 		CommitSpecifier: c.branch,
@@ -132,14 +135,14 @@ func (c *codeCommit) GetFile(file string) []byte {
 	if err != nil {
 		var awsError *types.FileDoesNotExistException
 		if errors.As(err, &awsError) {
-			return nil
+			return nil, nil
 		}
-		common.Logger.Fatalf("Failed to get %s from repository: %s", file, err)
+		return nil, fmt.Errorf("failed to get %s from repository: %w", file, err)
 	}
-	return output.FileContent
+	return output.FileContent, nil
 }
 
-func (c *codeCommit) DeleteFile(file string) {
+func (c *codeCommit) DeleteFile(file string) error {
 	for {
 		deleteFileOutput, err := c.codecommit.DeleteFile(context.Background(), &codecommit.DeleteFileInput{
 			BranchName:     c.branch,
@@ -152,24 +155,24 @@ func (c *codeCommit) DeleteFile(file string) {
 			var awsError *types.FileDoesNotExistException
 			var commitIdError *types.ParentCommitIdOutdatedException
 			if errors.As(err, &awsError) {
-				return
+				return nil
 			} else if errors.As(err, &commitIdError) {
 				err = c.updateLatestCommitId()
 				if err != nil {
-					common.Logger.Fatalf("Failed to update latest commit id: %s", err)
+					return fmt.Errorf("failed to update latest commit id: %w", err)
 				}
 				continue
 			} else {
-				common.Logger.Fatalf("Failed to delete %s from repository: %s", file, err)
+				return fmt.Errorf("failed to delete %s from repository: %w", file, err)
 			}
 		}
 		common.Logger.Printf("Deleted file %s from repository\n", file)
 		c.parentCommitId = deleteFileOutput.CommitId
-		return
+		return nil
 	}
 }
 
-func (c *codeCommit) CheckFolderExists(folder string) bool {
+func (c *codeCommit) CheckFolderExists(folder string) (bool, error) {
 	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
 		CommitSpecifier: c.branch,
 		RepositoryName:  c.repo,
@@ -178,14 +181,14 @@ func (c *codeCommit) CheckFolderExists(folder string) bool {
 	if err != nil {
 		var awsError *types.FolderDoesNotExistException
 		if errors.As(err, &awsError) {
-			return false
+			return false, nil
 		}
-		common.Logger.Fatalf("Failed to get %s from repository: %s", folder, err)
+		return false, fmt.Errorf("failed to get %s from repository: %w", folder, err)
 	}
-	return len(output.Files) > 0 || len(output.SubFolders) > 0
+	return len(output.Files) > 0 || len(output.SubFolders) > 0, nil
 }
 
-func (c *codeCommit) ListFolderFiles(folder string) []string {
+func (c *codeCommit) ListFolderFiles(folder string) ([]string, error) {
 	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
 		CommitSpecifier: c.branch,
 		RepositoryName:  c.repo,
@@ -194,13 +197,13 @@ func (c *codeCommit) ListFolderFiles(folder string) []string {
 	if err != nil {
 		var awsError *types.FolderDoesNotExistException
 		if errors.As(err, &awsError) {
-			return []string{}
+			return []string{}, nil
 		}
-		common.Logger.Fatalf("Failed to get %s from repository: %s", folder, err)
+		return nil, fmt.Errorf("failed to get %s from repository: %w", folder, err)
 	}
 	files := make([]string, 0)
 	for _, file := range output.Files {
 		files = append(files, *file.RelativePath)
 	}
-	return files
+	return files, nil
 }

@@ -2,13 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
 type Account interface {
-	GetAccountID() string
+	GetAccountID() (string, error)
 }
 
 type account struct {
@@ -21,10 +21,10 @@ func NewSTS(config aws.Config) Account {
 	}
 }
 
-func (a *account) GetAccountID() string {
+func (a *account) GetAccountID() (string, error) {
 	stsOutput, err := a.sts.GetCallerIdentity(context.Background(), nil)
 	if err != nil {
-		common.Logger.Fatalf("Failed to get AWS account number: %s", err)
+		return "", fmt.Errorf("failed to get AWS account number: %w", err)
 	}
-	return *stsOutput.Account
+	return *stsOutput.Account, nil
 }
