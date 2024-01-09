@@ -107,7 +107,8 @@ const (
 type AgentReplaceType string
 
 const (
-	AgentReplaceTypeVersion AgentReplaceType = "version"
+	AgentReplaceTypeVersion   AgentReplaceType = "version"
+	AgentReplaceTypeAccountId                  = "accountId"
 )
 
 type Approve string

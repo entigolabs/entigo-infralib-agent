@@ -47,7 +47,8 @@ type updater struct {
 }
 
 func NewUpdater(flags *common.Flags) Updater {
-	awsService := NewAWS(strings.ToLower(flags.AWSPrefix))
+	prefix := GetAwsPrefix(flags)
+	awsService := NewAWS(strings.ToLower(prefix))
 	resources := awsService.SetupAWSResources(flags.Branch)
 	config := GetConfig(flags.Config, resources.CodeCommit)
 	githubClient := github.NewGithub(config.Source)
@@ -925,6 +926,8 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		}
 		moduleVersion, _, err := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, err
+	} else if parts[0] == model.AgentReplaceTypeAccountId {
+		return u.resources.AccountId, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }

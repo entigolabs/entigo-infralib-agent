@@ -37,3 +37,8 @@ spec:
     kind: CustomResourceDefinition
     jqPathExpressions:
     - .spec.conversion.webhook.clientConfig.service.name
+  - group: apps
+    kind: StatefulSet
+    name: loki-read
+    jqPathExpressions:
+      - .spec.persistentVolumeClaimRetentionPolicy

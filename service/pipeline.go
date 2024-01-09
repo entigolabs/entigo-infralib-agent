@@ -24,7 +24,7 @@ type Pipeline interface {
 	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
-	CreateAgentPipeline(pipelineName string, projectName string, bucket string) error
+	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
 	StartPipelineExecution(pipelineName string) (*string, error)
 	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error
 }
@@ -414,7 +414,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, bucket string) error {
+func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error {
 	if p.pipelineExists(pipelineName) {
 		_, err := p.StartPipelineExecution(pipelineName)
 		return err
@@ -458,8 +458,9 @@ func (p *pipeline) CreateAgentPipeline(pipelineName string, projectName string, 
 					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
 					RunOrder:       aws.Int32(2),
 					Configuration: map[string]string{
-						"ProjectName":   projectName,
-						"PrimarySource": "source_output",
+						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
+						"EnvironmentVariables": fmt.Sprintf(`[{"name":"%s","value":"%s"}]`, common.AwsPrefixEnv, prefix),
 					},
 				},
 				},

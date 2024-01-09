@@ -50,6 +50,8 @@ To execute the [bootstrap](#bootstrap), override the default command.
 
 ## Commands
 
+For bootstrap and run commands you must either provide a config file or an aws-prefix value. This is required for creating and finding AWS resources. Bootstrap adds that value as an environment variable for the agent pipeline.
+
 ### bootstrap
 
 Creates the required AWS resources and a codepipeline for executing the agent. If the pipeline already exists, the agent image version will be updated if needed and a new execution will be started.
@@ -57,7 +59,7 @@ Creates the required AWS resources and a codepipeline for executing the agent. I
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
-* aws-prefix - prefix used when creating aws resources (default: **entigo-infralib**) [$AWS_PREFIX]
+* aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
 
 Example
 ```bash
@@ -71,7 +73,7 @@ Processes config steps, creates and executes CodePipelines which apply Entigo In
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
-* aws-prefix - prefix used when creating aws resources (default: **entigo-infralib**) [$AWS_PREFIX]
+* aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
 
 Example
 ```bash
@@ -141,7 +143,7 @@ During merging, step name and workspace are used for identifying parent steps, m
 * base_config - base config, pulled from source
   * version - highest version of Entigo Infralib base config
   * profile - name of the config file without a suffix, empty string means no base config is used
-* prefix - prefix used for CodeCommit folders/files and terraform resources
+* prefix - prefix used for AWS resources, CodeCommit folders/files and terraform resources
 * source - source repository for Entigo Infralib terraform modules
 * version - version of Entigo Infralib terraform modules to use
 * agent_version - image version of Entigo Infralib Agent to use
@@ -179,4 +181,4 @@ If the parameter type is StringList then it's possible to use an index to get a 
 
 Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
 
-Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`.
+Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports account id using key accountId.
