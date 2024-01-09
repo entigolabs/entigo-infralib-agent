@@ -157,7 +157,7 @@ func (u *updater) ProcessSteps() {
 	u.updateAgentCodeBuild()
 	releases, err := u.getReleases()
 	if err != nil {
-		common.Logger.Fatalf("%w", err)
+		common.Logger.Fatalf("Failed to get releases: %s", err)
 	}
 	firstRunDone := make(map[string]bool)
 	for _, release := range releases {
