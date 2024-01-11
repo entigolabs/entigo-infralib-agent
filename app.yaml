@@ -24,6 +24,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
   ignoreDifferences:
   - group: admissionregistration.k8s.io
     kind: ValidatingWebhookConfiguration
@@ -42,3 +43,19 @@ spec:
     name: loki-read
     jqPathExpressions:
       - .spec.persistentVolumeClaimRetentionPolicy
+  - jsonPointers:
+    - /data/redis-password
+    kind: Secret
+  - jsonPointers:
+    - /data/admin-password
+    kind: Secret
+  - jsonPointers:
+    - /data/password
+    kind: Secret
+  - jsonPointers:
+    - /data/postgres-password
+    kind: Secret
+  - jsonPointers:
+    - '/spec/template/metadata/annotations/checksum~1secret'
+    kind: StatefulSet
+    group: apps
