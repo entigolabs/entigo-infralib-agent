@@ -141,3 +141,7 @@ type FileNotFoundError struct {
 func (e FileNotFoundError) Error() string {
 	return fmt.Sprintf("file %s not found", e.fileName)
 }
+
+func (e FileNotFoundError) Unwrap() error {
+	return nil
+}
