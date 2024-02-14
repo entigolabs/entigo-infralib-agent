@@ -63,7 +63,7 @@ steps:
         version: stable
         inputs:
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
-          vpc_id: "{{ ssm.network.vpc.vpc_id }}"
+          vpc_id: "{{ ssm.net.main.vpc_id }}"
           public_subdomain_name: "minimal"
           create_private: false
       - name: eks
@@ -84,82 +84,180 @@ steps:
           eks_db_max_size: 0
           cluster_enabled_log_types: |
             []
+      - name: crossplane
+        source: aws/crossplane
+        version: stable
+        inputs:
+          eks_oidc_provider: |
+            module.eks.oidc_provider
+          eks_oidc_provider_arn: |
+            module.eks.oidc_provider_arn
   - name: helm
     type: terraform
     workspace: dev
+    approve: minor
     version: stable
-    vpc_id: "{{ .ssm.net.main.vpc_id }}"
+    vpc_id: '{{ .ssm.net.main.vpc_id }}'
     vpc_subnet_ids: |
       [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
       [{{ .ssm.net.main.pipeline_security_group }}]
     provider:
       inputs:
-        eks_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
-      aws:
-        default_tags:
-          tags:
-            team: devops
-    approve: major
+        eks_cluster_name: '{{ .ssm.infra.eks.cluster_name }}'
+      aws: { }
+      kubernetes: { }
     modules:
-      - name: crossplane
-        source: aws/crossplane
-        version: stable
-        inputs:
-          eks_oidc_provider: "{{ .ssm.infra.eks.oidc_provider }}"
-          eks_oidc_provider_arn: "{{ .ssm.infra.eks.oidc_provider_arn }}"
-          eks_region: "{{ .ssm.infra.eks.region }}"
-          eks_account: "{{ .ssm.infra.eks.account }}"
       - name: argocd
         source: aws/argocd
         version: stable
         inputs:
-          branch: "{{ .agent.version.helm.argocd }}"
-          namespace: "argocd"
-          name: "argocd"
-          argocd_apps_name: "{{ .config.prefix }}-applications"
+          argocd_apps_name: '{{ .config.prefix }}-applications'
+          codecommit_name: "{{ .config.prefix }}-{{ .agent.accountId }}"
+          branch: '{{ .agent.version.helm.argocd }}'
+          hostname: argocd.{{ ssm.infra.dns.pub_domain }}
+          name: argocd
+          namespace: argocd
           ingress_group_name: "external"
           ingress_scheme: "internet-facing"
-          hostname: "argocd.{{ ssm.infra.dns.int_domain }}"
   - name: applications
     type: argocd-apps
     workspace: dev
     version: stable
-    vpc_id: "{{ .ssm.net.main.vpc_id }}"
+    vpc_id: '{{ .ssm.net.main.vpc_id }}'
     vpc_subnet_ids: |
       [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
       [{{ .ssm.net.main.pipeline_security_group }}]
-    repo_url: "{{ .ssm.helm.argocd.repo_url }}"
+    repo_url: '{{ .ssm.helm.argocd.repo_url }}'
     modules:
-      - name: aws-alb
+      - name: aws-alb-devops
         source: aws-alb
         version: stable
         inputs:
-          awsAccount: "{{ .ssm.infra.eks.account }}"
-          clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
           aws-load-balancer-controller:
-            clusterName: "{{ .ssm.infra.eks.cluster_name }}"
+            clusterName: '{{ .ssm.infra.eks.cluster_name }}'
+          awsAccount: '{{ .ssm.infra.eks.account }}'
+          clusterOIDC: '{{ .ssm.infra.eks.oidc_provider }}'
       - name: crossplane-system
         source: crossplane
         version: stable
-      - name: external-dns
+        inputs:
+          awsRole: '{{ .ssm.infra.crossplane.iam_role }}'
+      - name: external-dns-devops
         source: external-dns
         version: stable
         inputs:
-          awsAccount: "{{ .ssm.infra.eks.account }}"
-          clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
+          awsAccount: '{{ .ssm.infra.eks.account }}'
+          clusterOIDC: '{{ .ssm.infra.eks.oidc_provider }}'
+          external-dns:
+            image:
+              tag: "v0.13.6"
+            sources:
+              - service
+              - ingress
+              - istio-gateway
+              - istio-virtualservice
+            extraArgs:
+              - --metrics-address=:7979
+      - name: loki
+        source: loki
+        version: stable
+        inputs:
+          awsAccount: '{{ .ssm.infra.eks.account }}'
+          clusterOIDC: '{{ .ssm.infra.eks.oidc_provider }}'
+          bucketName: '{{ .config.prefix }}-entigo-loki-logs'
+          region: "{{ .ssm.infra.eks.region }}"
+          promtail:
+            image:
+              registry: registry.devops.learn.entigo.io/hub
+          loki:
+            gateway:
+              ingress:
+                annotations:
+                  alb.ingress.kubernetes.io/group.name: external
+                  alb.ingress.kubernetes.io/scheme: internet-facing
+                hosts:
+                  - host: loki.{{ ssm.infra.dns.pub_domain }}
+                    paths:
+                      - path: "/"
+                        pathType: "Prefix"
+            read:
+              replicas: 3
+            loki:
+              image:
+                registry: registry.devops.learn.entigo.io/hub
+              storage:
+                s3:
+                  region: "{{ .ssm.infra.eks.region }}"
+                bucketNames:
+                  chunks: '{{ .config.prefix }}-entigo-loki-logs'
+                  ruler: '{{ .config.prefix }}-entigo-loki-logs'
+                  admin: '{{ .config.prefix }}-entigo-loki-logs'
+              storage_config:
+                aws:
+                  region: "{{ .ssm.infra.eks.region }}"
+                  bucketnames: '{{ .config.prefix }}-entigo-loki-logs'
+      - name: prometheus
+        source: prometheus
+        version: stable
+        inputs:
+          prometheus:
+            server:
+              global:
+                scrape_interval: 30s
+              ingress:
+                annotations:
+                  alb.ingress.kubernetes.io/group.name: external
+                  alb.ingress.kubernetes.io/scheme: internet-facing
+                hosts:
+                  - prometheus.{{ ssm.infra.dns.pub_domain }}
       - name: istio-base
         source: istio-base
         version: stable
       - name: istio-system
         source: istio-istiod
         version: stable
+        inputs:
+          istiod:
+            global:
+              hub: registry.devops.learn.entigo.io/hub/istio
+            pilot:
+              traceSampling: 100
       - name: istio-gateway
         source: istio-gateway
         version: stable
         inputs:
-          domain: "*.{{ ssm.infra.dns.pub_domain }}"
+          certificateArn: "{{ ssm.infra.dns.pub_cert_arn }}"
+      - name: kiali
+        source: kiali
+        version: stable
+        inputs:
+          kiali-server:
+            auth:
+              strategy: "anonymous"
+            server:
+              web_fqdn: kiali.{{ ssm.infra.dns.pub_domain }}
+            deployment:
+              ingress:
+                override_yaml:
+                  metadata:
+                    annotations:
+                      alb.ingress.kubernetes.io/group.name: external
+                      alb.ingress.kubernetes.io/scheme: internet-facing
+      - name: aws-storageclass
+        source: aws-storageclass
+        version: stable
+      - name: metrics-server
+        source: metrics-server
+        version: stable
+      - name: external-secrets-devops
+        source: external-secrets
+        version: stable
+        inputs:
+          awsRegion: "{{ .ssm.infra.eks.region }}"
+          awsAccount: "{{ .ssm.infra.eks.account }}"
+          clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
   - name: additional
     type: terraform-custom
     workspace: dev

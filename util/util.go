@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"gopkg.in/yaml.v3"
 	"io"
 	"net/http"
 	"reflect"
@@ -122,4 +123,24 @@ func GetValueFromStruct(keyWithDots string, object interface{}) (string, error) 
 		return "", fmt.Errorf("found value with key %s is not a string, got %T", keyWithDots, v)
 	}
 	return v.String(), nil
+}
+
+func YamlBytesToMap(b []byte) (map[string]interface{}, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	m := make(map[string]interface{})
+	err := yaml.Unmarshal(b, &m)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func MapToYamlBytes(m map[string]interface{}) ([]byte, error) {
+	b, err := yaml.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }

@@ -743,7 +743,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string) error {
 	appFilePath := fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name, step.Workspace, module.Name)
-	appBytes, err := argocd.GetApplicationFile(module, step.RepoUrl, moduleVersion, appFilePath)
+	appBytes, err := argocd.GetApplicationFile(u.github, module, step.RepoUrl, moduleVersion, appFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
