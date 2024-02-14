@@ -12,7 +12,7 @@ import (
 )
 
 func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl string, version string, valuesFilePath string) ([]byte, error) {
-	baseBytes, err := getBaseApplicationFile(module, repoSSHUrl, version, valuesFilePath)
+	baseBytes, err := getBaseApplicationFile()
 	if err != nil {
 		return nil, err
 	}
@@ -20,28 +20,21 @@ func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl st
 	if err != nil {
 		return nil, err
 	}
-	if moduleFile == nil {
-		return baseBytes, nil
-	}
-	baseFile, err := util.YamlBytesToMap(baseBytes)
+	bytes, err := mergeAppFiles(baseBytes, moduleFile)
 	if err != nil {
 		return nil, err
 	}
-	err = mergo.Merge(&baseFile, moduleFile)
-	if err != nil {
-		return nil, err
-	}
-	return util.MapToYamlBytes(baseFile)
+	return replacePlaceholders(bytes, module, repoSSHUrl, version, valuesFilePath), nil
 }
 
-func getBaseApplicationFile(module model.Module, repoSSHUrl string, version string, valuesFilePath string) ([]byte, error) {
-	file, err := os.ReadFile("app.yaml")
-	if err != nil {
-		return nil, err
-	}
+func getBaseApplicationFile() ([]byte, error) {
+	return os.ReadFile("app.yaml")
+}
+
+func replacePlaceholders(bytes []byte, module model.Module, repoSSHUrl string, version string, valuesFilePath string) []byte {
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{codeRepoSSHUrl}}", repoSSHUrl,
 		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{valuesFilePath}}", valuesFilePath)
-	return []byte(replacer.Replace(string(file))), nil
+	return []byte(replacer.Replace(string(bytes)))
 }
 
 func getModuleApplicationFile(git github.Github, release string, moduleSource string) (map[string]interface{}, error) {
@@ -54,4 +47,19 @@ func getModuleApplicationFile(git github.Github, release string, moduleSource st
 		return nil, err
 	}
 	return util.YamlBytesToMap(bytes)
+}
+
+func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte, error) {
+	if moduleFile == nil {
+		return baseBytes, nil
+	}
+	baseFile, err := util.YamlBytesToMap(baseBytes)
+	if err != nil {
+		return nil, err
+	}
+	err = mergo.Merge(&baseFile, moduleFile)
+	if err != nil {
+		return nil, err
+	}
+	return util.MapToYamlBytes(baseFile)
 }
