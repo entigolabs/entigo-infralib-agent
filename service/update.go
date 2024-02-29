@@ -805,10 +805,10 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	moduleState.AutoApprove = true
 	if moduleState.Version == "" {
 		if moduleSemver.GreaterThan(releaseTag) {
-			moduleState.Version = releaseTag.Original()
+			moduleState.Version = getFormattedVersion(releaseTag)
 			return getFormattedVersion(releaseTag), true, nil
 		} else {
-			moduleState.Version = moduleSemver.Original()
+			moduleState.Version = getFormattedVersion(moduleSemver)
 			return getFormattedVersion(moduleSemver), true, nil
 		}
 	}
@@ -824,7 +824,7 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		return getFormattedVersion(moduleStateSemver), false, nil
 	} else {
 		moduleState.AutoApprove = getModuleAutoApprove(moduleStateSemver, releaseTag, approve)
-		moduleState.Version = releaseTag.Original()
+		moduleState.Version = getFormattedVersion(releaseTag)
 		return getFormattedVersion(releaseTag), true, nil
 	}
 }
