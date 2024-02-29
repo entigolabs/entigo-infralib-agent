@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 	"os"
@@ -140,17 +141,27 @@ func validateConfigModules(step model.Step, state *model.State, stepVersion stri
 		}
 		stateModule := GetModuleState(stepState, module.Name)
 		moduleVersionString := module.Version
+		if util.IsClientModule(module) {
+			if moduleVersionString == "" {
+				common.Logger.Fatalf("module version is not set for client module %s in step %s\n", module.Name, step.Name)
+			}
+			continue
+		}
 		if moduleVersionString == "" {
 			moduleVersionString = stepVersion
 		}
-		if stateModule == nil || stateModule.Version == nil || moduleVersionString == StableVersion {
+		if stateModule == nil || stateModule.Version == "" || moduleVersionString == StableVersion {
 			continue
 		}
 		moduleVersion, err := version.NewVersion(moduleVersionString)
 		if err != nil {
 			common.Logger.Fatalf("failed to parse module version %s for module %s: %s\n", module.Version, module.Name, err)
 		}
-		if moduleVersion.LessThan(stateModule.Version) {
+		stateModuleVersion, err := version.NewVersion(stateModule.Version)
+		if err != nil {
+			common.Logger.Fatalf("failed to parse state module version %s for module %s: %s\n", stateModule.Version, module.Name, err)
+		}
+		if moduleVersion.LessThan(stateModuleVersion) {
 			common.Logger.Fatalf("config module %s version %s is less than state version %s\n", module.Name,
 				moduleVersionString, stateModule.Version)
 		}
@@ -201,9 +212,7 @@ func createState(config model.Config, state *model.State) {
 	for _, step := range config.Steps {
 		modules := make([]*model.StateModule, 0)
 		for _, module := range step.Modules {
-			modules = append(modules, &model.StateModule{
-				Name: module.Name,
-			})
+			modules = append(modules, createStateModule(module))
 		}
 		steps = append(steps, &model.StateStep{
 			Name:      step.Name,
@@ -212,6 +221,17 @@ func createState(config model.Config, state *model.State) {
 		})
 	}
 	state.Steps = steps
+}
+
+func createStateModule(module model.Module) *model.StateModule {
+	stateModule := model.StateModule{
+		Name: module.Name,
+	}
+	if util.IsClientModule(module) {
+		moduleType := model.ModuleTypeCustom
+		stateModule.Type = &moduleType
+	}
+	return &stateModule
 }
 
 func addNewSteps(config model.Config, state *model.State) {
@@ -228,10 +248,7 @@ func addNewSteps(config model.Config, state *model.State) {
 		for _, module := range step.Modules {
 			stateModule := GetModuleState(stepState, module.Name)
 			if stateModule == nil {
-				stateModule = &model.StateModule{
-					Name: module.Name,
-				}
-				stepState.Modules = append(stepState.Modules, stateModule)
+				stepState.Modules = append(stepState.Modules, createStateModule(module))
 			}
 		}
 	}

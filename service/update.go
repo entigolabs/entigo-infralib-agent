@@ -276,29 +276,45 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if err != nil {
 		return err
 	}
-	if firstRun && appliedVersionMatchesRelease(stepState, release) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			err := u.executePipeline(firstRun, step, stepState, release)
-			if err != nil {
-				common.PrintError(err)
-				errChan <- err
-			}
-		}()
-		return nil
-	} else {
+	if !firstRun {
 		return u.executePipeline(firstRun, step, stepState, release)
 	}
+	parallelExecution, err := appliedVersionMatchesRelease(stepState, release)
+	if err != nil {
+		return err
+	}
+	if !parallelExecution {
+		return u.executePipeline(firstRun, step, stepState, release)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := u.executePipeline(firstRun, step, stepState, release)
+		if err != nil {
+			common.PrintError(err)
+			errChan <- err
+		}
+	}()
+	return nil
 }
 
-func appliedVersionMatchesRelease(stepState *model.StateStep, release *version.Version) bool {
+func appliedVersionMatchesRelease(stepState *model.StateStep, release *version.Version) (bool, error) {
 	for _, moduleState := range stepState.Modules {
-		if moduleState.AppliedVersion == nil || !moduleState.AppliedVersion.Equal(release) {
-			return false
+		if moduleState.Type != nil && *moduleState.Type == model.ModuleTypeCustom {
+			continue
+		}
+		if moduleState.AppliedVersion == nil {
+			return false, nil
+		}
+		appliedVersion, err := version.NewVersion(*moduleState.AppliedVersion)
+		if err != nil {
+			return false, err
+		}
+		if !appliedVersion.Equal(release) {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, release *version.Version) error {
@@ -404,7 +420,7 @@ func (u *updater) getRepoMetadata(stepType model.StepType) (*ccTypes.RepositoryM
 }
 
 func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, customRepo string) error {
-	executionId, err := u.resources.CodePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step.Workspace, customRepo)
+	executionId, err := u.resources.CodePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step, customRepo)
 	if err != nil {
 		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
 	}
@@ -510,6 +526,9 @@ func (u *updater) getOldestVersion() (string, error) {
 			return "", err
 		}
 		for _, module := range step.Modules {
+			if util.IsClientModule(module) {
+				continue
+			}
 			oldestVersion, err = getOlderVersion(oldestVersion, module.Version)
 			if err != nil {
 				return "", err
@@ -519,8 +538,8 @@ func (u *updater) getOldestVersion() (string, error) {
 	for _, step := range u.state.Steps {
 		for _, module := range step.Modules {
 			moduleVersion := ""
-			if module.Version != nil {
-				moduleVersion = getFormattedVersion(module.Version)
+			if module.Version != "" {
+				moduleVersion = module.Version
 			}
 			oldestVersion, err = getOlderVersion(oldestVersion, moduleVersion)
 			if err != nil {
@@ -562,6 +581,9 @@ func (u *updater) getNewestVersion() (string, error) {
 			stepVersion = configVersion
 		}
 		for _, module := range step.Modules {
+			if util.IsClientModule(module) {
+				continue
+			}
 			moduleVersion := module.Version
 			if moduleVersion == "" {
 				moduleVersion = stepVersion
@@ -579,6 +601,9 @@ func (u *updater) getNewestVersion() (string, error) {
 				}
 			}
 		}
+	}
+	if newestVersion == "" {
+		return u.config.Version, nil
 	}
 	return newestVersion, nil
 }
@@ -702,7 +727,7 @@ func (u *updater) putStateFile() error {
 func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
 	stepState.AppliedAt = time.Now()
 	for _, module := range stepState.Modules {
-		module.AppliedVersion = module.Version
+		module.AppliedVersion = &module.Version
 	}
 	bytes, err := yaml.Marshal(u.state)
 	if err != nil {
@@ -726,11 +751,16 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		}
 		newModule := body.AppendNewBlock("module", []string{module.Name})
 		moduleBody := newModule.Body()
-		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", u.config.Source, module.Source, moduleVersion)))
+		if util.IsClientModule(module) {
+			moduleBody.SetAttributeValue("source",
+				cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion)))
+		} else {
+			moduleBody.SetAttributeValue("source",
+				cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", u.config.Source, module.Source, moduleVersion)))
+			moduleVersions[module.Name] = moduleVersion
+		}
 		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, module.Name)))
 		terraform.AddInputs(module.Inputs, moduleBody)
-		moduleVersions[module.Name] = moduleVersion
 	}
 	if changed {
 		err := u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
@@ -757,6 +787,10 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	if err != nil {
 		return "", false, err
 	}
+	if util.IsClientModule(module) {
+		clientModuleVersion, moduleChanged := getClientModuleVersion(module, moduleState)
+		return clientModuleVersion, moduleChanged, nil
+	}
 	var moduleSemver *version.Version
 	if moduleVersion == "" {
 		moduleSemver = stepSemver
@@ -769,25 +803,34 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		}
 	}
 	moduleState.AutoApprove = true
-	if moduleState.Version == nil {
+	if moduleState.Version == "" {
 		if moduleSemver.GreaterThan(releaseTag) {
-			moduleState.Version = releaseTag
+			moduleState.Version = releaseTag.Original()
 			return getFormattedVersion(releaseTag), true, nil
 		} else {
-			moduleState.Version = moduleSemver
+			moduleState.Version = moduleSemver.Original()
 			return getFormattedVersion(moduleSemver), true, nil
 		}
 	}
-	if moduleSemver.Equal(moduleState.Version) && moduleSemver.LessThan(releaseTag) {
-		return getFormattedVersion(moduleState.Version), false, nil
+	var moduleStateSemver *version.Version
+	moduleStateSemver, err = version.NewVersion(moduleVersion)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to parse module state version %s: %s", moduleVersion, err)
 	}
-	if moduleState.Version.GreaterThan(releaseTag) {
-		return getFormattedVersion(moduleState.Version), false, nil
+	if moduleSemver.Equal(moduleStateSemver) && moduleSemver.LessThan(releaseTag) {
+		return getFormattedVersion(moduleStateSemver), false, nil
+	}
+	if moduleStateSemver.GreaterThan(releaseTag) {
+		return getFormattedVersion(moduleStateSemver), false, nil
 	} else {
-		moduleState.AutoApprove = getModuleAutoApprove(moduleState.Version, releaseTag, approve)
-		moduleState.Version = releaseTag
+		moduleState.AutoApprove = getModuleAutoApprove(moduleStateSemver, releaseTag, approve)
+		moduleState.Version = releaseTag.Original()
 		return getFormattedVersion(releaseTag), true, nil
 	}
+}
+
+func getClientModuleVersion(module model.Module, state *model.StateModule) (string, bool) {
+	return module.Version, module.Version != state.Version
 }
 
 func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.StateStep, semver *version.Version) error {
@@ -887,6 +930,12 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 				return "", err
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
+		case model.ReplaceTypeSSMCustom:
+			parameter, err := u.getSSMCustomParameter(replaceKey)
+			if err != nil {
+				return "", err
+			}
+			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
 		case model.ReplaceTypeConfig:
 			configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
 			configValue, err := util.GetValueFromStruct(configKey, u.config)
@@ -941,20 +990,34 @@ func (u *updater) getSSMParameter(prefix string, step model.Step, replaceKey str
 	re := regexp.MustCompile(parameterIndexRegex)
 	match := re.FindStringSubmatch(parts[3])
 	parameterName := fmt.Sprintf("%s/%s-%s-%s-%s/%s", ssmPrefix, prefix, parts[1], parts[2], step.Workspace, match[1])
+	return u.getSSMParameterValue(match, replaceKey, parameterName)
+}
+
+func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse ssm custom parameter key %s, got %d split parts instead of 2", replaceKey, len(parts))
+	}
+	re := regexp.MustCompile(parameterIndexRegex)
+	match := re.FindStringSubmatch(parts[1])
+	return u.getSSMParameterValue(match, replaceKey, parts[1])
+}
+
+func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
 	parameter, err := u.resources.SSM.GetParameter(parameterName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get parameter %s: %s", parameterName, err)
+		return "", fmt.Errorf("failed to get ssm parameter %s: %s", parameterName, err)
 	}
 	if match[2] == "" {
 		return *parameter.Value, nil
 	}
 	if parameter.Type != ssmTypes.ParameterTypeStringList {
-		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", parameterName)
+		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
-	return getSSMParameterValue(match, parameter, replaceKey, parameterName)
+	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
 }
 
-func getSSMParameterValue(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {
+func getSSMParameterValueFromList(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {
 	parameters := strings.Split(*parameter.Value, ",")
 	start, err := strconv.Atoi(match[3])
 	if err != nil {
