@@ -22,7 +22,7 @@ const planName = "Plan"
 
 type Pipeline interface {
 	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error
+	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
@@ -151,7 +151,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
-func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error {
+func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error {
 	if p.pipelineExists(pipelineName) {
 		return nil
 	}
@@ -202,7 +202,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables("plan-destroy", stepName, workspace),
+						"EnvironmentVariables": getTerraformEnvironmentVariables("plan-destroy", stepName, step),
 					},
 				},
 				},
@@ -233,7 +233,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables("apply-destroy", stepName, workspace),
+						"EnvironmentVariables": getTerraformEnvironmentVariables("apply-destroy", stepName, step),
 					},
 				},
 				},
@@ -724,6 +724,7 @@ func getTerraformEnvironmentVariables(command string, stepName string, step mode
 		if util.IsClientModule(module) {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.HttpUsername))
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.HttpPassword))
+			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.Source))
 		}
 	}
 	return "[" + strings.Join(envVars, ",") + "]"

@@ -424,7 +424,7 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	if err != nil {
 		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace, customRepo)
+	err = u.resources.CodePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, customRepo)
 	if err != nil {
 		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
 	}
