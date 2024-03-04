@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -143,4 +144,8 @@ func MapToYamlBytes(m map[string]interface{}) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+func IsClientModule(module model.Module) bool {
+	return strings.HasPrefix(module.Source, "git::") || strings.HasPrefix(module.Source, "git@")
 }

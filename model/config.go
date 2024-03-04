@@ -81,11 +81,13 @@ func (k KubernetesProvider) IsEmpty() bool {
 }
 
 type Module struct {
-	Name    string                 `yaml:"name"`
-	Source  string                 `yaml:"source,omitempty"`
-	Version string                 `yaml:"version,omitempty"`
-	Remove  bool                   `yaml:"remove,omitempty"`
-	Inputs  map[string]interface{} `yaml:"inputs,omitempty"`
+	Name         string                 `yaml:"name"`
+	Source       string                 `yaml:"source,omitempty"`
+	HttpUsername string                 `yaml:"http_username,omitempty"`
+	HttpPassword string                 `yaml:"http_password,omitempty"`
+	Version      string                 `yaml:"version,omitempty"`
+	Remove       bool                   `yaml:"remove,omitempty"`
+	Inputs       map[string]interface{} `yaml:"inputs,omitempty"`
 }
 
 type StepType string
@@ -99,9 +101,10 @@ const (
 type ReplaceType string
 
 const (
-	ReplaceTypeSSM    ReplaceType = "ssm"
-	ReplaceTypeConfig             = "config"
-	ReplaceTypeAgent              = "agent"
+	ReplaceTypeSSM       ReplaceType = "ssm"
+	ReplaceTypeSSMCustom             = "ssm-custom"
+	ReplaceTypeConfig                = "config"
+	ReplaceTypeAgent                 = "agent"
 )
 
 type AgentReplaceType string
@@ -138,8 +141,15 @@ type StateStep struct {
 }
 
 type StateModule struct {
-	Name           string           `yaml:"name"`
-	Version        *version.Version `yaml:"version,omitempty"`
-	AppliedVersion *version.Version `yaml:"applied_version,omitempty"`
-	AutoApprove    bool             `yaml:"-"` // always omit
+	Name           string      `yaml:"name"`
+	Version        string      `yaml:"version,omitempty"`
+	AppliedVersion *string     `yaml:"applied_version,omitempty"`
+	Type           *ModuleType `yaml:"type,omitempty"`
+	AutoApprove    bool        `yaml:"-"` // always omit
 }
+
+type ModuleType string
+
+const (
+	ModuleTypeCustom ModuleType = "custom"
+)

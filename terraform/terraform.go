@@ -39,6 +39,9 @@ func NewTerraform(github github.Github) Terraform {
 }
 
 func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string) ([]byte, error) {
+	if len(moduleVersions) == 0 {
+		return make([]byte, 0), nil
+	}
 	versions := util.MapValues(moduleVersions)
 	providersVersion, err := util.GetNewestVersion(versions)
 	if err != nil {
@@ -50,6 +53,9 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	}
 	providersAttributes := make(map[string]*hclwrite.Attribute)
 	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
 		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name])
 		if err != nil {
 			return nil, err

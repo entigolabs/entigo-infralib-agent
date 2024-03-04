@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"regexp"
 	"strings"
@@ -20,8 +21,8 @@ const approveActionName = "Approval"
 const planName = "Plan"
 
 type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error
+	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error)
+	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error
 	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, workspace string) (*string, error)
 	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string) error
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
@@ -53,7 +54,7 @@ func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn strin
 	}
 }
 
-func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) (*string, error) {
+func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
 	if p.pipelineExists(pipelineName) {
 		return p.StartPipelineExecution(pipelineName)
 	}
@@ -104,7 +105,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables("plan", stepName, workspace),
+						"EnvironmentVariables": getTerraformEnvironmentVariables("plan", stepName, step),
 					},
 				},
 				},
@@ -135,7 +136,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables("apply", stepName, workspace),
+						"EnvironmentVariables": getTerraformEnvironmentVariables("apply", stepName, step),
 					},
 				},
 				},
@@ -150,7 +151,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
-func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, workspace string, customRepo string) error {
+func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error {
 	if p.pipelineExists(pipelineName) {
 		return nil
 	}
@@ -201,7 +202,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables("plan-destroy", stepName, workspace),
+						"EnvironmentVariables": getTerraformEnvironmentVariables("plan-destroy", stepName, step),
 					},
 				},
 				},
@@ -232,7 +233,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables("apply-destroy", stepName, workspace),
+						"EnvironmentVariables": getTerraformEnvironmentVariables("apply-destroy", stepName, step),
 					},
 				},
 				},
@@ -717,8 +718,29 @@ func (p *pipeline) pipelineExists(pipelineName string) bool {
 	return true
 }
 
+func getTerraformEnvironmentVariables(command string, stepName string, step model.Step) string {
+	envVars := getEnvironmentVariablesList(command, stepName, step.Workspace)
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.HttpUsername))
+			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.HttpPassword))
+			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.Source))
+		}
+	}
+	return "[" + strings.Join(envVars, ",") + "]"
+}
+
 func getEnvironmentVariables(command string, stepName string, workspace string) string {
-	return "[{\"name\":\"COMMAND\",\"value\":\"" + command + "\"},{\"name\":\"TF_VAR_prefix\",\"value\":\"" + stepName + "\"},{\"name\":\"WORKSPACE\",\"value\":\"" + workspace + "\"}]"
+	envVars := getEnvironmentVariablesList(command, stepName, workspace)
+	return "[" + strings.Join(envVars, ",") + "]"
+}
+
+func getEnvironmentVariablesList(command string, stepName string, workspace string) []string {
+	var envVars []string
+	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
+	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))
+	envVars = append(envVars, fmt.Sprintf("{\"name\":\"WORKSPACE\",\"value\":\"%s\"}", workspace))
+	return envVars
 }
 
 func (p *pipeline) getApprovalToken(pipelineName string) *string {
