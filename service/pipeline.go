@@ -12,6 +12,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -492,7 +493,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var noChanges *bool
+	var pipeChanges *changes
 	var approved *bool
 	for ctx.Err() == nil {
 		time.Sleep(time.Duration(delay) * time.Second)
@@ -513,7 +514,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 		if err != nil {
 			return err
 		}
-		noChanges, approved, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, stepType, noChanges, approved, autoApprove)
+		pipeChanges, approved, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, stepType, pipeChanges, approved, autoApprove)
 		if err != nil {
 			return err
 		}
@@ -562,44 +563,44 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, noChanges *bool, approved *bool, autoApprove bool) (*bool, *bool, error) {
+func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *changes, approved *bool, autoApprove bool) (*changes, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
 			continue
 		}
 		if approved != nil && *approved {
-			return noChanges, approved, nil
+			return pipeChanges, approved, nil
 		}
 		var err error
-		noChanges, err = p.hasNotChanged(pipelineName, noChanges, actions, stepType)
+		pipeChanges, err = p.getChanges(pipelineName, pipeChanges, actions, stepType)
 		if err != nil {
-			return noChanges, approved, err
+			return pipeChanges, approved, err
 		}
-		if *noChanges || autoApprove {
+		if pipeChanges.destroyed == 0 && (pipeChanges.changed == 0 || autoApprove) {
 			approved, err = p.approveStage(pipelineName)
 			if err != nil {
-				return noChanges, approved, err
+				return pipeChanges, approved, err
 			}
 		} else {
 			common.Logger.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 		}
 	}
-	return noChanges, approved, nil
+	return pipeChanges, approved, nil
 }
 
-func (p *pipeline) hasNotChanged(pipelineName string, noChanges *bool, actions []types.ActionExecutionDetail, stepType model.StepType) (*bool, error) {
-	if noChanges != nil {
-		return noChanges, nil
+func (p *pipeline) getChanges(pipelineName string, pipeChanges *changes, actions []types.ActionExecutionDetail, stepType model.StepType) (*changes, error) {
+	if pipeChanges != nil {
+		return pipeChanges, nil
 	}
 	switch stepType {
 	case model.StepTypeTerraform:
-		return p.hasTerraformNotChanged(pipelineName, actions)
+		return p.getTerraformChanges(pipelineName, actions)
 	}
-	return aws.Bool(false), nil
+	return &changes{}, nil
 }
 
-func (p *pipeline) hasTerraformNotChanged(pipelineName string, actions []types.ActionExecutionDetail) (*bool, error) {
+func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*changes, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -611,22 +612,36 @@ func (p *pipeline) hasTerraformNotChanged(pipelineName string, actions []types.A
 	re := regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
 	for _, log := range logs {
 		matches := re.FindStringSubmatch(log)
+		tfChanges := changes{}
 		if matches != nil {
 			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
 			changed := matches[2]
 			destroyed := matches[3]
 			if changed != "0" || destroyed != "0" {
-				return aws.Bool(false), nil
+				tfChanges.changed, err = strconv.Atoi(changed)
+				if err != nil {
+					return nil, err
+				}
+				tfChanges.destroyed, err = strconv.Atoi(destroyed)
+				if err != nil {
+					return nil, err
+				}
+				return &tfChanges, nil
 			} else {
-				return aws.Bool(true), nil
+				return &tfChanges, nil
 			}
 		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") ||
 			strings.HasPrefix(log, "You can apply this plan to save these new output values") {
 			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
-			return aws.Bool(true), nil
+			return &tfChanges, nil
 		}
 	}
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
+}
+
+type changes struct {
+	changed   int
+	destroyed int
 }
 
 func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
