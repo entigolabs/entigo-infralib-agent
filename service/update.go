@@ -490,7 +490,7 @@ func (u *updater) getReleases() ([]*version.Version, error) {
 		common.Logger.Printf("Latest release is %s\n", latestRelease.Original())
 		return []*version.Version{latestRelease}, nil
 	}
-	oldestRelease, err := u.github.GetReleaseByTag(oldestVersion)
+	oldestRelease, err := u.github.GetReleaseByTag(getFormattedVersionString(oldestVersion))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get oldest release %s: %w", oldestVersion, err)
 	}
@@ -1047,7 +1047,10 @@ func getFormattedVersion(version *version.Version) string {
 	if version == nil {
 		return ""
 	}
-	original := version.Original()
+	return getFormattedVersionString(version.Original())
+}
+
+func getFormattedVersionString(original string) string {
 	if strings.HasPrefix(original, "v") {
 		return original
 	}

@@ -121,6 +121,8 @@ steps:
       - name: string
         source: string
         version: stable | semver
+        http_username: string
+        http_password: string
         remove: bool
         inputs: map[string]string
     provider:
@@ -161,8 +163,10 @@ During merging, step name and workspace are used for identifying parent steps, m
   * repo_url - for argocd-apps steps, repo to use for cloning
   * modules - list of modules to apply
     * name - name of the module
-    * source - source of the terraform module
+    * source - source of the terraform module, can be an external git repository beginning with git:: or git@
     * version - version of the module to use
+    * http_username - username for external repository authentication
+    * http_password - password for external repository authentication
     * remove - whether to remove the module during merge or not, default **false**
     * inputs - map of inputs for the module, string values need to be quoted
   * provider - provider values to add

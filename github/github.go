@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"github.com/google/go-github/v54/github"
+	"github.com/google/go-github/v60/github"
 	"net/url"
 	"sort"
 	"strings"
