@@ -537,6 +537,9 @@ func (u *updater) getOldestVersion() (string, error) {
 	}
 	for _, step := range u.state.Steps {
 		for _, module := range step.Modules {
+			if module.Type != nil && *module.Type == model.ModuleTypeCustom {
+				continue
+			}
 			moduleVersion := ""
 			if module.Version != "" {
 				moduleVersion = module.Version
@@ -813,7 +816,7 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		}
 	}
 	var moduleStateSemver *version.Version
-	moduleStateSemver, err = version.NewVersion(moduleVersion)
+	moduleStateSemver, err = version.NewVersion(moduleState.Version)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to parse module state version %s: %s", moduleVersion, err)
 	}
@@ -829,8 +832,9 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	}
 }
 
-func getClientModuleVersion(module model.Module, state *model.StateModule) (string, bool) {
-	return module.Version, module.Version != state.Version
+func getClientModuleVersion(module model.Module, moduleState *model.StateModule) (string, bool) {
+	moduleState.Version = module.Version
+	return module.Version, module.Version != moduleState.Version
 }
 
 func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.StateStep, semver *version.Version) error {
