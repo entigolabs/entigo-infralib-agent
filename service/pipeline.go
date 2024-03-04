@@ -577,7 +577,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 		if err != nil {
 			return pipeChanges, approved, err
 		}
-		if pipeChanges.destroyed == 0 && (pipeChanges.changed == 0 || autoApprove) {
+		if pipeChanges != nil && pipeChanges.destroyed == 0 && (pipeChanges.changed == 0 || autoApprove) {
 			approved, err = p.approveStage(pipelineName)
 			if err != nil {
 				return pipeChanges, approved, err
