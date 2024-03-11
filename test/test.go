@@ -59,5 +59,5 @@ func SemVer() (*version.Version, error) {
 }
 
 func StepType() model.StepType {
-	return model.StepType(gofakeit.RandomString([]string{model.StepTypeArgoCD, string(model.StepTypeTerraform), model.StepTypeTerraformCustom}))
+	return model.StepType(gofakeit.RandomString([]string{string(model.StepTypeArgoCD), string(model.StepTypeTerraform), string(model.StepTypeTerraformCustom)}))
 }

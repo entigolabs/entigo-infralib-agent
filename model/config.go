@@ -94,33 +94,33 @@ type StepType string
 
 const (
 	StepTypeTerraform       StepType = "terraform"
-	StepTypeArgoCD                   = "argocd-apps"
-	StepTypeTerraformCustom          = "terraform-custom"
+	StepTypeArgoCD          StepType = "argocd-apps"
+	StepTypeTerraformCustom StepType = "terraform-custom"
 )
 
 type ReplaceType string
 
 const (
 	ReplaceTypeSSM       ReplaceType = "ssm"
-	ReplaceTypeSSMCustom             = "ssm-custom"
-	ReplaceTypeConfig                = "config"
-	ReplaceTypeAgent                 = "agent"
+	ReplaceTypeSSMCustom ReplaceType = "ssm-custom"
+	ReplaceTypeConfig    ReplaceType = "config"
+	ReplaceTypeAgent     ReplaceType = "agent"
 )
 
 type AgentReplaceType string
 
 const (
 	AgentReplaceTypeVersion   AgentReplaceType = "version"
-	AgentReplaceTypeAccountId                  = "accountId"
+	AgentReplaceTypeAccountId AgentReplaceType = "accountId"
 )
 
 type Approve string
 
 const (
 	ApproveMinor  Approve = "minor"
-	ApproveMajor          = "major"
-	ApproveAlways         = "always"
-	ApproveNever          = "never"
+	ApproveMajor  Approve = "major"
+	ApproveAlways Approve = "always"
+	ApproveNever  Approve = "never"
 )
 
 type State struct {
