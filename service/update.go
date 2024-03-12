@@ -321,9 +321,9 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	common.Logger.Printf("applying version %s for step %s\n", release.Original(), step.Name)
 	var err error
 	if firstRun {
-		err = u.createExecuteStepPipelines(step, stepState)
+		err = u.createExecuteStepPipelines(step, stepState, release)
 	} else {
-		err = u.executeStepPipelines(step, stepState)
+		err = u.executeStepPipelines(step, stepState, release)
 	}
 	if err != nil {
 		return err
@@ -372,7 +372,7 @@ func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, r
 	return true, nil
 }
 
-func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep) error {
+func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	repoMetadata, err := u.getRepoMetadata(step.Type)
 	if err != nil {
 		return err
@@ -382,7 +382,8 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 
 	vpcConfig := getVpcConfig(step)
-	err = u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, vpcConfig)
+	imageVersion := u.getBaseImageVersion(step, release)
+	err = u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
@@ -451,19 +452,18 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 	return nil
 }
 
-func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep) error {
+func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	if step.Type == model.StepTypeArgoCD {
 		return nil // Temporarily disabled because ArgoCD has no pipelines
 	}
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
-	if vpcConfig != nil {
-		err := u.resources.CodeBuild.UpdateProjectVpc(projectName, vpcConfig)
-		if err != nil {
-			return fmt.Errorf("failed to update CodeBuild project %s VPC: %w", projectName, err)
-		}
+	imageVersion := u.getBaseImageVersion(step, release)
+	err := u.resources.CodeBuild.UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
+	if err != nil {
+		return err
 	}
-	err := u.updatePipelines(projectName, step)
+	err = u.updatePipelines(projectName, step)
 	if err != nil {
 		return err
 	}
@@ -646,6 +646,10 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	}
 	if !changed {
 		return false, nil
+	}
+	if len(moduleVersions) == 0 {
+		// Add a version for external providers fallback
+		moduleVersions["current"] = getFormattedVersion(releaseTag)
 	}
 	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions)
 	if err != nil {
@@ -1036,6 +1040,16 @@ func (u *updater) updatePipelines(projectName string, step model.Step) error {
 		return fmt.Errorf("failed to update destroy pipeline %s: %w", projectName, err)
 	}
 	return nil
+}
+
+func (u *updater) getBaseImageVersion(step model.Step, release *version.Version) string {
+	if step.BaseImageVersion != "" {
+		return step.BaseImageVersion
+	}
+	if u.config.BaseImageVersion != "" {
+		return u.config.BaseImageVersion
+	}
+	return getFormattedVersion(release)
 }
 
 func getSSMParameterValueFromList(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {

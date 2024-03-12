@@ -105,6 +105,7 @@ prefix: string
 source: https://github.com/entigolabs/entigo-infralib-release
 version: stable | semver
 agent_version: latest | semver
+base_image_version: stable | semver
 steps:
   - name: string
     type: terraform | argocd-apps | terraform-custom 
@@ -112,6 +113,7 @@ steps:
     before: string
     approve: minor | major | never | always
     version: stable | semver
+    base_image_version: stable | semver
     remove: bool
     vpc_id: string
     vpc_subnet_ids: multiline string
@@ -149,6 +151,7 @@ During merging, step name and workspace are used for identifying parent steps, m
 * source - source repository for Entigo Infralib terraform modules
 * version - version of Entigo Infralib terraform modules to use
 * agent_version - image version of Entigo Infralib Agent to use
+* base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
@@ -156,6 +159,7 @@ During merging, step name and workspace are used for identifying parent steps, m
   * before - for patch config, name of the step in the same workspace that this step should be executed before
   * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
   * version - version of Entigo Infralib terraform modules to use
+  * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * remove - whether to remove the step during merge or not, default **false**
   * vpc_id - vpc id for code build
   * vpc_subnet_ids - vpc subnet ids for code build
