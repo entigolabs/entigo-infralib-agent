@@ -84,7 +84,7 @@ func (a *agent) updateProjectImage(project *types.Project, version string) (bool
 	if *project.Environment.Image == repoURL+":"+version {
 		return false, nil
 	}
-	err := a.resources.CodeBuild.UpdateProjectImage(*project.Name, repoURL+":"+version)
+	err := a.resources.CodeBuild.UpdateProject(*project.Name, repoURL+":"+version, nil)
 	if err != nil {
 		return false, err
 	}

@@ -6,12 +6,13 @@ import (
 )
 
 type Config struct {
-	BaseConfig   BaseConfig `yaml:"base_config"`
-	Prefix       string     `yaml:"prefix,omitempty" fake:"{word}"`
-	Source       string     `yaml:"source" fake:"{url}"`
-	Version      string     `yaml:"version,omitempty" fake:"{version}"`
-	AgentVersion string     `yaml:"agent_version,omitempty" fake:"{version}"`
-	Steps        []Step     `yaml:"steps,omitempty" fakesize:"1"`
+	BaseConfig       BaseConfig `yaml:"base_config"`
+	Prefix           string     `yaml:"prefix,omitempty" fake:"{word}"`
+	Source           string     `yaml:"source" fake:"{url}"`
+	Version          string     `yaml:"version,omitempty" fake:"{version}"`
+	AgentVersion     string     `yaml:"agent_version,omitempty" fake:"{version}"`
+	BaseImageVersion string     `yaml:"base_image_version,omitempty"`
+	Steps            []Step     `yaml:"steps,omitempty" fakesize:"1"`
 }
 
 type BaseConfig struct {
@@ -27,6 +28,7 @@ type Step struct {
 	Approve             Approve  `yaml:"approve,omitempty"`
 	Remove              bool     `yaml:"remove,omitempty"`
 	Version             string   `yaml:"version,omitempty"`
+	BaseImageVersion    string   `yaml:"base_image_version,omitempty"`
 	VpcId               string   `yaml:"vpc_id,omitempty"`
 	VpcSubnetIds        string   `yaml:"vpc_subnet_ids,omitempty"`
 	VpcSecurityGroupIds string   `yaml:"vpc_security_group_ids,omitempty"`
@@ -94,33 +96,33 @@ type StepType string
 
 const (
 	StepTypeTerraform       StepType = "terraform"
-	StepTypeArgoCD                   = "argocd-apps"
-	StepTypeTerraformCustom          = "terraform-custom"
+	StepTypeArgoCD          StepType = "argocd-apps"
+	StepTypeTerraformCustom StepType = "terraform-custom"
 )
 
 type ReplaceType string
 
 const (
 	ReplaceTypeSSM       ReplaceType = "ssm"
-	ReplaceTypeSSMCustom             = "ssm-custom"
-	ReplaceTypeConfig                = "config"
-	ReplaceTypeAgent                 = "agent"
+	ReplaceTypeSSMCustom ReplaceType = "ssm-custom"
+	ReplaceTypeConfig    ReplaceType = "config"
+	ReplaceTypeAgent     ReplaceType = "agent"
 )
 
 type AgentReplaceType string
 
 const (
 	AgentReplaceTypeVersion   AgentReplaceType = "version"
-	AgentReplaceTypeAccountId                  = "accountId"
+	AgentReplaceTypeAccountId AgentReplaceType = "accountId"
 )
 
 type Approve string
 
 const (
 	ApproveMinor  Approve = "minor"
-	ApproveMajor          = "major"
-	ApproveAlways         = "always"
-	ApproveNever          = "never"
+	ApproveMajor  Approve = "major"
+	ApproveAlways Approve = "always"
+	ApproveNever  Approve = "never"
 )
 
 type State struct {

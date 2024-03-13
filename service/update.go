@@ -321,9 +321,9 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	common.Logger.Printf("applying version %s for step %s\n", release.Original(), step.Name)
 	var err error
 	if firstRun {
-		err = u.createExecuteStepPipelines(step, stepState)
+		err = u.createExecuteStepPipelines(step, stepState, release)
 	} else {
-		err = u.executeStepPipelines(step, stepState)
+		err = u.executeStepPipelines(step, stepState, release)
 	}
 	if err != nil {
 		return err
@@ -372,7 +372,7 @@ func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, r
 	return true, nil
 }
 
-func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep) error {
+func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	repoMetadata, err := u.getRepoMetadata(step.Type)
 	if err != nil {
 		return err
@@ -382,7 +382,8 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 
 	vpcConfig := getVpcConfig(step)
-	err = u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, vpcConfig)
+	imageVersion := u.getBaseImageVersion(step, release)
+	err = u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
@@ -436,11 +437,11 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 }
 
 func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) error {
-	executionId, err := u.resources.CodePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step.Workspace)
+	executionId, err := u.resources.CodePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step)
 	if err != nil {
 		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step.Workspace)
+	err = u.resources.CodePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step)
 	if err != nil {
 		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
 	}
@@ -451,17 +452,20 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 	return nil
 }
 
-func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep) error {
+func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	if step.Type == model.StepTypeArgoCD {
-		return nil // Temporarily disabled to save time
+		return nil // Temporarily disabled because ArgoCD has no pipelines
 	}
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
-	if vpcConfig != nil {
-		err := u.resources.CodeBuild.UpdateProjectVpc(projectName, vpcConfig)
-		if err != nil {
-			return fmt.Errorf("failed to update CodeBuild project %s VPC: %w", projectName, err)
-		}
+	imageVersion := u.getBaseImageVersion(step, release)
+	err := u.resources.CodeBuild.UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
+	if err != nil {
+		return err
+	}
+	err = u.updatePipelines(projectName, step)
+	if err != nil {
+		return err
 	}
 	executionId, err := u.resources.CodePipeline.StartPipelineExecution(projectName)
 	if err != nil {
@@ -642,6 +646,10 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	}
 	if !changed {
 		return false, nil
+	}
+	if len(moduleVersions) == 0 {
+		// Add a version for external providers fallback
+		moduleVersions["current"] = getFormattedVersion(releaseTag)
 	}
 	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions)
 	if err != nil {
@@ -917,7 +925,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, release *version.Vers
 func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, release *version.Version) (string, error) {
 	re := regexp.MustCompile(replaceRegex)
 	matches := re.FindAllStringSubmatch(configYaml, -1)
-	if matches == nil || len(matches) == 0 {
+	if len(matches) == 0 {
 		return configYaml, nil
 	}
 	for _, match := range matches {
@@ -934,20 +942,20 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 				return "", err
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
-		case model.ReplaceTypeSSMCustom:
+		case string(model.ReplaceTypeSSMCustom):
 			parameter, err := u.getSSMCustomParameter(replaceKey)
 			if err != nil {
 				return "", err
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
-		case model.ReplaceTypeConfig:
+		case string(model.ReplaceTypeConfig):
 			configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
 			configValue, err := util.GetValueFromStruct(configKey, u.config)
 			if err != nil {
 				return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, configValue, 1)
-		case model.ReplaceTypeAgent:
+		case string(model.ReplaceTypeAgent):
 			key := replaceKey[strings.Index(replaceKey, ".")+1:]
 			agentValue, err := u.getReplacementAgentValue(step, key, release)
 			if err != nil {
@@ -979,7 +987,7 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		}
 		moduleVersion, _, err := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, err
-	} else if parts[0] == model.AgentReplaceTypeAccountId {
+	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
 		return u.resources.AccountId, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
@@ -1019,6 +1027,29 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
+}
+
+func (u *updater) updatePipelines(projectName string, step model.Step) error {
+	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
+	err := u.resources.CodePipeline.UpdatePipeline(projectName, stepName, step)
+	if err != nil {
+		return fmt.Errorf("failed to update pipeline %s: %w", projectName, err)
+	}
+	err = u.resources.CodePipeline.UpdatePipeline(fmt.Sprintf("%s-destroy", projectName), stepName, step)
+	if err != nil {
+		return fmt.Errorf("failed to update destroy pipeline %s: %w", projectName, err)
+	}
+	return nil
+}
+
+func (u *updater) getBaseImageVersion(step model.Step, release *version.Version) string {
+	if step.BaseImageVersion != "" {
+		return step.BaseImageVersion
+	}
+	if u.config.BaseImageVersion != "" {
+		return u.config.BaseImageVersion
+	}
+	return getFormattedVersion(release)
 }
 
 func getSSMParameterValueFromList(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {

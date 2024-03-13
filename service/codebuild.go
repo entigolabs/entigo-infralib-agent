@@ -12,12 +12,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
+
 type Builder interface {
-	CreateProject(projectName string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error
+	CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *types.VpcConfig) error
 	CreateAgentProject(projectName string, awsPrefix string, image string) error
 	GetProject(projectName string) (*types.Project, error)
-	UpdateProjectImage(projectName string, image string) error
-	UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfig) error
+	UpdateProject(projectName string, image string, vpcConfig *types.VpcConfig) error
 }
 
 type BuildSpec struct {
@@ -65,7 +66,7 @@ func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logS
 	}
 }
 
-func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, vpcConfig *types.VpcConfig) error {
+func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *types.VpcConfig) error {
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -73,7 +74,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String("public.ecr.aws/entigolabs/entigo-infralib-base:latest"),
+			Image:                    aws.String(fmt.Sprintf("%s:%s", ProjectImage, imageVersion)),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, workspace),
@@ -99,13 +100,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		if vpcConfig != nil {
-			err = b.UpdateProjectVpc(projectName, vpcConfig)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return b.UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -181,24 +176,7 @@ func (b *builder) GetProject(projectName string) (*types.Project, error) {
 	return &projects.Projects[0], nil
 }
 
-func (b *builder) UpdateProjectImage(projectName string, image string) error {
-	common.Logger.Printf("Updating CodeBuild project %s image to %s\n", projectName, image)
-	_, err := b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
-		Name: aws.String(projectName),
-		Environment: &types.ProjectEnvironment{
-			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String(image),
-			Type:                     types.EnvironmentTypeLinuxContainer,
-			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-		},
-	})
-	return err
-}
-
-func (b *builder) UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfig) error {
-	if vpcConfig == nil || vpcConfig.VpcId == nil {
-		return nil
-	}
+func (b *builder) UpdateProject(projectName string, image string, vpcConfig *types.VpcConfig) error {
 	project, err := b.GetProject(projectName)
 	if err != nil {
 		return err
@@ -206,19 +184,43 @@ func (b *builder) UpdateProjectVpc(projectName string, vpcConfig *types.VpcConfi
 	if project == nil {
 		return fmt.Errorf("project %s not found", projectName)
 	}
-	if project.VpcConfig != nil && project.VpcConfig.VpcId != nil && *project.VpcConfig.VpcId == *vpcConfig.VpcId &&
-		util.EqualLists(project.VpcConfig.Subnets, vpcConfig.Subnets) &&
-		util.EqualLists(project.VpcConfig.SecurityGroupIds, vpcConfig.SecurityGroupIds) {
+
+	vpcChanged := vpcConfig != nil && (project.VpcConfig == nil ||
+		(project.VpcConfig.VpcId == nil || *project.VpcConfig.VpcId != *vpcConfig.VpcId) ||
+		!util.EqualLists(project.VpcConfig.Subnets, vpcConfig.Subnets) ||
+		!util.EqualLists(project.VpcConfig.SecurityGroupIds, vpcConfig.SecurityGroupIds))
+
+	imageChanged := image != "" && project.Environment != nil && project.Environment.Image != nil &&
+		*project.Environment.Image != image
+
+	if !vpcChanged && !imageChanged {
 		return nil
 	}
-	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
-		Name:      aws.String(projectName),
-		VpcConfig: vpcConfig,
-	})
-	if err != nil {
-		common.Logger.Printf("updated CodeBuild project %s VPC to %s\n", projectName, *vpcConfig.VpcId)
+
+	if !vpcChanged {
+		vpcConfig = project.VpcConfig
 	}
-	return err
+	if imageChanged {
+		project.Environment.Image = aws.String(image)
+	}
+
+	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
+		Name:        aws.String(projectName),
+		VpcConfig:   vpcConfig,
+		Environment: project.Environment,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to update CodeBuild project %s: %w", projectName, err)
+	}
+
+	if vpcConfig != nil && vpcConfig.VpcId != nil {
+		common.Logger.Printf("updated CodeBuild project %s image to %s and vpc to %s\n", projectName, image,
+			*vpcConfig.VpcId)
+	} else if imageChanged {
+		common.Logger.Printf("updated CodeBuild project %s image to %s\n", projectName, image)
+	}
+	return nil
 }
 
 func buildSpec() *string {
