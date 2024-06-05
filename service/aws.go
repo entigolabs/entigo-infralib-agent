@@ -11,56 +11,42 @@ import (
 	"time"
 )
 
-type AWS interface {
-	SetupAWSResources(branch string) AWSResources
-	SetupCustomCodeCommit(branch string) (CodeCommit, error)
-}
-
 type awsService struct {
-	awsConfig aws.Config
-	awsPrefix string
-	accountId string
-	resources AWSResources
+	awsConfig   aws.Config
+	cloudPrefix string
+	accountId   string
+	resources   AWSResources
 }
 
 type AWSResources struct {
-	CodeCommit    CodeCommit
-	CodePipeline  Pipeline
-	CodeBuild     Builder
-	SSM           SSM
-	IAM           IAM
-	AwsPrefix     string
-	Bucket        string
-	DynamoDBTable string
-	AccountId     string
-	Region        string
+	CloudResources
+	Region string
 }
 
-func NewAWS(awsPrefix string) AWS {
-	awsConfig := GetAWSConfig()
+func NewAWS(cloudPrefix string, awsConfig aws.Config) CloudProvider {
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
 	return &awsService{
-		awsConfig: awsConfig,
-		awsPrefix: awsPrefix,
-		accountId: accountId,
+		awsConfig:   awsConfig,
+		cloudPrefix: cloudPrefix,
+		accountId:   accountId,
 	}
 }
 
-func GetAWSConfig() aws.Config {
+func GetAWSConfig() (*aws.Config, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRetryer(func() aws.Retryer {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
 	if err != nil {
-		common.Logger.Fatalf("Failed to initialize AWS session: %s", err)
+		return nil, err
 	}
-	common.Logger.Printf("AWS session initialized with region: %s\n", cfg.Region)
-	return cfg
+	common.Logger.Printf("CloudProvider session initialized with region: %s\n", cfg.Region)
+	return &cfg, nil
 }
 
-func (a *awsService) SetupAWSResources(branch string) AWSResources {
+func (a *awsService) SetupResources(branch string) Resources {
 	codeCommit, err := a.setupCodeCommit(branch)
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
@@ -79,16 +65,18 @@ func (a *awsService) SetupAWSResources(branch string) AWSResources {
 	codePipeline := NewPipeline(a.awsConfig, *repoMetadata.RepositoryName, branch, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
 
 	a.resources = AWSResources{
-		CodeCommit:    codeCommit,
-		CodePipeline:  codePipeline,
-		CodeBuild:     codeBuild,
-		SSM:           NewSSM(a.awsConfig),
-		IAM:           iam,
-		AwsPrefix:     a.awsPrefix,
-		Bucket:        bucket,
-		DynamoDBTable: *dynamoDBTable.TableName,
-		AccountId:     a.accountId,
-		Region:        a.awsConfig.Region,
+		CloudResources: CloudResources{
+			CodeRepo:      codeCommit,
+			Pipeline:      codePipeline,
+			CodeBuild:     codeBuild,
+			SSM:           NewSSM(a.awsConfig),
+			IAM:           iam,
+			CloudPrefix:   a.cloudPrefix,
+			Bucket:        bucket,
+			DynamoDBTable: *dynamoDBTable.TableName,
+			AccountId:     a.accountId,
+		},
+		Region: a.awsConfig.Region,
 	}
 	return a.resources
 }
@@ -98,12 +86,12 @@ func getAccountId(awsConfig aws.Config) (string, error) {
 	return stsService.GetAccountID()
 }
 
-func (a *awsService) setupCodeCommit(branch string) (CodeCommit, error) {
-	repoName := fmt.Sprintf("%s-%s", a.awsPrefix, a.accountId)
+func (a *awsService) setupCodeCommit(branch string) (CodeRepo, error) {
+	repoName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
 	created, err := codeCommit.CreateRepository()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CodeCommit repository: %w", err)
+		return nil, fmt.Errorf("failed to create CodeRepo repository: %w", err)
 	}
 	if created {
 		err := codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis repository is used to apply Entigo infralib modules."))
@@ -114,12 +102,12 @@ func (a *awsService) setupCodeCommit(branch string) (CodeCommit, error) {
 	return codeCommit, nil
 }
 
-func (a *awsService) SetupCustomCodeCommit(branch string) (CodeCommit, error) {
-	repoName := fmt.Sprintf("%s-custom-%s", a.awsPrefix, a.accountId)
+func (a *awsService) SetupCustomCodeCommit(branch string) (CodeRepo, error) {
+	repoName := fmt.Sprintf("%s-custom-%s", a.cloudPrefix, a.accountId)
 	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
 	created, err := codeCommit.CreateRepository()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create custom CodeCommit repository: %s", err)
+		common.Logger.Fatalf("Failed to create custom CodeRepo repository: %s", err)
 	}
 	if created {
 		err := codeCommit.PutFile("README.md", []byte("# Entigo infralib custom repository\nThis repository is used to apply client modules."))
@@ -137,7 +125,7 @@ func (a *awsService) SetupCustomCodeCommit(branch string) (CodeCommit, error) {
 
 func (a *awsService) createBucket() (string, string) {
 	s3 := NewS3(a.awsConfig)
-	bucket := fmt.Sprintf("%s-%s", a.awsPrefix, a.accountId)
+	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	s3Arn, err := s3.CreateBucket(bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create S3 Bucket: %s", err)
@@ -146,7 +134,7 @@ func (a *awsService) createBucket() (string, string) {
 }
 
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
-	dynamoDBTable, err := CreateDynamoDBTable(a.awsConfig, fmt.Sprintf("%s-%s", a.awsPrefix, a.accountId))
+	dynamoDBTable, err := CreateDynamoDBTable(a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
 		common.Logger.Fatalf("Failed to create DynamoDB table: %s", err)
 	}
@@ -155,12 +143,12 @@ func (a *awsService) createDynamoDBTable() *types.TableDescription {
 
 func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
 	cloudwatch := NewCloudWatch(a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.awsPrefix)
+	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
 	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CloudWatch log group: %s", err)
 	}
-	logStream := fmt.Sprintf("%s-log", a.awsPrefix)
+	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
 	err = cloudwatch.CreateLogStream(logGroup, logStream)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create CloudWatch log stream: %s", err)
@@ -170,7 +158,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
-	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.awsPrefix, logGroupArn, s3Arn, repoArn, dynamoDBTableArn)
+	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, repoArn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn, repoArn)
 
 	if buildRoleCreated || pipelineRoleCreated {
@@ -185,15 +173,15 @@ func (a *awsService) attachRolePolicies(roleArn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
 	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineRepoPolicy(roleArn)})
-	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
+	err := a.resources.IAM.AttachRolePolicy(pipelinePolicy.Arn, pipelineRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
 	}
 
-	buildRoleName := getBuildRoleName(a.awsPrefix)
+	buildRoleName := getBuildRoleName(a.cloudPrefix)
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
 	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildRepoPolicy(roleArn)})
-	err = a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
+	err = a.resources.IAM.AttachRolePolicy(buildPolicy.Arn, buildRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
 	}
@@ -208,18 +196,18 @@ func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (
 	}})
 	if pipelineRole == nil {
 		pipelineRole = iam.GetRole(pipelineRoleName)
-		return *pipelineRole.Arn, false
+		return pipelineRole.Arn, false
 	}
 	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn, repoArn))
-	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
+	err := iam.AttachRolePolicy(pipelinePolicy.Arn, pipelineRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
+		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRole.RoleName, err)
 	}
-	return *pipelineRole.Arn, true
+	return pipelineRole.Arn, true
 }
 
 func (a *awsService) getPipelineRoleName() string {
-	return fmt.Sprintf("%s-pipeline", a.awsPrefix)
+	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
 }
 
 func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {
@@ -231,20 +219,20 @@ func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, r
 	}})
 	if buildRole == nil {
 		buildRole = iam.GetRole(buildRoleName)
-		return *buildRole.Arn, false
+		return buildRole.Arn, false
 	}
 
-	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
+	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", buildRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
+		common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", buildRole.RoleName, err)
 	}
 	buildPolicy := iam.CreatePolicy(buildRoleName,
 		CodeBuildPolicy(logGroupArn, s3Arn, repoArn, dynamoDBTableArn))
-	err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
+	err = iam.AttachRolePolicy(buildPolicy.Arn, buildRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
+		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRole.RoleName, err)
 	}
-	return *buildRole.Arn, true
+	return buildRole.Arn, true
 }
 
 func getBuildRoleName(prefix string) string {

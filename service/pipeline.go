@@ -43,17 +43,6 @@ type changes struct {
 	destroyed int
 }
 
-type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error
-	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step model.Step) (*string, error)
-	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step) error
-	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
-	UpdatePipeline(pipelineName string, stepName string, step model.Step) error
-	StartPipelineExecution(pipelineName string) (*string, error)
-	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error
-}
-
 type pipeline struct {
 	codePipeline *codepipeline.Client
 	repo         string

@@ -1,4 +1,4 @@
-FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.21-alpine AS build
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.22-alpine AS build
 WORKDIR /go/ei-agent
 RUN apk add build-base
 COPY go.* ./

@@ -7,10 +7,6 @@ import (
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
-type SSM interface {
-	GetParameter(name string) (*ssmTypes.Parameter, error)
-}
-
 type ssm struct {
 	ssmClient *awsSSM.Client
 }

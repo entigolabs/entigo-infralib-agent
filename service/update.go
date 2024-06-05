@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	ccTypes "github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
@@ -36,31 +35,30 @@ type Updater interface {
 type updater struct {
 	config                 model.Config
 	patchConfig            model.Config
-	awsService             AWS
-	resources              AWSResources
+	provider               CloudProvider
+	resources              Resources
 	github                 github.Github
 	terraform              terraform.Terraform
-	customCC               CodeCommit
+	customCC               CodeRepo
 	state                  *model.State
 	stableRelease          *version.Version
 	baseConfigReleaseLimit *version.Version
 }
 
 func NewUpdater(flags *common.Flags) Updater {
-	prefix := GetAwsPrefix(flags)
-	awsService := NewAWS(strings.ToLower(prefix))
-	resources := awsService.SetupAWSResources(flags.Branch)
-	config := GetConfig(flags.Config, resources.CodeCommit)
+	provider := GetCloudProvider(flags)
+	resources := provider.SetupResources(flags.Branch)
+	config := GetConfig(flags.Config, resources.GetCodeRepo())
 	githubClient := github.NewGithub(config.Source)
 	stableRelease := getLatestRelease(githubClient)
-	latestState, err := getLatestState(resources.CodeCommit)
+	latestState, err := getLatestState(resources.GetCodeRepo())
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
 	return &updater{
 		config:                 config,
 		patchConfig:            config,
-		awsService:             awsService,
+		provider:               provider,
 		resources:              resources,
 		github:                 githubClient,
 		terraform:              terraform.NewTerraform(githubClient),
@@ -113,7 +111,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
 	}
-	err = u.resources.CodeCommit.PutFile("merged_config.yaml", bytes)
+	err = u.resources.GetCodeRepo().PutFile("merged_config.yaml", bytes)
 	if err != nil {
 		common.Logger.Fatalf("Failed to put merged config file: %s", err)
 	}
@@ -121,7 +119,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	u.state.BaseConfig.Version = release
 }
 
-func getLatestState(codeCommit CodeCommit) (*model.State, error) {
+func getLatestState(codeCommit CodeRepo) (*model.State, error) {
 	file, err := codeCommit.GetFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state file: %w", err)
@@ -144,7 +142,7 @@ func (u *updater) setupCustomCodeCommit() error {
 	for _, step := range u.config.Steps {
 		if step.Type == model.StepTypeTerraformCustom {
 			var err error
-			u.customCC, err = u.awsService.SetupCustomCodeCommit("main")
+			u.customCC, err = u.provider.SetupCustomCodeCommit("main")
 			if err != nil {
 				return err
 			}
@@ -171,7 +169,7 @@ func (u *updater) ProcessSteps() {
 		}
 		err = u.setupCustomCodeCommit()
 		if err != nil {
-			common.Logger.Fatalf("Failed to setup custom CodeCommit: %s", err)
+			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
 		}
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
@@ -383,7 +381,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err = u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, imageVersion, vpcConfig)
+	err = u.resources.GetBuilder().CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
@@ -400,11 +398,11 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	return nil
 }
 
-func getVpcConfig(step model.Step) *types.VpcConfig {
+func getVpcConfig(step model.Step) *VpcConfig {
 	if step.VpcId == "" {
 		return nil
 	}
-	return &types.VpcConfig{
+	return &VpcConfig{
 		VpcId:            aws.String(step.VpcId),
 		Subnets:          util.ToList(step.VpcSubnetIds),
 		SecurityGroupIds: util.ToList(step.VpcSecurityGroupIds),
@@ -416,20 +414,20 @@ func (u *updater) getRepoMetadata(stepType model.StepType) (*ccTypes.RepositoryM
 	case model.StepTypeTerraformCustom:
 		return u.customCC.GetRepoMetadata()
 	default:
-		return u.resources.CodeCommit.GetRepoMetadata()
+		return u.resources.GetCodeRepo().GetRepoMetadata()
 	}
 }
 
 func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, customRepo string) error {
-	executionId, err := u.resources.CodePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step, customRepo)
+	executionId, err := u.resources.GetPipeline().CreateTerraformPipeline(projectName, projectName, stepName, step, customRepo)
 	if err != nil {
 		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, customRepo)
+	err = u.resources.GetPipeline().CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, customRepo)
 	if err != nil {
 		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -437,15 +435,15 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 }
 
 func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) error {
-	executionId, err := u.resources.CodePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step)
+	executionId, err := u.resources.GetPipeline().CreateArgoCDPipeline(projectName, projectName, stepName, step)
 	if err != nil {
 		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step)
+	err = u.resources.GetPipeline().CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step)
 	if err != nil {
 		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -459,7 +457,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err := u.resources.CodeBuild.UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
+	err := u.resources.GetBuilder().UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
 	if err != nil {
 		return err
 	}
@@ -467,12 +465,12 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return err
 	}
-	executionId, err := u.resources.CodePipeline.StartPipelineExecution(projectName)
+	executionId, err := u.resources.GetPipeline().StartPipelineExecution(projectName)
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", projectName, err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	return u.resources.GetPipeline().WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
 }
 
 func getAutoApprove(state *model.StateStep) bool {
@@ -632,7 +630,7 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 }
 
 func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
-	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.CodeCommit)
+	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetCodeRepo())
 	if err != nil {
 		return false, err
 	}
@@ -655,7 +653,7 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return false, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	err = u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
+	err = u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
 	return changed, err
 }
 
@@ -680,7 +678,7 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 				return false, fmt.Errorf("failed to marshal inputs: %s", err)
 			}
 		}
-		err = u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+		err = u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
 			step.Workspace, module.Name), bytes)
 		if err != nil {
 			return false, err
@@ -714,11 +712,11 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 	return executePipeline, nil
 }
 
-func (u *updater) createBackendConf(path string, codeCommit CodeCommit) error {
+func (u *updater) createBackendConf(path string, codeCommit CodeRepo) error {
 	bytes, err := util.CreateKeyValuePairs(map[string]string{
-		"bucket":         u.resources.Bucket,
+		"bucket":         u.resources.GetBucket(),
 		"key":            fmt.Sprintf("%s/terraform.tfstate", path),
-		"dynamodb_table": u.resources.DynamoDBTable,
+		"dynamodb_table": u.resources.GetDynamoDBTable(),
 		"encrypt":        "true",
 	}, "", "")
 	if err != nil {
@@ -732,7 +730,7 @@ func (u *updater) putStateFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.CodeCommit.PutFile(stateFile, bytes)
+	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
 }
 
 func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
@@ -744,7 +742,7 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.CodeCommit.PutFile(stateFile, bytes)
+	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
 }
 
 func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, map[string]string, error) {
@@ -774,7 +772,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		terraform.AddInputs(module.Inputs, moduleBody)
 	}
 	if changed {
-		err := u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
+		err := u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
 		if err != nil {
 			return false, nil, err
 		}
@@ -788,7 +786,7 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+	return u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
 		step.Workspace, module.Name), appBytes)
 }
 
@@ -882,7 +880,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 }
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
-	files, err := u.resources.CodeCommit.ListFolderFiles(fmt.Sprintf("%s-%s/%s/app-of-apps", u.config.Prefix, step.Name, step.Workspace))
+	files, err := u.resources.GetCodeRepo().ListFolderFiles(fmt.Sprintf("%s-%s/%s/app-of-apps", u.config.Prefix, step.Name, step.Workspace))
 	if err != nil {
 		return err
 	}
@@ -891,12 +889,12 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		if modules.Contains(file) {
 			continue
 		}
-		err = u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
 			step.Workspace, file))
 		if err != nil {
 			return err
 		}
-		err = u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
 			step.Workspace, file))
 		if err != nil {
 			return err
@@ -988,7 +986,7 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		moduleVersion, _, err := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, err
 	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
-		return u.resources.AccountId, nil
+		return u.resources.GetAccountId(), nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
@@ -1016,7 +1014,7 @@ func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
 }
 
 func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
-	parameter, err := u.resources.SSM.GetParameter(parameterName)
+	parameter, err := u.resources.GetSSM().GetParameter(parameterName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get ssm parameter %s: %s", parameterName, err)
 	}
@@ -1031,11 +1029,11 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 
 func (u *updater) updatePipelines(projectName string, step model.Step) error {
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
-	err := u.resources.CodePipeline.UpdatePipeline(projectName, stepName, step)
+	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step)
 	if err != nil {
 		return fmt.Errorf("failed to update pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.UpdatePipeline(fmt.Sprintf("%s-destroy", projectName), stepName, step)
+	err = u.resources.GetPipeline().UpdatePipeline(fmt.Sprintf("%s-destroy", projectName), stepName, step)
 	if err != nil {
 		return fmt.Errorf("failed to update destroy pipeline %s: %w", projectName, err)
 	}

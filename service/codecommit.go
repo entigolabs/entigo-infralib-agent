@@ -10,17 +10,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
-type CodeCommit interface {
-	CreateRepository() (bool, error)
-	GetLatestCommitId() (*string, error)
-	GetRepoMetadata() (*types.RepositoryMetadata, error)
-	PutFile(file string, content []byte) error
-	GetFile(file string) ([]byte, error)
-	DeleteFile(file string) error
-	CheckFolderExists(folder string) (bool, error)
-	ListFolderFiles(folder string) ([]string, error)
-}
-
 type codeCommit struct {
 	codecommit     *codecommit.Client
 	repo           *string
@@ -29,7 +18,7 @@ type codeCommit struct {
 	parentCommitId *string
 }
 
-func NewCodeCommit(awsConfig aws.Config, repoName string, branchName string) CodeCommit {
+func NewCodeCommit(awsConfig aws.Config, repoName string, branchName string) CodeRepo {
 	return &codeCommit{
 		codecommit: codecommit.NewFromConfig(awsConfig),
 		repo:       aws.String(repoName),
@@ -52,7 +41,7 @@ func (c *codeCommit) CreateRepository() (bool, error) {
 			c.repoMetadata, err = c.GetRepoMetadata()
 			return false, err
 		} else {
-			common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
+			common.Logger.Fatalf("Failed to create CodeRepo repository: %s", err)
 			return false, err
 		}
 	} else {
@@ -70,7 +59,7 @@ func (c *codeCommit) GetRepoMetadata() (*types.RepositoryMetadata, error) {
 		RepositoryName: c.repo,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CodeCommit repository: %w", err)
+		return nil, fmt.Errorf("failed to get CodeRepo repository: %w", err)
 	}
 	return result.RepositoryMetadata, nil
 }

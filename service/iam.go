@@ -11,13 +11,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
-type IAM interface {
-	AttachRolePolicy(policyArn string, roleName string) error
-	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
-	CreateRole(roleName string, statement []PolicyStatement) *types.Role
-	GetRole(roleName string) *types.Role
-}
-
 type PolicyDocument struct {
 	Version   string
 	Statement []PolicyStatement
@@ -40,7 +33,7 @@ func NewIAM(config aws.Config) IAM {
 	}
 }
 
-func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *types.Role {
+func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *Role {
 	result, err := i.iamClient.CreateRole(context.Background(), &iam.CreateRoleInput{
 		AssumeRolePolicyDocument: getPolicy(statement),
 		RoleName:                 aws.String(roleName),
@@ -54,18 +47,24 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 		}
 	}
 	common.Logger.Printf("Created IAM role: %s\n", roleName)
-	return result.Role
+	return &Role{
+		RoleName: *result.Role.RoleName,
+		Arn:      *result.Role.Arn,
+	}
 }
 
-func (i *identity) GetRole(roleName string) *types.Role {
+func (i *identity) GetRole(roleName string) *Role {
 	role, err := i.iamClient.GetRole(context.Background(), &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
 		common.Logger.Fatalf("Failed to get role %s: %s", roleName, err)
 	}
-	return role.Role
+	return &Role{
+		RoleName: *role.Role.RoleName,
+		Arn:      *role.Role.Arn,
+	}
 }
 
-func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy {
+func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *Policy {
 	result, err := i.iamClient.CreatePolicy(context.Background(), &iam.CreatePolicyInput{
 		PolicyDocument: getPolicy(statement),
 		PolicyName:     aws.String(policyName),
@@ -79,7 +78,9 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 		}
 	}
 	common.Logger.Printf("Created IAM policy: %s\n", policyName)
-	return result.Policy
+	return &Policy{
+		Arn: *result.Policy.Arn,
+	}
 }
 
 func getPolicy(statements []PolicyStatement) *string {
