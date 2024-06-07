@@ -1,7 +1,9 @@
 package service
 
 import (
+	"github.com/entigolabs/entigo-infralib-agent/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"strings"
 )
 
@@ -27,11 +29,11 @@ import (
 //	fmt.Println(bucketAttrs.Name)
 //}
 
-func GetCloudProvider(flags *common.Flags) CloudProvider {
+func GetCloudProvider(flags *common.Flags) model.CloudProvider {
 	prefix := GetAwsPrefix(flags)
-	cfg, err := GetAWSConfig()
+	cfg, err := aws.GetAWSConfig()
 	if err == nil {
-		return NewAWS(strings.ToLower(prefix), *cfg)
+		return aws.NewAWS(strings.ToLower(prefix), *cfg)
 	} else {
 		// Try to initialize google cloud resources
 		common.Logger.Fatalf("Failed to initialize cloud provider: %s", err)

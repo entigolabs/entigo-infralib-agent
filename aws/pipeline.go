@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"context"
@@ -54,7 +54,7 @@ type pipeline struct {
 	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) Pipeline {
+func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) model.Pipeline {
 	return &pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
 		repo:         repo,
@@ -477,7 +477,7 @@ func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
 						"S3Bucket":             bucket,
-						"S3ObjectKey":          agentSource,
+						"S3ObjectKey":          model.AgentSource,
 						"PollForSourceChanges": "false",
 					},
 				},

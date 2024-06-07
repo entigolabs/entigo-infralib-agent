@@ -3,10 +3,10 @@ package service
 import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 const repoURL = "public.ecr.aws/entigolabs/entigo-infralib-agent"
-const agentSource = "agent-source.zip"
 const LatestAgentImage = "latest"
 
 type Agent interface {
@@ -17,10 +17,10 @@ type Agent interface {
 type agent struct {
 	name        string
 	cloudPrefix string
-	resources   Resources
+	resources   model.Resources
 }
 
-func NewAgent(resources Resources) Agent {
+func NewAgent(resources model.Resources) Agent {
 	return &agent{
 		name:        resources.GetCloudPrefix() + "-agent",
 		cloudPrefix: resources.GetCloudPrefix(),
@@ -76,7 +76,7 @@ func (a *agent) UpdateProjectImage(version string) error {
 	return fmt.Errorf("started another execution with updated image")
 }
 
-func (a *agent) updateProjectImage(project *Project, version string) (bool, error) {
+func (a *agent) updateProjectImage(project *model.Project, version string) (bool, error) {
 	if version == "" {
 		version = LatestAgentImage
 	}

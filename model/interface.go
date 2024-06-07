@@ -1,17 +1,22 @@
-package service
+package model
 
-import (
-	"github.com/aws/aws-sdk-go-v2/service/codecommit/types"
-	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
-	"github.com/entigolabs/entigo-infralib-agent/model"
+const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
+const AgentSource = "agent-source.zip"
+
+type ProviderType string
+
+const (
+	AWS    ProviderType = "AWS"
+	GCLOUD ProviderType = "GCLOUD"
 )
 
 type CloudProvider interface {
 	SetupResources(branch string) Resources
-	SetupCustomCodeCommit(branch string) (CodeRepo, error)
+	SetupCustomCodeRepo(branch string) (CodeRepo, error)
 }
 
 type Resources interface {
+	GetProviderType() ProviderType
 	GetCodeRepo() CodeRepo
 	GetPipeline() Pipeline
 	GetBuilder() Builder
@@ -26,7 +31,7 @@ type Resources interface {
 type CodeRepo interface {
 	CreateRepository() (bool, error)
 	GetLatestCommitId() (*string, error)
-	GetRepoMetadata() (*types.RepositoryMetadata, error)
+	GetRepoMetadata() (*RepositoryMetadata, error)
 	PutFile(file string, content []byte) error
 	GetFile(file string) ([]byte, error)
 	DeleteFile(file string) error
@@ -35,14 +40,14 @@ type CodeRepo interface {
 }
 
 type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error
-	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step model.Step) (*string, error)
-	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step) error
+	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) (*string, error)
+	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) error
+	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step Step) (*string, error)
+	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step Step) error
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
-	UpdatePipeline(pipelineName string, stepName string, step model.Step) error
+	UpdatePipeline(pipelineName string, stepName string, step Step) error
 	StartPipelineExecution(pipelineName string) (*string, error)
-	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error
+	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType StepType) error
 }
 
 type Builder interface {
@@ -53,7 +58,7 @@ type Builder interface {
 }
 
 type SSM interface {
-	GetParameter(name string) (*ssmTypes.Parameter, error)
+	GetParameter(name string) (*Parameter, error)
 }
 
 type IAM interface {
@@ -64,6 +69,7 @@ type IAM interface {
 }
 
 type CloudResources struct {
+	ProviderType  ProviderType
 	CodeRepo      CodeRepo
 	Pipeline      Pipeline
 	CodeBuild     Builder
@@ -73,6 +79,10 @@ type CloudResources struct {
 	Bucket        string
 	DynamoDBTable string
 	AccountId     string
+}
+
+func (c CloudResources) GetProviderType() ProviderType {
+	return c.ProviderType
 }
 
 func (c CloudResources) GetCodeRepo() CodeRepo {
@@ -111,6 +121,11 @@ func (c CloudResources) GetDynamoDBTable() string {
 	return c.DynamoDBTable
 }
 
+type RepositoryMetadata struct {
+	Name string
+	URL  string
+}
+
 type VpcConfig struct {
 	SecurityGroupIds []string
 	Subnets          []string
@@ -129,4 +144,21 @@ type Policy struct {
 type Role struct {
 	Arn      string
 	RoleName string
+}
+
+type PolicyDocument struct {
+	Version   string
+	Statement []PolicyStatement
+}
+
+type PolicyStatement struct {
+	Effect    string
+	Action    []string
+	Principal map[string]string `json:",omitempty"`
+	Resource  []string          `json:",omitempty"`
+}
+
+type Parameter struct {
+	Value *string
+	Type  string
 }

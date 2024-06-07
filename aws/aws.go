@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"time"
 )
 
@@ -15,15 +16,15 @@ type awsService struct {
 	awsConfig   aws.Config
 	cloudPrefix string
 	accountId   string
-	resources   AWSResources
+	resources   Resources
 }
 
-type AWSResources struct {
-	CloudResources
+type Resources struct {
+	model.CloudResources
 	Region string
 }
 
-func NewAWS(cloudPrefix string, awsConfig aws.Config) CloudProvider {
+func NewAWS(cloudPrefix string, awsConfig aws.Config) model.CloudProvider {
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
@@ -46,12 +47,12 @@ func GetAWSConfig() (*aws.Config, error) {
 	return &cfg, nil
 }
 
-func (a *awsService) SetupResources(branch string) Resources {
+func (a *awsService) SetupResources(branch string) model.Resources {
 	codeCommit, err := a.setupCodeCommit(branch)
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
-	repoMetadata, err := codeCommit.GetRepoMetadata()
+	repoMetadata, err := codeCommit.GetAWSRepoMetadata()
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
@@ -64,8 +65,9 @@ func (a *awsService) SetupResources(branch string) Resources {
 	codeBuild := NewBuilder(a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
 	codePipeline := NewPipeline(a.awsConfig, *repoMetadata.RepositoryName, branch, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
 
-	a.resources = AWSResources{
-		CloudResources: CloudResources{
+	a.resources = Resources{
+		CloudResources: model.CloudResources{
+			ProviderType:  model.AWS,
 			CodeRepo:      codeCommit,
 			Pipeline:      codePipeline,
 			CodeBuild:     codeBuild,
@@ -86,7 +88,7 @@ func getAccountId(awsConfig aws.Config) (string, error) {
 	return stsService.GetAccountID()
 }
 
-func (a *awsService) setupCodeCommit(branch string) (CodeRepo, error) {
+func (a *awsService) setupCodeCommit(branch string) (*CodeCommit, error) {
 	repoName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
 	created, err := codeCommit.CreateRepository()
@@ -102,7 +104,7 @@ func (a *awsService) setupCodeCommit(branch string) (CodeRepo, error) {
 	return codeCommit, nil
 }
 
-func (a *awsService) SetupCustomCodeCommit(branch string) (CodeRepo, error) {
+func (a *awsService) SetupCustomCodeRepo(branch string) (model.CodeRepo, error) {
 	repoName := fmt.Sprintf("%s-custom-%s", a.cloudPrefix, a.accountId)
 	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
 	created, err := codeCommit.CreateRepository()
@@ -114,7 +116,7 @@ func (a *awsService) SetupCustomCodeCommit(branch string) (CodeRepo, error) {
 		if err != nil {
 			return nil, err
 		}
-		repoMetadata, err := codeCommit.GetRepoMetadata()
+		repoMetadata, err := codeCommit.GetAWSRepoMetadata()
 		if err != nil {
 			return nil, err
 		}
@@ -156,7 +158,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 	return logGroup, logGroupArn, logStream, cloudwatch
 }
 
-func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (IAM, string, string) {
+func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (model.IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
 	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, repoArn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn, repoArn)
@@ -172,7 +174,7 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn st
 func (a *awsService) attachRolePolicies(roleArn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
-	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineRepoPolicy(roleArn)})
+	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []model.PolicyStatement{CodePipelineRepoPolicy(roleArn)})
 	err := a.resources.IAM.AttachRolePolicy(pipelinePolicy.Arn, pipelineRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
@@ -180,16 +182,16 @@ func (a *awsService) attachRolePolicies(roleArn string) {
 
 	buildRoleName := getBuildRoleName(a.cloudPrefix)
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
-	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildRepoPolicy(roleArn)})
+	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []model.PolicyStatement{CodeBuildRepoPolicy(roleArn)})
 	err = a.resources.IAM.AttachRolePolicy(buildPolicy.Arn, buildRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
 	}
 }
 
-func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (string, bool) {
+func (a *awsService) createPipelineRole(iam model.IAM, s3Arn string, repoArn string) (string, bool) {
 	pipelineRoleName := a.getPipelineRoleName()
-	pipelineRole := iam.CreateRole(pipelineRoleName, []PolicyStatement{{
+	pipelineRole := iam.CreateRole(pipelineRoleName, []model.PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
@@ -210,9 +212,9 @@ func (a *awsService) getPipelineRoleName() string {
 	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
 }
 
-func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {
+func createBuildRole(iam model.IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {
 	buildRoleName := getBuildRoleName(prefix)
-	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
+	buildRole := iam.CreateRole(buildRoleName, []model.PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},

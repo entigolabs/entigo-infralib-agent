@@ -2,8 +2,6 @@ package service
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	ccTypes "github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -35,11 +33,11 @@ type Updater interface {
 type updater struct {
 	config                 model.Config
 	patchConfig            model.Config
-	provider               CloudProvider
-	resources              Resources
+	provider               model.CloudProvider
+	resources              model.Resources
 	github                 github.Github
 	terraform              terraform.Terraform
-	customCC               CodeRepo
+	customCC               model.CodeRepo
 	state                  *model.State
 	stableRelease          *version.Version
 	baseConfigReleaseLimit *version.Version
@@ -119,7 +117,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	u.state.BaseConfig.Version = release
 }
 
-func getLatestState(codeCommit CodeRepo) (*model.State, error) {
+func getLatestState(codeCommit model.CodeRepo) (*model.State, error) {
 	file, err := codeCommit.GetFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state file: %w", err)
@@ -135,14 +133,14 @@ func getLatestState(codeCommit CodeRepo) (*model.State, error) {
 	return &state, nil
 }
 
-func (u *updater) setupCustomCodeCommit() error {
+func (u *updater) setupCustomCodeRepo() error {
 	if u.customCC != nil {
 		return nil
 	}
 	for _, step := range u.config.Steps {
 		if step.Type == model.StepTypeTerraformCustom {
 			var err error
-			u.customCC, err = u.provider.SetupCustomCodeCommit("main")
+			u.customCC, err = u.provider.SetupCustomCodeRepo("main")
 			if err != nil {
 				return err
 			}
@@ -167,7 +165,7 @@ func (u *updater) ProcessSteps() {
 		if u.releaseNewerThanConfigVersions(release) {
 			break
 		}
-		err = u.setupCustomCodeCommit()
+		err = u.setupCustomCodeRepo()
 		if err != nil {
 			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
 		}
@@ -381,7 +379,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err = u.resources.GetBuilder().CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, imageVersion, vpcConfig)
+	err = u.resources.GetBuilder().CreateProject(projectName, repoMetadata.URL, stepName, step.Workspace, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
@@ -393,23 +391,23 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	case model.StepTypeArgoCD:
 		//u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove) Temporarily disabled to save time
 	case model.StepTypeTerraformCustom:
-		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, *repoMetadata.RepositoryName)
+		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, repoMetadata.Name)
 	}
 	return nil
 }
 
-func getVpcConfig(step model.Step) *VpcConfig {
+func getVpcConfig(step model.Step) *model.VpcConfig {
 	if step.VpcId == "" {
 		return nil
 	}
-	return &VpcConfig{
-		VpcId:            aws.String(step.VpcId),
+	return &model.VpcConfig{
+		VpcId:            &step.VpcId,
 		Subnets:          util.ToList(step.VpcSubnetIds),
 		SecurityGroupIds: util.ToList(step.VpcSecurityGroupIds),
 	}
 }
 
-func (u *updater) getRepoMetadata(stepType model.StepType) (*ccTypes.RepositoryMetadata, error) {
+func (u *updater) getRepoMetadata(stepType model.StepType) (*model.RepositoryMetadata, error) {
 	switch stepType {
 	case model.StepTypeTerraformCustom:
 		return u.customCC.GetRepoMetadata()
@@ -457,7 +455,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err := u.resources.GetBuilder().UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
+	err := u.resources.GetBuilder().UpdateProject(projectName, fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
 	if err != nil {
 		return err
 	}
@@ -712,7 +710,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 	return executePipeline, nil
 }
 
-func (u *updater) createBackendConf(path string, codeCommit CodeRepo) error {
+func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
 	bytes, err := util.CreateKeyValuePairs(map[string]string{
 		"bucket":         u.resources.GetBucket(),
 		"key":            fmt.Sprintf("%s/terraform.tfstate", path),
@@ -1021,7 +1019,7 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 	if match[2] == "" {
 		return *parameter.Value, nil
 	}
-	if parameter.Type != ssmTypes.ParameterTypeStringList {
+	if parameter.Type != string(ssmTypes.ParameterTypeStringList) {
 		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
@@ -1050,7 +1048,7 @@ func (u *updater) getBaseImageVersion(step model.Step, release *version.Version)
 	return getFormattedVersion(release)
 }
 
-func getSSMParameterValueFromList(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {
+func getSSMParameterValueFromList(match []string, parameter *model.Parameter, replaceKey string, parameterName string) (string, error) {
 	parameters := strings.Split(*parameter.Value, ",")
 	start, err := strconv.Atoi(match[3])
 	if err != nil {

@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"archive/zip"
@@ -10,6 +10,7 @@ import (
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 type S3 interface {
@@ -80,7 +81,7 @@ func (s *s3) createDummyZip(bucketName string) error {
 	}
 	_, err = s.awsS3.PutObject(context.Background(), &awsS3.PutObjectInput{
 		Bucket: aws.String(bucketName),
-		Key:    aws.String(agentSource),
+		Key:    aws.String(model.AgentSource),
 		Body:   bytes.NewReader(buffer.Bytes()),
 	})
 	return err

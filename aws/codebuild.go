@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"context"
@@ -8,11 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
 )
-
-const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 
 type BuildSpec struct {
 	Version   string
@@ -47,7 +46,7 @@ type builder struct {
 	buildSpec    *string
 }
 
-func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string) Builder {
+func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string) model.Builder {
 	return &builder{
 		codeBuild:    codebuild.NewFromConfig(awsConfig),
 		region:       &awsConfig.Region,
@@ -59,7 +58,7 @@ func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logS
 	}
 }
 
-func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *VpcConfig) error {
+func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *model.VpcConfig) error {
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -67,7 +66,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String(fmt.Sprintf("%s:%s", ProjectImage, imageVersion)),
+			Image:                    aws.String(fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, workspace),
@@ -93,7 +92,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
+		return b.UpdateProject(projectName, fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -156,7 +155,7 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 	return err
 }
 
-func (b *builder) GetProject(projectName string) (*Project, error) {
+func (b *builder) GetProject(projectName string) (*model.Project, error) {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return nil, err
@@ -164,7 +163,7 @@ func (b *builder) GetProject(projectName string) (*Project, error) {
 	if project == nil {
 		return nil, nil
 	}
-	return &Project{
+	return &model.Project{
 		Name:  *project.Name,
 		Image: *project.Environment.Image,
 	}, nil
@@ -183,7 +182,7 @@ func (b *builder) getProject(projectName string) (*types.Project, error) {
 	return &projects.Projects[0], nil
 }
 
-func (b *builder) UpdateProject(projectName string, image string, vpcConfig *VpcConfig) error {
+func (b *builder) UpdateProject(projectName string, image string, vpcConfig *model.VpcConfig) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return err
@@ -231,7 +230,7 @@ func (b *builder) UpdateProject(projectName string, image string, vpcConfig *Vpc
 	return nil
 }
 
-func getAwsVpcConfig(vpcConfig *VpcConfig) *types.VpcConfig {
+func getAwsVpcConfig(vpcConfig *model.VpcConfig) *types.VpcConfig {
 	if vpcConfig == nil {
 		return nil
 	}
