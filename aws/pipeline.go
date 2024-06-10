@@ -27,17 +27,6 @@ const applyDestroyName = "ApplyDestroy"
 const argoCDApplyName = "ArgoCDApply"
 const argoCDDestroyName = "ArgoCDDestroy"
 
-type actionCommand string
-
-const (
-	planCommand          actionCommand = "plan"
-	applyCommand         actionCommand = "apply"
-	planDestroyCommand   actionCommand = "plan-destroy"
-	applyDestroyCommand  actionCommand = "apply-destroy"
-	argoCDApplyCommand   actionCommand = "argocd-apply"
-	argoCDDestroyCommand actionCommand = "argocd-destroy"
-)
-
 type changes struct {
 	changed   int
 	destroyed int
@@ -122,7 +111,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(model.PlanCommand, stepName, step),
 					},
 				},
 				},
@@ -153,7 +142,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(model.ApplyCommand, stepName, step),
 					},
 				},
 				},
@@ -223,7 +212,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planDestroyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(model.PlanDestroyCommand, stepName, step),
 					},
 				},
 				},
@@ -254,7 +243,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyDestroyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(model.ApplyDestroyCommand, stepName, step),
 					},
 				},
 				},
@@ -344,7 +333,7 @@ func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string,
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables(argoCDApplyCommand, stepName, step.Workspace),
+						"EnvironmentVariables": getEnvironmentVariables(model.ArgoCDApplyCommand, stepName, step.Workspace),
 					},
 				},
 				},
@@ -421,7 +410,7 @@ func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables(argoCDDestroyCommand, stepName, step.Workspace),
+						"EnvironmentVariables": getEnvironmentVariables(model.ArgoCDDestroyCommand, stepName, step.Workspace),
 					},
 				},
 				},
@@ -577,20 +566,20 @@ func getActionEnvironmentVariables(actionName string, stepName string, step mode
 	}
 }
 
-func getCommand(actionName string) actionCommand {
+func getCommand(actionName string) model.ActionCommand {
 	switch actionName {
 	case planName:
-		return planCommand
+		return model.PlanCommand
 	case applyName:
-		return applyCommand
+		return model.ApplyCommand
 	case destroyName:
-		return planDestroyCommand
+		return model.PlanDestroyCommand
 	case applyDestroyName:
-		return applyDestroyCommand
+		return model.ApplyDestroyCommand
 	case argoCDApplyName:
-		return argoCDApplyCommand
+		return model.ArgoCDApplyCommand
 	case argoCDDestroyName:
-		return argoCDDestroyCommand
+		return model.ArgoCDDestroyCommand
 	}
 	return ""
 }
@@ -838,7 +827,7 @@ func (p *pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 	return pipelineOutput.Pipeline, nil
 }
 
-func getTerraformEnvironmentVariables(command actionCommand, stepName string, step model.Step) string {
+func getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step) string {
 	envVars := getEnvironmentVariablesList(command, stepName, step.Workspace)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
@@ -850,12 +839,12 @@ func getTerraformEnvironmentVariables(command actionCommand, stepName string, st
 	return "[" + strings.Join(envVars, ",") + "]"
 }
 
-func getEnvironmentVariables(command actionCommand, stepName string, workspace string) string {
+func getEnvironmentVariables(command model.ActionCommand, stepName string, workspace string) string {
 	envVars := getEnvironmentVariablesList(command, stepName, workspace)
 	return "[" + strings.Join(envVars, ",") + "]"
 }
 
-func getEnvironmentVariablesList(command actionCommand, stepName string, workspace string) []string {
+func getEnvironmentVariablesList(command model.ActionCommand, stepName string, workspace string) []string {
 	var envVars []string
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))

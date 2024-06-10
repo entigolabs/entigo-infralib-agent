@@ -1,6 +1,7 @@
 package model
 
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
+const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
@@ -130,6 +131,17 @@ type Project struct {
 	Name  string
 	Image string
 }
+
+type ActionCommand string
+
+const (
+	PlanCommand          ActionCommand = "plan"
+	ApplyCommand         ActionCommand = "apply"
+	PlanDestroyCommand   ActionCommand = "plan-destroy"
+	ApplyDestroyCommand  ActionCommand = "apply-destroy"
+	ArgoCDApplyCommand   ActionCommand = "argocd-apply"
+	ArgoCDDestroyCommand ActionCommand = "argocd-destroy"
+)
 
 type Policy struct {
 	Arn string

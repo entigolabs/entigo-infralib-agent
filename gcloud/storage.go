@@ -22,7 +22,8 @@ func NewStorage(ctx context.Context, projectId string, bucket string) (*GStorage
 		return nil, err
 	}
 	bucketHandle := client.Bucket(bucket)
-	if err = createBucket(ctx, projectId, bucketHandle); err != nil {
+	// TODO make location configurable
+	if err = createBucket(ctx, projectId, "europe-north1", bucketHandle); err != nil {
 		return nil, err
 	}
 	return &GStorage{
@@ -34,7 +35,7 @@ func NewStorage(ctx context.Context, projectId string, bucket string) (*GStorage
 	}, nil
 }
 
-func createBucket(ctx context.Context, projectId string, bucketHandle *storage.BucketHandle) error {
+func createBucket(ctx context.Context, projectId string, location string, bucketHandle *storage.BucketHandle) error {
 	exists, err := bucketExists(ctx, bucketHandle)
 	if err != nil {
 		return err
@@ -43,9 +44,9 @@ func createBucket(ctx context.Context, projectId string, bucketHandle *storage.B
 		return nil
 	}
 	return bucketHandle.Create(ctx, projectId, &storage.BucketAttrs{
-		Location:                   "EUROPE-WEST4", // TODO make this configurable
-		PredefinedACL:              "private",
-		PredefinedDefaultObjectACL: "private",
+		Location:                   location,
+		PredefinedACL:              "projectPrivate",
+		PredefinedDefaultObjectACL: "projectPrivate",
 		PublicAccessPrevention:     storage.PublicAccessPreventionEnforced,
 		VersioningEnabled:          true,
 	})
