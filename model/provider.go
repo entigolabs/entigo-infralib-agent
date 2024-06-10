@@ -1,6 +1,8 @@
 package model
 
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
+const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
+const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
 type ProviderType string
@@ -25,12 +27,9 @@ type Resources interface {
 	GetCloudPrefix() string
 	GetBucket() string
 	GetAccountId() string
-	GetDynamoDBTable() string
 }
 
 type CodeRepo interface {
-	CreateRepository() (bool, error)
-	GetLatestCommitId() (*string, error)
 	GetRepoMetadata() (*RepositoryMetadata, error)
 	PutFile(file string, content []byte) error
 	GetFile(file string) ([]byte, error)
@@ -69,16 +68,15 @@ type IAM interface {
 }
 
 type CloudResources struct {
-	ProviderType  ProviderType
-	CodeRepo      CodeRepo
-	Pipeline      Pipeline
-	CodeBuild     Builder
-	SSM           SSM
-	IAM           IAM
-	CloudPrefix   string
-	Bucket        string
-	DynamoDBTable string
-	AccountId     string
+	ProviderType ProviderType
+	CodeRepo     CodeRepo
+	Pipeline     Pipeline
+	CodeBuild    Builder
+	SSM          SSM
+	IAM          IAM
+	CloudPrefix  string
+	Bucket       string
+	AccountId    string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -115,10 +113,6 @@ func (c CloudResources) GetBucket() string {
 
 func (c CloudResources) GetAccountId() string {
 	return c.AccountId
-}
-
-func (c CloudResources) GetDynamoDBTable() string {
-	return c.DynamoDBTable
 }
 
 type RepositoryMetadata struct {

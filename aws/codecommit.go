@@ -35,7 +35,7 @@ func (c *CodeCommit) CreateRepository() (bool, error) {
 	if err != nil {
 		var awsError *types.RepositoryNameExistsException
 		if errors.As(err, &awsError) {
-			c.parentCommitId, err = c.GetLatestCommitId()
+			c.parentCommitId, err = c.getLatestCommitId()
 			if err != nil {
 				return false, err
 			}
@@ -76,7 +76,7 @@ func (c *CodeCommit) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	}, nil
 }
 
-func (c *CodeCommit) GetLatestCommitId() (*string, error) {
+func (c *CodeCommit) getLatestCommitId() (*string, error) {
 	result, err := c.codeCommit.GetBranch(context.Background(), &codecommit.GetBranchInput{
 		RepositoryName: c.repo,
 		BranchName:     c.branch,
@@ -88,7 +88,7 @@ func (c *CodeCommit) GetLatestCommitId() (*string, error) {
 }
 
 func (c *CodeCommit) updateLatestCommitId() error {
-	commitId, err := c.GetLatestCommitId()
+	commitId, err := c.getLatestCommitId()
 	if err != nil {
 		return err
 	}

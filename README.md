@@ -60,6 +60,7 @@ OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
 * aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
 
 Example
 ```bash
@@ -74,6 +75,7 @@ OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
 * aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
 
 Example
 ```bash

@@ -1,9 +1,11 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
+	"github.com/entigolabs/entigo-infralib-agent/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -44,7 +46,7 @@ type updater struct {
 }
 
 func NewUpdater(flags *common.Flags) Updater {
-	provider := GetCloudProvider(flags)
+	provider := GetCloudProvider(context.Background(), flags)
 	resources := provider.SetupResources(flags.Branch)
 	config := GetConfig(flags.Config, resources.GetCodeRepo())
 	githubClient := github.NewGithub(config.Source)
@@ -647,7 +649,7 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 		// Add a version for external providers fallback
 		moduleVersions["current"] = getFormattedVersion(releaseTag)
 	}
-	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions)
+	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions, u.resources.GetProviderType())
 	if err != nil {
 		return false, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
@@ -711,12 +713,18 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 }
 
 func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
-	bytes, err := util.CreateKeyValuePairs(map[string]string{
-		"bucket":         u.resources.GetBucket(),
-		"key":            fmt.Sprintf("%s/terraform.tfstate", path),
-		"dynamodb_table": u.resources.GetDynamoDBTable(),
-		"encrypt":        "true",
-	}, "", "")
+	key := fmt.Sprintf("%s/terraform.tfstate", path)
+	backendConfig := map[string]string{
+		"bucket":  u.resources.GetBucket(),
+		"encrypt": "true",
+	}
+	if u.resources.GetProviderType() == model.GCLOUD {
+		backendConfig["prefix"] = key
+	} else {
+		backendConfig["key"] = key
+		backendConfig["dynamodb_table"] = u.resources.(aws.Resources).DynamoDBTable
+	}
+	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
 	if err != nil {
 		return fmt.Errorf("failed to convert backend config values: %w", err)
 	}
@@ -865,7 +873,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 	if workspaceExists {
 		return nil
 	}
-	providerBytes, err := u.terraform.GetEmptyTerraformProvider(getFormattedVersion(semver))
+	providerBytes, err := u.terraform.GetEmptyTerraformProvider(getFormattedVersion(semver), u.resources.GetProviderType())
 	if err != nil {
 		return fmt.Errorf("failed to create empty terraform provider: %w", err)
 	}

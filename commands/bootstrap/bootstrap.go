@@ -1,16 +1,18 @@
 package bootstrap
 
 import (
+	"context"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
 func Bootstrap(flags *common.Flags) {
-	provider := service.GetCloudProvider(flags)
+	provider := service.GetCloudProvider(context.Background(), flags)
 	resources := provider.SetupResources(flags.Branch)
 	config := service.GetConfig(flags.Config, resources.GetCodeRepo())
 	if config.AgentVersion == "" {
-		config.AgentVersion = service.LatestAgentImage
+		config.AgentVersion = model.LatestImageVersion
 	}
 
 	common.Logger.Printf("Agent version: %s\n", config.AgentVersion)

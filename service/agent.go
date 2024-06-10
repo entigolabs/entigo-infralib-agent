@@ -6,9 +6,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
-const repoURL = "public.ecr.aws/entigolabs/entigo-infralib-agent"
-const LatestAgentImage = "latest"
-
 type Agent interface {
 	CreatePipeline(version string) error
 	UpdateProjectImage(version string) error
@@ -50,7 +47,7 @@ func (a *agent) createCodeBuild(version string) error {
 		_, err = a.updateProjectImage(project, version)
 		return err
 	}
-	return a.resources.GetBuilder().CreateAgentProject(a.name, a.cloudPrefix, repoURL+":"+version)
+	return a.resources.GetBuilder().CreateAgentProject(a.name, a.cloudPrefix, model.AgentImage+":"+version)
 }
 
 func (a *agent) UpdateProjectImage(version string) error {
@@ -78,15 +75,15 @@ func (a *agent) UpdateProjectImage(version string) error {
 
 func (a *agent) updateProjectImage(project *model.Project, version string) (bool, error) {
 	if version == "" {
-		version = LatestAgentImage
+		version = model.LatestImageVersion
 	}
-	if project.Image == repoURL+":"+version {
+	if project.Image == model.AgentImage+":"+version {
 		return false, nil
 	}
-	err := a.resources.GetBuilder().UpdateProject(project.Name, repoURL+":"+version, nil)
+	err := a.resources.GetBuilder().UpdateProject(project.Name, model.AgentImage+":"+version, nil)
 	if err != nil {
 		return false, err
 	}
-	common.Logger.Printf("Updated Agent CodeBuild project %s image to %s\n", project.Name, repoURL+":"+version)
+	common.Logger.Printf("Updated Agent CodeBuild project %s image to %s\n", project.Name, model.AgentImage+":"+version)
 	return true, nil
 }

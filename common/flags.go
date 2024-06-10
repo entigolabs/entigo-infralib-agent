@@ -8,6 +8,7 @@ type Flags struct {
 	BaseConfig   string
 	Branch       string
 	AWSPrefix    string
+	ProjectId    string
 }
 
 func (f *Flags) Setup(cmd Command) error {

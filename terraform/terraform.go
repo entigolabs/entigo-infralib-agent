@@ -24,8 +24,8 @@ const versionsFile = "versions.tf"
 const awsTagsRegex = `(\w+)\s*=\s*"([^"]+)"`
 
 type Terraform interface {
-	GetTerraformProvider(step model.Step, moduleVersions map[string]string) ([]byte, error)
-	GetEmptyTerraformProvider(version string) ([]byte, error)
+	GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, error)
+	GetEmptyTerraformProvider(version string, providerType model.ProviderType) ([]byte, error)
 }
 
 type terraform struct {
@@ -38,7 +38,7 @@ func NewTerraform(github github.Github) Terraform {
 	}
 }
 
-func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string) ([]byte, error) {
+func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, error) {
 	if len(moduleVersions) == 0 {
 		return make([]byte, 0), nil
 	}
@@ -51,6 +51,7 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	if err != nil {
 		return nil, err
 	}
+	modifyBackendType(file.Body(), providerType)
 	providersAttributes := make(map[string]*hclwrite.Attribute)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
@@ -76,12 +77,28 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	return hclwrite.Format(file.Bytes()), nil
 }
 
-func (t *terraform) GetEmptyTerraformProvider(version string) ([]byte, error) {
+func (t *terraform) GetEmptyTerraformProvider(version string, providerType model.ProviderType) ([]byte, error) {
 	file, err := t.getTerraformFile(providerPath, baseFile, version)
 	if err != nil {
 		return nil, err
 	}
+	modifyBackendType(file.Body(), providerType)
 	return hclwrite.Format(file.Bytes()), nil
+}
+
+func modifyBackendType(body *hclwrite.Body, providerType model.ProviderType) {
+	if providerType != model.GCLOUD {
+		return
+	}
+	terraformBlock := body.FirstMatchingBlock("terraform", []string{})
+	if terraformBlock == nil {
+		return
+	}
+	backendBlock := terraformBlock.Body().FirstMatchingBlock("backend", []string{"s3"})
+	if backendBlock == nil {
+		return
+	}
+	backendBlock.SetLabels([]string{"gcs"})
 }
 
 func (t *terraform) getTerraformFile(filePath string, fileName string, release string) (*hclwrite.File, error) {

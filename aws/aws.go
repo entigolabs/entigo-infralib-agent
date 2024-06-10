@@ -21,10 +21,12 @@ type awsService struct {
 
 type Resources struct {
 	model.CloudResources
-	Region string
+	DynamoDBTable string
+	Region        string
 }
 
-func NewAWS(cloudPrefix string, awsConfig aws.Config) model.CloudProvider {
+func NewAWS(ctx context.Context, cloudPrefix string) model.CloudProvider {
+	awsConfig := GetAWSConfig(ctx)
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
@@ -36,15 +38,15 @@ func NewAWS(cloudPrefix string, awsConfig aws.Config) model.CloudProvider {
 	}
 }
 
-func GetAWSConfig() (*aws.Config, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRetryer(func() aws.Retryer {
+func GetAWSConfig(ctx context.Context) aws.Config {
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRetryer(func() aws.Retryer {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
 	if err != nil {
-		return nil, err
+		common.Logger.Fatalf("Failed to initialize AWS session: %s", err)
 	}
-	common.Logger.Printf("CloudProvider session initialized with region: %s\n", cfg.Region)
-	return &cfg, nil
+	common.Logger.Printf("AWS session initialized with region: %s\n", cfg.Region)
+	return cfg
 }
 
 func (a *awsService) SetupResources(branch string) model.Resources {
@@ -67,18 +69,18 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
-			ProviderType:  model.AWS,
-			CodeRepo:      codeCommit,
-			Pipeline:      codePipeline,
-			CodeBuild:     codeBuild,
-			SSM:           NewSSM(a.awsConfig),
-			IAM:           iam,
-			CloudPrefix:   a.cloudPrefix,
-			Bucket:        bucket,
-			DynamoDBTable: *dynamoDBTable.TableName,
-			AccountId:     a.accountId,
+			ProviderType: model.AWS,
+			CodeRepo:     codeCommit,
+			Pipeline:     codePipeline,
+			CodeBuild:    codeBuild,
+			SSM:          NewSSM(a.awsConfig),
+			IAM:          iam,
+			CloudPrefix:  a.cloudPrefix,
+			Bucket:       bucket,
+			AccountId:    a.accountId,
 		},
-		Region: a.awsConfig.Region,
+		DynamoDBTable: *dynamoDBTable.TableName,
+		Region:        a.awsConfig.Region,
 	}
 	return a.resources
 }
