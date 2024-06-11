@@ -1,20 +1,21 @@
 package gcloud
 
 import (
-	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-	run "cloud.google.com/go/run/apiv2"
-	"cloud.google.com/go/run/apiv2/runpb"
+	deploy "cloud.google.com/go/deploy/apiv1"
+	"cloud.google.com/go/deploy/apiv1/deploypb"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"google.golang.org/genproto/googleapis/api"
+	"github.com/googleapis/gax-go/v2/apierror"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 type pipeline struct {
 	ctx            context.Context
-	client         *run.JobsClient
+	client         *deploy.CloudDeployClient
 	projectId      string
 	location       string
 	serviceAccount string
@@ -22,7 +23,7 @@ type pipeline struct {
 }
 
 func NewPipeline(ctx context.Context, projectId string, serviceAccount string, bucket string) (model.Pipeline, error) {
-	client, err := run.NewJobsClient(ctx)
+	client, err := deploy.NewCloudDeployClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -37,88 +38,88 @@ func NewPipeline(ctx context.Context, projectId string, serviceAccount string, b
 }
 
 func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
-	job, err := p.getJob(pipelineName)
-	if err != nil {
-		return nil, err
-	}
-	if job != nil {
-		return p.StartPipelineExecution(pipelineName)
-	}
-	bucket := p.bucket
-	if customRepo != "" {
-		bucket = customRepo
-	}
-	_, err = p.client.CreateJob(p.ctx, &runpb.CreateJobRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/%s", p.projectId, p.location),
-		Job: &runpb.Job{
-			Template: &runpb.ExecutionTemplate{
-				Template: &runpb.TaskTemplate{
-					Containers: []*runpb.Container{{
-						Name:  "terraform",
-						Image: model.ProjectImageDocker,
-						Env:   p.getEnvironmentVariables(model.PlanCommand, stepName, step.Workspace),
-					}},
-					Volumes: []*runpb.Volume{{
-						Name: bucket,
-						VolumeType: &runpb.Volume_Gcs{
-							Gcs: &runpb.GCSVolumeSource{
-								Bucket: bucket,
-							},
-						},
-					}},
-					Timeout:        &durationpb.Duration{Seconds: 86400},
-					ServiceAccount: p.serviceAccount,
+	collection := fmt.Sprintf("projects/%s/locations/%s", p.projectId, p.location)
+	_, err := p.client.CreateTarget(p.ctx, &deploypb.CreateTargetRequest{
+		Parent:   collection,
+		TargetId: fmt.Sprintf("%s-plan", pipelineName),
+		Target: &deploypb.Target{
+			DeploymentTarget: &deploypb.Target_Run{
+				Run: &deploypb.CloudRunLocation{
+					Location: collection,
 				},
 			},
-			LaunchStage: api.LaunchStage_BETA,
+			ExecutionConfigs: []*deploypb.ExecutionConfig{{
+				Usages: []deploypb.ExecutionConfig_ExecutionEnvironmentUsage{
+					deploypb.ExecutionConfig_RENDER,
+					deploypb.ExecutionConfig_DEPLOY,
+				},
+				ExecutionTimeout: &durationpb.Duration{Seconds: 86400},
+				ServiceAccount:   p.serviceAccount,
+			}},
 		},
-		JobId: pipelineName,
+	})
+	if err != nil {
+		var apiError *apierror.APIError
+		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.AlreadyExists {
+			return nil, err
+		}
+	}
+	_, err = p.client.CreateTarget(p.ctx, &deploypb.CreateTargetRequest{
+		Parent:   collection,
+		TargetId: fmt.Sprintf("%s-apply", pipelineName),
+		Target: &deploypb.Target{
+			DeploymentTarget: &deploypb.Target_Run{
+				Run: &deploypb.CloudRunLocation{
+					Location: collection,
+				},
+			},
+			ExecutionConfigs: []*deploypb.ExecutionConfig{{
+				Usages: []deploypb.ExecutionConfig_ExecutionEnvironmentUsage{
+					deploypb.ExecutionConfig_RENDER,
+					deploypb.ExecutionConfig_DEPLOY,
+				},
+				ExecutionTimeout: &durationpb.Duration{Seconds: 86400},
+				ServiceAccount:   p.serviceAccount,
+			}},
+			RequireApproval: true,
+		},
+	})
+	if err != nil {
+		var apiError *apierror.APIError
+		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.AlreadyExists {
+			return nil, err
+		}
+	}
+	common.Logger.Printf("%s/targets/%s-plan\n", collection, pipelineName)
+	deliveryPipeline, err := p.client.CreateDeliveryPipeline(p.ctx, &deploypb.CreateDeliveryPipelineRequest{
+		Parent:             collection,
+		DeliveryPipelineId: pipelineName,
+		DeliveryPipeline: &deploypb.DeliveryPipeline{
+			Pipeline: &deploypb.DeliveryPipeline_SerialPipeline{
+				SerialPipeline: &deploypb.SerialPipeline{
+					Stages: []*deploypb.Stage{
+						{
+							TargetId: fmt.Sprintf("%s-plan", pipelineName),
+							Profiles: []string{"plan"},
+						},
+						{
+							TargetId: fmt.Sprintf("%s-apply", pipelineName),
+							Profiles: []string{"apply"},
+						},
+					},
+				},
+			},
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	return p.StartPipelineExecution(pipelineName)
+	name := deliveryPipeline.Name()
+	return &name, nil
 }
 
 func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error {
-	job, err := p.getJob(pipelineName)
-	if err != nil {
-		return nil
-	}
-	if job != nil {
-		// TODO Update env vars?
-	}
-	bucket := p.bucket
-	if customRepo != "" {
-		bucket = customRepo
-	}
-	_, err = p.client.CreateJob(p.ctx, &runpb.CreateJobRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/%s", p.projectId, p.location),
-		Job: &runpb.Job{
-			Template: &runpb.ExecutionTemplate{
-				Template: &runpb.TaskTemplate{
-					Containers: []*runpb.Container{{
-						Name:  "terraform",
-						Image: model.ProjectImageDocker,
-						Env:   p.getEnvironmentVariables(model.PlanDestroyCommand, stepName, step.Workspace),
-					}},
-					Volumes: []*runpb.Volume{{
-						Name: bucket,
-						VolumeType: &runpb.Volume_Gcs{
-							Gcs: &runpb.GCSVolumeSource{
-								Bucket: bucket,
-							},
-						},
-					}},
-					Timeout:        &durationpb.Duration{Seconds: 86400},
-					ServiceAccount: p.serviceAccount,
-				},
-			},
-			LaunchStage: api.LaunchStage_BETA,
-		},
-		JobId: pipelineName,
-	})
-	return err
+	return errors.New("not implemented")
 }
 
 func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step model.Step) (*string, error) {
@@ -138,64 +139,9 @@ func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 }
 
 func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) {
-	operation, err := p.client.RunJob(p.ctx, &runpb.RunJobRequest{
-		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", p.projectId, p.location, pipelineName),
-	})
-	if err != nil {
-		return nil, err
-	}
-	name := operation.Name()
-	return &name, nil
+	return nil, errors.New("not implemented")
 }
 
 func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error {
-	operation, err := p.client.WaitOperation(p.ctx, &longrunningpb.WaitOperationRequest{
-		Name: *executionId,
-	})
-	if err != nil {
-		return err
-	}
-	if !operation.Done {
-		return errors.New("operation is not done")
-	}
-	resultError := operation.GetError()
-	if resultError == nil {
-		return nil
-	}
-	return errors.New(resultError.Message)
-}
-
-func (p *pipeline) getJob(pipelineName string) (*runpb.Job, error) {
-	job, err := p.client.GetJob(p.ctx, &runpb.GetJobRequest{
-		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", p.projectId, p.location, pipelineName),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return job, nil
-}
-
-func (p *pipeline) getEnvironmentVariables(command model.ActionCommand, stepName string, workspace string) []*runpb.EnvVar {
-	return []*runpb.EnvVar{
-		{
-			Name:   "GOOGLE_REGION",
-			Values: &runpb.EnvVar_Value{Value: p.location},
-		},
-		{
-			Name:   "GOOGLE_PROJECT",
-			Values: &runpb.EnvVar_Value{Value: p.projectId},
-		},
-		{
-			Name:   "COMMAND",
-			Values: &runpb.EnvVar_Value{Value: string(command)},
-		},
-		{
-			Name:   "TF_VAR_prefix",
-			Values: &runpb.EnvVar_Value{Value: stepName},
-		},
-		{
-			Name:   "WORKSPACE",
-			Values: &runpb.EnvVar_Value{Value: workspace},
-		},
-	}
+	return errors.New("not implemented")
 }

@@ -59,6 +59,7 @@ func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logS
 }
 
 func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *model.VpcConfig) error {
+	image := fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -66,7 +67,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String(fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)),
+			Image:                    aws.String(image),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, workspace),
@@ -92,7 +93,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
+		return b.UpdateProject(projectName, image, vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -117,7 +118,7 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string, w
 	}}
 }
 
-func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image string) error {
+func (b *builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
@@ -126,7 +127,7 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Small,
-			Image:                    aws.String(image),
+			Image:                    aws.String(model.AgentImage + ":" + imageVersion),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables: []types.EnvironmentVariable{

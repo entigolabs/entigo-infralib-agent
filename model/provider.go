@@ -3,6 +3,7 @@ package model
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
+const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
@@ -18,6 +19,7 @@ type CloudProvider interface {
 	SetupCustomCodeRepo(branch string) (CodeRepo, error)
 }
 
+// TODO AccountId should only belong to AWS Resources
 type Resources interface {
 	GetProviderType() ProviderType
 	GetCodeRepo() CodeRepo
@@ -52,7 +54,7 @@ type Pipeline interface {
 
 type Builder interface {
 	CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *VpcConfig) error
-	CreateAgentProject(projectName string, awsPrefix string, image string) error
+	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
 	GetProject(projectName string) (*Project, error)
 	UpdateProject(projectName string, image string, vpcConfig *VpcConfig) error
 }

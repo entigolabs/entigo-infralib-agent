@@ -715,14 +715,14 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
 	key := fmt.Sprintf("%s/terraform.tfstate", path)
 	backendConfig := map[string]string{
-		"bucket":  u.resources.GetBucket(),
-		"encrypt": "true",
+		"bucket": u.resources.GetBucket(),
 	}
 	if u.resources.GetProviderType() == model.GCLOUD {
 		backendConfig["prefix"] = key
 	} else {
 		backendConfig["key"] = key
 		backendConfig["dynamodb_table"] = u.resources.(aws.Resources).DynamoDBTable
+		backendConfig["encrypt"] = "true"
 	}
 	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
 	if err != nil {

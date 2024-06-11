@@ -47,7 +47,7 @@ func (a *agent) createCodeBuild(version string) error {
 		_, err = a.updateProjectImage(project, version)
 		return err
 	}
-	return a.resources.GetBuilder().CreateAgentProject(a.name, a.cloudPrefix, model.AgentImage+":"+version)
+	return a.resources.GetBuilder().CreateAgentProject(a.name, a.cloudPrefix, version)
 }
 
 func (a *agent) UpdateProjectImage(version string) error {
