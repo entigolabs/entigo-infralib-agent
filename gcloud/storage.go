@@ -66,18 +66,17 @@ func bucketExists(ctx context.Context, bucketHandle *storage.BucketHandle) (bool
 func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	return &model.RepositoryMetadata{
 		Name: g.bucket,
-		URL:  "", // TODO
+		URL:  g.bucket,
 	}, nil
 }
 
 func (g *GStorage) PutFile(file string, content []byte) error {
 	writer := g.bucketHandle.Object(file).NewWriter(g.ctx)
 	_, err := writer.Write(content)
-	if err != nil {
+	defer func(writer *storage.Writer) {
 		_ = writer.Close()
-		return err
-	}
-	return writer.Close()
+	}(writer)
+	return err
 }
 
 func (g *GStorage) GetFile(file string) ([]byte, error) {

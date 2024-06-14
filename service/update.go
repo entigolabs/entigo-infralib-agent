@@ -457,7 +457,12 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err := u.resources.GetBuilder().UpdateProject(projectName, fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
+	repoMetadata, err := u.getRepoMetadata(step.Type)
+	if err != nil {
+		return err
+	}
+	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, step.Name, step.Workspace,
+		fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
 	if err != nil {
 		return err
 	}

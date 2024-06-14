@@ -28,16 +28,18 @@ func NewGCloud(ctx context.Context, cloudPrefix string, projectId string) model.
 func (g *gcloudService) SetupResources(_ string) model.Resources {
 	// TODO Add Log messages when creating resources, just like with AWS
 	// TODO Default clients use gRPC, connections must be closed before exiting
+	location := "europe-north1" // TODO Make this configurable
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage bucket: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, "infralib-agent@entigo-infralib.iam.gserviceaccount.com", bucket)
+	builder, err := NewBuilder(g.ctx, g.projectId, location, "infralib-agent@entigo-infralib.iam.gserviceaccount.com")
 	if err != nil {
 		common.Logger.Fatalf("Failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, "infralib-agent@entigo-infralib.iam.gserviceaccount.com", bucket)
+	pipeline, err := NewPipeline(g.ctx, g.projectId, location, g.cloudPrefix,
+		"infralib-agent@entigo-infralib.iam.gserviceaccount.com", codeStorage, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create pipeline: %s", err)
 	}

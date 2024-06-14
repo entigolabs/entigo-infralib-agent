@@ -4,15 +4,23 @@ import (
 	run "cloud.google.com/go/run/apiv2"
 	"cloud.google.com/go/run/apiv2/runpb"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/googleapis/gax-go/v2/apierror"
+	runv1 "google.golang.org/api/run/v1"
 	"google.golang.org/genproto/googleapis/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"io/fs"
+	"os"
+	k8syaml "sigs.k8s.io/yaml"
+	"strings"
 )
+
+const tempFolder = "/tmp"
 
 type Builder struct {
 	ctx            context.Context
@@ -20,10 +28,9 @@ type Builder struct {
 	projectId      string
 	location       string
 	serviceAccount string
-	bucket         string
 }
 
-func NewBuilder(ctx context.Context, projectId string, serviceAccount string, bucket string) (*Builder, error) {
+func NewBuilder(ctx context.Context, projectId string, location string, serviceAccount string) (*Builder, error) {
 	client, err := run.NewJobsClient(ctx)
 	if err != nil {
 		return nil, err
@@ -32,60 +39,107 @@ func NewBuilder(ctx context.Context, projectId string, serviceAccount string, bu
 		ctx:            ctx,
 		client:         client,
 		projectId:      projectId,
-		location:       "europe-north1", // TODO make this configurable
+		location:       location,
 		serviceAccount: serviceAccount,
-		bucket:         bucket,
 	}, nil
 }
 
-func (b *Builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *model.VpcConfig) error {
-	job, err := b.getJob(projectName)
+// TODO ArgoCD has different commands!
+// TODO Custom Repo storage?
+func (b *Builder) CreateProject(projectName string, bucket string, stepName string, workspace string, imageVersion string, vpcConfig *model.VpcConfig) error {
+	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
+	return b.createJobManifests(projectName, bucket, stepName, workspace, image, vpcConfig)
+}
+
+func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, workspace string, image string, vpcConfig *model.VpcConfig) error {
+	templateMeta, err := getVPCMeta(vpcConfig)
 	if err != nil {
 		return err
 	}
-	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
-	if job != nil {
-		return b.UpdateProject(projectName, image, vpcConfig)
+	err = b.createJobManifest(projectName, model.PlanCommand, bucket, stepName, workspace, image, templateMeta)
+	if err != nil {
+		return fmt.Errorf("failed to create plan job manifest: %v", err)
 	}
-	_, err = b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
-		Job: &runpb.Job{
-			Template: &runpb.ExecutionTemplate{
-				Template: &runpb.TaskTemplate{
-					Containers: []*runpb.Container{{
-						Name:  "terraform",
-						Image: image,
-						Env:   b.getEnvironmentVariables(projectName, stepName, workspace, "/bucket"),
-						VolumeMounts: []*runpb.VolumeMount{{
-							Name:      b.bucket,
-							MountPath: "/bucket",
-						}, {
-							Name:      "project",
-							MountPath: "/project",
-						}},
-					}},
-					Volumes: []*runpb.Volume{{
-						Name: b.bucket,
-						VolumeType: &runpb.Volume_Gcs{
-							Gcs: &runpb.GCSVolumeSource{Bucket: b.bucket},
+	err = b.createJobManifest(projectName, model.ApplyCommand, bucket, stepName, workspace, image, templateMeta)
+	if err != nil {
+		return fmt.Errorf("failed to create apply job manifest: %v", err)
+	}
+	err = b.createJobManifest(projectName, model.PlanDestroyCommand, bucket, stepName, workspace, image, templateMeta)
+	if err != nil {
+		return fmt.Errorf("failed to create plan-destroy job manifest: %v", err)
+	}
+	err = b.createJobManifest(projectName, model.ApplyDestroyCommand, bucket, stepName, workspace, image, templateMeta)
+	if err != nil {
+		return fmt.Errorf("failed to create destroy job manifest: %v", err)
+	}
+	return nil
+}
+
+func (b *Builder) createJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, workspace string, image string, templateMeta *runv1.ObjectMeta) error {
+	job := b.GetJobManifest(projectName, command, bucket, stepName, workspace, image, templateMeta)
+	bytes, err := k8syaml.Marshal(job)
+	if err != nil {
+		return err
+	}
+	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, workspace), 0755)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, workspace, projectName, command),
+		bytes, 0644)
+}
+
+func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, workspace string, image string, templateMeta *runv1.ObjectMeta) runv1.Job {
+	return runv1.Job{
+		ApiVersion: "run.googleapis.com/v1",
+		Kind:       "Job",
+		Metadata: &runv1.ObjectMeta{
+			Name: fmt.Sprintf("%s-%s", projectName, command),
+			Annotations: map[string]string{
+				"run.googleapis.com/launch-stage": "BETA",
+			},
+		},
+		Spec: &runv1.JobSpec{
+			Template: &runv1.ExecutionTemplateSpec{
+				Metadata: templateMeta,
+				Spec: &runv1.ExecutionSpec{
+					Template: &runv1.TaskTemplateSpec{
+						Spec: &runv1.TaskSpec{
+							TimeoutSeconds:     86400,
+							ServiceAccountName: b.serviceAccount,
+							MaxRetries:         0,
+							Containers: []*runv1.Container{{
+								Name:  "infralib",
+								Image: image,
+								Env:   b.getEnvironmentVariables(projectName, stepName, workspace, "/bucket", command),
+								VolumeMounts: []*runv1.VolumeMount{{
+									Name:      bucket,
+									MountPath: "/bucket",
+								}, {
+									Name:      "project",
+									MountPath: "/project",
+								}},
+							}},
+							Volumes: []*runv1.Volume{{
+								Name: bucket,
+								Csi: &runv1.CSIVolumeSource{
+									Driver: "gcsfuse.run.googleapis.com",
+									VolumeAttributes: map[string]string{
+										"bucketName": bucket,
+									},
+								},
+							}, {
+								Name: "project",
+								EmptyDir: &runv1.EmptyDirVolumeSource{
+									SizeLimit: "1Gi",
+								},
+							}},
 						},
-					}, {
-						Name: "project",
-						VolumeType: &runpb.Volume_EmptyDir{
-							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "1Gi"},
-						},
-					}},
-					Timeout:        &durationpb.Duration{Seconds: 86400},
-					ServiceAccount: b.serviceAccount,
-					VpcAccess:      getGCloudVpcAccess(vpcConfig),
-					Retries:        &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
+					},
 				},
 			},
-			LaunchStage: api.LaunchStage_BETA,
 		},
-		JobId: projectName,
-	})
-	return err
+	}
 }
 
 func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
@@ -101,6 +155,14 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 							Name:   common.AwsPrefixEnv,
 							Values: &runpb.EnvVar_Value{Value: awsPrefix},
 						}},
+						VolumeMounts: []*runpb.VolumeMount{{
+							Name:      "tmp",
+							MountPath: "/tmp",
+						}},
+					}},
+					Volumes: []*runpb.Volume{{
+						Name:       "tmp",
+						VolumeType: &runpb.Volume_EmptyDir{EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "100Mi"}},
 					}},
 					Timeout:        &durationpb.Duration{Seconds: 86400},
 					ServiceAccount: b.serviceAccount,
@@ -127,8 +189,26 @@ func (b *Builder) GetProject(projectName string) (*model.Project, error) {
 	}, nil
 }
 
-func (b *Builder) UpdateProject(projectName string, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) UpdateAgentProject(projectName string, image string) error {
 	job, err := b.getJob(projectName)
+	if err != nil {
+		return err
+	}
+	if job == nil {
+		return fmt.Errorf("job %s not found", projectName)
+	}
+
+	if image == "" || job.Template.Template.Containers[0].Image == image {
+		return nil
+	}
+
+	job.Template.Template.Containers[0].Image = image
+	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
+	return err
+}
+
+func (b *Builder) UpdateProject(projectName, bucket, stepName, workspace, image string, vpcConfig *model.VpcConfig) error {
+	job, err := b.getJob(fmt.Sprintf("%s-%s", projectName, model.PlanCommand))
 	if err != nil {
 		return err
 	}
@@ -136,16 +216,14 @@ func (b *Builder) UpdateProject(projectName string, image string, vpcConfig *mod
 		return fmt.Errorf("project %s not found", projectName)
 	}
 
-	_ = getGCloudVpcAccess(vpcConfig) // TODO Check if vpc hasn't changed
-	imageChanged := job.Template.Template.Containers[0].Image != image
+	vpc := getGCloudVpcAccess(vpcConfig)
+	vpcChanged := hasVPCConfigChanged(vpc, job.Template.Template.VpcAccess)
+	imageChanged := image != "" && job.Template.Template.Containers[0].Image != image
 
-	if !imageChanged {
+	if !imageChanged && !vpcChanged {
 		return nil
 	}
-
-	job.Template.Template.Containers[0].Image = image
-	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
-	return err
+	return b.createJobManifests(projectName, bucket, stepName, workspace, image, vpcConfig)
 }
 
 func (b *Builder) getJob(projectName string) (*runpb.Job, error) {
@@ -162,12 +240,54 @@ func (b *Builder) getJob(projectName string) (*runpb.Job, error) {
 	return job, nil
 }
 
+func hasVPCConfigChanged(a, b *runpb.VpcAccess) bool {
+	if a == nil || b == nil {
+		return a != b
+	}
+	if a.Egress != b.Egress {
+		return true
+	}
+	if len(a.NetworkInterfaces) != len(b.NetworkInterfaces) {
+		return true
+	}
+	for i, ni := range a.NetworkInterfaces {
+		if ni.Network != b.NetworkInterfaces[i].Network || ni.Subnetwork != b.NetworkInterfaces[i].Subnetwork {
+			return true
+		}
+	}
+	return false
+}
+
+func getVPCMeta(vpcConfig *model.VpcConfig) (*runv1.ObjectMeta, error) {
+	vpcAccess := getGCloudVpcAccess(vpcConfig)
+	if vpcAccess == nil {
+		return nil, nil
+	}
+	interfaces := make([]map[string]string, len(vpcAccess.NetworkInterfaces))
+	for i, ni := range vpcAccess.NetworkInterfaces {
+		interfaces[i] = map[string]string{
+			"network":    ni.Network,
+			"subnetwork": ni.Subnetwork,
+		}
+	}
+	interfacesJson, err := json.Marshal(interfaces)
+	if err != nil {
+		return nil, err
+	}
+	return &runv1.ObjectMeta{
+		Annotations: map[string]string{
+			"run.googleapis.com/vpc-access-egress":  strings.Replace(strings.ToLower(vpcAccess.Egress.String()), "_", "-", -1),
+			"run.googleapis.com/network-interfaces": string(interfacesJson),
+		},
+	}, nil
+}
+
 func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	if vpcConfig == nil {
 		return &runpb.VpcAccess{
 			NetworkInterfaces: []*runpb.VpcAccess_NetworkInterface{{
-				Network:    "taivopikkmets-rd-203-biz",
-				Subnetwork: "taivopikkmets-rd-203-biz",
+				Network:    "runner-main-biz",
+				Subnetwork: "runner-main-biz",
 			}},
 			Egress: runpb.VpcAccess_PRIVATE_RANGES_ONLY,
 		}
@@ -175,35 +295,14 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	return nil // TODO
 }
 
-func (b *Builder) getEnvironmentVariables(projectName string, stepName string, workspace string, dir string) []*runpb.EnvVar {
-	return []*runpb.EnvVar{
-		{
-			Name:   "PROJECT_NAME",
-			Values: &runpb.EnvVar_Value{Value: projectName},
-		},
-		{
-			Name:   "CODEBUILD_SRC_DIR",
-			Values: &runpb.EnvVar_Value{Value: dir},
-		},
-		{
-			Name:   "GOOGLE_REGION",
-			Values: &runpb.EnvVar_Value{Value: b.location},
-		},
-		{
-			Name:   "GOOGLE_PROJECT",
-			Values: &runpb.EnvVar_Value{Value: b.projectId},
-		},
-		{
-			Name:   "COMMAND",
-			Values: &runpb.EnvVar_Value{Value: string(model.PlanCommand)},
-		},
-		{
-			Name:   "TF_VAR_prefix",
-			Values: &runpb.EnvVar_Value{Value: stepName},
-		},
-		{
-			Name:   "WORKSPACE",
-			Values: &runpb.EnvVar_Value{Value: workspace},
-		},
+func (b *Builder) getEnvironmentVariables(projectName string, stepName string, workspace string, dir string, command model.ActionCommand) []*runv1.EnvVar {
+	return []*runv1.EnvVar{
+		{Name: "PROJECT_NAME", Value: projectName},
+		{Name: "CODEBUILD_SRC_DIR", Value: dir},
+		{Name: "GOOGLE_REGION", Value: b.location},
+		{Name: "GOOGLE_PROJECT", Value: b.projectId},
+		{Name: "COMMAND", Value: string(command)},
+		{Name: "TF_VAR_prefix", Value: stepName},
+		{Name: "WORKSPACE", Value: workspace},
 	}
 }

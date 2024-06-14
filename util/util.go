@@ -1,7 +1,9 @@
 package util
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -11,6 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 )
@@ -148,4 +152,49 @@ func MapToYamlBytes(m map[string]interface{}) ([]byte, error) {
 
 func IsClientModule(module model.Module) bool {
 	return strings.HasPrefix(module.Source, "git::") || strings.HasPrefix(module.Source, "git@")
+}
+
+func TarGzWrite(inDirPath string) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	gw := gzip.NewWriter(buf)
+	tw := tar.NewWriter(gw)
+
+	err := filepath.Walk(inDirPath, func(file string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Return on non-regular files. We don't add directories without files and symlinks
+		if !fi.Mode().IsRegular() {
+			return nil
+		}
+		header, err := tar.FileInfoHeader(fi, fi.Name())
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.Join(filepath.Base(inDirPath), strings.TrimPrefix(file, inDirPath))
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		f, err := os.Open(file)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			return err
+		}
+		f.Close()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err = tw.Close(); err != nil {
+		return nil, err
+	}
+	if err = gw.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }

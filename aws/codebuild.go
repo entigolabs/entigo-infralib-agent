@@ -93,7 +93,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, image, vpcConfig)
+		return b.UpdateProject(projectName, "", "", "", image, vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -183,7 +183,11 @@ func (b *builder) getProject(projectName string) (*types.Project, error) {
 	return &projects.Projects[0], nil
 }
 
-func (b *builder) UpdateProject(projectName string, image string, vpcConfig *model.VpcConfig) error {
+func (b *builder) UpdateAgentProject(projectName string, image string) error {
+	return b.UpdateProject(projectName, "", "", "", image, nil)
+}
+
+func (b *builder) UpdateProject(projectName, _, _, _, image string, vpcConfig *model.VpcConfig) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return err

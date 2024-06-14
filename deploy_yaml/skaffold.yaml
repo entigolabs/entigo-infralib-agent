@@ -1,0 +1,15 @@
+apiVersion: skaffold/v4beta7
+kind: Config
+metadata:
+  name: entigo-infralib
+deploy:
+  cloudrun: {}
+profiles:
+  - name: plan
+    manifests:
+      rawYaml:
+        - entigo-infralib-plan.yaml
+  - name: apply
+    manifests:
+      rawYaml:
+        - entigo-infralib-apply.yaml
