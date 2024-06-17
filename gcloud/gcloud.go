@@ -11,6 +11,7 @@ type gcloudService struct {
 	ctx         context.Context
 	cloudPrefix string
 	projectId   string
+	location    string
 }
 
 type Resources struct {
@@ -29,15 +30,15 @@ func NewGCloud(ctx context.Context, cloudPrefix string, projectId string) model.
 		ctx:         ctx,
 		cloudPrefix: cloudPrefix,
 		projectId:   projectId,
+		location:    "europe-north1", // TODO Make this configurable or obtain from config if possible
 	}
 }
 
 func (g *gcloudService) SetupResources(_ string) model.Resources {
 	// TODO Add Log messages when creating resources, just like with AWS
 	// TODO Default clients use gRPC, connections must be closed before exiting
-	location := "europe-north1" // TODO Make this configurable or obtain from config if possible
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
-	codeStorage, err := NewStorage(g.ctx, g.projectId, bucket)
+	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage bucket: %s", err)
 	}
@@ -45,11 +46,11 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	if err != nil {
 		common.Logger.Fatalf("Failed to create logging client: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, location, "infralib-agent@entigo-infralib.iam.gserviceaccount.com")
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, "infralib-agent@entigo-infralib.iam.gserviceaccount.com")
 	if err != nil {
 		common.Logger.Fatalf("Failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, location, g.cloudPrefix,
+	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix,
 		"infralib-agent@entigo-infralib.iam.gserviceaccount.com", codeStorage, bucket, builder, logging)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create pipeline: %s", err)
@@ -68,5 +69,5 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 
 func (g *gcloudService) SetupCustomCodeRepo(_ string) (model.CodeRepo, error) {
 	bucket := fmt.Sprintf("%s-%s-custom", g.cloudPrefix, g.projectId)
-	return NewStorage(g.ctx, g.projectId, bucket)
+	return NewStorage(g.ctx, g.projectId, g.location, bucket)
 }

@@ -77,13 +77,19 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 	if version == "" {
 		version = model.LatestImageVersion
 	}
-	if project.Image == model.AgentImage+":"+version {
+	var image string
+	if a.resources.GetProviderType() == model.AWS {
+		image = model.AgentImage
+	} else {
+		image = model.AgentImageDocker
+	}
+	if project.Image == image+":"+version {
 		return false, nil
 	}
-	err := a.resources.GetBuilder().UpdateAgentProject(project.Name, model.AgentImage+":"+version)
+	err := a.resources.GetBuilder().UpdateAgentProject(project.Name, version)
 	if err != nil {
 		return false, err
 	}
-	common.Logger.Printf("Updated Agent CodeBuild project %s image to %s\n", project.Name, model.AgentImage+":"+version)
+	common.Logger.Printf("Updated Agent CodeBuild project %s image version to %s\n", project.Name, version)
 	return true, nil
 }

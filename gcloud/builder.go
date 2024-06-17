@@ -143,7 +143,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 }
 
 func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
-	_, err := b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
+	jobOp, err := b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
 		Job: &runpb.Job{
 			Template: &runpb.ExecutionTemplate{
@@ -154,6 +154,9 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 						Env: []*runpb.EnvVar{{
 							Name:   common.AwsPrefixEnv,
 							Values: &runpb.EnvVar_Value{Value: awsPrefix},
+						}, {
+							Name:   "PROJECT_ID",
+							Values: &runpb.EnvVar_Value{Value: b.projectId},
 						}},
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      "tmp",
@@ -164,6 +167,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 						Name:       "tmp",
 						VolumeType: &runpb.Volume_EmptyDir{EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "100Mi"}},
 					}},
+					Retries:        &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
 					Timeout:        &durationpb.Duration{Seconds: 86400},
 					ServiceAccount: b.serviceAccount,
 				},
@@ -172,6 +176,10 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 		},
 		JobId: projectName,
 	})
+	if err != nil {
+		return fmt.Errorf("failed to create agent job: %v", err)
+	}
+	_, err = jobOp.Wait(b.ctx)
 	return err
 }
 
@@ -184,12 +192,12 @@ func (b *Builder) GetProject(projectName string) (*model.Project, error) {
 		return nil, nil
 	}
 	return &model.Project{
-		Name:  job.Name,
+		Name:  projectName,
 		Image: job.Template.Template.Containers[0].Image,
 	}, nil
 }
 
-func (b *Builder) UpdateAgentProject(projectName string, image string) error {
+func (b *Builder) UpdateAgentProject(projectName string, version string) error {
 	job, err := b.getJob(projectName)
 	if err != nil {
 		return err
@@ -197,6 +205,7 @@ func (b *Builder) UpdateAgentProject(projectName string, image string) error {
 	if job == nil {
 		return fmt.Errorf("job %s not found", projectName)
 	}
+	image := fmt.Sprintf("%s:%s", model.AgentImageDocker, version)
 
 	if image == "" || job.Template.Template.Containers[0].Image == image {
 		return nil

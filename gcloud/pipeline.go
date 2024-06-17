@@ -375,9 +375,9 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	return p.createDeliveryPipeline(pipelineName, model.PlanDestroyCommand, model.ApplyDestroyCommand)
 }
 
-func (p *pipeline) CreateAgentPipeline(_ string, _ string, _ string, _ string) error {
-	common.Logger.Println("GCloud uses Agent Job instead of pipeline")
-	return nil
+func (p *pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, _ string) error {
+	_, err := p.builder.executeJob(pipelineName, false)
+	return err
 }
 
 func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step) error {

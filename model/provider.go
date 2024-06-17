@@ -54,7 +54,7 @@ type Builder interface {
 	CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *VpcConfig) error
 	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
 	GetProject(projectName string) (*Project, error)
-	UpdateAgentProject(projectName string, image string) error
+	UpdateAgentProject(projectName string, version string) error
 	UpdateProject(projectName, repoURL, stepName, workspace, image string, vpcConfig *VpcConfig) error
 }
 

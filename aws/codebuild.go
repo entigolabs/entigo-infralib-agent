@@ -183,8 +183,8 @@ func (b *builder) getProject(projectName string) (*types.Project, error) {
 	return &projects.Projects[0], nil
 }
 
-func (b *builder) UpdateAgentProject(projectName string, image string) error {
-	return b.UpdateProject(projectName, "", "", "", image, nil)
+func (b *builder) UpdateAgentProject(projectName string, version string) error {
+	return b.UpdateProject(projectName, "", "", "", model.AgentImage+":"+version, nil)
 }
 
 func (b *builder) UpdateProject(projectName, _, _, _, image string, vpcConfig *model.VpcConfig) error {

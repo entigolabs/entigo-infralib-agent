@@ -16,14 +16,13 @@ type GStorage struct {
 	bucketHandle *storage.BucketHandle
 }
 
-func NewStorage(ctx context.Context, projectId string, bucket string) (*GStorage, error) {
+func NewStorage(ctx context.Context, projectId string, location string, bucket string) (*GStorage, error) {
 	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 	bucketHandle := client.Bucket(bucket)
-	// TODO make location configurable
-	if err = createBucket(ctx, projectId, "europe-north1", bucketHandle); err != nil {
+	if err = createBucket(ctx, projectId, location, bucketHandle); err != nil {
 		return nil, err
 	}
 	return &GStorage{
