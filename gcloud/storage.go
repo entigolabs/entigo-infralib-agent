@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"google.golang.org/api/iterator"
+	"io"
 )
 
 type GStorage struct {
@@ -89,9 +90,7 @@ func (g *GStorage) GetFile(file string) ([]byte, error) {
 	defer func(reader *storage.Reader) {
 		_ = reader.Close()
 	}(reader)
-	var content []byte
-	_, err = reader.Read(content)
-	return content, err
+	return io.ReadAll(reader)
 }
 
 func (g *GStorage) DeleteFile(file string) error {
