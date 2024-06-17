@@ -434,22 +434,6 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	return nil
 }
 
-func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) error {
-	executionId, err := u.resources.GetPipeline().CreateArgoCDPipeline(projectName, projectName, stepName, step)
-	if err != nil {
-		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
-	}
-	err = u.resources.GetPipeline().CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step)
-	if err != nil {
-		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
-	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
-	if err != nil {
-		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
-	}
-	return nil
-}
-
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	if step.Type == model.StepTypeArgoCD {
 		return nil // Temporarily disabled because ArgoCD has no pipelines
@@ -719,16 +703,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 
 func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
 	key := fmt.Sprintf("%s/terraform.tfstate", path)
-	backendConfig := map[string]string{
-		"bucket": u.resources.GetBucket(),
-	}
-	if u.resources.GetProviderType() == model.GCLOUD {
-		backendConfig["prefix"] = key
-	} else {
-		backendConfig["key"] = key
-		backendConfig["dynamodb_table"] = u.resources.(aws.Resources).DynamoDBTable
-		backendConfig["encrypt"] = "true"
-	}
+	backendConfig := u.resources.GetBackendConfigVars(key)
 	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
 	if err != nil {
 		return fmt.Errorf("failed to convert backend config values: %w", err)
@@ -997,7 +972,7 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		moduleVersion, _, err := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, err
 	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
-		return u.resources.GetAccountId(), nil
+		return u.resources.(aws.Resources).AccountId, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }

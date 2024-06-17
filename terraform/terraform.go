@@ -17,6 +17,7 @@ import (
 	"strings"
 )
 
+const PlanRegex = `Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`
 const providerPath = "providers"
 const moduleTemplate = "modules/%s"
 const baseFile = "base.tf"

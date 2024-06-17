@@ -107,7 +107,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 						Spec: &runv1.TaskSpec{
 							TimeoutSeconds:     86400,
 							ServiceAccountName: b.serviceAccount,
-							MaxRetries:         0,
+							MaxRetries:         1, // TODO 0 retries is cut away by the yaml marshal
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,
@@ -226,6 +226,26 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName, workspace, image 
 	return b.createJobManifests(projectName, bucket, stepName, workspace, image, vpcConfig)
 }
 
+func (b *Builder) executeJob(projectName string) (string, error) {
+	fmt.Printf("Executing job %s\n", projectName)
+	job, err := b.getJob(projectName)
+	if err != nil {
+		return "", err
+	}
+	if job == nil {
+		return "", fmt.Errorf("job %s not found", projectName)
+	}
+	jobOp, err := b.client.RunJob(b.ctx, &runpb.RunJobRequest{Name: job.Name})
+	if err != nil {
+		return "", err
+	}
+	execution, err := jobOp.Wait(b.ctx)
+	if err != nil {
+		return "", err
+	}
+	return execution.Name, err
+}
+
 func (b *Builder) getJob(projectName string) (*runpb.Job, error) {
 	job, err := b.client.GetJob(b.ctx, &runpb.GetJobRequest{
 		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", b.projectId, b.location, projectName),
@@ -287,7 +307,7 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 		return &runpb.VpcAccess{
 			NetworkInterfaces: []*runpb.VpcAccess_NetworkInterface{{
 				Network:    "runner-main-biz",
-				Subnetwork: "runner-main-biz",
+				Subnetwork: "runner-main-biz-private-0",
 			}},
 			Egress: runpb.VpcAccess_PRIVATE_RANGES_ONLY,
 		}

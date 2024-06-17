@@ -19,7 +19,6 @@ type CloudProvider interface {
 	SetupCustomCodeRepo(branch string) (CodeRepo, error)
 }
 
-// TODO AccountId should only belong to AWS Resources
 type Resources interface {
 	GetProviderType() ProviderType
 	GetCodeRepo() CodeRepo
@@ -29,7 +28,7 @@ type Resources interface {
 	GetIAM() IAM
 	GetCloudPrefix() string
 	GetBucket() string
-	GetAccountId() string
+	GetBackendConfigVars(string) map[string]string
 }
 
 type CodeRepo interface {
@@ -44,8 +43,6 @@ type CodeRepo interface {
 type Pipeline interface {
 	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) (*string, error)
 	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) error
-	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step Step) (*string, error)
-	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step Step) error
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
 	UpdatePipeline(pipelineName string, stepName string, step Step) error
 	StartPipelineExecution(pipelineName string) (*string, error)
@@ -80,7 +77,6 @@ type CloudResources struct {
 	IAM          IAM
 	CloudPrefix  string
 	Bucket       string
-	AccountId    string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -113,10 +109,6 @@ func (c CloudResources) GetCloudPrefix() string {
 
 func (c CloudResources) GetBucket() string {
 	return c.Bucket
-}
-
-func (c CloudResources) GetAccountId() string {
-	return c.AccountId
 }
 
 type RepositoryMetadata struct {
@@ -170,4 +162,9 @@ type PolicyStatement struct {
 type Parameter struct {
 	Value *string
 	Type  string
+}
+
+type TerraformChanges struct {
+	Changed   int
+	Destroyed int
 }

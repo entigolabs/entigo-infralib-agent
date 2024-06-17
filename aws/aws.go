@@ -23,6 +23,16 @@ type Resources struct {
 	model.CloudResources
 	DynamoDBTable string
 	Region        string
+	AccountId     string
+}
+
+func (r Resources) GetBackendConfigVars(key string) map[string]string {
+	return map[string]string{
+		"key":            key,
+		"bucket":         r.Bucket,
+		"dynamodb_table": r.DynamoDBTable,
+		"encrypt":        "true",
+	}
 }
 
 func NewAWS(ctx context.Context, cloudPrefix string) model.CloudProvider {
@@ -77,10 +87,10 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 			IAM:          iam,
 			CloudPrefix:  a.cloudPrefix,
 			Bucket:       bucket,
-			AccountId:    a.accountId,
 		},
 		DynamoDBTable: *dynamoDBTable.TableName,
 		Region:        a.awsConfig.Region,
+		AccountId:     a.accountId,
 	}
 	return a.resources
 }

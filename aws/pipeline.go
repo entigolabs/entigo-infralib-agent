@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"regexp"
@@ -26,11 +27,6 @@ const destroyName = "Destroy"
 const applyDestroyName = "ApplyDestroy"
 const argoCDApplyName = "ArgoCDApply"
 const argoCDDestroyName = "ArgoCDDestroy"
-
-type changes struct {
-	changed   int
-	destroyed int
-}
 
 type pipeline struct {
 	codePipeline *codepipeline.Client
@@ -591,7 +587,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *strin
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var pipeChanges *changes
+	var pipeChanges *model.TerraformChanges
 	var approved *bool
 	for ctx.Err() == nil {
 		time.Sleep(time.Duration(delay) * time.Second)
@@ -661,7 +657,7 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *changes, approved *bool, autoApprove bool) (*changes, *bool, error) {
+func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.TerraformChanges, approved *bool, autoApprove bool) (*model.TerraformChanges, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -675,7 +671,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 		if err != nil {
 			return pipeChanges, approved, err
 		}
-		if pipeChanges != nil && pipeChanges.destroyed == 0 && (pipeChanges.changed == 0 || autoApprove) {
+		if pipeChanges != nil && pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove) {
 			approved, err = p.approveStage(pipelineName)
 			if err != nil {
 				return pipeChanges, approved, err
@@ -687,7 +683,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 	return pipeChanges, approved, nil
 }
 
-func (p *pipeline) getChanges(pipelineName string, pipeChanges *changes, actions []types.ActionExecutionDetail, stepType model.StepType) (*changes, error) {
+func (p *pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.TerraformChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
@@ -695,10 +691,10 @@ func (p *pipeline) getChanges(pipelineName string, pipeChanges *changes, actions
 	case model.StepTypeTerraform:
 		return p.getTerraformChanges(pipelineName, actions)
 	}
-	return &changes{}, nil
+	return &model.TerraformChanges{}, nil
 }
 
-func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*changes, error) {
+func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*model.TerraformChanges, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -707,20 +703,20 @@ func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.Acti
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
+	re := regexp.MustCompile(terraform.PlanRegex)
 	for _, log := range logs {
 		matches := re.FindStringSubmatch(log)
-		tfChanges := changes{}
+		tfChanges := model.TerraformChanges{}
 		if matches != nil {
 			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
 			changed := matches[2]
 			destroyed := matches[3]
 			if changed != "0" || destroyed != "0" {
-				tfChanges.changed, err = strconv.Atoi(changed)
+				tfChanges.Changed, err = strconv.Atoi(changed)
 				if err != nil {
 					return nil, err
 				}
-				tfChanges.destroyed, err = strconv.Atoi(destroyed)
+				tfChanges.Destroyed, err = strconv.Atoi(destroyed)
 				if err != nil {
 					return nil, err
 				}
