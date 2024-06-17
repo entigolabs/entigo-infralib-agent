@@ -45,8 +45,9 @@ type Pipeline interface {
 	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) error
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
 	UpdatePipeline(pipelineName string, stepName string, step Step) error
-	StartPipelineExecution(pipelineName string) (*string, error)
-	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType StepType) error
+	StartAgentExecution(pipelineName string) error
+	StartPipelineExecution(pipelineName string, stepName string, step Step, customRepo string) (*string, error)
+	WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType StepType) error
 }
 
 type Builder interface {

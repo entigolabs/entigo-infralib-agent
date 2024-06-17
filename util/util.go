@@ -198,3 +198,10 @@ func TarGzWrite(inDirPath string) ([]byte, error) {
 
 	return buf.Bytes(), nil
 }
+
+func MinInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

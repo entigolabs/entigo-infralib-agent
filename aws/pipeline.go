@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+const pollingDelay = 30
+
 const approveStageName = "Approve"
 const approveActionName = "Approval"
 const planName = "Plan"
@@ -438,7 +440,7 @@ func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 		return err
 	}
 	if pipe != nil {
-		_, err = p.StartPipelineExecution(pipelineName)
+		_, err = p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
 		return err
 	}
 	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
@@ -494,7 +496,7 @@ func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 	return err
 }
 
-func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) {
+func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
@@ -506,12 +508,17 @@ func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) 
 	return execution.PipelineExecutionId, nil
 }
 
+func (p *pipeline) StartAgentExecution(pipelineName string) error {
+	_, err := p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
+	return err
+}
+
 func (p *pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) (*string, error) {
 	err := p.updatePipeline(pipeline, stepName, step)
 	if err != nil {
 		return nil, err
 	}
-	return p.StartPipelineExecution(*pipeline.Name)
+	return p.StartPipelineExecution(*pipeline.Name, stepName, step, "")
 }
 
 func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step) error {
@@ -580,17 +587,17 @@ func getCommand(actionName string) model.ActionCommand {
 	return ""
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error {
+func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType model.StepType) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
-	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
+	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, pollingDelay)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var pipeChanges *model.TerraformChanges
 	var approved *bool
 	for ctx.Err() == nil {
-		time.Sleep(time.Duration(delay) * time.Second)
+		time.Sleep(pollingDelay * time.Second)
 		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
 			PipelineExecutionId: executionId,

@@ -427,7 +427,7 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	if err != nil {
 		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
 	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -438,6 +438,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	if step.Type == model.StepTypeArgoCD {
 		return nil // Temporarily disabled because ArgoCD has no pipelines
 	}
+	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
@@ -454,12 +455,17 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return err
 	}
-	executionId, err := u.resources.GetPipeline().StartPipelineExecution(projectName)
+	var executionId *string
+	if step.Type == model.StepTypeTerraformCustom {
+		executionId, err = u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, repoMetadata.Name)
+	} else {
+		executionId, err = u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, "")
+	}
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", projectName, err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.resources.GetPipeline().WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	return u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
 }
 
 func getAutoApprove(state *model.StateStep) bool {

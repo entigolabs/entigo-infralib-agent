@@ -66,7 +66,7 @@ func (a *agent) UpdateProjectImage(version string) error {
 	if !updated {
 		return nil
 	}
-	_, err = a.resources.GetPipeline().StartPipelineExecution(a.name)
+	err = a.resources.GetPipeline().StartAgentExecution(a.name)
 	if err != nil {
 		return fmt.Errorf("failed to start another execution: %w", err)
 	}

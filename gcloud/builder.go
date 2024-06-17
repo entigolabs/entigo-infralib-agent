@@ -226,7 +226,7 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName, workspace, image 
 	return b.createJobManifests(projectName, bucket, stepName, workspace, image, vpcConfig)
 }
 
-func (b *Builder) executeJob(projectName string) (string, error) {
+func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
 	fmt.Printf("Executing job %s\n", projectName)
 	job, err := b.getJob(projectName)
 	if err != nil {
@@ -237,6 +237,9 @@ func (b *Builder) executeJob(projectName string) (string, error) {
 	}
 	jobOp, err := b.client.RunJob(b.ctx, &runpb.RunJobRequest{Name: job.Name})
 	if err != nil {
+		return "", err
+	}
+	if !wait {
 		return "", err
 	}
 	execution, err := jobOp.Wait(b.ctx)
