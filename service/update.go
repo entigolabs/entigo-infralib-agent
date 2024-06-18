@@ -926,12 +926,16 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
 		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		switch replaceType {
+		case string(model.ReplaceTypeGCSM):
+			fallthrough
 		case string(model.ReplaceTypeSSM):
 			parameter, err := u.getSSMParameter(u.config.Prefix, step, replaceKey)
 			if err != nil {
 				return "", err
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
+		case string(model.ReplaceTypeGCSMCustom):
+			fallthrough
 		case string(model.ReplaceTypeSSMCustom):
 			parameter, err := u.getSSMCustomParameter(replaceKey)
 			if err != nil {
@@ -1013,7 +1017,7 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 	if match[2] == "" {
 		return *parameter.Value, nil
 	}
-	if parameter.Type != string(ssmTypes.ParameterTypeStringList) {
+	if parameter.Type != string(ssmTypes.ParameterTypeStringList) && parameter.Type != "" {
 		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])

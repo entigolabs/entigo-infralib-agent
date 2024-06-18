@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/deploy v1.19.0
 	cloud.google.com/go/logging v1.10.0
 	cloud.google.com/go/run v1.3.7
+	cloud.google.com/go/secretmanager v1.13.1
 	cloud.google.com/go/storage v1.41.0
 	dario.cat/mergo v1.0.0
 	github.com/aws/aws-sdk-go-v2 v1.21.0

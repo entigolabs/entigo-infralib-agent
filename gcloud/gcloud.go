@@ -12,6 +12,7 @@ type gcloudService struct {
 	cloudPrefix string
 	projectId   string
 	location    string
+	zone        string
 }
 
 type Resources struct {
@@ -25,17 +26,17 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewGCloud(ctx context.Context, cloudPrefix string, projectId string) model.CloudProvider {
+func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) model.CloudProvider {
 	return &gcloudService{
 		ctx:         ctx,
 		cloudPrefix: cloudPrefix,
-		projectId:   projectId,
-		location:    "europe-north1", // TODO Make this configurable or obtain from config if possible
+		projectId:   gCloud.ProjectId,
+		location:    gCloud.Location,
+		zone:        gCloud.Zone,
 	}
 }
 
 func (g *gcloudService) SetupResources(_ string) model.Resources {
-	// TODO Add Log messages when creating resources, just like with AWS
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
@@ -46,7 +47,7 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	if err != nil {
 		common.Logger.Fatalf("Failed to create logging client: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, "infralib-agent@entigo-infralib.iam.gserviceaccount.com")
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "infralib-agent@entigo-infralib.iam.gserviceaccount.com")
 	if err != nil {
 		common.Logger.Fatalf("Failed to create builder: %s", err)
 	}
@@ -55,12 +56,17 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	if err != nil {
 		common.Logger.Fatalf("Failed to create pipeline: %s", err)
 	}
+	sm, err := NewSM(g.ctx, g.projectId)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create secret manager: %s", err)
+	}
 	return Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.GCLOUD,
 			CodeRepo:     codeStorage,
 			CodeBuild:    builder,
 			Pipeline:     pipeline,
+			SSM:          sm,
 			Bucket:       bucket,
 			CloudPrefix:  g.cloudPrefix,
 		},

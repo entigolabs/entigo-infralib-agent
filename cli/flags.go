@@ -19,6 +19,8 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 		&branchFlag,
 		&awsPrefixFlag,
 		&projectIdFlag,
+		&locationFlag,
+		&zoneFlag,
 	)
 }
 
@@ -89,6 +91,26 @@ var projectIdFlag = cli.StringFlag{
 	DefaultText: "",
 	Value:       "",
 	Usage:       "project id used when creating gcloud resources",
-	Destination: &flags.ProjectId,
+	Destination: &flags.GCloud.ProjectId,
 	Required:    false,
+}
+
+var locationFlag = cli.StringFlag{
+	Name:        "location",
+	Aliases:     []string{"loc"},
+	EnvVars:     []string{"LOCATION"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "location used when creating gcloud resources",
+	Destination: &flags.GCloud.Location,
+}
+
+var zoneFlag = cli.StringFlag{
+	Name:        "zone",
+	Aliases:     []string{"z"},
+	EnvVars:     []string{"ZONE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "zone used in run jobs",
+	Destination: &flags.GCloud.Zone,
 }

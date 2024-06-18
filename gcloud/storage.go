@@ -4,6 +4,7 @@ import (
 	"cloud.google.com/go/storage"
 	"context"
 	"errors"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"google.golang.org/api/iterator"
 	"io"
@@ -23,7 +24,7 @@ func NewStorage(ctx context.Context, projectId string, location string, bucket s
 		return nil, err
 	}
 	bucketHandle := client.Bucket(bucket)
-	if err = createBucket(ctx, projectId, location, bucketHandle); err != nil {
+	if err = createBucket(ctx, projectId, location, bucketHandle, bucket); err != nil {
 		return nil, err
 	}
 	return &GStorage{
@@ -35,7 +36,7 @@ func NewStorage(ctx context.Context, projectId string, location string, bucket s
 	}, nil
 }
 
-func createBucket(ctx context.Context, projectId string, location string, bucketHandle *storage.BucketHandle) error {
+func createBucket(ctx context.Context, projectId string, location string, bucketHandle *storage.BucketHandle, bucket string) error {
 	exists, err := bucketExists(ctx, bucketHandle)
 	if err != nil {
 		return err
@@ -43,6 +44,7 @@ func createBucket(ctx context.Context, projectId string, location string, bucket
 	if exists {
 		return nil
 	}
+	common.Logger.Printf("Created GCloud Storage Bucket %s\n", bucket)
 	return bucketHandle.Create(ctx, projectId, &storage.BucketAttrs{
 		Location:                   location,
 		PredefinedACL:              "projectPrivate",

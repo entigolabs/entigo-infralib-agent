@@ -27,10 +27,11 @@ type Builder struct {
 	client         *run.JobsClient
 	projectId      string
 	location       string
+	zone           string
 	serviceAccount string
 }
 
-func NewBuilder(ctx context.Context, projectId string, location string, serviceAccount string) (*Builder, error) {
+func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount string) (*Builder, error) {
 	client, err := run.NewJobsClient(ctx)
 	if err != nil {
 		return nil, err
@@ -40,6 +41,7 @@ func NewBuilder(ctx context.Context, projectId string, location string, serviceA
 		client:         client,
 		projectId:      projectId,
 		location:       location,
+		zone:           zone,
 		serviceAccount: serviceAccount,
 	}, nil
 }
@@ -107,7 +109,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 						Spec: &runv1.TaskSpec{
 							TimeoutSeconds:     86400,
 							ServiceAccountName: b.serviceAccount,
-							MaxRetries:         1, // TODO 0 retries is cut away by the yaml marshal
+							MaxRetries:         1, // 0 retries is cut away by the yaml marshal and default is 3
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,
@@ -157,6 +159,12 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 						}, {
 							Name:   "PROJECT_ID",
 							Values: &runpb.EnvVar_Value{Value: b.projectId},
+						}, {
+							Name:   "LOCATION",
+							Values: &runpb.EnvVar_Value{Value: b.location},
+						}, {
+							Name:   "PROJECT_ID",
+							Values: &runpb.EnvVar_Value{Value: b.zone},
 						}},
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      "tmp",
@@ -315,10 +323,20 @@ func getVPCMeta(vpcConfig *model.VpcConfig) (*runv1.ObjectMeta, error) {
 }
 
 func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
-	if vpcConfig == nil {
+	if vpcConfig == nil || vpcConfig.VpcId == nil {
 		return nil
 	}
-	return nil // TODO
+	var subnet string
+	if len(vpcConfig.Subnets) > 0 {
+		subnet = vpcConfig.Subnets[0]
+	}
+	return &runpb.VpcAccess{
+		Egress: runpb.VpcAccess_PRIVATE_RANGES_ONLY,
+		NetworkInterfaces: []*runpb.VpcAccess_NetworkInterface{{
+			Network:    *vpcConfig.VpcId,
+			Subnetwork: subnet,
+		}},
+	}
 }
 
 func (b *Builder) getEnvironmentVariables(projectName string, stepName string, workspace string, dir string, command model.ActionCommand) []*runv1.EnvVar {
@@ -327,6 +345,7 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, w
 		{Name: "CODEBUILD_SRC_DIR", Value: dir},
 		{Name: "GOOGLE_REGION", Value: b.location},
 		{Name: "GOOGLE_PROJECT", Value: b.projectId},
+		{Name: "GOOGLE_ZONE", Value: b.zone},
 		{Name: "COMMAND", Value: string(command)},
 		{Name: "TF_VAR_prefix", Value: stepName},
 		{Name: "WORKSPACE", Value: workspace},
