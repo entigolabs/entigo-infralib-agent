@@ -46,33 +46,29 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 	}, nil
 }
 
-// TODO ArgoCD has different commands!
-// TODO Custom Repo storage?
-func (b *Builder) CreateProject(projectName string, bucket string, stepName string, workspace string, imageVersion string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
 	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
-	return b.createJobManifests(projectName, bucket, stepName, workspace, image, vpcConfig)
+	return b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 }
 
-func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, workspace string, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
 	templateMeta, err := getVPCMeta(vpcConfig)
 	if err != nil {
 		return err
 	}
-	err = b.createJobManifest(projectName, model.PlanCommand, bucket, stepName, workspace, image, templateMeta)
-	if err != nil {
-		return fmt.Errorf("failed to create plan job manifest: %v", err)
+	var commands []model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		commands = []model.ActionCommand{model.ArgoCDPlanCommand, model.ArgoCDApplyCommand,
+			model.ArgoCDPlanDestroyCommand, model.ArgoCDApplyDestroyCommand}
+	} else {
+		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand, model.PlanDestroyCommand,
+			model.ApplyDestroyCommand}
 	}
-	err = b.createJobManifest(projectName, model.ApplyCommand, bucket, stepName, workspace, image, templateMeta)
-	if err != nil {
-		return fmt.Errorf("failed to create apply job manifest: %v", err)
-	}
-	err = b.createJobManifest(projectName, model.PlanDestroyCommand, bucket, stepName, workspace, image, templateMeta)
-	if err != nil {
-		return fmt.Errorf("failed to create plan-destroy job manifest: %v", err)
-	}
-	err = b.createJobManifest(projectName, model.ApplyDestroyCommand, bucket, stepName, workspace, image, templateMeta)
-	if err != nil {
-		return fmt.Errorf("failed to create destroy job manifest: %v", err)
+	for _, command := range commands {
+		err = b.createJobManifest(projectName, command, bucket, stepName, step.Workspace, image, templateMeta)
+		if err != nil {
+			return fmt.Errorf("failed to create %s job manifest: %v", model.PlanCommand, err)
+		}
 	}
 	return nil
 }
@@ -224,7 +220,7 @@ func (b *Builder) UpdateAgentProject(projectName string, version string) error {
 	return err
 }
 
-func (b *Builder) UpdateProject(projectName, bucket, stepName, workspace, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
 	job, err := b.getJob(fmt.Sprintf("%s-%s", projectName, model.PlanCommand))
 	if err != nil {
 		return err
@@ -240,7 +236,7 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName, workspace, image 
 	if !imageChanged && !vpcChanged {
 		return nil
 	}
-	return b.createJobManifests(projectName, bucket, stepName, workspace, image, vpcConfig)
+	return b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 }
 
 func (b *Builder) executeJob(projectName string, wait bool) (string, error) {

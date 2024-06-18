@@ -58,7 +58,7 @@ func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logS
 	}
 }
 
-func (b *builder) CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *model.VpcConfig) error {
+func (b *builder) CreateProject(projectName string, repoURL string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
 	image := fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)
 	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
@@ -70,7 +70,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 			Image:                    aws.String(image),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, workspace),
+			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, step.Workspace),
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
@@ -93,7 +93,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, "", "", "", image, vpcConfig)
+		return b.UpdateProject(projectName, "", "", step, image, vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -184,10 +184,10 @@ func (b *builder) getProject(projectName string) (*types.Project, error) {
 }
 
 func (b *builder) UpdateAgentProject(projectName string, version string) error {
-	return b.UpdateProject(projectName, "", "", "", model.AgentImage+":"+version, nil)
+	return b.UpdateProject(projectName, "", "", model.Step{}, model.AgentImage+":"+version, nil)
 }
 
-func (b *builder) UpdateProject(projectName, _, _, _, image string, vpcConfig *model.VpcConfig) error {
+func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, image string, vpcConfig *model.VpcConfig) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return err

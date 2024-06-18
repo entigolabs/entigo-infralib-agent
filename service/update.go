@@ -381,21 +381,15 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err = u.resources.GetBuilder().CreateProject(projectName, repoMetadata.URL, stepName, step.Workspace, imageVersion, vpcConfig)
+	err = u.resources.GetBuilder().CreateProject(projectName, repoMetadata.URL, stepName, step, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-
-	switch step.Type {
-	case model.StepTypeTerraform:
-		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, "")
-	case model.StepTypeArgoCD:
-		//u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove) Temporarily disabled to save time
-	case model.StepTypeTerraformCustom:
+	if step.Type == model.StepTypeTerraformCustom {
 		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, repoMetadata.Name)
 	}
-	return nil
+	return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, "")
 }
 
 func getVpcConfig(step model.Step) *model.VpcConfig {
@@ -419,13 +413,9 @@ func (u *updater) getRepoMetadata(stepType model.StepType) (*model.RepositoryMet
 }
 
 func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, customRepo string) error {
-	executionId, err := u.resources.GetPipeline().CreateTerraformPipeline(projectName, projectName, stepName, step, customRepo)
+	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, customRepo)
 	if err != nil {
-		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
-	}
-	err = u.resources.GetPipeline().CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, customRepo)
-	if err != nil {
-		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
+		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
 	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
 	if err != nil {
@@ -435,9 +425,6 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 }
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
-	if step.Type == model.StepTypeArgoCD {
-		return nil // Temporarily disabled because ArgoCD has no pipelines
-	}
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
@@ -446,7 +433,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return err
 	}
-	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, step.Name, step.Workspace,
+	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, step.Name, step,
 		fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
 	if err != nil {
 		return err
@@ -663,22 +650,11 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 		if changed {
 			executePipeline = true
 		}
-		inputs := module.Inputs
-		var bytes []byte
-		if len(inputs) == 0 {
-			bytes = []byte{}
-		} else {
-			bytes, err = yaml.Marshal(inputs)
-			if err != nil {
-				return false, fmt.Errorf("failed to marshal inputs: %s", err)
-			}
-		}
-		err = u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
-			step.Workspace, module.Name), bytes)
+		inputBytes, err := getModuleInputBytes(module)
 		if err != nil {
 			return false, err
 		}
-		err = u.createArgoCDApp(module, step, moduleVersion)
+		err = u.createArgoCDApp(module, step, moduleVersion, inputBytes)
 		if err != nil {
 			return false, err
 		}
@@ -698,13 +674,29 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 		if !changed {
 			continue
 		}
+		inputBytes, err := getModuleInputBytes(module)
+		if err != nil {
+			return false, err
+		}
 		executePipeline = true
-		err = u.createArgoCDApp(module, step, moduleVersion)
+		err = u.createArgoCDApp(module, step, moduleVersion, inputBytes)
 		if err != nil {
 			return false, err
 		}
 	}
 	return executePipeline, nil
+}
+
+func getModuleInputBytes(module model.Module) ([]byte, error) {
+	inputs := module.Inputs
+	if len(inputs) == 0 {
+		return []byte{}, nil
+	}
+	bytes, err := yaml.Marshal(inputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal inputs: %s", err)
+	}
+	return bytes, nil
 }
 
 func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
@@ -772,13 +764,12 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 	return changed, moduleVersions, nil
 }
 
-func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string) error {
-	appFilePath := fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name, step.Workspace, module.Name)
-	appBytes, err := argocd.GetApplicationFile(u.github, module, step.RepoUrl, moduleVersion, appFilePath)
+func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) error {
+	appBytes, err := argocd.GetApplicationFile(u.github, module, step.RepoUrl, moduleVersion, values)
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+	return u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
 		step.Workspace, module.Name), appBytes)
 }
 
@@ -872,7 +863,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 }
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
-	files, err := u.resources.GetCodeRepo().ListFolderFiles(fmt.Sprintf("%s-%s/%s/app-of-apps", u.config.Prefix, step.Name, step.Workspace))
+	files, err := u.resources.GetCodeRepo().ListFolderFiles(fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace))
 	if err != nil {
 		return err
 	}
@@ -881,7 +872,7 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		if modules.Contains(file) {
 			continue
 		}
-		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
 			step.Workspace, file))
 		if err != nil {
 			return err

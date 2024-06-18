@@ -8,9 +8,6 @@ spec:
     namespace: '{{moduleName}}'
   project: default
   sources:
-    - repoURL: '{{codeRepoSSHUrl}}'
-      targetRevision: 'main'
-      ref: codeRepo
     - repoURL: "https://github.com/entigolabs/entigo-infralib-release.git"
       targetRevision: '{{moduleVersion}}'
       path: "modules/k8s/{{moduleSource}}"
@@ -18,7 +15,8 @@ spec:
         ignoreMissingValueFiles: true
         valueFiles:
           - 'values.yaml'
-          - '$codeRepo/{{valuesFilePath}}'
+        values: |
+          {{moduleValues}}
   syncPolicy:
     automated:
       selfHeal: true

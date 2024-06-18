@@ -41,8 +41,7 @@ type CodeRepo interface {
 }
 
 type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step Step, customRepo string) error
+	CreatePipeline(projectName string, stepName string, step Step, customRepo string) (*string, error)
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
 	UpdatePipeline(pipelineName string, stepName string, step Step) error
 	StartAgentExecution(pipelineName string) error
@@ -51,11 +50,11 @@ type Pipeline interface {
 }
 
 type Builder interface {
-	CreateProject(projectName string, repoURL string, stepName string, workspace string, imageVersion string, vpcConfig *VpcConfig) error
+	CreateProject(projectName string, repoURL string, stepName string, step Step, imageVersion string, vpcConfig *VpcConfig) error
 	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
 	GetProject(projectName string) (*Project, error)
 	UpdateAgentProject(projectName string, version string) error
-	UpdateProject(projectName, repoURL, stepName, workspace, image string, vpcConfig *VpcConfig) error
+	UpdateProject(projectName, repoURL, stepName string, step Step, image string, vpcConfig *VpcConfig) error
 }
 
 type SSM interface {
@@ -131,12 +130,14 @@ type Project struct {
 type ActionCommand string
 
 const (
-	PlanCommand          ActionCommand = "plan"
-	ApplyCommand         ActionCommand = "apply"
-	PlanDestroyCommand   ActionCommand = "plan-destroy"
-	ApplyDestroyCommand  ActionCommand = "apply-destroy"
-	ArgoCDApplyCommand   ActionCommand = "argocd-apply"
-	ArgoCDDestroyCommand ActionCommand = "argocd-destroy"
+	PlanCommand               ActionCommand = "plan"
+	ApplyCommand              ActionCommand = "apply"
+	PlanDestroyCommand        ActionCommand = "plan-destroy"
+	ApplyDestroyCommand       ActionCommand = "apply-destroy"
+	ArgoCDPlanCommand         ActionCommand = "argocd-plan"
+	ArgoCDApplyCommand        ActionCommand = "argocd-apply"
+	ArgoCDPlanDestroyCommand  ActionCommand = "argocd-plan-destroy"
+	ArgoCDApplyDestroyCommand ActionCommand = "argocd-apply-destroy"
 )
 
 type Policy struct {

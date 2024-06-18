@@ -142,17 +142,33 @@ func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projec
 	return nil
 }
 
-func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
+func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step, customRepo string) (*string, error) {
 	bucket := p.bucket
 	if customRepo != "" {
 		bucket = customRepo
 	}
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	var destroyPlanCommand model.ActionCommand
+	var destroyApplyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanCommand
+		applyCommand = model.ArgoCDApplyCommand
+		destroyPlanCommand = model.ArgoCDPlanDestroyCommand
+		destroyApplyCommand = model.ArgoCDApplyDestroyCommand
+	} else {
+		planCommand = model.PlanCommand
+		applyCommand = model.ApplyCommand
+		destroyPlanCommand = model.PlanDestroyCommand
+		destroyApplyCommand = model.ApplyDestroyCommand
+	}
 	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
-	err := p.createSkaffoldManifest(pipelineName, projectName, folder, model.PlanCommand, model.ApplyCommand)
+	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
 		return nil, err
 	}
-	err = p.createSkaffoldManifest(fmt.Sprintf("%s-destroy", pipelineName), projectName, folder, model.PlanDestroyCommand, model.ApplyDestroyCommand)
+	destroyPipeline := fmt.Sprintf("%s-destroy", projectName)
+	err = p.createSkaffoldManifest(destroyPipeline, projectName, folder, destroyPlanCommand, destroyApplyCommand)
 	if err != nil {
 		return nil, err
 	}
@@ -164,11 +180,15 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	if err != nil {
 		return nil, err
 	}
-	err = p.createDeliveryPipeline(pipelineName, model.PlanCommand, model.ApplyCommand)
+	err = p.createDeliveryPipeline(projectName, planCommand, applyCommand)
 	if err != nil {
 		return nil, err
 	}
-	return p.StartPipelineExecution(pipelineName, stepName, step, customRepo)
+	err = p.createDeliveryPipeline(destroyPipeline, destroyPlanCommand, destroyApplyCommand)
+	if err != nil {
+		return nil, err
+	}
+	return p.StartPipelineExecution(projectName, stepName, step, customRepo)
 }
 
 func (p *pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
@@ -371,10 +391,6 @@ func (p *pipeline) getTerraformChanges(pipelineName string, jobName string, exec
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
 }
 
-func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error {
-	return p.createDeliveryPipeline(pipelineName, model.PlanDestroyCommand, model.ApplyDestroyCommand)
-}
-
 func (p *pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, _ string) error {
 	_, err := p.builder.executeJob(pipelineName, false)
 	return err
@@ -418,7 +434,6 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return fmt.Errorf("release id is nil")
 	}
 	common.Logger.Printf("Waiting for pipeline %s to complete\n", pipelineName)
-	common.Logger.Printf("waiting for pipeline %s release %s to render\n", pipelineName, *releaseId)
 	err := p.waitForReleaseRender(pipelineName, *releaseId)
 	if err != nil {
 		return err
@@ -439,7 +454,16 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	planJob := fmt.Sprintf("%s-%s", projectName, model.PlanCommand)
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if stepType == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanCommand
+		applyCommand = model.ArgoCDApplyCommand
+	} else {
+		planCommand = model.PlanCommand
+		applyCommand = model.ApplyCommand
+	}
+	planJob := fmt.Sprintf("%s-%s", projectName, planCommand)
 	executionName, err := p.builder.executeJob(planJob, true)
 	if err != nil {
 		return err
@@ -460,6 +484,6 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, model.ApplyCommand), true)
+	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, applyCommand), true)
 	return err
 }

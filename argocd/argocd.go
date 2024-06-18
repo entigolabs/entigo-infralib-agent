@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl string, version string, valuesFilePath string) ([]byte, error) {
+func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl string, version string, values []byte) ([]byte, error) {
 	baseBytes, err := getBaseApplicationFile()
 	if err != nil {
 		return nil, err
@@ -24,16 +24,16 @@ func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl st
 	if err != nil {
 		return nil, err
 	}
-	return replacePlaceholders(bytes, module, repoSSHUrl, version, valuesFilePath), nil
+	return replacePlaceholders(bytes, module, repoSSHUrl, version, values), nil
 }
 
 func getBaseApplicationFile() ([]byte, error) {
 	return os.ReadFile("app.yaml")
 }
 
-func replacePlaceholders(bytes []byte, module model.Module, repoSSHUrl string, version string, valuesFilePath string) []byte {
+func replacePlaceholders(bytes []byte, module model.Module, repoSSHUrl string, version string, values []byte) []byte {
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{codeRepoSSHUrl}}", repoSSHUrl,
-		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{valuesFilePath}}", valuesFilePath)
+		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{moduleValues}}", string(values))
 	return []byte(replacer.Replace(string(bytes)))
 }
 

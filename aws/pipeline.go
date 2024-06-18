@@ -27,8 +27,6 @@ const applyName = "Apply"
 const sourceName = "Source"
 const destroyName = "Destroy"
 const applyDestroyName = "ApplyDestroy"
-const argoCDApplyName = "ArgoCDApply"
-const argoCDDestroyName = "ArgoCDDestroy"
 
 type pipeline struct {
 	codePipeline *codepipeline.Client
@@ -52,6 +50,248 @@ func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn strin
 		logGroup:     logGroup,
 		logStream:    logStream,
 	}
+}
+
+func (p *pipeline) CreatePipeline(projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
+	execution, err := p.CreateApplyPipeline(projectName, projectName, stepName, step, customRepo)
+	if err != nil {
+		return nil, err
+	}
+	err = p.CreateDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, customRepo)
+	return execution, err
+}
+
+func (p *pipeline) CreateApplyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
+	pipe, err := p.getPipeline(pipelineName)
+	if err != nil {
+		return nil, err
+	}
+	if pipe != nil {
+		return p.startUpdatedPipeline(pipe, stepName, step)
+	}
+	repo := p.repo
+	if customRepo != "" {
+		repo = customRepo
+	}
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanCommand
+		applyCommand = model.ArgoCDApplyCommand
+	} else {
+		planCommand = model.PlanCommand
+		applyCommand = model.ApplyCommand
+	}
+	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
+		Pipeline: &types.PipelineDeclaration{
+			Name:    aws.String(pipelineName),
+			RoleArn: aws.String(p.roleArn),
+			ArtifactStore: &types.ArtifactStore{
+				Location: aws.String(p.bucket),
+				Type:     types.ArtifactStoreTypeS3,
+			}, Stages: []types.StageDeclaration{{
+				Name: aws.String(sourceName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(sourceName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeCommit"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        aws.Int32(1),
+					Configuration: map[string]string{
+						"RepositoryName":       repo,
+						"BranchName":           p.branch,
+						"PollForSourceChanges": "false",
+						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
+					},
+				},
+				},
+			}, {
+				Name: aws.String(planName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(planName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryBuild,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeBuild"),
+						Version:  aws.String("1"),
+					},
+					InputArtifacts:  []types.InputArtifact{{Name: aws.String("source_output")}},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("Plan")}},
+					RunOrder:        aws.Int32(2),
+					Configuration: map[string]string{
+						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
+						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step),
+					},
+				},
+				},
+			}, {
+				Name: aws.String(approveStageName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(approveActionName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryApproval,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("Manual"),
+						Version:  aws.String("1"),
+					},
+					RunOrder: aws.Int32(3),
+				}},
+			}, {
+				Name: aws.String(applyName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(applyName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryBuild,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeBuild"),
+						Version:  aws.String("1"),
+					},
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}, {Name: aws.String("Plan")}},
+					RunOrder:       aws.Int32(4),
+					Configuration: map[string]string{
+						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
+						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step),
+					},
+				},
+				},
+			},
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
+	return p.getNewPipelineExecutionId(pipelineName)
+}
+
+func (p *pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error {
+	pipe, err := p.getPipeline(pipelineName)
+	if err != nil {
+		return err
+	}
+	if pipe != nil {
+		return p.updatePipeline(pipe, stepName, step)
+	}
+	repo := p.repo
+	if customRepo != "" {
+		repo = customRepo
+	}
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanDestroyCommand
+		applyCommand = model.ArgoCDApplyDestroyCommand
+	} else {
+		planCommand = model.PlanDestroyCommand
+		applyCommand = model.ApplyDestroyCommand
+	}
+	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
+		Pipeline: &types.PipelineDeclaration{
+			Name:    aws.String(pipelineName),
+			RoleArn: aws.String(p.roleArn),
+			ArtifactStore: &types.ArtifactStore{
+				Location: aws.String(p.bucket),
+				Type:     types.ArtifactStoreTypeS3,
+			}, Stages: []types.StageDeclaration{{
+				Name: aws.String(sourceName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(sourceName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategorySource,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeCommit"),
+						Version:  aws.String("1"),
+					},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
+					RunOrder:        aws.Int32(1),
+					Configuration: map[string]string{
+						"RepositoryName":       repo,
+						"BranchName":           p.branch,
+						"PollForSourceChanges": "false",
+						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
+					},
+				},
+				},
+			}, {
+				Name: aws.String(destroyName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(destroyName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryBuild,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeBuild"),
+						Version:  aws.String("1"),
+					},
+					InputArtifacts:  []types.InputArtifact{{Name: aws.String("source_output")}},
+					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("Plan")}},
+					RunOrder:        aws.Int32(2),
+					Configuration: map[string]string{
+						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
+						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step),
+					},
+				},
+				},
+			}, {
+				Name: aws.String(approveStageName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(approveActionName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryApproval,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("Manual"),
+						Version:  aws.String("1"),
+					},
+					RunOrder: aws.Int32(3),
+				}},
+			}, {
+				Name: aws.String(applyDestroyName),
+				Actions: []types.ActionDeclaration{{
+					Name: aws.String(applyDestroyName),
+					ActionTypeId: &types.ActionTypeId{
+						Category: types.ActionCategoryBuild,
+						Owner:    types.ActionOwnerAws,
+						Provider: aws.String("CodeBuild"),
+						Version:  aws.String("1"),
+					},
+					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}, {Name: aws.String("Plan")}},
+					RunOrder:       aws.Int32(4),
+					Configuration: map[string]string{
+						"ProjectName":          projectName,
+						"PrimarySource":        "source_output",
+						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step),
+					},
+				},
+				},
+			},
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Created destroy CodePipeline %s\n", pipelineName)
+	err = p.disableStageTransition(pipelineName, destroyName)
+	if err != nil {
+		return err
+	}
+	err = p.disableStageTransition(pipelineName, approveStageName)
+	if err != nil {
+		return err
+	}
+	err = p.disableStageTransition(pipelineName, applyDestroyName)
+	if err != nil {
+		return err
+	}
+	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
+	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
 func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
@@ -269,171 +509,6 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step model.Step) (*string, error) {
-	pipe, err := p.getPipeline(pipelineName)
-	if err != nil {
-		return nil, err
-	}
-	if pipe != nil {
-		return p.startUpdatedPipeline(pipe, stepName, step)
-	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
-		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
-			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
-				Type:     types.ArtifactStoreTypeS3,
-			}, Stages: []types.StageDeclaration{{
-				Name: aws.String(sourceName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(sourceName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategorySource,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeCommit"),
-						Version:  aws.String("1"),
-					},
-					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        aws.Int32(1),
-					Configuration: map[string]string{
-						"RepositoryName":       p.repo,
-						"BranchName":           p.branch,
-						"PollForSourceChanges": "false",
-						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
-					},
-				},
-				},
-			}, {
-				Name: aws.String(approveStageName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(approveActionName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryApproval,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("Manual"),
-						Version:  aws.String("1"),
-					},
-					RunOrder: aws.Int32(2),
-				}},
-			}, {
-				Name: aws.String(argoCDApplyName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(argoCDApplyName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryBuild,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeBuild"),
-						Version:  aws.String("1"),
-					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       aws.Int32(3),
-					Configuration: map[string]string{
-						"ProjectName":          projectName,
-						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables(model.ArgoCDApplyCommand, stepName, step.Workspace),
-					},
-				},
-				},
-			},
-			},
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
-	return p.getNewPipelineExecutionId(pipelineName)
-}
-
-func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step) error {
-	pipe, err := p.getPipeline(pipelineName)
-	if err != nil {
-		return err
-	}
-	if pipe != nil {
-		return p.updatePipeline(pipe, stepName, step)
-	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
-		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
-			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
-				Type:     types.ArtifactStoreTypeS3,
-			}, Stages: []types.StageDeclaration{{
-				Name: aws.String(sourceName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(sourceName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategorySource,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeCommit"),
-						Version:  aws.String("1"),
-					},
-					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        aws.Int32(1),
-					Configuration: map[string]string{
-						"RepositoryName":       p.repo,
-						"BranchName":           p.branch,
-						"PollForSourceChanges": "false",
-						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
-					},
-				},
-				},
-			}, {
-				Name: aws.String(approveStageName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(approveActionName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryApproval,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("Manual"),
-						Version:  aws.String("1"),
-					},
-					RunOrder: aws.Int32(2),
-				}},
-			}, {
-				Name: aws.String(argoCDDestroyName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(argoCDDestroyName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryBuild,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeBuild"),
-						Version:  aws.String("1"),
-					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       aws.Int32(3),
-					Configuration: map[string]string{
-						"ProjectName":          projectName,
-						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables(model.ArgoCDDestroyCommand, stepName, step.Workspace),
-					},
-				},
-				},
-			},
-			},
-		},
-	})
-	var awsError *types.PipelineNameInUseException
-	if err != nil && errors.As(err, &awsError) {
-		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
-		return nil
-	}
-	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
-	err = p.disableStageTransition(pipelineName, "Approve")
-	if err != nil {
-		return err
-	}
-	err = p.disableStageTransition(pipelineName, argoCDDestroyName)
-	if err != nil {
-		return err
-	}
-	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-	return p.stopLatestPipelineExecutions(pipelineName, 1)
-}
-
 func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
@@ -561,28 +636,40 @@ func (p *pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 }
 
 func getActionEnvironmentVariables(actionName string, stepName string, step model.Step) string {
-	command := getCommand(actionName)
-	if step.Type == model.StepTypeTerraform {
+	command := getCommand(actionName, step.Type)
+	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
 		return getTerraformEnvironmentVariables(command, stepName, step)
 	} else {
 		return getEnvironmentVariables(command, stepName, step.Workspace)
 	}
 }
 
-func getCommand(actionName string) model.ActionCommand {
+func getCommand(actionName string, stepType model.StepType) model.ActionCommand {
 	switch actionName {
 	case planName:
-		return model.PlanCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDPlanCommand
+		} else {
+			return model.PlanCommand
+		}
 	case applyName:
-		return model.ApplyCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDApplyCommand
+		} else {
+			return model.ApplyCommand
+		}
 	case destroyName:
-		return model.PlanDestroyCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDPlanDestroyCommand
+		} else {
+			return model.PlanDestroyCommand
+		}
 	case applyDestroyName:
-		return model.ApplyDestroyCommand
-	case argoCDApplyName:
-		return model.ArgoCDApplyCommand
-	case argoCDDestroyName:
-		return model.ArgoCDDestroyCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDApplyDestroyCommand
+		} else {
+			return model.ApplyDestroyCommand
+		}
 	}
 	return ""
 }
