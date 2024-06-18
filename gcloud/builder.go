@@ -316,13 +316,7 @@ func getVPCMeta(vpcConfig *model.VpcConfig) (*runv1.ObjectMeta, error) {
 
 func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	if vpcConfig == nil {
-		return &runpb.VpcAccess{
-			NetworkInterfaces: []*runpb.VpcAccess_NetworkInterface{{
-				Network:    "runner-main-biz",
-				Subnetwork: "runner-main-biz-private-0",
-			}},
-			Egress: runpb.VpcAccess_PRIVATE_RANGES_ONLY,
-		}
+		return nil
 	}
 	return nil // TODO
 }
