@@ -163,7 +163,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 							Name:   "LOCATION",
 							Values: &runpb.EnvVar_Value{Value: b.location},
 						}, {
-							Name:   "PROJECT_ID",
+							Name:   "ZONE",
 							Values: &runpb.EnvVar_Value{Value: b.zone},
 						}},
 						VolumeMounts: []*runpb.VolumeMount{{
