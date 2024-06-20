@@ -176,6 +176,9 @@ func (u *updater) ProcessSteps() {
 			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
 		}
 		u.currentChecksums, err = u.GetChecksums(release)
+		if err != nil {
+			common.Logger.Fatalf("Failed to get checksums for release %s: %v", release.Original(), err)
+		}
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
 		errChan := make(chan error, 1)
@@ -284,6 +287,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			fmt.Printf("Skipping step %s\n", step.Name)
+			u.updateStepState(stepState)
 			return nil
 		}
 		return u.executePipeline(firstRun, step, stepState, release)
@@ -803,15 +807,19 @@ func (u *updater) putStateFile() error {
 }
 
 func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
-	stepState.AppliedAt = time.Now()
-	for _, module := range stepState.Modules {
-		module.AppliedVersion = &module.Version
-	}
+	u.updateStepState(stepState)
 	bytes, err := yaml.Marshal(u.state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
+}
+
+func (u *updater) updateStepState(stepState *model.StateStep) {
+	stepState.AppliedAt = time.Now()
+	for _, module := range stepState.Modules {
+		module.AppliedVersion = &module.Version
+	}
 }
 
 func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, map[string]string, error) {
