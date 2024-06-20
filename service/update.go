@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
@@ -23,6 +24,7 @@ import (
 )
 
 const stateFile = "state.yaml"
+const checksumsFile = "checksums.sha256"
 
 const replaceRegex = `{{(.*?)}}`
 const parameterIndexRegex = `(\w+)(\[(\d+)(-(\d+))?])?`
@@ -43,6 +45,8 @@ type updater struct {
 	state                  *model.State
 	stableRelease          *version.Version
 	baseConfigReleaseLimit *version.Version
+	previousChecksums      map[string]string
+	currentChecksums       map[string]string
 }
 
 func NewUpdater(flags *common.Flags) Updater {
@@ -171,6 +175,7 @@ func (u *updater) ProcessSteps() {
 		if err != nil {
 			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
 		}
+		u.currentChecksums, err = u.GetChecksums(release)
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
 		errChan := make(chan error, 1)
@@ -195,11 +200,12 @@ func (u *updater) ProcessSteps() {
 				break
 			}
 			var executePipelines bool
+			var providers []string
 			if !firstRunDone[step.Name] {
 				executePipelines, err = u.createStepFiles(step, stepState, release, stepSemVer)
 			} else {
-				executePipelines, err = u.updateStepFiles(step, stepState, release, stepSemVer, terraformExecuted)
-				if step.Type == model.StepTypeTerraform && executePipelines {
+				executePipelines, providers, err = u.updateStepFiles(step, stepState, release, stepSemVer, terraformExecuted)
+				if executePipelines {
 					terraformExecuted = true
 				}
 			}
@@ -208,7 +214,7 @@ func (u *updater) ProcessSteps() {
 				failed = true
 				break
 			}
-			err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, wg, errChan)
+			err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, providers, wg, errChan)
 			if err != nil {
 				common.PrintError(err)
 				failed = true
@@ -222,6 +228,7 @@ func (u *updater) ProcessSteps() {
 		if _, ok := <-errChan; ok || failed {
 			common.Logger.Fatalf("One or more steps failed to apply")
 		}
+		u.previousChecksums = u.currentChecksums
 		if u.state.BaseConfig.AppliedVersion != u.state.BaseConfig.Version {
 			u.state.BaseConfig.AppliedVersion = u.state.BaseConfig.Version
 			err = u.putStateFile()
@@ -266,7 +273,7 @@ func (u *updater) getStepSemVer(step model.Step) (*version.Version, error) {
 	return stepSemVer, nil
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, wg *sync.WaitGroup, errChan chan<- error) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, providers []string, wg *sync.WaitGroup, errChan chan<- error) error {
 	if !executePipelines {
 		return nil
 	}
@@ -275,6 +282,10 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		return err
 	}
 	if !firstRun {
+		if !u.hasChanged(step, providers) {
+			fmt.Printf("Skipping step %s\n", step.Name)
+			return nil
+		}
 		return u.executePipeline(firstRun, step, stepState, release)
 	}
 	parallelExecution, err := appliedVersionMatchesRelease(stepState, release)
@@ -294,6 +305,78 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		}
 	}()
 	return nil
+}
+
+func (u *updater) hasChanged(step model.Step, providers []string) bool {
+	if u.previousChecksums == nil || u.currentChecksums == nil {
+		return true
+	}
+	if u.hasProfileChanged() {
+		return true
+	}
+	if u.haveProvidersChanged(providers) {
+		return true
+	}
+	return u.haveModulesChanged(step)
+}
+
+func (u *updater) hasProfileChanged() bool {
+	profile := u.config.BaseConfig.Profile
+	if profile == "" {
+		return false
+	}
+	profileKey := fmt.Sprintf("profiles/%s.yaml", profile)
+	previousChecksum, ok := u.previousChecksums[profileKey]
+	if !ok {
+		return true
+	}
+	currentChecksum, ok := u.currentChecksums[profileKey]
+	if !ok {
+		return true
+	}
+	return previousChecksum != currentChecksum
+}
+
+func (u *updater) haveProvidersChanged(providers []string) bool {
+	if providers == nil {
+		return false
+	}
+	for _, provider := range providers {
+		providerKey := fmt.Sprintf("providers/%s.tf", provider)
+		previousChecksum, ok := u.previousChecksums[providerKey]
+		if !ok {
+			return true
+		}
+		currentChecksum, ok := u.currentChecksums[providerKey]
+		if !ok {
+			return true
+		}
+		if previousChecksum != currentChecksum {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *updater) haveModulesChanged(step model.Step) bool {
+	if step.Modules == nil {
+		return false
+	}
+	for _, module := range step.Modules {
+		moduleKey := fmt.Sprintf("modules/%s", module.Source)
+		previousChecksum, ok := u.previousChecksums[moduleKey]
+		if !ok {
+			return true
+		}
+		currentChecksum, ok := u.currentChecksums[moduleKey]
+		if !ok {
+			return true
+		}
+		if previousChecksum != currentChecksum {
+			return true
+		}
+	}
+	return false
 }
 
 func appliedVersionMatchesRelease(stepState *model.StateStep, release *version.Version) (bool, error) {
@@ -349,7 +432,8 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
-		return u.createTerraformFiles(step, stepState, releaseTag, stepSemver)
+		execute, _, err := u.createTerraformFiles(step, stepState, releaseTag, stepSemver)
+		return execute, err
 	case model.StepTypeArgoCD:
 		return u.createArgoCDFiles(step, stepState, releaseTag, stepSemver)
 	case model.StepTypeTerraformCustom:
@@ -358,16 +442,17 @@ func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, r
 	return true, nil
 }
 
-func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, terraformExecuted bool) (bool, error) {
+func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, terraformExecuted bool) (bool, []string, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
 	case model.StepTypeArgoCD:
-		return u.updateArgoCDFiles(step, stepState, releaseTag, stepSemver)
+		execute, err := u.updateArgoCDFiles(step, stepState, releaseTag, stepSemver)
+		return execute, nil, err
 	case model.StepTypeTerraformCustom:
-		return terraformExecuted, nil
+		return terraformExecuted, nil, nil
 	}
-	return true, nil
+	return true, nil, nil
 }
 
 func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
@@ -611,32 +696,32 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
+func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, []string, error) {
 	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetCodeRepo())
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	return u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
+func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, []string, error) {
 	changed, moduleVersions, err := u.createTerraformMain(step, stepState, releaseTag, stepSemver)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !changed {
-		return false, nil
+		return false, nil, nil
 	}
 	if len(moduleVersions) == 0 {
 		// Add a version for external providers fallback
 		moduleVersions["current"] = getFormattedVersion(releaseTag)
 	}
-	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions, u.resources.GetProviderType())
+	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, u.resources.GetProviderType())
 	if err != nil {
-		return false, fmt.Errorf("failed to create terraform provider: %s", err)
+		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
 	err = u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
-	return changed, err
+	return changed, providers, err
 }
 
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
@@ -1035,6 +1120,31 @@ func (u *updater) getBaseImageVersion(step model.Step, release *version.Version)
 		return u.config.BaseImageVersion
 	}
 	return getFormattedVersion(release)
+}
+
+func (u *updater) GetChecksums(release *version.Version) (map[string]string, error) {
+	content, err := u.github.GetRawFileContent(checksumsFile, release.Original())
+	if err != nil {
+		var fileError github.FileNotFoundError
+		if errors.As(err, &fileError) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	checksums := make(map[string]string)
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			fmt.Printf("Invalid line: %s\n", line)
+			continue
+		}
+		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
+	}
+	return checksums, nil
 }
 
 func getSSMParameterValueFromList(match []string, parameter *model.Parameter, replaceKey string, parameterName string) (string, error) {

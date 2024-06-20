@@ -25,7 +25,7 @@ const versionsFile = "versions.tf"
 const awsTagsRegex = `(\w+)\s*=\s*"([^"]+)"`
 
 type Terraform interface {
-	GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, error)
+	GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, []string, error)
 	GetEmptyTerraformProvider(version string, providerType model.ProviderType) ([]byte, error)
 }
 
@@ -39,43 +39,45 @@ func NewTerraform(github github.Github) Terraform {
 	}
 }
 
-func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, error) {
+func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, []string, error) {
 	if len(moduleVersions) == 0 {
-		return make([]byte, 0), nil
+		return make([]byte, 0), []string{}, nil
 	}
 	versions := util.MapValues(moduleVersions)
 	providersVersion, err := util.GetNewestVersion(versions)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	file, err := t.getTerraformFile(providerPath, baseFile, providersVersion)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	modifyBackendType(file.Body(), providerType)
 	providersAttributes := make(map[string]*hclwrite.Attribute)
+	providers := make([]string, 0)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
 		}
 		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for name, attribute := range providerAttributes {
 			providersAttributes[name] = attribute
+			providers = append(providers, name)
 		}
 	}
 	providersBlock, err := getRequiredProvidersBlock(file)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	baseBody := file.Body()
 	err = t.addProviderAttributes(baseBody, providersBlock, providersAttributes, providersVersion, step)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return hclwrite.Format(file.Bytes()), nil
+	return hclwrite.Format(file.Bytes()), providers, nil
 }
 
 func (t *terraform) GetEmptyTerraformProvider(version string, providerType model.ProviderType) ([]byte, error) {
