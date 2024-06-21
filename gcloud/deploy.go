@@ -410,7 +410,7 @@ func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 	}
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	releaseId := fmt.Sprintf("%s-%s", pipelineName, uuid.New().String())
-	_, err := p.client.CreateRelease(p.ctx, &deploypb.CreateReleaseRequest{
+	releaseOp, err := p.client.CreateRelease(p.ctx, &deploypb.CreateReleaseRequest{
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location, pipelineName),
 		ReleaseId: releaseId,
 		Release: &deploypb.Release{
@@ -421,6 +421,7 @@ func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 	if err != nil {
 		return nil, err
 	}
+	_, err = releaseOp.Wait(p.ctx) // Wait for release creation, otherwise wait loop will fail
 	return &releaseId, err
 }
 

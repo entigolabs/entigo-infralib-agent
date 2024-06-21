@@ -21,20 +21,22 @@ type BaseConfig struct {
 }
 
 type Step struct {
-	Name                string   `yaml:"name" fake:"{word}"`
-	Type                StepType `yaml:"type,omitempty" fake:"{stepType}"`
-	Workspace           string   `yaml:"workspace"`
-	Before              string   `yaml:"before,omitempty"`
-	Approve             Approve  `yaml:"approve,omitempty"`
-	Remove              bool     `yaml:"remove,omitempty"`
-	Version             string   `yaml:"version,omitempty"`
-	BaseImageVersion    string   `yaml:"base_image_version,omitempty"`
-	VpcId               string   `yaml:"vpc_id,omitempty"`
-	VpcSubnetIds        string   `yaml:"vpc_subnet_ids,omitempty"`
-	VpcSecurityGroupIds string   `yaml:"vpc_security_group_ids,omitempty"`
-	RepoUrl             string   `yaml:"repo_url,omitempty"`
-	Provider            Provider `yaml:"provider,omitempty"`
-	Modules             []Module `yaml:"modules,omitempty"`
+	Name                  string   `yaml:"name" fake:"{word}"`
+	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
+	Workspace             string   `yaml:"workspace"`
+	Before                string   `yaml:"before,omitempty"`
+	Approve               Approve  `yaml:"approve,omitempty"`
+	Remove                bool     `yaml:"remove,omitempty"`
+	Version               string   `yaml:"version,omitempty"`
+	BaseImageVersion      string   `yaml:"base_image_version,omitempty"`
+	VpcId                 string   `yaml:"vpc_id,omitempty"`
+	VpcSubnetIds          string   `yaml:"vpc_subnet_ids,omitempty"`
+	VpcSecurityGroupIds   string   `yaml:"vpc_security_group_ids,omitempty"`
+	KubernetesClusterName string   `yaml:"kubernetes_cluster_name,omitempty"`
+	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
+	RepoUrl               string   `yaml:"repo_url,omitempty"`
+	Provider              Provider `yaml:"provider,omitempty"`
+	Modules               []Module `yaml:"modules,omitempty"`
 }
 
 type Provider struct {

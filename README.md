@@ -124,6 +124,7 @@ steps:
     vpc_id: string
     vpc_subnet_ids: multiline string
     vpc_security_group_ids: multiline string
+    kubernetes_cluster_name: string
     repo_url: string
     modules:
       - name: string
@@ -170,6 +171,8 @@ During merging, step name and workspace are used for identifying parent steps, m
   * vpc_id - vpc id for code build
   * vpc_subnet_ids - vpc subnet ids for code build
   * vpc_security_group_ids - vpc security group ids for code build
+  * kubernetes_cluster_name - kubernetes cluster name for argocd-apps steps
+  * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
   * repo_url - for argocd-apps steps, repo to use for cloning
   * modules - list of modules to apply
     * name - name of the module

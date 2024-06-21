@@ -64,8 +64,12 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand, model.PlanDestroyCommand,
 			model.ApplyDestroyCommand}
 	}
+	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace), 0755)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
 	for _, command := range commands {
-		err = b.createJobManifest(projectName, command, bucket, stepName, step.Workspace, image, templateMeta)
+		err = b.createJobManifest(projectName, command, bucket, stepName, step, image, templateMeta)
 		if err != nil {
 			return fmt.Errorf("failed to create %s job manifest: %v", model.PlanCommand, err)
 		}
@@ -73,21 +77,17 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 	return nil
 }
 
-func (b *Builder) createJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, workspace string, image string, templateMeta *runv1.ObjectMeta) error {
-	job := b.GetJobManifest(projectName, command, bucket, stepName, workspace, image, templateMeta)
+func (b *Builder) createJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta) error {
+	job := b.GetJobManifest(projectName, command, bucket, stepName, step, image, templateMeta)
 	bytes, err := k8syaml.Marshal(job)
 	if err != nil {
 		return err
 	}
-	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, workspace), 0755)
-	if err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
-	}
-	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, workspace, projectName, command),
+	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, step.Workspace, projectName, command),
 		bytes, 0644)
 }
 
-func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, workspace string, image string, templateMeta *runv1.ObjectMeta) runv1.Job {
+func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta) runv1.Job {
 	return runv1.Job{
 		ApiVersion: "run.googleapis.com/v1",
 		Kind:       "Job",
@@ -109,7 +109,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,
-								Env:   b.getEnvironmentVariables(projectName, stepName, workspace, "/bucket", command),
+								Env:   b.getEnvironmentVariables(projectName, stepName, step, "/bucket", command),
 								VolumeMounts: []*runv1.VolumeMount{{
 									Name:      bucket,
 									MountPath: "/bucket",
@@ -335,8 +335,8 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	}
 }
 
-func (b *Builder) getEnvironmentVariables(projectName string, stepName string, workspace string, dir string, command model.ActionCommand) []*runv1.EnvVar {
-	return []*runv1.EnvVar{
+func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runv1.EnvVar {
+	envVars := []*runv1.EnvVar{
 		{Name: "PROJECT_NAME", Value: projectName},
 		{Name: "CODEBUILD_SRC_DIR", Value: dir},
 		{Name: "GOOGLE_REGION", Value: b.location},
@@ -344,6 +344,17 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, w
 		{Name: "GOOGLE_ZONE", Value: b.zone},
 		{Name: "COMMAND", Value: string(command)},
 		{Name: "TF_VAR_prefix", Value: stepName},
-		{Name: "WORKSPACE", Value: workspace},
+		{Name: "WORKSPACE", Value: step.Workspace},
 	}
+	if step.Type == model.StepTypeArgoCD {
+		if step.KubernetesClusterName != "" {
+			envVars = append(envVars, &runv1.EnvVar{Name: "KUBERNETES_CLUSTER_NAME", Value: step.KubernetesClusterName})
+		}
+		if step.ArgocdNamespace == "" {
+			envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: "argocd"})
+		} else {
+			envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: step.ArgocdNamespace})
+		}
+	}
+	return envVars
 }
