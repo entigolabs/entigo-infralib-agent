@@ -18,3 +18,6 @@ bin/
 # IntelliJ IDEA
 .idea/
 .DS_Store
+
+# Visual Studio Code
+.vscode/
