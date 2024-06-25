@@ -447,7 +447,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	fmt.Printf("waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
+	fmt.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
 	err = p.waitForRollout(rollout, pipelineName, stepType, "", "", autoApprove)
 	if err != nil {
 		return err
@@ -477,7 +477,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	fmt.Printf("waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
+	fmt.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
 	err = p.waitForRollout(rollout, pipelineName, stepType, planJob, executionName, autoApprove)
 	if err != nil {
 		return err

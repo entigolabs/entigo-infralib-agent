@@ -21,6 +21,7 @@ type awsService struct {
 
 type Resources struct {
 	model.CloudResources
+	IAM           IAM
 	DynamoDBTable string
 	Region        string
 	AccountId     string
@@ -84,10 +85,10 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 			Pipeline:     codePipeline,
 			CodeBuild:    codeBuild,
 			SSM:          NewSSM(a.awsConfig),
-			IAM:          iam,
 			CloudPrefix:  a.cloudPrefix,
 			Bucket:       bucket,
 		},
+		IAM:           iam,
 		DynamoDBTable: *dynamoDBTable.TableName,
 		Region:        a.awsConfig.Region,
 		AccountId:     a.accountId,
@@ -170,7 +171,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 	return logGroup, logGroupArn, logStream, cloudwatch
 }
 
-func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (model.IAM, string, string) {
+func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
 	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, repoArn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn, repoArn)
@@ -186,67 +187,67 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn st
 func (a *awsService) attachRolePolicies(roleArn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
-	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []model.PolicyStatement{CodePipelineRepoPolicy(roleArn)})
-	err := a.resources.IAM.AttachRolePolicy(pipelinePolicy.Arn, pipelineRoleName)
+	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineRepoPolicy(roleArn)})
+	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
 	}
 
 	buildRoleName := getBuildRoleName(a.cloudPrefix)
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
-	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []model.PolicyStatement{CodeBuildRepoPolicy(roleArn)})
-	err = a.resources.IAM.AttachRolePolicy(buildPolicy.Arn, buildRoleName)
+	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildRepoPolicy(roleArn)})
+	err = a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
 	}
 }
 
-func (a *awsService) createPipelineRole(iam model.IAM, s3Arn string, repoArn string) (string, bool) {
+func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (string, bool) {
 	pipelineRoleName := a.getPipelineRoleName()
-	pipelineRole := iam.CreateRole(pipelineRoleName, []model.PolicyStatement{{
+	pipelineRole := iam.CreateRole(pipelineRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
 	}})
 	if pipelineRole == nil {
 		pipelineRole = iam.GetRole(pipelineRoleName)
-		return pipelineRole.Arn, false
+		return *pipelineRole.Arn, false
 	}
 	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn, repoArn))
-	err := iam.AttachRolePolicy(pipelinePolicy.Arn, pipelineRole.RoleName)
+	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRole.RoleName, err)
 	}
-	return pipelineRole.Arn, true
+	return *pipelineRole.Arn, true
 }
 
 func (a *awsService) getPipelineRoleName() string {
 	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
 }
 
-func createBuildRole(iam model.IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {
+func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {
 	buildRoleName := getBuildRoleName(prefix)
-	buildRole := iam.CreateRole(buildRoleName, []model.PolicyStatement{{
+	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
 	}})
 	if buildRole == nil {
 		buildRole = iam.GetRole(buildRoleName)
-		return buildRole.Arn, false
+		return *buildRole.Arn, false
 	}
 
-	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", buildRole.RoleName)
+	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", buildRole.RoleName, err)
+		common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
 	}
 	buildPolicy := iam.CreatePolicy(buildRoleName,
 		CodeBuildPolicy(logGroupArn, s3Arn, repoArn, dynamoDBTableArn))
-	err = iam.AttachRolePolicy(buildPolicy.Arn, buildRole.RoleName)
+	err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRole.RoleName, err)
+		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 	}
-	return buildRole.Arn, true
+	return *buildRole.Arn, true
 }
 
 func getBuildRoleName(prefix string) string {

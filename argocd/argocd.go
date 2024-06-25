@@ -32,9 +32,30 @@ func getBaseApplicationFile() ([]byte, error) {
 }
 
 func replacePlaceholders(bytes []byte, module model.Module, repoSSHUrl string, version string, values []byte) []byte {
+	file := string(bytes)
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{codeRepoSSHUrl}}", repoSSHUrl,
-		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{moduleValues}}", string(values))
-	return []byte(replacer.Replace(string(bytes)))
+		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{moduleValues}}",
+		getValuesString(file, bytes, values))
+	return []byte(replacer.Replace(file))
+}
+
+func getValuesString(file string, bytes []byte, values []byte) string {
+	index := strings.Index(file, "{{moduleValues}}")
+	if index == -1 {
+		return string(values)
+	}
+	spaceCount := 0
+	for i := index - 1; i >= 0; i-- {
+		if bytes[i] == '\n' {
+			break
+		}
+		spaceCount++
+	}
+	replaceLines := strings.Split(string(values), "\n")
+	for i := 1; i < len(replaceLines); i++ {
+		replaceLines[i] = strings.Repeat(" ", spaceCount) + replaceLines[i]
+	}
+	return strings.Join(replaceLines, "\n")
 }
 
 func getModuleApplicationFile(git github.Github, release string, moduleSource string) (map[string]interface{}, error) {

@@ -25,7 +25,6 @@ type Resources interface {
 	GetPipeline() Pipeline
 	GetBuilder() Builder
 	GetSSM() SSM
-	GetIAM() IAM
 	GetCloudPrefix() string
 	GetBucket() string
 	GetBackendConfigVars(string) map[string]string
@@ -61,20 +60,12 @@ type SSM interface {
 	GetParameter(name string) (*Parameter, error)
 }
 
-type IAM interface {
-	AttachRolePolicy(policyArn string, roleName string) error
-	CreatePolicy(policyName string, statement []PolicyStatement) *Policy
-	CreateRole(roleName string, statement []PolicyStatement) *Role
-	GetRole(roleName string) *Role
-}
-
 type CloudResources struct {
 	ProviderType ProviderType
 	CodeRepo     CodeRepo
 	Pipeline     Pipeline
 	CodeBuild    Builder
 	SSM          SSM
-	IAM          IAM
 	CloudPrefix  string
 	Bucket       string
 }
@@ -97,10 +88,6 @@ func (c CloudResources) GetBuilder() Builder {
 
 func (c CloudResources) GetSSM() SSM {
 	return c.SSM
-}
-
-func (c CloudResources) GetIAM() IAM {
-	return c.IAM
 }
 
 func (c CloudResources) GetCloudPrefix() string {
@@ -139,27 +126,6 @@ const (
 	ArgoCDPlanDestroyCommand  ActionCommand = "argocd-plan-destroy"
 	ArgoCDApplyDestroyCommand ActionCommand = "argocd-apply-destroy"
 )
-
-type Policy struct {
-	Arn string
-}
-
-type Role struct {
-	Arn      string
-	RoleName string
-}
-
-type PolicyDocument struct {
-	Version   string
-	Statement []PolicyStatement
-}
-
-type PolicyStatement struct {
-	Effect    string
-	Action    []string
-	Principal map[string]string `json:",omitempty"`
-	Resource  []string          `json:",omitempty"`
-}
 
 type Parameter struct {
 	Value *string

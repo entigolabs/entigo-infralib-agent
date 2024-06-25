@@ -9,20 +9,38 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 )
+
+type IAM interface {
+	AttachRolePolicy(policyArn string, roleName string) error
+	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
+	CreateRole(roleName string, statement []PolicyStatement) *types.Role
+	GetRole(roleName string) *types.Role
+}
+
+type PolicyDocument struct {
+	Version   string
+	Statement []PolicyStatement
+}
+
+type PolicyStatement struct {
+	Effect    string
+	Action    []string
+	Principal map[string]string `json:",omitempty"`
+	Resource  []string          `json:",omitempty"`
+}
 
 type identity struct {
 	iamClient *iam.Client
 }
 
-func NewIAM(config aws.Config) model.IAM {
+func NewIAM(config aws.Config) IAM {
 	return &identity{
 		iamClient: iam.NewFromConfig(config),
 	}
 }
 
-func (i *identity) CreateRole(roleName string, statement []model.PolicyStatement) *model.Role {
+func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *types.Role {
 	result, err := i.iamClient.CreateRole(context.Background(), &iam.CreateRoleInput{
 		AssumeRolePolicyDocument: getPolicy(statement),
 		RoleName:                 aws.String(roleName),
@@ -36,24 +54,18 @@ func (i *identity) CreateRole(roleName string, statement []model.PolicyStatement
 		}
 	}
 	common.Logger.Printf("Created IAM role: %s\n", roleName)
-	return &model.Role{
-		RoleName: *result.Role.RoleName,
-		Arn:      *result.Role.Arn,
-	}
+	return result.Role
 }
 
-func (i *identity) GetRole(roleName string) *model.Role {
+func (i *identity) GetRole(roleName string) *types.Role {
 	role, err := i.iamClient.GetRole(context.Background(), &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
 		common.Logger.Fatalf("Failed to get role %s: %s", roleName, err)
 	}
-	return &model.Role{
-		RoleName: *role.Role.RoleName,
-		Arn:      *role.Role.Arn,
-	}
+	return role.Role
 }
 
-func (i *identity) CreatePolicy(policyName string, statement []model.PolicyStatement) *model.Policy {
+func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy {
 	result, err := i.iamClient.CreatePolicy(context.Background(), &iam.CreatePolicyInput{
 		PolicyDocument: getPolicy(statement),
 		PolicyName:     aws.String(policyName),
@@ -67,13 +79,11 @@ func (i *identity) CreatePolicy(policyName string, statement []model.PolicyState
 		}
 	}
 	common.Logger.Printf("Created IAM policy: %s\n", policyName)
-	return &model.Policy{
-		Arn: *result.Policy.Arn,
-	}
+	return result.Policy
 }
 
-func getPolicy(statements []model.PolicyStatement) *string {
-	policy := model.PolicyDocument{
+func getPolicy(statements []PolicyStatement) *string {
+	policy := PolicyDocument{
 		Version:   "2012-10-17",
 		Statement: statements,
 	}
@@ -92,8 +102,8 @@ func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
 	return err
 }
 
-func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbArn string) []model.PolicyStatement {
-	return []model.PolicyStatement{{
+func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbArn string) []PolicyStatement {
+	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{logGroupArn, fmt.Sprintf("%s:*", logGroupArn)},
 		Action: []string{
@@ -127,8 +137,8 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbA
 	}}
 }
 
-func CodeBuildRepoPolicy(repoArn string) model.PolicyStatement {
-	return model.PolicyStatement{
+func CodeBuildRepoPolicy(repoArn string) PolicyStatement {
+	return PolicyStatement{
 		Effect:   "Allow",
 		Resource: []string{repoArn},
 		Action: []string{
@@ -141,8 +151,8 @@ func CodeBuildRepoPolicy(repoArn string) model.PolicyStatement {
 	}
 }
 
-func CodePipelinePolicy(s3Arn string, repoArn string) []model.PolicyStatement {
-	return []model.PolicyStatement{{
+func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
+	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{s3Arn, fmt.Sprintf("%s/*", s3Arn)},
 		Action: []string{
@@ -159,8 +169,8 @@ func CodePipelinePolicy(s3Arn string, repoArn string) []model.PolicyStatement {
 	}}
 }
 
-func CodePipelineRepoPolicy(repoArn string) model.PolicyStatement {
-	return model.PolicyStatement{
+func CodePipelineRepoPolicy(repoArn string) PolicyStatement {
+	return PolicyStatement{
 		Effect:   "Allow",
 		Resource: []string{repoArn, fmt.Sprintf("%s/*", repoArn)},
 		Action: []string{

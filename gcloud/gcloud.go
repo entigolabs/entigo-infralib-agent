@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"strings"
 )
 
 type gcloudService struct {
@@ -47,12 +48,16 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	if err != nil {
 		common.Logger.Fatalf("Failed to create logging client: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "infralib-agent@entigo-infralib.iam.gserviceaccount.com")
+	iam, err := NewIAM(g.ctx, g.projectId)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create IAM service: %s", err)
+	}
+	serviceAccount := g.createServiceAccount(iam)
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix,
-		"infralib-agent@entigo-infralib.iam.gserviceaccount.com", codeStorage, builder, logging)
+	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, serviceAccount, codeStorage, builder, logging)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create pipeline: %s", err)
 	}
@@ -76,4 +81,23 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 func (g *gcloudService) SetupCustomCodeRepo(_ string) (model.CodeRepo, error) {
 	bucket := fmt.Sprintf("%s-%s-custom", g.cloudPrefix, g.projectId)
 	return NewStorage(g.ctx, g.projectId, g.location, bucket)
+}
+
+func (g *gcloudService) createServiceAccount(iam *IAM) string {
+	account, err := iam.GetOrCreateServiceAccount(g.cloudPrefix, "Entigo infralib service account")
+	if err != nil {
+		common.Logger.Fatalf("Failed to create service account: %s", err)
+	}
+	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
+		"roles/iam.serviceAccountAdmin"})
+	if err != nil {
+		common.Logger.Fatalf("Failed to add roles to service account: %s", err)
+	}
+	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
+		"roles/iam.serviceAccountAdmin", "roles/container.admin"})
+	if err != nil {
+		common.Logger.Fatalf("Failed to add roles to project: %s", err)
+	}
+	nameParts := strings.Split(account.Name, "/")
+	return nameParts[len(nameParts)-1]
 }
