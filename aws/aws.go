@@ -75,7 +75,7 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *repoMetadata.Arn, *dynamoDBTable.TableArn)
 
 	codeBuild := NewBuilder(a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.awsConfig, *repoMetadata.RepositoryName, branch, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
+	codePipeline := NewPipeline(a.awsConfig, branch, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{

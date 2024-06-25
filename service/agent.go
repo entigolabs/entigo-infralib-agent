@@ -86,7 +86,7 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 	if project.Image == image+":"+version {
 		return false, nil
 	}
-	err := a.resources.GetBuilder().UpdateAgentProject(project.Name, version)
+	err := a.resources.GetBuilder().UpdateAgentProject(project.Name, version, a.cloudPrefix)
 	if err != nil {
 		return false, err
 	}

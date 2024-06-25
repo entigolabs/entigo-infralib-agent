@@ -58,12 +58,11 @@ type pipeline struct {
 	location       string
 	serviceAccount string
 	storage        *GStorage
-	bucket         string
 	builder        *Builder
 	logging        *Logging
 }
 
-func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, bucket string, builder *Builder, logging *Logging) (model.Pipeline, error) {
+func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging) (model.Pipeline, error) {
 	client, err := deploy.NewCloudDeployClient(ctx)
 	if err != nil {
 		return nil, err
@@ -80,7 +79,6 @@ func NewPipeline(ctx context.Context, projectId string, location string, prefix 
 		location:       location,
 		serviceAccount: serviceAccount,
 		storage:        storage,
-		bucket:         bucket,
 		builder:        builder,
 		logging:        logging,
 	}, nil
@@ -142,11 +140,7 @@ func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projec
 	return nil
 }
 
-func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step, customRepo string) (*string, error) {
-	bucket := p.bucket
-	if customRepo != "" {
-		bucket = customRepo
-	}
+func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket string) (*string, error) {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
 	var destroyPlanCommand model.ActionCommand
@@ -188,7 +182,7 @@ func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	if err != nil {
 		return nil, err
 	}
-	return p.StartPipelineExecution(projectName, stepName, step, customRepo)
+	return p.StartPipelineExecution(projectName, stepName, step, bucket)
 }
 
 func (p *pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
@@ -396,18 +390,21 @@ func (p *pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, 
 	return err
 }
 
-func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step) error {
-	// TODO This needs to update env variables to update client module GIT credentials
-	// TODO This should update the manifests and upload a new tar?
-	common.PrintWarning("UpdatePipeline not implemented for GCloud")
+func (p *pipeline) UpdatePipeline(_ string, stepName string, step model.Step, bucket string) error {
+	// Job manifests were updated previously, just need to update the tarball
+	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
+	tarContent, err := util.TarGzWrite(folder)
+	if err != nil {
+		return err
+	}
+	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
-	bucket := p.bucket
-	if customRepo != "" {
-		bucket = customRepo
-	}
+func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, bucket string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	releaseId := fmt.Sprintf("%s-%s", pipelineName, uuid.New().String())
 	releaseOp, err := p.client.CreateRelease(p.ctx, &deploypb.CreateReleaseRequest{

@@ -475,10 +475,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	if step.Type == model.StepTypeTerraformCustom {
-		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, repoMetadata.Name)
-	}
-	return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, "")
+	return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, repoMetadata.Name)
 }
 
 func getVpcConfig(step model.Step) *model.VpcConfig {
@@ -501,8 +498,8 @@ func (u *updater) getRepoMetadata(stepType model.StepType) (*model.RepositoryMet
 	}
 }
 
-func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, customRepo string) error {
-	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, customRepo)
+func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, repo string) error {
+	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, repo)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
@@ -527,16 +524,11 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return err
 	}
-	err = u.updatePipelines(projectName, step)
+	err = u.updatePipelines(projectName, step, repoMetadata.Name)
 	if err != nil {
 		return err
 	}
-	var executionId *string
-	if step.Type == model.StepTypeTerraformCustom {
-		executionId, err = u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, repoMetadata.Name)
-	} else {
-		executionId, err = u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, "")
-	}
+	executionId, err := u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, repoMetadata.Name)
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", projectName, err)
 	}
@@ -1107,15 +1099,11 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
 }
 
-func (u *updater) updatePipelines(projectName string, step model.Step) error {
+func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
-	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step)
+	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step, bucket)
 	if err != nil {
 		return fmt.Errorf("failed to update pipeline %s: %w", projectName, err)
-	}
-	err = u.resources.GetPipeline().UpdatePipeline(fmt.Sprintf("%s-destroy", projectName), stepName, step)
-	if err != nil {
-		return fmt.Errorf("failed to update destroy pipeline %s: %w", projectName, err)
 	}
 	return nil
 }

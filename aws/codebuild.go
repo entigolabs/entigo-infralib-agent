@@ -130,12 +130,7 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 			Image:                    aws.String(model.AgentImage + ":" + imageVersion),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-			EnvironmentVariables: []types.EnvironmentVariable{
-				{
-					Name:  aws.String(common.AwsPrefixEnv),
-					Value: aws.String(awsPrefix),
-				},
-			},
+			EnvironmentVariables:     getAgentEnvVars(awsPrefix),
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
@@ -154,6 +149,15 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 		},
 	})
 	return err
+}
+
+func getAgentEnvVars(awsPrefix string) []types.EnvironmentVariable {
+	return []types.EnvironmentVariable{
+		{
+			Name:  aws.String(common.AwsPrefixEnv),
+			Value: aws.String(awsPrefix),
+		},
+	}
 }
 
 func (b *builder) GetProject(projectName string) (*model.Project, error) {
@@ -183,8 +187,27 @@ func (b *builder) getProject(projectName string) (*types.Project, error) {
 	return &projects.Projects[0], nil
 }
 
-func (b *builder) UpdateAgentProject(projectName string, version string) error {
-	return b.UpdateProject(projectName, "", "", model.Step{}, model.AgentImage+":"+version, nil)
+func (b *builder) UpdateAgentProject(projectName string, version string, awsPrefix string) error {
+	project, err := b.getProject(projectName)
+	if err != nil {
+		return err
+	}
+	if project == nil {
+		return fmt.Errorf("project %s not found", projectName)
+	}
+	image := fmt.Sprintf("%s:%s", model.AgentImage, version)
+
+	if *project.Environment.Image == image {
+		return nil
+	}
+
+	project.Environment.Image = aws.String(image)
+	project.Environment.EnvironmentVariables = getAgentEnvVars(awsPrefix)
+	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
+		Name:        aws.String(projectName),
+		Environment: project.Environment,
+	})
+	return err
 }
 
 func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, image string, vpcConfig *model.VpcConfig) error {

@@ -52,7 +52,7 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 		common.Logger.Fatalf("Failed to create builder: %s", err)
 	}
 	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix,
-		"infralib-agent@entigo-infralib.iam.gserviceaccount.com", codeStorage, bucket, builder, logging)
+		"infralib-agent@entigo-infralib.iam.gserviceaccount.com", codeStorage, builder, logging)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create pipeline: %s", err)
 	}

@@ -41,9 +41,9 @@ type CodeRepo interface {
 }
 
 type Pipeline interface {
-	CreatePipeline(projectName string, stepName string, step Step, customRepo string) (*string, error)
+	CreatePipeline(projectName string, stepName string, step Step, repo string) (*string, error)
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
-	UpdatePipeline(pipelineName string, stepName string, step Step) error
+	UpdatePipeline(pipelineName string, stepName string, step Step, bucket string) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName string, stepName string, step Step, customRepo string) (*string, error)
 	WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType StepType) error
@@ -53,7 +53,7 @@ type Builder interface {
 	CreateProject(projectName string, repoURL string, stepName string, step Step, imageVersion string, vpcConfig *VpcConfig) error
 	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
 	GetProject(projectName string) (*Project, error)
-	UpdateAgentProject(projectName string, version string) error
+	UpdateAgentProject(projectName string, version string, cloudPrefix string) error
 	UpdateProject(projectName, repoURL, stepName string, step Step, image string, vpcConfig *VpcConfig) error
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/googleapis/gax-go/v2/apierror"
 	runv1 "google.golang.org/api/run/v1"
 	"google.golang.org/genproto/googleapis/api"
@@ -149,19 +150,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 					Containers: []*runpb.Container{{
 						Name:  "agent",
 						Image: model.AgentImageDocker + ":" + imageVersion,
-						Env: []*runpb.EnvVar{{
-							Name:   common.AwsPrefixEnv,
-							Values: &runpb.EnvVar_Value{Value: awsPrefix},
-						}, {
-							Name:   "PROJECT_ID",
-							Values: &runpb.EnvVar_Value{Value: b.projectId},
-						}, {
-							Name:   "LOCATION",
-							Values: &runpb.EnvVar_Value{Value: b.location},
-						}, {
-							Name:   "ZONE",
-							Values: &runpb.EnvVar_Value{Value: b.zone},
-						}},
+						Env:   b.getAgentEnvVars(awsPrefix),
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      "tmp",
 							MountPath: "/tmp",
@@ -187,6 +176,22 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 	return err
 }
 
+func (b *Builder) getAgentEnvVars(awsPrefix string) []*runpb.EnvVar {
+	return []*runpb.EnvVar{{
+		Name:   common.AwsPrefixEnv,
+		Values: &runpb.EnvVar_Value{Value: awsPrefix},
+	}, {
+		Name:   "PROJECT_ID",
+		Values: &runpb.EnvVar_Value{Value: b.projectId},
+	}, {
+		Name:   "LOCATION",
+		Values: &runpb.EnvVar_Value{Value: b.location},
+	}, {
+		Name:   "ZONE",
+		Values: &runpb.EnvVar_Value{Value: b.zone},
+	}}
+}
+
 func (b *Builder) GetProject(projectName string) (*model.Project, error) {
 	job, err := b.getJob(projectName)
 	if err != nil {
@@ -201,7 +206,7 @@ func (b *Builder) GetProject(projectName string) (*model.Project, error) {
 	}, nil
 }
 
-func (b *Builder) UpdateAgentProject(projectName string, version string) error {
+func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPrefix string) error {
 	job, err := b.getJob(projectName)
 	if err != nil {
 		return err
@@ -211,11 +216,12 @@ func (b *Builder) UpdateAgentProject(projectName string, version string) error {
 	}
 	image := fmt.Sprintf("%s:%s", model.AgentImageDocker, version)
 
-	if image == "" || job.Template.Template.Containers[0].Image == image {
+	if job.Template.Template.Containers[0].Image == image {
 		return nil
 	}
 
 	job.Template.Template.Containers[0].Image = image
+	job.Template.Template.Containers[0].Env = b.getAgentEnvVars(cloudPrefix)
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
 }
@@ -227,14 +233,6 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model
 	}
 	if job == nil {
 		return fmt.Errorf("project %s not found", projectName)
-	}
-
-	vpc := getGCloudVpcAccess(vpcConfig)
-	vpcChanged := hasVPCConfigChanged(vpc, job.Template.Template.VpcAccess)
-	imageChanged := image != "" && job.Template.Template.Containers[0].Image != image
-
-	if !imageChanged && !vpcChanged {
-		return nil
 	}
 	return b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 }
@@ -346,15 +344,34 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 		{Name: "TF_VAR_prefix", Value: stepName},
 		{Name: "WORKSPACE", Value: step.Workspace},
 	}
+	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
+		envVars = addTerraformEnvironmentVariables(envVars, step)
+	}
 	if step.Type == model.StepTypeArgoCD {
-		if step.KubernetesClusterName != "" {
-			envVars = append(envVars, &runv1.EnvVar{Name: "KUBERNETES_CLUSTER_NAME", Value: step.KubernetesClusterName})
+		envVars = addArgoCDEnvironmentVariables(envVars, step)
+	}
+	return envVars
+}
+
+func addTerraformEnvironmentVariables(envVars []*runv1.EnvVar, step model.Step) []*runv1.EnvVar {
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf("GIT_AUTH_USERNAME_%s", strings.ToUpper(module.Name)), Value: module.HttpUsername})
+			envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf("GIT_AUTH_PASSWORD_%s", strings.ToUpper(module.Name)), Value: module.HttpPassword})
+			envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf("GIT_AUTH_SOURCE_%s", strings.ToUpper(module.Name)), Value: module.Source})
 		}
-		if step.ArgocdNamespace == "" {
-			envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: "argocd"})
-		} else {
-			envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: step.ArgocdNamespace})
-		}
+	}
+	return envVars
+}
+
+func addArgoCDEnvironmentVariables(envVars []*runv1.EnvVar, step model.Step) []*runv1.EnvVar {
+	if step.KubernetesClusterName != "" {
+		envVars = append(envVars, &runv1.EnvVar{Name: "KUBERNETES_CLUSTER_NAME", Value: step.KubernetesClusterName})
+	}
+	if step.ArgocdNamespace == "" {
+		envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: "argocd"})
+	} else {
+		envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: step.ArgocdNamespace})
 	}
 	return envVars
 }
