@@ -18,6 +18,9 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 		&configFlag,
 		&branchFlag,
 		&awsPrefixFlag,
+		&projectIdFlag,
+		&locationFlag,
+		&zoneFlag,
 	)
 }
 
@@ -79,4 +82,35 @@ var awsPrefixFlag = cli.StringFlag{
 	Usage:       "prefix used when creating aws resources",
 	Destination: &flags.AWSPrefix,
 	Required:    false,
+}
+
+var projectIdFlag = cli.StringFlag{
+	Name:        "project-id",
+	Aliases:     []string{"pid"},
+	EnvVars:     []string{"PROJECT_ID"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "project id used when creating gcloud resources",
+	Destination: &flags.GCloud.ProjectId,
+	Required:    false,
+}
+
+var locationFlag = cli.StringFlag{
+	Name:        "location",
+	Aliases:     []string{"loc"},
+	EnvVars:     []string{"LOCATION"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "location used when creating gcloud resources",
+	Destination: &flags.GCloud.Location,
+}
+
+var zoneFlag = cli.StringFlag{
+	Name:        "zone",
+	Aliases:     []string{"z"},
+	EnvVars:     []string{"ZONE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "zone used in run jobs",
+	Destination: &flags.GCloud.Zone,
 }

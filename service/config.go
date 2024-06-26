@@ -28,7 +28,7 @@ func GetAwsPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(configFile string, codeCommit CodeCommit) model.Config {
+func GetConfig(configFile string, codeCommit model.CodeRepo) model.Config {
 	var config model.Config
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
@@ -58,7 +58,7 @@ func GetLocalConfig(configFile string) model.Config {
 	return config
 }
 
-func PutConfig(codeCommit CodeCommit, config model.Config) {
+func PutConfig(codeCommit model.CodeRepo, config model.Config) {
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
@@ -69,7 +69,7 @@ func PutConfig(codeCommit CodeCommit, config model.Config) {
 	}
 }
 
-func GetRemoteConfig(codeCommit CodeCommit) model.Config {
+func GetRemoteConfig(codeCommit model.CodeRepo) model.Config {
 	bytes, err := codeCommit.GetFile("config.yaml")
 	if err != nil {
 		common.Logger.Fatalf("Failed to get config: %s", err)
@@ -116,8 +116,8 @@ func validateStep(step model.Step, steps []model.Step) {
 	if step.Type == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s-%s", step.Name, step.Workspace)})
 	}
-	if step.VpcId != "" && (step.VpcSubnetIds == "" || step.VpcSecurityGroupIds == "") {
-		common.Logger.Fatalf("VPC ID is set for step %s-%s but subnet IDs or security group IDs are not", step.Name, step.Workspace)
+	if step.VpcId != "" && step.VpcSubnetIds == "" {
+		common.Logger.Fatalf("VPC ID is set for step %s-%s but subnet IDs are not", step.Name, step.Workspace)
 	}
 	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
 		common.Logger.Fatalf("VPC ID is not set for step %s-%s", step.Name, step.Workspace)

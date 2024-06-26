@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"context"
@@ -8,51 +8,41 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codecommit"
 	"github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
-type CodeCommit interface {
-	CreateRepository() (bool, error)
-	GetLatestCommitId() (*string, error)
-	GetRepoMetadata() (*types.RepositoryMetadata, error)
-	PutFile(file string, content []byte) error
-	GetFile(file string) ([]byte, error)
-	DeleteFile(file string) error
-	CheckFolderExists(folder string) (bool, error)
-	ListFolderFiles(folder string) ([]string, error)
-}
-
-type codeCommit struct {
-	codecommit     *codecommit.Client
+type CodeCommit struct {
+	codeCommit     *codecommit.Client
 	repo           *string
 	branch         *string
 	repoMetadata   *types.RepositoryMetadata
 	parentCommitId *string
 }
 
-func NewCodeCommit(awsConfig aws.Config, repoName string, branchName string) CodeCommit {
-	return &codeCommit{
-		codecommit: codecommit.NewFromConfig(awsConfig),
+func NewCodeCommit(awsConfig aws.Config, repoName string, branchName string) *CodeCommit {
+	return &CodeCommit{
+		codeCommit: codecommit.NewFromConfig(awsConfig),
 		repo:       aws.String(repoName),
 		branch:     aws.String(branchName),
 	}
 }
 
-func (c *codeCommit) CreateRepository() (bool, error) {
+func (c *CodeCommit) CreateRepository() (bool, error) {
 	input := &codecommit.CreateRepositoryInput{
 		RepositoryName: c.repo,
 	}
-	result, err := c.codecommit.CreateRepository(context.Background(), input)
+	result, err := c.codeCommit.CreateRepository(context.Background(), input)
 	if err != nil {
 		var awsError *types.RepositoryNameExistsException
 		if errors.As(err, &awsError) {
-			c.parentCommitId, err = c.GetLatestCommitId()
+			c.parentCommitId, err = c.getLatestCommitId()
 			if err != nil {
 				return false, err
 			}
-			c.repoMetadata, err = c.GetRepoMetadata()
+			c.repoMetadata, err = c.GetAWSRepoMetadata()
 			return false, err
 		} else {
-			common.Logger.Fatalf("Failed to create CodeCommit repository: %s", err)
+			common.Logger.Fatalf("Failed to create CodeRepo repository: %s", err)
 			return false, err
 		}
 	} else {
@@ -62,21 +52,32 @@ func (c *codeCommit) CreateRepository() (bool, error) {
 	}
 }
 
-func (c *codeCommit) GetRepoMetadata() (*types.RepositoryMetadata, error) {
+func (c *CodeCommit) GetAWSRepoMetadata() (*types.RepositoryMetadata, error) {
 	if c.repoMetadata != nil {
 		return c.repoMetadata, nil
 	}
-	result, err := c.codecommit.GetRepository(context.Background(), &codecommit.GetRepositoryInput{
+	result, err := c.codeCommit.GetRepository(context.Background(), &codecommit.GetRepositoryInput{
 		RepositoryName: c.repo,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CodeCommit repository: %w", err)
+		return nil, fmt.Errorf("failed to get CodeRepo repository: %w", err)
 	}
 	return result.RepositoryMetadata, nil
 }
 
-func (c *codeCommit) GetLatestCommitId() (*string, error) {
-	result, err := c.codecommit.GetBranch(context.Background(), &codecommit.GetBranchInput{
+func (c *CodeCommit) GetRepoMetadata() (*model.RepositoryMetadata, error) {
+	repoMetadata, err := c.GetAWSRepoMetadata()
+	if err != nil {
+		return nil, err
+	}
+	return &model.RepositoryMetadata{
+		Name: *repoMetadata.RepositoryName,
+		URL:  *repoMetadata.CloneUrlHttp,
+	}, nil
+}
+
+func (c *CodeCommit) getLatestCommitId() (*string, error) {
+	result, err := c.codeCommit.GetBranch(context.Background(), &codecommit.GetBranchInput{
 		RepositoryName: c.repo,
 		BranchName:     c.branch,
 	})
@@ -86,8 +87,8 @@ func (c *codeCommit) GetLatestCommitId() (*string, error) {
 	return result.Branch.CommitId, nil
 }
 
-func (c *codeCommit) updateLatestCommitId() error {
-	commitId, err := c.GetLatestCommitId()
+func (c *CodeCommit) updateLatestCommitId() error {
+	commitId, err := c.getLatestCommitId()
 	if err != nil {
 		return err
 	}
@@ -95,9 +96,9 @@ func (c *codeCommit) updateLatestCommitId() error {
 	return nil
 }
 
-func (c *codeCommit) PutFile(file string, content []byte) error {
+func (c *CodeCommit) PutFile(file string, content []byte) error {
 	for {
-		putFileOutput, err := c.codecommit.PutFile(context.Background(), &codecommit.PutFileInput{
+		putFileOutput, err := c.codeCommit.PutFile(context.Background(), &codecommit.PutFileInput{
 			BranchName:     c.branch,
 			CommitMessage:  aws.String(fmt.Sprintf("Add %s", file)),
 			RepositoryName: c.repo,
@@ -125,9 +126,9 @@ func (c *codeCommit) PutFile(file string, content []byte) error {
 	}
 }
 
-func (c *codeCommit) GetFile(file string) ([]byte, error) {
+func (c *CodeCommit) GetFile(file string) ([]byte, error) {
 	common.Logger.Printf("Getting file %s from repository\n", file)
-	output, err := c.codecommit.GetFile(context.Background(), &codecommit.GetFileInput{
+	output, err := c.codeCommit.GetFile(context.Background(), &codecommit.GetFileInput{
 		CommitSpecifier: c.branch,
 		RepositoryName:  c.repo,
 		FilePath:        aws.String(file),
@@ -142,9 +143,9 @@ func (c *codeCommit) GetFile(file string) ([]byte, error) {
 	return output.FileContent, nil
 }
 
-func (c *codeCommit) DeleteFile(file string) error {
+func (c *CodeCommit) DeleteFile(file string) error {
 	for {
-		deleteFileOutput, err := c.codecommit.DeleteFile(context.Background(), &codecommit.DeleteFileInput{
+		deleteFileOutput, err := c.codeCommit.DeleteFile(context.Background(), &codecommit.DeleteFileInput{
 			BranchName:     c.branch,
 			CommitMessage:  aws.String(fmt.Sprintf("Delete %s", file)),
 			RepositoryName: c.repo,
@@ -172,8 +173,8 @@ func (c *codeCommit) DeleteFile(file string) error {
 	}
 }
 
-func (c *codeCommit) CheckFolderExists(folder string) (bool, error) {
-	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
+func (c *CodeCommit) CheckFolderExists(folder string) (bool, error) {
+	output, err := c.codeCommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
 		CommitSpecifier: c.branch,
 		RepositoryName:  c.repo,
 		FolderPath:      aws.String(folder),
@@ -188,8 +189,8 @@ func (c *codeCommit) CheckFolderExists(folder string) (bool, error) {
 	return len(output.Files) > 0 || len(output.SubFolders) > 0, nil
 }
 
-func (c *codeCommit) ListFolderFiles(folder string) ([]string, error) {
-	output, err := c.codecommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
+func (c *CodeCommit) ListFolderFiles(folder string) ([]string, error) {
+	output, err := c.codeCommit.GetFolder(context.Background(), &codecommit.GetFolderInput{
 		CommitSpecifier: c.branch,
 		RepositoryName:  c.repo,
 		FolderPath:      aws.String(folder),

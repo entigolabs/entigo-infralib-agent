@@ -1,12 +1,12 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
-	ccTypes "github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
+	"github.com/entigolabs/entigo-infralib-agent/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -24,6 +24,7 @@ import (
 )
 
 const stateFile = "state.yaml"
+const checksumsFile = "checksums.sha256"
 
 const replaceRegex = `{{(.*?)}}`
 const parameterIndexRegex = `(\w+)(\[(\d+)(-(\d+))?])?`
@@ -36,31 +37,32 @@ type Updater interface {
 type updater struct {
 	config                 model.Config
 	patchConfig            model.Config
-	awsService             AWS
-	resources              AWSResources
+	provider               model.CloudProvider
+	resources              model.Resources
 	github                 github.Github
 	terraform              terraform.Terraform
-	customCC               CodeCommit
+	customCC               model.CodeRepo
 	state                  *model.State
 	stableRelease          *version.Version
 	baseConfigReleaseLimit *version.Version
+	previousChecksums      map[string]string
+	currentChecksums       map[string]string
 }
 
 func NewUpdater(flags *common.Flags) Updater {
-	prefix := GetAwsPrefix(flags)
-	awsService := NewAWS(strings.ToLower(prefix))
-	resources := awsService.SetupAWSResources(flags.Branch)
-	config := GetConfig(flags.Config, resources.CodeCommit)
+	provider := GetCloudProvider(context.Background(), flags)
+	resources := provider.SetupResources(flags.Branch)
+	config := GetConfig(flags.Config, resources.GetCodeRepo())
 	githubClient := github.NewGithub(config.Source)
 	stableRelease := getLatestRelease(githubClient)
-	latestState, err := getLatestState(resources.CodeCommit)
+	latestState, err := getLatestState(resources.GetCodeRepo())
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
 	return &updater{
 		config:                 config,
 		patchConfig:            config,
-		awsService:             awsService,
+		provider:               provider,
 		resources:              resources,
 		github:                 githubClient,
 		terraform:              terraform.NewTerraform(githubClient),
@@ -113,7 +115,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
 	}
-	err = u.resources.CodeCommit.PutFile("merged_config.yaml", bytes)
+	err = u.resources.GetCodeRepo().PutFile("merged_config.yaml", bytes)
 	if err != nil {
 		common.Logger.Fatalf("Failed to put merged config file: %s", err)
 	}
@@ -121,7 +123,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	u.state.BaseConfig.Version = release
 }
 
-func getLatestState(codeCommit CodeCommit) (*model.State, error) {
+func getLatestState(codeCommit model.CodeRepo) (*model.State, error) {
 	file, err := codeCommit.GetFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state file: %w", err)
@@ -137,14 +139,14 @@ func getLatestState(codeCommit CodeCommit) (*model.State, error) {
 	return &state, nil
 }
 
-func (u *updater) setupCustomCodeCommit() error {
+func (u *updater) setupCustomCodeRepo() error {
 	if u.customCC != nil {
 		return nil
 	}
 	for _, step := range u.config.Steps {
 		if step.Type == model.StepTypeTerraformCustom {
 			var err error
-			u.customCC, err = u.awsService.SetupCustomCodeCommit("main")
+			u.customCC, err = u.provider.SetupCustomCodeRepo("main")
 			if err != nil {
 				return err
 			}
@@ -169,9 +171,13 @@ func (u *updater) ProcessSteps() {
 		if u.releaseNewerThanConfigVersions(release) {
 			break
 		}
-		err = u.setupCustomCodeCommit()
+		err = u.setupCustomCodeRepo()
 		if err != nil {
-			common.Logger.Fatalf("Failed to setup custom CodeCommit: %s", err)
+			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
+		}
+		u.currentChecksums, err = u.GetChecksums(release)
+		if err != nil {
+			common.Logger.Fatalf("Failed to get checksums for release %s: %v", release.Original(), err)
 		}
 		terraformExecuted := false
 		wg := new(sync.WaitGroup)
@@ -197,11 +203,12 @@ func (u *updater) ProcessSteps() {
 				break
 			}
 			var executePipelines bool
+			var providers []string
 			if !firstRunDone[step.Name] {
 				executePipelines, err = u.createStepFiles(step, stepState, release, stepSemVer)
 			} else {
-				executePipelines, err = u.updateStepFiles(step, stepState, release, stepSemVer, terraformExecuted)
-				if step.Type == model.StepTypeTerraform && executePipelines {
+				executePipelines, providers, err = u.updateStepFiles(step, stepState, release, stepSemVer, terraformExecuted)
+				if executePipelines {
 					terraformExecuted = true
 				}
 			}
@@ -210,7 +217,7 @@ func (u *updater) ProcessSteps() {
 				failed = true
 				break
 			}
-			err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, wg, errChan)
+			err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, providers, wg, errChan)
 			if err != nil {
 				common.PrintError(err)
 				failed = true
@@ -224,6 +231,7 @@ func (u *updater) ProcessSteps() {
 		if _, ok := <-errChan; ok || failed {
 			common.Logger.Fatalf("One or more steps failed to apply")
 		}
+		u.previousChecksums = u.currentChecksums
 		if u.state.BaseConfig.AppliedVersion != u.state.BaseConfig.Version {
 			u.state.BaseConfig.AppliedVersion = u.state.BaseConfig.Version
 			err = u.putStateFile()
@@ -268,7 +276,7 @@ func (u *updater) getStepSemVer(step model.Step) (*version.Version, error) {
 	return stepSemVer, nil
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, wg *sync.WaitGroup, errChan chan<- error) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, providers []string, wg *sync.WaitGroup, errChan chan<- error) error {
 	if !executePipelines {
 		return nil
 	}
@@ -277,6 +285,11 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		return err
 	}
 	if !firstRun {
+		if !u.hasChanged(step, providers) {
+			fmt.Printf("Skipping step %s\n", step.Name)
+			u.updateStepState(stepState)
+			return nil
+		}
 		return u.executePipeline(firstRun, step, stepState, release)
 	}
 	parallelExecution, err := appliedVersionMatchesRelease(stepState, release)
@@ -296,6 +309,78 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		}
 	}()
 	return nil
+}
+
+func (u *updater) hasChanged(step model.Step, providers []string) bool {
+	if u.previousChecksums == nil || u.currentChecksums == nil {
+		return true
+	}
+	if u.hasProfileChanged() {
+		return true
+	}
+	if u.haveProvidersChanged(providers) {
+		return true
+	}
+	return u.haveModulesChanged(step)
+}
+
+func (u *updater) hasProfileChanged() bool {
+	profile := u.config.BaseConfig.Profile
+	if profile == "" {
+		return false
+	}
+	profileKey := fmt.Sprintf("profiles/%s.yaml", profile)
+	previousChecksum, ok := u.previousChecksums[profileKey]
+	if !ok {
+		return true
+	}
+	currentChecksum, ok := u.currentChecksums[profileKey]
+	if !ok {
+		return true
+	}
+	return previousChecksum != currentChecksum
+}
+
+func (u *updater) haveProvidersChanged(providers []string) bool {
+	if providers == nil {
+		return false
+	}
+	for _, provider := range providers {
+		providerKey := fmt.Sprintf("providers/%s.tf", provider)
+		previousChecksum, ok := u.previousChecksums[providerKey]
+		if !ok {
+			return true
+		}
+		currentChecksum, ok := u.currentChecksums[providerKey]
+		if !ok {
+			return true
+		}
+		if previousChecksum != currentChecksum {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *updater) haveModulesChanged(step model.Step) bool {
+	if step.Modules == nil {
+		return false
+	}
+	for _, module := range step.Modules {
+		moduleKey := fmt.Sprintf("modules/%s", module.Source)
+		previousChecksum, ok := u.previousChecksums[moduleKey]
+		if !ok {
+			return true
+		}
+		currentChecksum, ok := u.currentChecksums[moduleKey]
+		if !ok {
+			return true
+		}
+		if previousChecksum != currentChecksum {
+			return true
+		}
+	}
+	return false
 }
 
 func appliedVersionMatchesRelease(stepState *model.StateStep, release *version.Version) (bool, error) {
@@ -351,7 +436,8 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
-		return u.createTerraformFiles(step, stepState, releaseTag, stepSemver)
+		execute, _, err := u.createTerraformFiles(step, stepState, releaseTag, stepSemver)
+		return execute, err
 	case model.StepTypeArgoCD:
 		return u.createArgoCDFiles(step, stepState, releaseTag, stepSemver)
 	case model.StepTypeTerraformCustom:
@@ -360,16 +446,17 @@ func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, r
 	return true, nil
 }
 
-func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, terraformExecuted bool) (bool, error) {
+func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, terraformExecuted bool) (bool, []string, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
 	case model.StepTypeArgoCD:
-		return u.updateArgoCDFiles(step, stepState, releaseTag, stepSemver)
+		execute, err := u.updateArgoCDFiles(step, stepState, releaseTag, stepSemver)
+		return execute, nil, err
 	case model.StepTypeTerraformCustom:
-		return terraformExecuted, nil
+		return terraformExecuted, nil, nil
 	}
-	return true, nil
+	return true, nil, nil
 }
 
 func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
@@ -383,69 +470,40 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err = u.resources.CodeBuild.CreateProject(projectName, *repoMetadata.CloneUrlHttp, stepName, step.Workspace, imageVersion, vpcConfig)
+	err = u.resources.GetBuilder().CreateProject(projectName, repoMetadata.URL, stepName, step, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-
-	switch step.Type {
-	case model.StepTypeTerraform:
-		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, "")
-	case model.StepTypeArgoCD:
-		//u.createExecuteArgoCDPipelines(projectName, stepName, step, autoApprove) Temporarily disabled to save time
-	case model.StepTypeTerraformCustom:
-		return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, *repoMetadata.RepositoryName)
-	}
-	return nil
+	return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, repoMetadata.Name)
 }
 
-func getVpcConfig(step model.Step) *types.VpcConfig {
+func getVpcConfig(step model.Step) *model.VpcConfig {
 	if step.VpcId == "" {
 		return nil
 	}
-	return &types.VpcConfig{
-		VpcId:            aws.String(step.VpcId),
+	return &model.VpcConfig{
+		VpcId:            &step.VpcId,
 		Subnets:          util.ToList(step.VpcSubnetIds),
 		SecurityGroupIds: util.ToList(step.VpcSecurityGroupIds),
 	}
 }
 
-func (u *updater) getRepoMetadata(stepType model.StepType) (*ccTypes.RepositoryMetadata, error) {
+func (u *updater) getRepoMetadata(stepType model.StepType) (*model.RepositoryMetadata, error) {
 	switch stepType {
 	case model.StepTypeTerraformCustom:
 		return u.customCC.GetRepoMetadata()
 	default:
-		return u.resources.CodeCommit.GetRepoMetadata()
+		return u.resources.GetCodeRepo().GetRepoMetadata()
 	}
 }
 
-func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, customRepo string) error {
-	executionId, err := u.resources.CodePipeline.CreateTerraformPipeline(projectName, projectName, stepName, step, customRepo)
+func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, repo string) error {
+	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, repo)
 	if err != nil {
-		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
+		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.CodePipeline.CreateTerraformDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, customRepo)
-	if err != nil {
-		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
-	}
-	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
-	if err != nil {
-		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
-	}
-	return nil
-}
-
-func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName string, step model.Step, autoApprove bool) error {
-	executionId, err := u.resources.CodePipeline.CreateArgoCDPipeline(projectName, projectName, stepName, step)
-	if err != nil {
-		return fmt.Errorf("failed to create CodePipeline %s: %w", projectName, err)
-	}
-	err = u.resources.CodePipeline.CreateArgoCDDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step)
-	if err != nil {
-		return fmt.Errorf("failed to create destroy CodePipeline %s: %w", projectName, err)
-	}
-	err = u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -453,26 +511,29 @@ func (u *updater) createExecuteArgoCDPipelines(projectName string, stepName stri
 }
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
-	if step.Type == model.StepTypeArgoCD {
-		return nil // Temporarily disabled because ArgoCD has no pipelines
-	}
+	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err := u.resources.CodeBuild.UpdateProject(projectName, fmt.Sprintf("%s:%s", ProjectImage, imageVersion), vpcConfig)
+	repoMetadata, err := u.getRepoMetadata(step.Type)
 	if err != nil {
 		return err
 	}
-	err = u.updatePipelines(projectName, step)
+	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, step.Name, step,
+		fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
 	if err != nil {
 		return err
 	}
-	executionId, err := u.resources.CodePipeline.StartPipelineExecution(projectName)
+	err = u.updatePipelines(projectName, step, repoMetadata.Name)
+	if err != nil {
+		return err
+	}
+	executionId, err := u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, repoMetadata.Name)
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", projectName, err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.resources.CodePipeline.WaitPipelineExecution(projectName, executionId, autoApprove, 30, step.Type)
+	return u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
 }
 
 func getAutoApprove(state *model.StateStep) bool {
@@ -631,32 +692,32 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
-	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.CodeCommit)
+func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, []string, error) {
+	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetCodeRepo())
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	return u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
+func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, []string, error) {
 	changed, moduleVersions, err := u.createTerraformMain(step, stepState, releaseTag, stepSemver)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !changed {
-		return false, nil
+		return false, nil, nil
 	}
 	if len(moduleVersions) == 0 {
 		// Add a version for external providers fallback
 		moduleVersions["current"] = getFormattedVersion(releaseTag)
 	}
-	provider, err := u.terraform.GetTerraformProvider(step, moduleVersions)
+	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, u.resources.GetProviderType())
 	if err != nil {
-		return false, fmt.Errorf("failed to create terraform provider: %s", err)
+		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	err = u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
-	return changed, err
+	err = u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
+	return changed, providers, err
 }
 
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
@@ -670,22 +731,11 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 		if changed {
 			executePipeline = true
 		}
-		inputs := module.Inputs
-		var bytes []byte
-		if len(inputs) == 0 {
-			bytes = []byte{}
-		} else {
-			bytes, err = yaml.Marshal(inputs)
-			if err != nil {
-				return false, fmt.Errorf("failed to marshal inputs: %s", err)
-			}
-		}
-		err = u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
-			step.Workspace, module.Name), bytes)
+		inputBytes, err := getModuleInputBytes(module)
 		if err != nil {
 			return false, err
 		}
-		err = u.createArgoCDApp(module, step, moduleVersion)
+		err = u.createArgoCDApp(module, step, moduleVersion, inputBytes)
 		if err != nil {
 			return false, err
 		}
@@ -705,8 +755,12 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 		if !changed {
 			continue
 		}
+		inputBytes, err := getModuleInputBytes(module)
+		if err != nil {
+			return false, err
+		}
 		executePipeline = true
-		err = u.createArgoCDApp(module, step, moduleVersion)
+		err = u.createArgoCDApp(module, step, moduleVersion, inputBytes)
 		if err != nil {
 			return false, err
 		}
@@ -714,13 +768,22 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 	return executePipeline, nil
 }
 
-func (u *updater) createBackendConf(path string, codeCommit CodeCommit) error {
-	bytes, err := util.CreateKeyValuePairs(map[string]string{
-		"bucket":         u.resources.Bucket,
-		"key":            fmt.Sprintf("%s/terraform.tfstate", path),
-		"dynamodb_table": u.resources.DynamoDBTable,
-		"encrypt":        "true",
-	}, "", "")
+func getModuleInputBytes(module model.Module) ([]byte, error) {
+	inputs := module.Inputs
+	if len(inputs) == 0 {
+		return []byte{}, nil
+	}
+	bytes, err := yaml.Marshal(inputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal inputs: %s", err)
+	}
+	return bytes, nil
+}
+
+func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
+	key := fmt.Sprintf("%s/terraform.tfstate", path)
+	backendConfig := u.resources.GetBackendConfigVars(key)
+	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
 	if err != nil {
 		return fmt.Errorf("failed to convert backend config values: %w", err)
 	}
@@ -732,19 +795,23 @@ func (u *updater) putStateFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.CodeCommit.PutFile(stateFile, bytes)
+	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
 }
 
 func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
-	stepState.AppliedAt = time.Now()
-	for _, module := range stepState.Modules {
-		module.AppliedVersion = &module.Version
-	}
+	u.updateStepState(stepState)
 	bytes, err := yaml.Marshal(u.state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.CodeCommit.PutFile(stateFile, bytes)
+	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
+}
+
+func (u *updater) updateStepState(stepState *model.StateStep) {
+	stepState.AppliedAt = time.Now()
+	for _, module := range stepState.Modules {
+		module.AppliedVersion = &module.Version
+	}
 }
 
 func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, map[string]string, error) {
@@ -774,7 +841,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		terraform.AddInputs(module.Inputs, moduleBody)
 	}
 	if changed {
-		err := u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
+		err := u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
 		if err != nil {
 			return false, nil, err
 		}
@@ -782,13 +849,12 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 	return changed, moduleVersions, nil
 }
 
-func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string) error {
-	appFilePath := fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name, step.Workspace, module.Name)
-	appBytes, err := argocd.GetApplicationFile(u.github, module, step.RepoUrl, moduleVersion, appFilePath)
+func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) error {
+	appBytes, err := argocd.GetApplicationFile(u.github, module, step.RepoUrl, moduleVersion, values)
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.CodeCommit.PutFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+	return u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
 		step.Workspace, module.Name), appBytes)
 }
 
@@ -869,7 +935,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 	if workspaceExists {
 		return nil
 	}
-	providerBytes, err := u.terraform.GetEmptyTerraformProvider(getFormattedVersion(semver))
+	providerBytes, err := u.terraform.GetEmptyTerraformProvider(getFormattedVersion(semver), u.resources.GetProviderType())
 	if err != nil {
 		return fmt.Errorf("failed to create empty terraform provider: %w", err)
 	}
@@ -882,7 +948,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 }
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
-	files, err := u.resources.CodeCommit.ListFolderFiles(fmt.Sprintf("%s-%s/%s/app-of-apps", u.config.Prefix, step.Name, step.Workspace))
+	files, err := u.resources.GetCodeRepo().ListFolderFiles(fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace))
 	if err != nil {
 		return err
 	}
@@ -891,12 +957,12 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		if modules.Contains(file) {
 			continue
 		}
-		err = u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/app-of-apps/%s.yaml", u.config.Prefix, step.Name,
+		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
 			step.Workspace, file))
 		if err != nil {
 			return err
 		}
-		err = u.resources.CodeCommit.DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
+		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
 			step.Workspace, file))
 		if err != nil {
 			return err
@@ -936,12 +1002,16 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
 		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		switch replaceType {
+		case string(model.ReplaceTypeGCSM):
+			fallthrough
 		case string(model.ReplaceTypeSSM):
 			parameter, err := u.getSSMParameter(u.config.Prefix, step, replaceKey)
 			if err != nil {
 				return "", err
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
+		case string(model.ReplaceTypeGCSMCustom):
+			fallthrough
 		case string(model.ReplaceTypeSSMCustom):
 			parameter, err := u.getSSMCustomParameter(replaceKey)
 			if err != nil {
@@ -988,7 +1058,7 @@ func (u *updater) getReplacementAgentValue(step model.Step, key string, release 
 		moduleVersion, _, err := u.getModuleVersion(*referencedModule, stepState, release, stepVersion, model.ApproveNever)
 		return moduleVersion, err
 	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
-		return u.resources.AccountId, nil
+		return u.resources.(aws.Resources).AccountId, nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
@@ -1016,28 +1086,24 @@ func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
 }
 
 func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
-	parameter, err := u.resources.SSM.GetParameter(parameterName)
+	parameter, err := u.resources.GetSSM().GetParameter(parameterName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get ssm parameter %s: %s", parameterName, err)
 	}
 	if match[2] == "" {
 		return *parameter.Value, nil
 	}
-	if parameter.Type != ssmTypes.ParameterTypeStringList {
+	if parameter.Type != string(ssmTypes.ParameterTypeStringList) && parameter.Type != "" {
 		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
 }
 
-func (u *updater) updatePipelines(projectName string, step model.Step) error {
+func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
-	err := u.resources.CodePipeline.UpdatePipeline(projectName, stepName, step)
+	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step, bucket)
 	if err != nil {
 		return fmt.Errorf("failed to update pipeline %s: %w", projectName, err)
-	}
-	err = u.resources.CodePipeline.UpdatePipeline(fmt.Sprintf("%s-destroy", projectName), stepName, step)
-	if err != nil {
-		return fmt.Errorf("failed to update destroy pipeline %s: %w", projectName, err)
 	}
 	return nil
 }
@@ -1052,7 +1118,32 @@ func (u *updater) getBaseImageVersion(step model.Step, release *version.Version)
 	return getFormattedVersion(release)
 }
 
-func getSSMParameterValueFromList(match []string, parameter *ssmTypes.Parameter, replaceKey string, parameterName string) (string, error) {
+func (u *updater) GetChecksums(release *version.Version) (map[string]string, error) {
+	content, err := u.github.GetRawFileContent(checksumsFile, release.Original())
+	if err != nil {
+		var fileError github.FileNotFoundError
+		if errors.As(err, &fileError) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	checksums := make(map[string]string)
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			fmt.Printf("Invalid line: %s\n", line)
+			continue
+		}
+		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
+	}
+	return checksums, nil
+}
+
+func getSSMParameterValueFromList(match []string, parameter *model.Parameter, replaceKey string, parameterName string) (string, error) {
 	parameters := strings.Split(*parameter.Value, ",")
 	start, err := strconv.Atoi(match[3])
 	if err != nil {

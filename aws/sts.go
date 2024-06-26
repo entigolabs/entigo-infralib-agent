@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"context"
@@ -24,7 +24,7 @@ func NewSTS(config aws.Config) Account {
 func (a *account) GetAccountID() (string, error) {
 	stsOutput, err := a.sts.GetCallerIdentity(context.Background(), nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to get AWS account number: %w", err)
+		return "", fmt.Errorf("failed to get CloudProvider account number: %w", err)
 	}
 	return *stsOutput.Account, nil
 }

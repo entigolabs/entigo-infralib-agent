@@ -1,4 +1,4 @@
-package service
+package aws
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"regexp"
@@ -17,6 +18,8 @@ import (
 	"time"
 )
 
+const pollingDelay = 30
+
 const approveStageName = "Approve"
 const approveActionName = "Approval"
 const planName = "Plan"
@@ -24,39 +27,9 @@ const applyName = "Apply"
 const sourceName = "Source"
 const destroyName = "Destroy"
 const applyDestroyName = "ApplyDestroy"
-const argoCDApplyName = "ArgoCDApply"
-const argoCDDestroyName = "ArgoCDDestroy"
-
-type actionCommand string
-
-const (
-	planCommand          actionCommand = "plan"
-	applyCommand         actionCommand = "apply"
-	planDestroyCommand   actionCommand = "plan-destroy"
-	applyDestroyCommand  actionCommand = "apply-destroy"
-	argoCDApplyCommand   actionCommand = "argocd-apply"
-	argoCDDestroyCommand actionCommand = "argocd-destroy"
-)
-
-type changes struct {
-	changed   int
-	destroyed int
-}
-
-type Pipeline interface {
-	CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error)
-	CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error
-	CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step model.Step) (*string, error)
-	CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step) error
-	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
-	UpdatePipeline(pipelineName string, stepName string, step model.Step) error
-	StartPipelineExecution(pipelineName string) (*string, error)
-	WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error
-}
 
 type pipeline struct {
 	codePipeline *codepipeline.Client
-	repo         string
 	branch       string
 	roleArn      string
 	bucket       string
@@ -65,10 +38,9 @@ type pipeline struct {
 	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) Pipeline {
+func NewPipeline(awsConfig aws.Config, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) model.Pipeline {
 	return &pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
-		repo:         repo,
 		branch:       branch,
 		roleArn:      roleArn,
 		bucket:       bucket,
@@ -78,7 +50,16 @@ func NewPipeline(awsConfig aws.Config, repo string, branch string, roleArn strin
 	}
 }
 
-func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) (*string, error) {
+func (p *pipeline) CreatePipeline(projectName string, stepName string, step model.Step, repo string) (*string, error) {
+	execution, err := p.CreateApplyPipeline(projectName, projectName, stepName, step, repo)
+	if err != nil {
+		return nil, err
+	}
+	err = p.CreateDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, repo)
+	return execution, err
+}
+
+func (p *pipeline) CreateApplyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) (*string, error) {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return nil, err
@@ -86,9 +67,14 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	if pipe != nil {
 		return p.startUpdatedPipeline(pipe, stepName, step)
 	}
-	repo := p.repo
-	if customRepo != "" {
-		repo = customRepo
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanCommand
+		applyCommand = model.ArgoCDApplyCommand
+	} else {
+		planCommand = model.PlanCommand
+		applyCommand = model.ApplyCommand
 	}
 	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
@@ -179,7 +165,7 @@ func (p *pipeline) CreateTerraformPipeline(pipelineName string, projectName stri
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
-func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, customRepo string) error {
+func (p *pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
@@ -187,9 +173,14 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	if pipe != nil {
 		return p.updatePipeline(pipe, stepName, step)
 	}
-	repo := p.repo
-	if customRepo != "" {
-		repo = customRepo
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanDestroyCommand
+		applyCommand = model.ArgoCDApplyDestroyCommand
+	} else {
+		planCommand = model.PlanDestroyCommand
+		applyCommand = model.ApplyDestroyCommand
 	}
 	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
@@ -234,7 +225,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planDestroyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step),
 					},
 				},
 				},
@@ -265,7 +256,7 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyDestroyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step),
 					},
 				},
 				},
@@ -293,178 +284,13 @@ func (p *pipeline) CreateTerraformDestroyPipeline(pipelineName string, projectNa
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *pipeline) CreateArgoCDPipeline(pipelineName string, projectName string, stepName string, step model.Step) (*string, error) {
-	pipe, err := p.getPipeline(pipelineName)
-	if err != nil {
-		return nil, err
-	}
-	if pipe != nil {
-		return p.startUpdatedPipeline(pipe, stepName, step)
-	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
-		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
-			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
-				Type:     types.ArtifactStoreTypeS3,
-			}, Stages: []types.StageDeclaration{{
-				Name: aws.String(sourceName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(sourceName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategorySource,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeCommit"),
-						Version:  aws.String("1"),
-					},
-					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        aws.Int32(1),
-					Configuration: map[string]string{
-						"RepositoryName":       p.repo,
-						"BranchName":           p.branch,
-						"PollForSourceChanges": "false",
-						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
-					},
-				},
-				},
-			}, {
-				Name: aws.String(approveStageName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(approveActionName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryApproval,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("Manual"),
-						Version:  aws.String("1"),
-					},
-					RunOrder: aws.Int32(2),
-				}},
-			}, {
-				Name: aws.String(argoCDApplyName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(argoCDApplyName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryBuild,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeBuild"),
-						Version:  aws.String("1"),
-					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       aws.Int32(3),
-					Configuration: map[string]string{
-						"ProjectName":          projectName,
-						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables(argoCDApplyCommand, stepName, step.Workspace),
-					},
-				},
-				},
-			},
-			},
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
-	return p.getNewPipelineExecutionId(pipelineName)
-}
-
-func (p *pipeline) CreateArgoCDDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step) error {
-	pipe, err := p.getPipeline(pipelineName)
-	if err != nil {
-		return err
-	}
-	if pipe != nil {
-		return p.updatePipeline(pipe, stepName, step)
-	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
-		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
-			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
-				Type:     types.ArtifactStoreTypeS3,
-			}, Stages: []types.StageDeclaration{{
-				Name: aws.String(sourceName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(sourceName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategorySource,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeCommit"),
-						Version:  aws.String("1"),
-					},
-					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:        aws.Int32(1),
-					Configuration: map[string]string{
-						"RepositoryName":       p.repo,
-						"BranchName":           p.branch,
-						"PollForSourceChanges": "false",
-						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
-					},
-				},
-				},
-			}, {
-				Name: aws.String(approveStageName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(approveActionName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryApproval,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("Manual"),
-						Version:  aws.String("1"),
-					},
-					RunOrder: aws.Int32(2),
-				}},
-			}, {
-				Name: aws.String(argoCDDestroyName),
-				Actions: []types.ActionDeclaration{{
-					Name: aws.String(argoCDDestroyName),
-					ActionTypeId: &types.ActionTypeId{
-						Category: types.ActionCategoryBuild,
-						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeBuild"),
-						Version:  aws.String("1"),
-					},
-					InputArtifacts: []types.InputArtifact{{Name: aws.String("source_output")}},
-					RunOrder:       aws.Int32(3),
-					Configuration: map[string]string{
-						"ProjectName":          projectName,
-						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getEnvironmentVariables(argoCDDestroyCommand, stepName, step.Workspace),
-					},
-				},
-				},
-			},
-			},
-		},
-	})
-	var awsError *types.PipelineNameInUseException
-	if err != nil && errors.As(err, &awsError) {
-		common.Logger.Printf("Pipeline %s already exists. Continuing...\n", projectName)
-		return nil
-	}
-	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
-	err = p.disableStageTransition(pipelineName, "Approve")
-	if err != nil {
-		return err
-	}
-	err = p.disableStageTransition(pipelineName, argoCDDestroyName)
-	if err != nil {
-		return err
-	}
-	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-	return p.stopLatestPipelineExecutions(pipelineName, 1)
-}
-
 func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
 	}
 	if pipe != nil {
-		_, err = p.StartPipelineExecution(pipelineName)
+		_, err = p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
 		return err
 	}
 	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
@@ -488,7 +314,7 @@ func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
 						"S3Bucket":             bucket,
-						"S3ObjectKey":          agentSource,
+						"S3ObjectKey":          model.AgentSource,
 						"PollForSourceChanges": "false",
 					},
 				},
@@ -520,7 +346,7 @@ func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 	return err
 }
 
-func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) {
+func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
@@ -532,21 +358,38 @@ func (p *pipeline) StartPipelineExecution(pipelineName string) (*string, error) 
 	return execution.PipelineExecutionId, nil
 }
 
+func (p *pipeline) StartAgentExecution(pipelineName string) error {
+	_, err := p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
+	return err
+}
+
 func (p *pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) (*string, error) {
 	err := p.updatePipeline(pipeline, stepName, step)
 	if err != nil {
 		return nil, err
 	}
-	return p.StartPipelineExecution(*pipeline.Name)
+	return p.StartPipelineExecution(*pipeline.Name, stepName, step, "")
 }
 
-func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step) error {
+func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step, _ string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
 	}
 	if pipe == nil {
 		return fmt.Errorf("pipeline %s not found", pipelineName)
+	}
+	err = p.updatePipeline(pipe, stepName, step)
+	if err != nil {
+		return err
+	}
+	destroyPipeline := fmt.Sprintf("%s-destroy", pipelineName)
+	pipe, err = p.getPipeline(destroyPipeline)
+	if err != nil {
+		return err
+	}
+	if pipe == nil {
+		return nil
 	}
 	return p.updatePipeline(pipe, stepName, step)
 }
@@ -580,43 +423,55 @@ func (p *pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 }
 
 func getActionEnvironmentVariables(actionName string, stepName string, step model.Step) string {
-	command := getCommand(actionName)
-	if step.Type == model.StepTypeTerraform {
+	command := getCommand(actionName, step.Type)
+	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
 		return getTerraformEnvironmentVariables(command, stepName, step)
 	} else {
-		return getEnvironmentVariables(command, stepName, step.Workspace)
+		return getEnvironmentVariables(command, stepName, step)
 	}
 }
 
-func getCommand(actionName string) actionCommand {
+func getCommand(actionName string, stepType model.StepType) model.ActionCommand {
 	switch actionName {
 	case planName:
-		return planCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDPlanCommand
+		} else {
+			return model.PlanCommand
+		}
 	case applyName:
-		return applyCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDApplyCommand
+		} else {
+			return model.ApplyCommand
+		}
 	case destroyName:
-		return planDestroyCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDPlanDestroyCommand
+		} else {
+			return model.PlanDestroyCommand
+		}
 	case applyDestroyName:
-		return applyDestroyCommand
-	case argoCDApplyName:
-		return argoCDApplyCommand
-	case argoCDDestroyName:
-		return argoCDDestroyCommand
+		if stepType == model.StepTypeArgoCD {
+			return model.ArgoCDApplyDestroyCommand
+		} else {
+			return model.ApplyDestroyCommand
+		}
 	}
 	return ""
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, executionId *string, autoApprove bool, delay int, stepType model.StepType) error {
+func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType model.StepType) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
-	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, delay)
+	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, pollingDelay)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var pipeChanges *changes
+	var pipeChanges *model.TerraformChanges
 	var approved *bool
 	for ctx.Err() == nil {
-		time.Sleep(time.Duration(delay) * time.Second)
+		time.Sleep(pollingDelay * time.Second)
 		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
 			PipelineExecutionId: executionId,
@@ -683,7 +538,7 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *changes, approved *bool, autoApprove bool) (*changes, *bool, error) {
+func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.TerraformChanges, approved *bool, autoApprove bool) (*model.TerraformChanges, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -697,7 +552,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 		if err != nil {
 			return pipeChanges, approved, err
 		}
-		if pipeChanges != nil && pipeChanges.destroyed == 0 && (pipeChanges.changed == 0 || autoApprove) {
+		if pipeChanges != nil && pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove) {
 			approved, err = p.approveStage(pipelineName)
 			if err != nil {
 				return pipeChanges, approved, err
@@ -709,7 +564,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 	return pipeChanges, approved, nil
 }
 
-func (p *pipeline) getChanges(pipelineName string, pipeChanges *changes, actions []types.ActionExecutionDetail, stepType model.StepType) (*changes, error) {
+func (p *pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.TerraformChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
@@ -717,10 +572,10 @@ func (p *pipeline) getChanges(pipelineName string, pipeChanges *changes, actions
 	case model.StepTypeTerraform:
 		return p.getTerraformChanges(pipelineName, actions)
 	}
-	return &changes{}, nil
+	return &model.TerraformChanges{}, nil
 }
 
-func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*changes, error) {
+func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*model.TerraformChanges, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -729,20 +584,20 @@ func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.Acti
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
+	re := regexp.MustCompile(terraform.PlanRegex)
 	for _, log := range logs {
 		matches := re.FindStringSubmatch(log)
-		tfChanges := changes{}
+		tfChanges := model.TerraformChanges{}
 		if matches != nil {
 			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
 			changed := matches[2]
 			destroyed := matches[3]
 			if changed != "0" || destroyed != "0" {
-				tfChanges.changed, err = strconv.Atoi(changed)
+				tfChanges.Changed, err = strconv.Atoi(changed)
 				if err != nil {
 					return nil, err
 				}
-				tfChanges.destroyed, err = strconv.Atoi(destroyed)
+				tfChanges.Destroyed, err = strconv.Atoi(destroyed)
 				if err != nil {
 					return nil, err
 				}
@@ -849,8 +704,8 @@ func (p *pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 	return pipelineOutput.Pipeline, nil
 }
 
-func getTerraformEnvironmentVariables(command actionCommand, stepName string, step model.Step) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step.Workspace)
+func getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step) string {
+	envVars := getEnvironmentVariablesList(command, stepName, step)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.HttpUsername))
@@ -861,16 +716,26 @@ func getTerraformEnvironmentVariables(command actionCommand, stepName string, st
 	return "[" + strings.Join(envVars, ",") + "]"
 }
 
-func getEnvironmentVariables(command actionCommand, stepName string, workspace string) string {
-	envVars := getEnvironmentVariablesList(command, stepName, workspace)
+func getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step) string {
+	envVars := getEnvironmentVariablesList(command, stepName, step)
 	return "[" + strings.Join(envVars, ",") + "]"
 }
 
-func getEnvironmentVariablesList(command actionCommand, stepName string, workspace string) []string {
+func getEnvironmentVariablesList(command model.ActionCommand, stepName string, step model.Step) []string {
 	var envVars []string
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"WORKSPACE\",\"value\":\"%s\"}", workspace))
+	envVars = append(envVars, fmt.Sprintf("{\"name\":\"WORKSPACE\",\"value\":\"%s\"}", step.Workspace))
+	if step.Type == model.StepTypeArgoCD {
+		if step.KubernetesClusterName != "" {
+			envVars = append(envVars, fmt.Sprintf("{\"name\":\"KUBERNETES_CLUSTER_NAME\",\"value\":\"%s\"}", step.KubernetesClusterName))
+		}
+		if step.ArgocdNamespace == "" {
+			envVars = append(envVars, fmt.Sprint("{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"argocd\"}"))
+		} else {
+			envVars = append(envVars, fmt.Sprintf("{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"%s\"}", step.ArgocdNamespace))
+		}
+	}
 	return envVars
 }
 

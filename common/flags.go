@@ -8,6 +8,13 @@ type Flags struct {
 	BaseConfig   string
 	Branch       string
 	AWSPrefix    string
+	GCloud       GCloud
+}
+
+type GCloud struct {
+	ProjectId string
+	Location  string
+	Zone      string
 }
 
 func (f *Flags) Setup(cmd Command) error {

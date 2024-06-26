@@ -2,13 +2,9 @@ package service
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
-
-const repoURL = "public.ecr.aws/entigolabs/entigo-infralib-agent"
-const agentSource = "agent-source.zip"
-const LatestAgentImage = "latest"
 
 type Agent interface {
 	CreatePipeline(version string) error
@@ -16,16 +12,16 @@ type Agent interface {
 }
 
 type agent struct {
-	name      string
-	awsPrefix string
-	resources AWSResources
+	name        string
+	cloudPrefix string
+	resources   model.Resources
 }
 
-func NewAgent(resources AWSResources) Agent {
+func NewAgent(resources model.Resources) Agent {
 	return &agent{
-		name:      resources.AwsPrefix + "-agent",
-		awsPrefix: resources.AwsPrefix,
-		resources: resources,
+		name:        resources.GetCloudPrefix() + "-agent",
+		cloudPrefix: resources.GetCloudPrefix(),
+		resources:   resources,
 	}
 }
 
@@ -34,7 +30,7 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	err = a.resources.CodePipeline.CreateAgentPipeline(a.awsPrefix, a.name, a.name, a.resources.Bucket)
+	err = a.resources.GetPipeline().CreateAgentPipeline(a.cloudPrefix, a.name, a.name, a.resources.GetBucket())
 	if err != nil {
 		return err
 	}
@@ -43,7 +39,7 @@ func (a *agent) CreatePipeline(version string) error {
 }
 
 func (a *agent) createCodeBuild(version string) error {
-	project, err := a.resources.CodeBuild.GetProject(a.name)
+	project, err := a.resources.GetBuilder().GetProject(a.name)
 	if err != nil {
 		return err
 	}
@@ -51,11 +47,11 @@ func (a *agent) createCodeBuild(version string) error {
 		_, err = a.updateProjectImage(project, version)
 		return err
 	}
-	return a.resources.CodeBuild.CreateAgentProject(a.name, a.awsPrefix, repoURL+":"+version)
+	return a.resources.GetBuilder().CreateAgentProject(a.name, a.cloudPrefix, version)
 }
 
 func (a *agent) UpdateProjectImage(version string) error {
-	project, err := a.resources.CodeBuild.GetProject(a.name)
+	project, err := a.resources.GetBuilder().GetProject(a.name)
 	if err != nil {
 		return err
 	}
@@ -70,24 +66,30 @@ func (a *agent) UpdateProjectImage(version string) error {
 	if !updated {
 		return nil
 	}
-	_, err = a.resources.CodePipeline.StartPipelineExecution(a.name)
+	err = a.resources.GetPipeline().StartAgentExecution(a.name)
 	if err != nil {
 		return fmt.Errorf("failed to start another execution: %w", err)
 	}
 	return fmt.Errorf("started another execution with updated image")
 }
 
-func (a *agent) updateProjectImage(project *types.Project, version string) (bool, error) {
+func (a *agent) updateProjectImage(project *model.Project, version string) (bool, error) {
 	if version == "" {
-		version = LatestAgentImage
+		version = model.LatestImageVersion
 	}
-	if *project.Environment.Image == repoURL+":"+version {
+	var image string
+	if a.resources.GetProviderType() == model.AWS {
+		image = model.AgentImage
+	} else {
+		image = model.AgentImageDocker
+	}
+	if project.Image == image+":"+version {
 		return false, nil
 	}
-	err := a.resources.CodeBuild.UpdateProject(*project.Name, repoURL+":"+version, nil)
+	err := a.resources.GetBuilder().UpdateAgentProject(project.Name, version, a.cloudPrefix)
 	if err != nil {
 		return false, err
 	}
-	common.Logger.Printf("Updated Agent CodeBuild project %s image to %s\n", *project.Name, repoURL+":"+version)
+	common.Logger.Printf("Updated Agent CodeBuild project %s image version to %s\n", project.Name, version)
 	return true, nil
 }
