@@ -216,7 +216,7 @@ func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (
 	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn, repoArn))
 	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRole.RoleName, err)
+		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
 	}
 	return *pipelineRole.Arn, true
 }
