@@ -44,7 +44,7 @@ func createBucket(ctx context.Context, projectId string, location string, bucket
 	if exists {
 		return nil
 	}
-	common.Logger.Printf("Created GCloud Storage Bucket %s\n", bucket)
+	common.Logger.Printf("Creating GCloud Storage Bucket %s\n", bucket)
 	return bucketHandle.Create(ctx, projectId, &storage.BucketAttrs{
 		Location:                   location,
 		PredefinedACL:              "projectPrivate",

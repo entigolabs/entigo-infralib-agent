@@ -49,7 +49,11 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 
 func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
 	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
-	return b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	if err != nil {
+		return err
+	}
+	return b.createDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig)
 }
 
 func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
@@ -59,11 +63,9 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 	}
 	var commands []model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
-		commands = []model.ActionCommand{model.ArgoCDPlanCommand, model.ArgoCDApplyCommand,
-			model.ArgoCDPlanDestroyCommand, model.ArgoCDApplyDestroyCommand}
+		commands = []model.ActionCommand{model.ArgoCDPlanCommand, model.ArgoCDApplyCommand}
 	} else {
-		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand, model.PlanDestroyCommand,
-			model.ApplyDestroyCommand}
+		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand}
 	}
 	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace), 0755)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
@@ -139,6 +141,72 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 			},
 		},
 	}
+}
+
+func (b *Builder) createDestroyJobs(name string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanDestroyCommand
+		applyCommand = model.ArgoCDApplyDestroyCommand
+	} else {
+		planCommand = model.PlanDestroyCommand
+		applyCommand = model.ApplyDestroyCommand
+	}
+	err := b.createJob(fmt.Sprintf("%s-plan-destroy", name), bucket, stepName, step, image, vpcConfig, planCommand)
+	if err != nil {
+		return err
+	}
+	return b.createJob(fmt.Sprintf("%s-apply-destroy", name), bucket, stepName, step, image, vpcConfig, applyCommand)
+}
+
+func (b *Builder) createJob(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, command model.ActionCommand) error {
+	job, err := b.getJob(projectName)
+	if err != nil {
+		return err
+	}
+	if job != nil {
+		return b.updateJob(projectName, stepName, step, image, vpcConfig, command)
+	}
+	_, err = b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
+		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
+		JobId:  projectName,
+		Job: &runpb.Job{
+			LaunchStage: api.LaunchStage_BETA,
+			Template: &runpb.ExecutionTemplate{
+				Template: &runpb.TaskTemplate{
+					Retries:        &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
+					Timeout:        &durationpb.Duration{Seconds: 86400},
+					ServiceAccount: b.serviceAccount,
+					VpcAccess:      getGCloudVpcAccess(vpcConfig),
+					Containers: []*runpb.Container{{
+						Name:  "infralib",
+						Image: image,
+						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, "/bucket", command),
+						VolumeMounts: []*runpb.VolumeMount{{
+							Name:      bucket,
+							MountPath: "/bucket",
+						}, {
+							Name:      "project",
+							MountPath: "/project",
+						}},
+					}},
+					Volumes: []*runpb.Volume{{
+						Name: bucket,
+						VolumeType: &runpb.Volume_Gcs{
+							Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
+						},
+					}, {
+						Name: "project",
+						VolumeType: &runpb.Volume_EmptyDir{
+							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "1Gi"},
+						},
+					}},
+				},
+			},
+		},
+	})
+	return err
 }
 
 func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
@@ -234,7 +302,43 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model
 	if job == nil {
 		return fmt.Errorf("project %s not found", projectName)
 	}
-	return b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	err = b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	if err != nil {
+		return err
+	}
+	return b.updateDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig)
+}
+
+func (b *Builder) updateDestroyJobs(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanDestroyCommand
+		applyCommand = model.ArgoCDApplyDestroyCommand
+	} else {
+		planCommand = model.PlanDestroyCommand
+		applyCommand = model.ApplyDestroyCommand
+	}
+	err := b.updateJob(fmt.Sprintf("%s-plan-destroy", projectName), stepName, step, image, vpcConfig, planCommand)
+	if err != nil {
+		return err
+	}
+	return b.updateJob(fmt.Sprintf("%s-apply-destroy", projectName), stepName, step, image, vpcConfig, applyCommand)
+}
+
+func (b *Builder) updateJob(projectName string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, command model.ActionCommand) error {
+	job, err := b.getJob(projectName)
+	if err != nil {
+		return err
+	}
+	if job == nil {
+		return fmt.Errorf("job %s not found", projectName)
+	}
+	job.Template.Template.Containers[0].Image = image
+	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, "/bucket", command)
+	job.Template.Template.VpcAccess = getGCloudVpcAccess(vpcConfig)
+	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
+	return err
 }
 
 func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
@@ -334,15 +438,33 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 }
 
 func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runv1.EnvVar {
-	envVars := []*runv1.EnvVar{
-		{Name: "PROJECT_NAME", Value: projectName},
-		{Name: "CODEBUILD_SRC_DIR", Value: dir},
-		{Name: "GOOGLE_REGION", Value: b.location},
-		{Name: "GOOGLE_PROJECT", Value: b.projectId},
-		{Name: "GOOGLE_ZONE", Value: b.zone},
-		{Name: "COMMAND", Value: string(command)},
-		{Name: "TF_VAR_prefix", Value: stepName},
-		{Name: "WORKSPACE", Value: step.Workspace},
+	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
+	envVars := make([]*runv1.EnvVar, len(rawEnvVars))
+	for key, value := range rawEnvVars {
+		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
+	}
+	return envVars
+}
+
+func (b *Builder) getJobEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runpb.EnvVar {
+	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
+	envVars := make([]*runpb.EnvVar, 0)
+	for key, value := range rawEnvVars {
+		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
+	}
+	return envVars
+}
+
+func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) map[string]string {
+	envVars := map[string]string{
+		"PROJECT_NAME":      projectName,
+		"CODEBUILD_SRC_DIR": dir,
+		"GOOGLE_REGION":     b.location,
+		"GOOGLE_PROJECT":    b.projectId,
+		"GOOGLE_ZONE":       b.zone,
+		"COMMAND":           string(command),
+		"TF_VAR_prefix":     stepName,
+		"WORKSPACE":         step.Workspace,
 	}
 	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
 		envVars = addTerraformEnvironmentVariables(envVars, step)
@@ -353,25 +475,25 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 	return envVars
 }
 
-func addTerraformEnvironmentVariables(envVars []*runv1.EnvVar, step model.Step) []*runv1.EnvVar {
+func addTerraformEnvironmentVariables(envVars map[string]string, step model.Step) map[string]string {
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
-			envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf("GIT_AUTH_USERNAME_%s", strings.ToUpper(module.Name)), Value: module.HttpUsername})
-			envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf("GIT_AUTH_PASSWORD_%s", strings.ToUpper(module.Name)), Value: module.HttpPassword})
-			envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf("GIT_AUTH_SOURCE_%s", strings.ToUpper(module.Name)), Value: module.Source})
+			envVars[fmt.Sprintf("GIT_AUTH_USERNAME_%s", strings.ToUpper(module.Name))] = module.HttpUsername
+			envVars[fmt.Sprintf("GIT_AUTH_PASSWORD_%s", strings.ToUpper(module.Name))] = module.HttpPassword
+			envVars[fmt.Sprintf("GIT_AUTH_SOURCE_%s", strings.ToUpper(module.Name))] = module.Source
 		}
 	}
 	return envVars
 }
 
-func addArgoCDEnvironmentVariables(envVars []*runv1.EnvVar, step model.Step) []*runv1.EnvVar {
+func addArgoCDEnvironmentVariables(envVars map[string]string, step model.Step) map[string]string {
 	if step.KubernetesClusterName != "" {
-		envVars = append(envVars, &runv1.EnvVar{Name: "KUBERNETES_CLUSTER_NAME", Value: step.KubernetesClusterName})
+		envVars["KUBERNETES_CLUSTER_NAME"] = step.KubernetesClusterName
 	}
 	if step.ArgocdNamespace == "" {
-		envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: "argocd"})
+		envVars["ARGOCD_NAMESPACE"] = "argocd"
 	} else {
-		envVars = append(envVars, &runv1.EnvVar{Name: "ARGOCD_NAMESPACE", Value: step.ArgocdNamespace})
+		envVars["ARGOCD_NAMESPACE"] = step.ArgocdNamespace
 	}
 	return envVars
 }

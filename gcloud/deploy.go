@@ -143,26 +143,15 @@ func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projec
 func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket string) (*string, error) {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
-	var destroyPlanCommand model.ActionCommand
-	var destroyApplyCommand model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
 		planCommand = model.ArgoCDPlanCommand
 		applyCommand = model.ArgoCDApplyCommand
-		destroyPlanCommand = model.ArgoCDPlanDestroyCommand
-		destroyApplyCommand = model.ArgoCDApplyDestroyCommand
 	} else {
 		planCommand = model.PlanCommand
 		applyCommand = model.ApplyCommand
-		destroyPlanCommand = model.PlanDestroyCommand
-		destroyApplyCommand = model.ApplyDestroyCommand
 	}
 	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
 	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
-	if err != nil {
-		return nil, err
-	}
-	destroyPipeline := fmt.Sprintf("%s-destroy", projectName)
-	err = p.createSkaffoldManifest(destroyPipeline, projectName, folder, destroyPlanCommand, destroyApplyCommand)
 	if err != nil {
 		return nil, err
 	}
@@ -175,10 +164,6 @@ func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 		return nil, err
 	}
 	err = p.createDeliveryPipeline(projectName, planCommand, applyCommand)
-	if err != nil {
-		return nil, err
-	}
-	err = p.createDeliveryPipeline(destroyPipeline, destroyPlanCommand, destroyApplyCommand)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +189,7 @@ func (p *pipeline) createSkaffoldManifest(name, projectName, folder string, firs
 }
 
 func (p *pipeline) createDeliveryPipeline(pipelineName string, firstCommand, secondCommand model.ActionCommand) error {
-	_, err := p.client.CreateDeliveryPipeline(p.ctx, &deploypb.CreateDeliveryPipelineRequest{
+	pipelineOp, err := p.client.CreateDeliveryPipeline(p.ctx, &deploypb.CreateDeliveryPipelineRequest{
 		Parent:             fmt.Sprintf("projects/%s/locations/%s", p.projectId, p.location),
 		DeliveryPipelineId: pipelineName,
 		DeliveryPipeline: &deploypb.DeliveryPipeline{
@@ -231,6 +216,10 @@ func (p *pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 		} else {
 			return err
 		}
+	}
+	_, err = pipelineOp.Wait(p.ctx)
+	if err != nil {
+		return err
 	}
 	fmt.Printf("Created delivery pipeline %s\n", pipelineName)
 	return nil

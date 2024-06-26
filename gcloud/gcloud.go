@@ -94,7 +94,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 		common.Logger.Fatalf("Failed to add roles to service account: %s", err)
 	}
 	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
-		"roles/iam.serviceAccountAdmin", "roles/container.admin"})
+		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor"})
 	if err != nil {
 		common.Logger.Fatalf("Failed to add roles to project: %s", err)
 	}
