@@ -25,18 +25,6 @@ steps:
           create_private: false
           create_public: false
           create_cert: false
-  - name: applications
-    type: argocd-apps
-    workspace: test
-    version: stable
-    repo_url: "test_repo_url"
-    modules:
-      - name: external-dns
-        source: external-dns
-        version: stable
-        inputs:
-          stepvalue: "{{ ssm.infra.dns.int_domain }}"
-          configvalue: "{{ .config.prefix }}"
   - name: additional
     before: applications
     type: terraform-custom
