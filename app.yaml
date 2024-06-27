@@ -15,6 +15,7 @@ spec:
         ignoreMissingValueFiles: true
         valueFiles:
           - 'values.yaml'
+          - 'values-{{cloudProvider}}.yaml'
         values: |
           {{moduleValues}}
   syncPolicy:
