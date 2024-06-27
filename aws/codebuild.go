@@ -93,7 +93,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, "", "", step, image, vpcConfig)
+		return b.UpdateProject(projectName, "", "", step, imageVersion, vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
