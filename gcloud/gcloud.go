@@ -39,6 +39,7 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) mo
 
 func (g *gcloudService) SetupResources(_ string) model.Resources {
 	// TODO Default clients use gRPC, connections must be closed before exiting
+	g.enableApiServices()
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
@@ -75,6 +76,19 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 			Bucket:       bucket,
 			CloudPrefix:  g.cloudPrefix,
 		},
+	}
+}
+
+func (g *gcloudService) enableApiServices() {
+	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create API usage service: %s", err)
+	}
+	err = apiUsage.EnableServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
+		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
+		"clouddeploy.googleapis.com"})
+	if err != nil {
+		common.Logger.Fatalf("Failed to enable services: %s", err)
 	}
 }
 
