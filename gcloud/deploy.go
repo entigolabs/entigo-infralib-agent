@@ -379,9 +379,21 @@ func (p *pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, 
 	return err
 }
 
-func (p *pipeline) UpdatePipeline(_ string, stepName string, step model.Step, bucket string) error {
-	// Job manifests were updated previously, just need to update the tarball
+func (p *pipeline) UpdatePipeline(projectName string, stepName string, step model.Step, bucket string) error {
+	var planCommand model.ActionCommand
+	var applyCommand model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		planCommand = model.ArgoCDPlanCommand
+		applyCommand = model.ArgoCDApplyCommand
+	} else {
+		planCommand = model.PlanCommand
+		applyCommand = model.ApplyCommand
+	}
 	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
+	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
+	if err != nil {
+		return err
+	}
 	tarContent, err := util.TarGzWrite(folder)
 	if err != nil {
 		return err

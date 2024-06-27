@@ -295,15 +295,8 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 }
 
 func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
-	job, err := b.getJob(fmt.Sprintf("%s-%s", projectName, model.PlanCommand))
-	if err != nil {
-		return err
-	}
-	if job == nil {
-		return fmt.Errorf("project %s not found", projectName)
-	}
 	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
-	err = b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 	if err != nil {
 		return err
 	}
