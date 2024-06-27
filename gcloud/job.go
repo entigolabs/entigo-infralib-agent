@@ -249,13 +249,13 @@ func (b *Builder) getAgentEnvVars(awsPrefix string) []*runpb.EnvVar {
 		Name:   common.AwsPrefixEnv,
 		Values: &runpb.EnvVar_Value{Value: awsPrefix},
 	}, {
-		Name:   "PROJECT_ID",
+		Name:   common.GCloudProjectIdEnv,
 		Values: &runpb.EnvVar_Value{Value: b.projectId},
 	}, {
-		Name:   "LOCATION",
+		Name:   common.GCloudLocationEnv,
 		Values: &runpb.EnvVar_Value{Value: b.location},
 	}, {
-		Name:   "ZONE",
+		Name:   common.GCloudZoneEnv,
 		Values: &runpb.EnvVar_Value{Value: b.zone},
 	}}
 }

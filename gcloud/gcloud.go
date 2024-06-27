@@ -98,7 +98,8 @@ func (g *gcloudService) SetupCustomCodeRepo(_ string) (model.CodeRepo, error) {
 }
 
 func (g *gcloudService) createServiceAccount(iam *IAM) string {
-	account, err := iam.GetOrCreateServiceAccount(g.cloudPrefix, "Entigo infralib service account")
+	account, err := iam.GetOrCreateServiceAccount(fmt.Sprintf("%s-agent", g.cloudPrefix),
+		"Entigo infralib service account")
 	if err != nil {
 		common.Logger.Fatalf("Failed to create service account: %s", err)
 	}

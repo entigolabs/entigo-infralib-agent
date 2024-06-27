@@ -1,6 +1,11 @@
 package common
 
-const AwsPrefixEnv = "AWS_PREFIX"
+const (
+	AwsPrefixEnv       = "AWS_PREFIX"
+	GCloudProjectIdEnv = "PROJECT_ID"
+	GCloudLocationEnv  = "LOCATION"
+	GCloudZoneEnv      = "ZONE"
+)
 
 type Flags struct {
 	LoggingLevel string
