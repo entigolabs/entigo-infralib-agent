@@ -8,6 +8,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"google.golang.org/api/iterator"
 	"io"
+	"strings"
 )
 
 type GStorage struct {
@@ -127,7 +128,10 @@ func (g *GStorage) ListFolderFiles(folder string) ([]string, error) {
 		} else if err != nil {
 			return nil, err
 		}
-		files = append(files, obj.Name)
+		if !strings.HasPrefix(obj.Name, folder+"/") {
+			continue
+		}
+		files = append(files, strings.TrimPrefix(obj.Name, folder+"/"))
 	}
 	return files, nil
 }

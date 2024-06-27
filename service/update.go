@@ -948,22 +948,19 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 }
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
-	files, err := u.resources.GetCodeRepo().ListFolderFiles(fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace))
+	folder := fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace)
+	files, err := u.resources.GetCodeRepo().ListFolderFiles(folder)
 	if err != nil {
 		return err
 	}
 	for _, file := range files {
-		file = strings.TrimSuffix(file, ".yaml")
-		if modules.Contains(file) {
+		if !strings.HasSuffix(file, ".yaml") {
 			continue
 		}
-		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
-			step.Workspace, file))
-		if err != nil {
-			return err
+		if modules.Contains(strings.TrimSuffix(file, ".yaml")) {
+			continue
 		}
-		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s-%s/%s/%s/values.yaml", u.config.Prefix, step.Name,
-			step.Workspace, file))
+		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s/%s", folder, file))
 		if err != nil {
 			return err
 		}
