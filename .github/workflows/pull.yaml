@@ -23,7 +23,19 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: eu-north-1
           AWS_PREFIX: entigo-infralib-test-${{ github.event.pull_request.head.ref }}
+          PROJECT_ID: entigo-infralib-agent
+          LOCATION: europe-north1
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ZONE: europe-north1-a
         run: |
+          mkdir -p $(echo ~)/.config/gcloud 
+          echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud config set project $PROJECT_ID
+          gcloud auth list
+          gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
           PR_BRANCH=${{ github.event.pull_request.head.ref }} && \
-          sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile.yaml && \
-          go test -v ./...
+          sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile-aws.yaml && \
+          sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile-gcloud.yaml && \
+          go test -timeout 0 -v ./...
+          

@@ -87,7 +87,7 @@ var awsPrefixFlag = cli.StringFlag{
 var projectIdFlag = cli.StringFlag{
 	Name:        "project-id",
 	Aliases:     []string{"pid"},
-	EnvVars:     []string{"PROJECT_ID"},
+	EnvVars:     []string{common.GCloudProjectIdEnv},
 	DefaultText: "",
 	Value:       "",
 	Usage:       "project id used when creating gcloud resources",
@@ -98,7 +98,7 @@ var projectIdFlag = cli.StringFlag{
 var locationFlag = cli.StringFlag{
 	Name:        "location",
 	Aliases:     []string{"loc"},
-	EnvVars:     []string{"LOCATION"},
+	EnvVars:     []string{common.GCloudLocationEnv},
 	DefaultText: "",
 	Value:       "",
 	Usage:       "location used when creating gcloud resources",
@@ -108,7 +108,7 @@ var locationFlag = cli.StringFlag{
 var zoneFlag = cli.StringFlag{
 	Name:        "zone",
 	Aliases:     []string{"z"},
-	EnvVars:     []string{"ZONE"},
+	EnvVars:     []string{common.GCloudZoneEnv},
 	DefaultText: "",
 	Value:       "",
 	Usage:       "zone used in run jobs",
