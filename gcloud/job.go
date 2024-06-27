@@ -294,7 +294,7 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 	return err
 }
 
-func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
 	job, err := b.getJob(fmt.Sprintf("%s-%s", projectName, model.PlanCommand))
 	if err != nil {
 		return err
@@ -302,6 +302,7 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model
 	if job == nil {
 		return fmt.Errorf("project %s not found", projectName)
 	}
+	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
 	err = b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 	if err != nil {
 		return err

@@ -53,7 +53,7 @@ type Builder interface {
 	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
 	GetProject(projectName string) (*Project, error)
 	UpdateAgentProject(projectName string, version string, cloudPrefix string) error
-	UpdateProject(projectName, repoURL, stepName string, step Step, image string, vpcConfig *VpcConfig) error
+	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion string, vpcConfig *VpcConfig) error
 }
 
 type SSM interface {

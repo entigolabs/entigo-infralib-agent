@@ -210,7 +210,7 @@ func (b *builder) UpdateAgentProject(projectName string, version string, awsPref
 	return err
 }
 
-func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, image string, vpcConfig *model.VpcConfig) error {
+func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return err
@@ -225,6 +225,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, image st
 		!util.EqualLists(project.VpcConfig.Subnets, awsVpcConfig.Subnets) ||
 		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))
 
+	image := fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)
 	imageChanged := image != "" && project.Environment != nil && project.Environment.Image != nil &&
 		*project.Environment.Image != image
 

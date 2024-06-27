@@ -519,8 +519,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return err
 	}
-	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, step.Name, step,
-		fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion), vpcConfig)
+	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, step.Name, step, imageVersion, vpcConfig)
 	if err != nil {
 		return err
 	}
