@@ -8,7 +8,7 @@ steps:
   - name: net
     type: terraform
     workspace: dev
-    approve: minor
+    approve: never
     modules:
       - name: main
         source: google/vpc

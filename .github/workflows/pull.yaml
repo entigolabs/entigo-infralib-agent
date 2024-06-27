@@ -37,5 +37,5 @@ jobs:
           PR_BRANCH=${{ github.event.pull_request.head.ref }} && \
           sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile-aws.yaml && \
           sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" test/profile-gcloud.yaml && \
-          go test -v ./...
+          go test -timeout 0 -v ./...
           
