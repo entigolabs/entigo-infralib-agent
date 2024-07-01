@@ -14,7 +14,7 @@ steps:
           tags:
             team: infrastructure
     version: stable
-    approve: minor
+    approve: never
     modules:
       - name: dns
         source: aws/route53
