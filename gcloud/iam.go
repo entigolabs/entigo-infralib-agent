@@ -126,6 +126,10 @@ func (iam *IAM) DeleteServiceAccount(name string) error {
 	_, err := iam.service.Projects.ServiceAccounts.Delete(fmt.Sprintf("projects/%s/serviceAccounts/%s@%s.iam.gserviceaccount.com",
 		iam.projectId, name, iam.projectId)).Do()
 	if err != nil {
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+			return nil
+		}
 		return err
 	}
 	common.Logger.Printf("Deleted service account: %s", name)

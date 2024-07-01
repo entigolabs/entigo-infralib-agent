@@ -112,9 +112,10 @@ func (g *gcloudService) GetResources(_ string) model.Resources {
 }
 
 func (g *gcloudService) DeleteResources() {
-	err := g.resources.GetBuilder().(*Builder).deleteJob(fmt.Sprintf("%s-agent", g.cloudPrefix))
+	agentJob := fmt.Sprintf("%s-agent", g.cloudPrefix)
+	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent job: %s", err))
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
 	}
 	err = g.resources.GetPipeline().(*Pipeline).deleteTargets()
 	if err != nil {
@@ -122,7 +123,8 @@ func (g *gcloudService) DeleteResources() {
 	}
 	err = g.resources.GetCodeRepo().Delete()
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket: %s", err))
+		bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
+		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket %s: %s", bucket, err))
 	}
 	iam, err := NewIAM(g.ctx, g.projectId)
 	if err != nil {
@@ -134,7 +136,7 @@ func (g *gcloudService) DeleteResources() {
 	}
 	err = iam.DeleteServiceAccount(accountName)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete service account: %s", err))
+		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err))
 	}
 }
 

@@ -475,9 +475,12 @@ func (b *Builder) deleteJob(name string) error {
 	jobOp, err := b.client.DeleteJob(b.ctx, &runpb.DeleteJobRequest{
 		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", b.projectId, b.location, name),
 	})
-	// TODO What happens if job doesn't exist?
 	if err != nil {
-		return err
+		var apiError *apierror.APIError
+		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.NotFound {
+			return err
+		}
+		return nil
 	}
 	_, err = jobOp.Wait(b.ctx)
 	if err == nil {

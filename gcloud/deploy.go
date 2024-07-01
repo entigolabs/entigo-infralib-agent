@@ -199,9 +199,20 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 }
 
 func (p *Pipeline) DeletePipeline(projectName string) error {
+	name := fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location,
+		projectName)
+	_, err := p.client.GetDeliveryPipeline(p.ctx, &deploypb.GetDeliveryPipelineRequest{
+		Name: name,
+	})
+	if err != nil {
+		var apiError *apierror.APIError
+		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+			return nil
+		}
+		return err
+	}
 	pipelineOp, err := p.client.DeleteDeliveryPipeline(p.ctx, &deploypb.DeleteDeliveryPipelineRequest{
-		Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location,
-			projectName),
+		Name:         name,
 		AllowMissing: true,
 		Force:        true,
 	})
@@ -259,9 +270,8 @@ func (p *Pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 		var apiError *apierror.APIError
 		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.AlreadyExists {
 			return nil
-		} else {
-			return err
 		}
+		return err
 	}
 	_, err = pipelineOp.Wait(p.ctx)
 	if err != nil {

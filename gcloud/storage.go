@@ -68,6 +68,22 @@ func (g *GStorage) Delete() error {
 	if !exists {
 		return nil
 	}
+	it := g.bucketHandle.Objects(g.ctx, &storage.Query{
+		Versions: true,
+	})
+	for {
+		attrs, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		err = g.bucketHandle.Object(attrs.Name).Generation(attrs.Generation).Delete(g.ctx)
+		if err != nil {
+			return err
+		}
+	}
 	err = g.bucketHandle.Delete(g.ctx)
 	if err == nil {
 		common.Logger.Printf("Deleted GCloud Storage Bucket %s\n", g.bucket)
