@@ -98,7 +98,7 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 
 func (a *awsService) GetResources(branch string) model.Resources {
 	repoName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
-	return Resources{
+	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
 			CodeRepo:     NewCodeCommit(a.awsConfig, repoName, branch),
@@ -111,6 +111,7 @@ func (a *awsService) GetResources(branch string) model.Resources {
 		Region:    a.awsConfig.Region,
 		AccountId: a.accountId,
 	}
+	return a.resources
 }
 
 func (a *awsService) DeleteResources() {
@@ -314,7 +315,21 @@ func (a *awsService) deleteCloudWatchLogs() {
 
 func (a *awsService) deleteIAMRoles() {
 	buildRole := getBuildRoleName(a.cloudPrefix)
-	err := a.resources.IAM.DeleteRole(buildRole)
+	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, buildRole)
+	err := a.resources.IAM.DeleteRolePolicyAttachment(policyArn, buildRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", buildRole, err))
+	}
+	policyArn = fmt.Sprintf("arn:aws:iam::%s:policy/%s-custom", a.accountId, buildRole)
+	err = a.resources.IAM.DeleteRolePolicyAttachment(policyArn, buildRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s-custom: %s", buildRole, err))
+	}
+	err = a.resources.IAM.DeleteRolePolicyAttachment("arn:aws:iam::aws:policy/AdministratorAccess", buildRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy AdministratorAccess: %s", err))
+	}
+	err = a.resources.IAM.DeleteRole(buildRole)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", buildRole, err))
 	}
@@ -327,6 +342,16 @@ func (a *awsService) deleteIAMRoles() {
 		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s-custom: %s", buildRole, err))
 	}
 	pipelineRole := a.getPipelineRoleName()
+	policyArn = fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, pipelineRole)
+	err = a.resources.IAM.DeleteRolePolicyAttachment(policyArn, pipelineRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", pipelineRole, err))
+	}
+	policyArn = fmt.Sprintf("arn:aws:iam::%s:policy/%s-custom", a.accountId, pipelineRole)
+	err = a.resources.IAM.DeleteRolePolicyAttachment(policyArn, pipelineRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s-custom: %s", pipelineRole, err))
+	}
 	err = a.resources.IAM.DeleteRole(pipelineRole)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", pipelineRole, err))

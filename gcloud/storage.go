@@ -4,6 +4,7 @@ import (
 	"cloud.google.com/go/storage"
 	"context"
 	"errors"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"google.golang.org/api/iterator"
@@ -12,12 +13,13 @@ import (
 )
 
 type GStorage struct {
-	ctx          context.Context
-	client       storage.Client
-	projectId    string
-	location     string
-	bucket       string
-	bucketHandle *storage.BucketHandle
+	ctx           context.Context
+	client        storage.Client
+	projectId     string
+	location      string
+	bucket        string
+	bucketHandle  *storage.BucketHandle
+	bucketCreated *bool
 }
 
 func NewStorage(ctx context.Context, projectId string, location string, bucket string) (*GStorage, error) {
@@ -37,25 +39,29 @@ func NewStorage(ctx context.Context, projectId string, location string, bucket s
 }
 
 func (g *GStorage) CreateBucket() error {
-	exists, err := bucketExists(g.ctx, g.bucketHandle)
+	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
 	if err != nil {
 		return err
 	}
 	if exists {
 		return nil
 	}
-	common.Logger.Printf("Creating GCloud Storage Bucket %s\n", g.bucket)
-	return g.bucketHandle.Create(g.ctx, g.projectId, &storage.BucketAttrs{
+	err = g.bucketHandle.Create(g.ctx, g.projectId, &storage.BucketAttrs{
 		Location:                   g.location,
 		PredefinedACL:              "projectPrivate",
 		PredefinedDefaultObjectACL: "projectPrivate",
 		PublicAccessPrevention:     storage.PublicAccessPreventionEnforced,
 		VersioningEnabled:          true,
 	})
+	if err == nil {
+		common.Logger.Printf("Created GCloud Storage Bucket %s\n", g.bucket)
+		g.bucketCreated = aws.Bool(true)
+	}
+	return err
 }
 
 func (g *GStorage) Delete() error {
-	exists, err := bucketExists(g.ctx, g.bucketHandle)
+	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
 	if err != nil {
 		return err
 	}
@@ -69,7 +75,10 @@ func (g *GStorage) Delete() error {
 	return err
 }
 
-func bucketExists(ctx context.Context, bucketHandle *storage.BucketHandle) (bool, error) {
+func (g *GStorage) bucketExists(ctx context.Context, bucketHandle *storage.BucketHandle) (bool, error) {
+	if g.bucketCreated != nil {
+		return *g.bucketCreated, nil
+	}
 	_, err := bucketHandle.Attrs(ctx)
 	if err == nil {
 		return true, nil
@@ -81,6 +90,13 @@ func bucketExists(ctx context.Context, bucketHandle *storage.BucketHandle) (bool
 }
 
 func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
+	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
 	return &model.RepositoryMetadata{
 		Name: g.bucket,
 		URL:  g.bucket,

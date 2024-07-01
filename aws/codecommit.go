@@ -75,7 +75,7 @@ func (c *CodeCommit) GetAWSRepoMetadata() (*types.RepositoryMetadata, error) {
 		RepositoryName: c.repo,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CodeRepo repository: %w", err)
+		return nil, err
 	}
 	return result.RepositoryMetadata, nil
 }
@@ -83,6 +83,10 @@ func (c *CodeCommit) GetAWSRepoMetadata() (*types.RepositoryMetadata, error) {
 func (c *CodeCommit) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	repoMetadata, err := c.GetAWSRepoMetadata()
 	if err != nil {
+		var awsError *types.RepositoryDoesNotExistException
+		if errors.As(err, &awsError) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &model.RepositoryMetadata{

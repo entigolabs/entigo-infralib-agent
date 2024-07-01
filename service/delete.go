@@ -24,19 +24,41 @@ type deleter struct {
 func NewDeleter(flags *common.Flags) Deleter {
 	provider := GetCloudProvider(context.Background(), flags)
 	resources := provider.GetResources(flags.Branch)
-	config := GetConfig(flags.Config, resources.GetCodeRepo())
+	repo, err := resources.GetCodeRepo().GetRepoMetadata()
+	if err != nil {
+		common.Logger.Fatalf("Failed to get repository metadata: %s", err)
+	}
+	if repo == nil && flags.Config == "" {
+		return &deleter{
+			config:    model.Config{},
+			provider:  provider,
+			resources: resources,
+		}
+	}
+	config := getConfig(flags.Config, resources.GetCodeRepo())
+	if config.Version == "" {
+		config.Version = StableVersion
+	}
 	githubClient := github.NewGithub(config.Source)
 	stableRelease := getLatestRelease(githubClient)
 	return &deleter{
 		config:                 config,
 		provider:               provider,
+		resources:              resources,
 		github:                 githubClient,
 		baseConfigReleaseLimit: stableRelease,
 	}
 }
 
+func getConfig(configFile string, codeCommit model.CodeRepo) model.Config {
+	if configFile != "" {
+		return GetLocalConfig(configFile)
+	}
+	return GetRemoteConfig(codeCommit)
+}
+
 func (d *deleter) Delete() {
-	if d.config.BaseConfig.Profile != "" {
+	if d.config.BaseConfig.Profile != "" && d.config.Source != "" {
 		d.config = MergeBaseConfig(d.github, d.baseConfigReleaseLimit, d.config)
 	}
 	for i := len(d.config.Steps) - 1; i >= 0; i-- {

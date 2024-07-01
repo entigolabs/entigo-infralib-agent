@@ -13,6 +13,7 @@ import (
 
 type IAM interface {
 	AttachRolePolicy(policyArn string, roleName string) error
+	DeleteRolePolicyAttachment(policyName string, roleName string) error
 	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
 	DeletePolicy(policyName string, accountId string) error
 	CreateRole(roleName string, statement []PolicyStatement) *types.Role
@@ -101,6 +102,20 @@ func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
 		PolicyArn: aws.String(policyArn),
 		RoleName:  aws.String(roleName),
 	})
+	return err
+}
+
+func (i *identity) DeleteRolePolicyAttachment(policyArn string, roleName string) error {
+	_, err := i.iamClient.DetachRolePolicy(context.Background(), &iam.DetachRolePolicyInput{
+		PolicyArn: aws.String(policyArn),
+		RoleName:  aws.String(roleName),
+	})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+	}
 	return err
 }
 
