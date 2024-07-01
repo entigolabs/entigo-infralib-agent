@@ -9,12 +9,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 type S3 interface {
 	CreateBucket(bucketName string) (string, error)
+	DeleteBucket(bucketName string) error
 }
 
 type s3 struct {
@@ -45,6 +47,10 @@ func (s *s3) CreateBucket(bucketName string) (string, error) {
 		var existsError *types.BucketAlreadyExists
 		var ownedError *types.BucketAlreadyOwnedByYou
 		if errors.As(err, &existsError) || errors.As(err, &ownedError) {
+			err = s.createDummyZip(bucketName)
+			if err != nil {
+				return "", err
+			}
 			return fmt.Sprintf("arn:aws:s3:::%s", bucketName), nil
 		} else {
 			return "", err
@@ -60,6 +66,63 @@ func (s *s3) CreateBucket(bucketName string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("arn:aws:s3:::%s", bucketName), nil
+}
+
+func (s *s3) DeleteBucket(bucketName string) error {
+	err := s.truncateBucket(bucketName)
+	if err != nil {
+		return err
+	}
+	_, err = s.awsS3.DeleteBucket(context.Background(), &awsS3.DeleteBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		var noSuchBucket *types.NoSuchBucket
+		var apiErr smithy.APIError
+		if errors.As(err, &noSuchBucket) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted S3 Bucket %s\n", bucketName)
+	return nil
+}
+
+func (s *s3) truncateBucket(bucketName string) error {
+	input := &awsS3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	}
+
+	for {
+		list, err := s.awsS3.ListObjectVersions(context.Background(), input)
+		if err != nil {
+			return err
+		}
+
+		for _, version := range list.Versions {
+			_, err = s.awsS3.DeleteObjects(context.Background(), &awsS3.DeleteObjectsInput{
+				Bucket: aws.String(bucketName),
+				Delete: &types.Delete{
+					Objects: []types.ObjectIdentifier{
+						{
+							Key:       version.Key,
+							VersionId: version.VersionId,
+						},
+					},
+				},
+			})
+			if err != nil {
+				return err
+			}
+		}
+
+		if list.IsTruncated {
+			input.KeyMarker = list.NextKeyMarker
+			input.VersionIdMarker = list.NextVersionIdMarker
+		} else {
+			return nil
+		}
+	}
 }
 
 func (s *s3) putBucketVersioning(bucketName string) error {

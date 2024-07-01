@@ -259,6 +259,21 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 	return nil
 }
 
+func (b *builder) DeleteProject(projectName string, _ model.Step) error {
+	_, err := b.codeBuild.DeleteProject(context.Background(), &codebuild.DeleteProjectInput{
+		Name: aws.String(projectName),
+	})
+	if err != nil {
+		var awsError *types.ResourceNotFoundException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted CodeBuild project %s\n", projectName)
+	return nil
+}
+
 func getAwsVpcConfig(vpcConfig *model.VpcConfig) *types.VpcConfig {
 	if vpcConfig == nil {
 		return nil

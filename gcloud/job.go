@@ -303,6 +303,26 @@ func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model
 	return b.updateDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig)
 }
 
+func (b *Builder) DeleteProject(projectName string, step model.Step) error {
+	var commands []model.ActionCommand
+	if step.Type == model.StepTypeArgoCD {
+		commands = []model.ActionCommand{model.ArgoCDPlanCommand, model.ArgoCDApplyCommand}
+	} else {
+		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand}
+	}
+	for _, command := range commands {
+		err := b.deleteJob(fmt.Sprintf("%s-%s", projectName, command))
+		if err != nil {
+			return err
+		}
+	}
+	err := b.deleteJob(fmt.Sprintf("%s-plan-destroy", projectName))
+	if err != nil {
+		return err
+	}
+	return b.deleteJob(fmt.Sprintf("%s-apply-destroy", projectName))
+}
+
 func (b *Builder) updateDestroyJobs(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
@@ -370,24 +390,6 @@ func (b *Builder) getJob(projectName string) (*runpb.Job, error) {
 		return nil, err
 	}
 	return job, nil
-}
-
-func hasVPCConfigChanged(a, b *runpb.VpcAccess) bool {
-	if a == nil || b == nil {
-		return a != b
-	}
-	if a.Egress != b.Egress {
-		return true
-	}
-	if len(a.NetworkInterfaces) != len(b.NetworkInterfaces) {
-		return true
-	}
-	for i, ni := range a.NetworkInterfaces {
-		if ni.Network != b.NetworkInterfaces[i].Network || ni.Subnetwork != b.NetworkInterfaces[i].Subnetwork {
-			return true
-		}
-	}
-	return false
 }
 
 func getVPCMeta(vpcConfig *model.VpcConfig) (*runv1.ObjectMeta, error) {
@@ -467,6 +469,24 @@ func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string
 		envVars = addArgoCDEnvironmentVariables(envVars, step)
 	}
 	return envVars
+}
+
+func (b *Builder) deleteJob(name string) error {
+	jobOp, err := b.client.DeleteJob(b.ctx, &runpb.DeleteJobRequest{
+		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", b.projectId, b.location, name),
+	})
+	if err != nil {
+		var apiError *apierror.APIError
+		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.NotFound {
+			return err
+		}
+		return nil
+	}
+	_, err = jobOp.Wait(b.ctx)
+	if err == nil {
+		fmt.Printf("Deleted job %s\n", name)
+	}
+	return err
 }
 
 func addTerraformEnvironmentVariables(envVars map[string]string, step model.Step) map[string]string {

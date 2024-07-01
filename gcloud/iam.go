@@ -48,14 +48,14 @@ func (iam *IAM) GetServiceAccount(serviceAccountName string) (*iamv1.ServiceAcco
 	return account, nil
 }
 
-func (iam *IAM) GetOrCreateServiceAccount(name, displayName string) (*iamv1.ServiceAccount, error) {
+func (iam *IAM) GetOrCreateServiceAccount(name, displayName string) (*iamv1.ServiceAccount, bool, error) {
 	account, err := iam.GetServiceAccount(fmt.Sprintf("projects/%s/serviceAccounts/%s@%s.iam.gserviceaccount.com",
 		iam.projectId, name, iam.projectId))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if account != nil {
-		return account, nil
+		return account, false, nil
 	}
 	account, err = iam.service.Projects.ServiceAccounts.Create(fmt.Sprintf("projects/%s", iam.projectId),
 		&iamv1.CreateServiceAccountRequest{
@@ -65,10 +65,10 @@ func (iam *IAM) GetOrCreateServiceAccount(name, displayName string) (*iamv1.Serv
 			},
 		}).Do()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	common.Logger.Printf("Created new service account: %v", account.Name)
-	return account, nil
+	return account, true, nil
 }
 
 func (iam *IAM) AddRolesToServiceAccount(serviceAccountName string, roles []string) error {
@@ -119,5 +119,19 @@ func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) err
 	if err != nil {
 		return fmt.Errorf("failed to set IAM policy: %w", err)
 	}
+	return nil
+}
+
+func (iam *IAM) DeleteServiceAccount(name string) error {
+	_, err := iam.service.Projects.ServiceAccounts.Delete(fmt.Sprintf("projects/%s/serviceAccounts/%s@%s.iam.gserviceaccount.com",
+		iam.projectId, name, iam.projectId)).Do()
+	if err != nil {
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted service account: %s", name)
 	return nil
 }

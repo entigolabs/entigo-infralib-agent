@@ -100,17 +100,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	if release.GreaterThan(u.baseConfigReleaseLimit) {
 		return
 	}
-	rawBaseConfig, err := u.github.GetRawFileContent(fmt.Sprintf("profiles/%s.yaml", u.patchConfig.BaseConfig.Profile),
-		release.Original())
-	if err != nil {
-		common.Logger.Fatalf("Failed to get base config: %s", err)
-	}
-	var baseConfig model.Config
-	err = yaml.Unmarshal(rawBaseConfig, &baseConfig)
-	if err != nil {
-		common.Logger.Fatalf("Failed to unmarshal base config: %s", err)
-	}
-	config := MergeConfig(u.patchConfig, baseConfig)
+	config := MergeBaseConfig(u.github, release, u.patchConfig)
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)

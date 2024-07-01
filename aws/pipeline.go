@@ -28,7 +28,7 @@ const sourceName = "Source"
 const destroyName = "Destroy"
 const applyDestroyName = "ApplyDestroy"
 
-type pipeline struct {
+type Pipeline struct {
 	codePipeline *codepipeline.Client
 	branch       string
 	roleArn      string
@@ -38,8 +38,8 @@ type pipeline struct {
 	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) model.Pipeline {
-	return &pipeline{
+func NewPipeline(awsConfig aws.Config, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
+	return &Pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
 		branch:       branch,
 		roleArn:      roleArn,
@@ -50,7 +50,7 @@ func NewPipeline(awsConfig aws.Config, branch string, roleArn string, bucket str
 	}
 }
 
-func (p *pipeline) CreatePipeline(projectName string, stepName string, step model.Step, repo string) (*string, error) {
+func (p *Pipeline) CreatePipeline(projectName string, stepName string, step model.Step, repo string) (*string, error) {
 	execution, err := p.CreateApplyPipeline(projectName, projectName, stepName, step, repo)
 	if err != nil {
 		return nil, err
@@ -59,7 +59,30 @@ func (p *pipeline) CreatePipeline(projectName string, stepName string, step mode
 	return execution, err
 }
 
-func (p *pipeline) CreateApplyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) (*string, error) {
+func (p *Pipeline) DeletePipeline(projectName string) error {
+	err := p.deletePipeline(projectName)
+	if err != nil {
+		return err
+	}
+	return p.deletePipeline(fmt.Sprintf("%s-destroy", projectName))
+}
+
+func (p *Pipeline) deletePipeline(projectName string) error {
+	_, err := p.codePipeline.DeletePipeline(context.Background(), &codepipeline.DeletePipelineInput{
+		Name: aws.String(projectName),
+	})
+	if err != nil {
+		var notFoundError *types.PipelineNotFoundException
+		if errors.As(err, &notFoundError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted CodePipeline %s\n", projectName)
+	return nil
+}
+
+func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) (*string, error) {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return nil, err
@@ -165,7 +188,7 @@ func (p *pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
-func (p *pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) error {
+func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
@@ -284,7 +307,7 @@ func (p *pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error {
+func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
@@ -346,7 +369,7 @@ func (p *pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 	return err
 }
 
-func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
+func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
@@ -358,12 +381,12 @@ func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 	return execution.PipelineExecutionId, nil
 }
 
-func (p *pipeline) StartAgentExecution(pipelineName string) error {
+func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 	_, err := p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
 	return err
 }
 
-func (p *pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) (*string, error) {
+func (p *Pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) (*string, error) {
 	err := p.updatePipeline(pipeline, stepName, step)
 	if err != nil {
 		return nil, err
@@ -371,7 +394,7 @@ func (p *pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, ste
 	return p.StartPipelineExecution(*pipeline.Name, stepName, step, "")
 }
 
-func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step, _ string) error {
+func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step, _ string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
@@ -394,7 +417,7 @@ func (p *pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 	return p.updatePipeline(pipe, stepName, step)
 }
 
-func (p *pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) error {
+func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) error {
 	changed := false
 	for _, stage := range pipeline.Stages {
 		if *stage.Name == sourceName || *stage.Name == approveStageName {
@@ -461,7 +484,7 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	return ""
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType model.StepType) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType model.StepType) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
@@ -497,7 +520,7 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	return ctx.Err()
 }
 
-func (p *pipeline) getNewPipelineExecutionId(pipelineName string) (*string, error) {
+func (p *Pipeline) getNewPipelineExecutionId(pipelineName string) (*string, error) {
 	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
 	executions, err := p.codePipeline.ListPipelineExecutions(context.Background(), &codepipeline.ListPipelineExecutionsInput{
 		PipelineName: aws.String(pipelineName),
@@ -538,7 +561,7 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.TerraformChanges, approved *bool, autoApprove bool) (*model.TerraformChanges, *bool, error) {
+func (p *Pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.TerraformChanges, approved *bool, autoApprove bool) (*model.TerraformChanges, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -564,7 +587,7 @@ func (p *pipeline) processStateStages(pipelineName string, actions []types.Actio
 	return pipeChanges, approved, nil
 }
 
-func (p *pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.TerraformChanges, error) {
+func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.TerraformChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
@@ -575,7 +598,7 @@ func (p *pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 	return &model.TerraformChanges{}, nil
 }
 
-func (p *pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*model.TerraformChanges, error) {
+func (p *Pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*model.TerraformChanges, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -632,7 +655,7 @@ func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 	return "", fmt.Errorf("couldn't find a terraform plan action")
 }
 
-func (p *pipeline) approveStage(pipelineName string) (*bool, error) {
+func (p *Pipeline) approveStage(pipelineName string) (*bool, error) {
 	token := p.getApprovalToken(pipelineName)
 	if token == nil {
 		common.Logger.Printf("No approval token found yet for %s, please wait or approve manually\n", pipelineName)
@@ -655,7 +678,7 @@ func (p *pipeline) approveStage(pipelineName string) (*bool, error) {
 	return aws.Bool(true), nil
 }
 
-func (p *pipeline) disableStageTransition(pipelineName string, stage string) error {
+func (p *Pipeline) disableStageTransition(pipelineName string, stage string) error {
 	_, err := p.codePipeline.DisableStageTransition(context.Background(), &codepipeline.DisableStageTransitionInput{
 		PipelineName:   aws.String(pipelineName),
 		StageName:      aws.String(stage),
@@ -665,7 +688,7 @@ func (p *pipeline) disableStageTransition(pipelineName string, stage string) err
 	return err
 }
 
-func (p *pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount int32) error {
+func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount int32) error {
 	executions, err := p.codePipeline.ListPipelineExecutions(context.Background(), &codepipeline.ListPipelineExecutionsInput{
 		PipelineName: aws.String(pipelineName),
 		MaxResults:   aws.Int32(latestCount),
@@ -690,7 +713,7 @@ func (p *pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount
 	return nil
 }
 
-func (p *pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration, error) {
+func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration, error) {
 	pipelineOutput, err := p.codePipeline.GetPipeline(context.Background(), &codepipeline.GetPipelineInput{
 		Name: aws.String(pipelineName),
 	})
@@ -739,7 +762,7 @@ func getEnvironmentVariablesList(command model.ActionCommand, stepName string, s
 	return envVars
 }
 
-func (p *pipeline) getApprovalToken(pipelineName string) *string {
+func (p *Pipeline) getApprovalToken(pipelineName string) *string {
 	state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
 		Name: aws.String(pipelineName),
 	})
@@ -761,5 +784,10 @@ func (p *pipeline) getApprovalToken(pipelineName string) *string {
 		}
 		break
 	}
+	return nil
+}
+
+func (p *Pipeline) StartDestroyExecution(_ string) error {
+	common.PrintWarning("Executing destroy pipelines not implemented for AWS")
 	return nil
 }

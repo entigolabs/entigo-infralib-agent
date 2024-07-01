@@ -36,6 +36,23 @@ func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDe
 	return table.TableDescription, nil
 }
 
+func DeleteDynamoDBTable(awsConfig aws.Config, tableName string) error {
+	client := dynamodb.NewFromConfig(awsConfig)
+	_, err := client.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{
+		TableName: aws.String(tableName),
+	})
+	if err != nil {
+		var resourceError *types.ResourceNotFoundException
+		if errors.As(err, &resourceError) {
+			return nil
+		} else {
+			return err
+		}
+	}
+	common.Logger.Printf("Deleted DynamoDB table %s\n", tableName)
+	return nil
+}
+
 func GetDynamoDBTable(client *dynamodb.Client, tableName string) (*types.TableDescription, error) {
 	table, err := client.DescribeTable(context.Background(), &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),

@@ -13,8 +13,11 @@ import (
 
 type IAM interface {
 	AttachRolePolicy(policyArn string, roleName string) error
+	DeleteRolePolicyAttachment(policyName string, roleName string) error
 	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
+	DeletePolicy(policyName string, accountId string) error
 	CreateRole(roleName string, statement []PolicyStatement) *types.Role
+	DeleteRole(roleName string) error
 	GetRole(roleName string) *types.Role
 }
 
@@ -100,6 +103,47 @@ func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
 		RoleName:  aws.String(roleName),
 	})
 	return err
+}
+
+func (i *identity) DeleteRolePolicyAttachment(policyArn string, roleName string) error {
+	_, err := i.iamClient.DetachRolePolicy(context.Background(), &iam.DetachRolePolicyInput{
+		PolicyArn: aws.String(policyArn),
+		RoleName:  aws.String(roleName),
+	})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+	}
+	return err
+}
+
+func (i *identity) DeletePolicy(policyName string, accountId string) error {
+	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", accountId, policyName)
+	_, err := i.iamClient.DeletePolicy(context.Background(), &iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted IAM policy: %s\n", policyName)
+	return nil
+}
+
+func (i *identity) DeleteRole(roleName string) error {
+	_, err := i.iamClient.DeleteRole(context.Background(), &iam.DeleteRoleInput{RoleName: aws.String(roleName)})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted IAM role: %s\n", roleName)
+	return nil
 }
 
 func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbArn string) []PolicyStatement {

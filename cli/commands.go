@@ -9,6 +9,7 @@ func cliCommands() []*cli.Command {
 	return []*cli.Command{
 		&runCommand,
 		&bootstrapCommand,
+		&deleteCommand,
 		&mergeCommand,
 	}
 }
@@ -27,6 +28,14 @@ var bootstrapCommand = cli.Command{
 	Usage:   "bootstraps agent codepipeline and codebuild",
 	Action:  action(common.BootstrapCommand),
 	Flags:   cliFlags(common.BootstrapCommand),
+}
+
+var deleteCommand = cli.Command{
+	Name:    "delete",
+	Aliases: []string{"del"},
+	Usage:   "delete agent resources",
+	Action:  action(common.DeleteCommand),
+	Flags:   cliFlags(common.DeleteCommand),
 }
 
 var mergeCommand = cli.Command{

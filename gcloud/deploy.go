@@ -50,7 +50,7 @@ type manifests struct {
 	RawYaml []string `json:"rawYaml"`
 }
 
-type pipeline struct {
+type Pipeline struct {
 	ctx            context.Context
 	client         *deploy.CloudDeployClient
 	cloudPrefix    string
@@ -62,7 +62,7 @@ type pipeline struct {
 	logging        *Logging
 }
 
-func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging) (model.Pipeline, error) {
+func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging) (*Pipeline, error) {
 	client, err := deploy.NewCloudDeployClient(ctx)
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func NewPipeline(ctx context.Context, projectId string, location string, prefix 
 	if err != nil {
 		return nil, err
 	}
-	return &pipeline{
+	return &Pipeline{
 		ctx:            ctx,
 		client:         client,
 		cloudPrefix:    prefix,
@@ -140,7 +140,35 @@ func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projec
 	return nil
 }
 
-func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket string) (*string, error) {
+func (p *Pipeline) deleteTargets() error {
+	targetOp, err := p.client.DeleteTarget(p.ctx, &deploypb.DeleteTargetRequest{
+		Name:         fmt.Sprintf("projects/%s/locations/%s/targets/%s-plan", p.projectId, p.location, p.cloudPrefix),
+		AllowMissing: true,
+	})
+	if err != nil {
+		return err
+	}
+	err = targetOp.Wait(p.ctx)
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Deleted target %s-plan\n", p.cloudPrefix)
+	targetOp, err = p.client.DeleteTarget(p.ctx, &deploypb.DeleteTargetRequest{
+		Name:         fmt.Sprintf("projects/%s/locations/%s/targets/%s-apply", p.projectId, p.location, p.cloudPrefix),
+		AllowMissing: true,
+	})
+	if err != nil {
+		return err
+	}
+	err = targetOp.Wait(p.ctx)
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Deleted target %s-apply\n", p.cloudPrefix)
+	return nil
+}
+
+func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket string) (*string, error) {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
@@ -170,7 +198,36 @@ func (p *pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	return p.StartPipelineExecution(projectName, stepName, step, bucket)
 }
 
-func (p *pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
+func (p *Pipeline) DeletePipeline(projectName string) error {
+	name := fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location,
+		projectName)
+	_, err := p.client.GetDeliveryPipeline(p.ctx, &deploypb.GetDeliveryPipelineRequest{
+		Name: name,
+	})
+	if err != nil {
+		var apiError *apierror.APIError
+		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+			return nil
+		}
+		return err
+	}
+	pipelineOp, err := p.client.DeleteDeliveryPipeline(p.ctx, &deploypb.DeleteDeliveryPipelineRequest{
+		Name:         name,
+		AllowMissing: true,
+		Force:        true,
+	})
+	if err != nil {
+		return err
+	}
+	err = pipelineOp.Wait(p.ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Deleted delivery pipeline %s\n", projectName)
+	return nil
+}
+
+func (p *Pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
 	skaffoldManifest := skaffold{
 		APIVersion: "skaffold/v4beta7",
 		Kind:       "Config",
@@ -188,7 +245,7 @@ func (p *pipeline) createSkaffoldManifest(name, projectName, folder string, firs
 	return os.WriteFile(fmt.Sprintf("%s/%s.yaml", folder, name), bytes, 0644)
 }
 
-func (p *pipeline) createDeliveryPipeline(pipelineName string, firstCommand, secondCommand model.ActionCommand) error {
+func (p *Pipeline) createDeliveryPipeline(pipelineName string, firstCommand, secondCommand model.ActionCommand) error {
 	pipelineOp, err := p.client.CreateDeliveryPipeline(p.ctx, &deploypb.CreateDeliveryPipelineRequest{
 		Parent:             fmt.Sprintf("projects/%s/locations/%s", p.projectId, p.location),
 		DeliveryPipelineId: pipelineName,
@@ -213,9 +270,8 @@ func (p *pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 		var apiError *apierror.APIError
 		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.AlreadyExists {
 			return nil
-		} else {
-			return err
 		}
+		return err
 	}
 	_, err = pipelineOp.Wait(p.ctx)
 	if err != nil {
@@ -225,7 +281,7 @@ func (p *pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 	return nil
 }
 
-func (p *pipeline) waitForReleaseRender(pipelineName string, releaseId string) error {
+func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Minute)
 	defer cancel()
 	delay := 1
@@ -254,7 +310,7 @@ func (p *pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 	}
 }
 
-func (p *pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool) error {
+func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
@@ -322,7 +378,7 @@ func (p *pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 	}
 }
 
-func (p *pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, stepType model.StepType, jobName string, executionName string) (*model.TerraformChanges, error) {
+func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, stepType model.StepType, jobName string, executionName string) (*model.TerraformChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
@@ -333,7 +389,7 @@ func (p *pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 	return &model.TerraformChanges{}, nil
 }
 
-func (p *pipeline) getTerraformChanges(pipelineName string, jobName string, executionName string) (*model.TerraformChanges, error) {
+func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, executionName string) (*model.TerraformChanges, error) {
 	re := regexp.MustCompile(terraform.PlanRegex)
 	lastSlash := strings.LastIndex(executionName, "/")
 	logIterator := p.logging.GetJobExecutionLogs(jobName, executionName[lastSlash+1:], p.location)
@@ -374,12 +430,12 @@ func (p *pipeline) getTerraformChanges(pipelineName string, jobName string, exec
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
 }
 
-func (p *pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, _ string) error {
+func (p *Pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, _ string) error {
 	_, err := p.builder.executeJob(pipelineName, false)
 	return err
 }
 
-func (p *pipeline) UpdatePipeline(projectName string, stepName string, step model.Step, bucket string) error {
+func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step model.Step, bucket string) error {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
@@ -405,7 +461,7 @@ func (p *pipeline) UpdatePipeline(projectName string, stepName string, step mode
 	return nil
 }
 
-func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, bucket string) (*string, error) {
+func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, bucket string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	releaseId := fmt.Sprintf("%s-%s", pipelineName, uuid.New().String())
 	releaseOp, err := p.client.CreateRelease(p.ctx, &deploypb.CreateReleaseRequest{
@@ -423,12 +479,12 @@ func (p *pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 	return &releaseId, err
 }
 
-func (p *pipeline) StartAgentExecution(pipelineName string) error {
+func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 	_, err := p.builder.executeJob(pipelineName, false)
 	return err
 }
 
-func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, stepType model.StepType) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, stepType model.StepType) error {
 	if releaseId == nil {
 		return fmt.Errorf("release id is nil")
 	}
@@ -485,4 +541,18 @@ func (p *pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	}
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, applyCommand), true)
 	return err
+}
+
+func (p *Pipeline) StartDestroyExecution(projectName string) error {
+	common.Logger.Printf("Starting destroy execution for pipeline %s\n", projectName)
+	_, err := p.builder.executeJob(fmt.Sprintf("%s-plan-destroy", projectName), true)
+	if err != nil {
+		return err
+	}
+	_, err = p.builder.executeJob(fmt.Sprintf("%s-apply-destroy", projectName), true)
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Successfully executed destroy pipeline %s\n", projectName)
+	return nil
 }
