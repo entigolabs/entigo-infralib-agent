@@ -542,3 +542,17 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, applyCommand), true)
 	return err
 }
+
+func (p *Pipeline) StartDestroyExecution(projectName string) error {
+	common.Logger.Printf("Starting destroy execution for pipeline %s\n", projectName)
+	_, err := p.builder.executeJob(fmt.Sprintf("%s-plan-destroy", projectName), true)
+	if err != nil {
+		return err
+	}
+	_, err = p.builder.executeJob(fmt.Sprintf("%s-apply-destroy", projectName), true)
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Successfully executed destroy pipeline %s\n", projectName)
+	return nil
+}

@@ -786,3 +786,8 @@ func (p *Pipeline) getApprovalToken(pipelineName string) *string {
 	}
 	return nil
 }
+
+func (p *Pipeline) StartDestroyExecution(_ string) error {
+	common.PrintWarning("Executing destroy pipelines not implemented for AWS")
+	return nil
+}

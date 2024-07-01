@@ -11,6 +11,7 @@ import (
 
 type Deleter interface {
 	Delete()
+	Destroy()
 }
 
 type deleter struct {
@@ -41,6 +42,9 @@ func NewDeleter(flags *common.Flags) Deleter {
 	}
 	githubClient := github.NewGithub(config.Source)
 	stableRelease := getLatestRelease(githubClient)
+	if config.BaseConfig.Profile != "" && config.Source != "" {
+		config = MergeBaseConfig(githubClient, stableRelease, config)
+	}
 	return &deleter{
 		config:                 config,
 		provider:               provider,
@@ -58,13 +62,9 @@ func getConfig(configFile string, codeCommit model.CodeRepo) model.Config {
 }
 
 func (d *deleter) Delete() {
-	if d.config.BaseConfig.Profile != "" && d.config.Source != "" {
-		d.config = MergeBaseConfig(d.github, d.baseConfigReleaseLimit, d.config)
-	}
 	for i := len(d.config.Steps) - 1; i >= 0; i-- {
 		step := d.config.Steps[i]
-		stepName := fmt.Sprintf("%s-%s", d.config.Prefix, step.Name)
-		projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
+		projectName := fmt.Sprintf("%s-%s-%s", d.config.Prefix, step.Name, step.Workspace)
 		err := d.resources.GetPipeline().DeletePipeline(projectName)
 		if err != nil {
 			common.PrintWarning(fmt.Sprintf("Failed to delete pipeline %s: %s", projectName, err))
@@ -75,4 +75,15 @@ func (d *deleter) Delete() {
 		}
 	}
 	d.provider.DeleteResources()
+}
+
+func (d *deleter) Destroy() {
+	for i := len(d.config.Steps) - 1; i >= 0; i-- {
+		step := d.config.Steps[i]
+		projectName := fmt.Sprintf("%s-%s-%s", d.config.Prefix, step.Name, step.Workspace)
+		err := d.resources.GetPipeline().StartDestroyExecution(projectName)
+		if err != nil {
+			common.PrintWarning(fmt.Sprintf("Failed to start destroy execution for pipeline %s: %s", projectName, err))
+		}
+	}
 }

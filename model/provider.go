@@ -50,6 +50,7 @@ type Pipeline interface {
 	StartPipelineExecution(pipelineName string, stepName string, step Step, customRepo string) (*string, error)
 	WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType StepType) error
 	DeletePipeline(projectName string) error
+	StartDestroyExecution(projectName string) error
 }
 
 type Builder interface {
