@@ -121,3 +121,13 @@ func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) err
 	}
 	return nil
 }
+
+func (iam *IAM) DeleteServiceAccount(name string) error {
+	_, err := iam.service.Projects.ServiceAccounts.Delete(fmt.Sprintf("projects/%s/serviceAccounts/%s@%s.iam.gserviceaccount.com",
+		iam.projectId, name, iam.projectId)).Do()
+	if err != nil {
+		return err
+	}
+	common.Logger.Printf("Deleted service account: %s", name)
+	return nil
+}

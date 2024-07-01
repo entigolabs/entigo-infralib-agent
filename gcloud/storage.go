@@ -15,6 +15,7 @@ type GStorage struct {
 	ctx          context.Context
 	client       storage.Client
 	projectId    string
+	location     string
 	bucket       string
 	bucketHandle *storage.BucketHandle
 }
@@ -25,34 +26,47 @@ func NewStorage(ctx context.Context, projectId string, location string, bucket s
 		return nil, err
 	}
 	bucketHandle := client.Bucket(bucket)
-	if err = createBucket(ctx, projectId, location, bucketHandle, bucket); err != nil {
-		return nil, err
-	}
 	return &GStorage{
 		ctx:          ctx,
 		client:       *client,
 		projectId:    projectId,
+		location:     location,
 		bucket:       bucket,
 		bucketHandle: bucketHandle,
 	}, nil
 }
 
-func createBucket(ctx context.Context, projectId string, location string, bucketHandle *storage.BucketHandle, bucket string) error {
-	exists, err := bucketExists(ctx, bucketHandle)
+func (g *GStorage) CreateBucket() error {
+	exists, err := bucketExists(g.ctx, g.bucketHandle)
 	if err != nil {
 		return err
 	}
 	if exists {
 		return nil
 	}
-	common.Logger.Printf("Creating GCloud Storage Bucket %s\n", bucket)
-	return bucketHandle.Create(ctx, projectId, &storage.BucketAttrs{
-		Location:                   location,
+	common.Logger.Printf("Creating GCloud Storage Bucket %s\n", g.bucket)
+	return g.bucketHandle.Create(g.ctx, g.projectId, &storage.BucketAttrs{
+		Location:                   g.location,
 		PredefinedACL:              "projectPrivate",
 		PredefinedDefaultObjectACL: "projectPrivate",
 		PublicAccessPrevention:     storage.PublicAccessPreventionEnforced,
 		VersioningEnabled:          true,
 	})
+}
+
+func (g *GStorage) Delete() error {
+	exists, err := bucketExists(g.ctx, g.bucketHandle)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	err = g.bucketHandle.Delete(g.ctx)
+	if err == nil {
+		common.Logger.Printf("Deleted GCloud Storage Bucket %s\n", g.bucket)
+	}
+	return err
 }
 
 func bucketExists(ctx context.Context, bucketHandle *storage.BucketHandle) (bool, error) {

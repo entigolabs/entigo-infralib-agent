@@ -14,6 +14,8 @@ type CloudWatch interface {
 	CreateLogGroup(logGroupName string) (string, error)
 	CreateLogStream(logGroupName string, logStreamName string) error
 	GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error)
+	DeleteLogGroup(logGroupName string) error
+	DeleteLogStream(logGroupName, logStreamName string) error
 }
 
 type cloudWatch struct {
@@ -82,4 +84,35 @@ func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string, limit in
 		logs = append(logs, *event.Message)
 	}
 	return logs, nil
+}
+
+func (c *cloudWatch) DeleteLogGroup(logGroupName string) error {
+	_, err := c.cloudwatchlogs.DeleteLogGroup(context.Background(), &cloudwatchlogs.DeleteLogGroupInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	if err != nil {
+		var awsError *types.ResourceNotFoundException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted log group %s\n", logGroupName)
+	return nil
+}
+
+func (c *cloudWatch) DeleteLogStream(logGroupName, logStreamName string) error {
+	_, err := c.cloudwatchlogs.DeleteLogStream(context.Background(), &cloudwatchlogs.DeleteLogStreamInput{
+		LogGroupName:  aws.String(logGroupName),
+		LogStreamName: aws.String(logStreamName),
+	})
+	if err != nil {
+		var awsError *types.ResourceNotFoundException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted log stream %s\n", logStreamName)
+	return nil
 }

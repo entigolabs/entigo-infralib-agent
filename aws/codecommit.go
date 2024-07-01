@@ -52,6 +52,21 @@ func (c *CodeCommit) CreateRepository() (bool, error) {
 	}
 }
 
+func (c *CodeCommit) Delete() error {
+	_, err := c.codeCommit.DeleteRepository(context.Background(), &codecommit.DeleteRepositoryInput{
+		RepositoryName: c.repo,
+	})
+	if err != nil {
+		var awsError *types.RepositoryDoesNotExistException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete CodeRepo repository: %w", err)
+	}
+	common.Logger.Printf("Repository %s deleted\n", *c.repo)
+	return nil
+}
+
 func (c *CodeCommit) GetAWSRepoMetadata() (*types.RepositoryMetadata, error) {
 	if c.repoMetadata != nil {
 		return c.repoMetadata, nil

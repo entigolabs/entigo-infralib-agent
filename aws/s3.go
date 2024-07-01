@@ -15,6 +15,7 @@ import (
 
 type S3 interface {
 	CreateBucket(bucketName string) (string, error)
+	DeleteBucket(bucketName string) error
 }
 
 type s3 struct {
@@ -60,6 +61,22 @@ func (s *s3) CreateBucket(bucketName string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("arn:aws:s3:::%s", bucketName), nil
+}
+
+func (s *s3) DeleteBucket(bucketName string) error {
+	_, err := s.awsS3.DeleteBucket(context.Background(), &awsS3.DeleteBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		var noSuchError *types.NoSuchBucket
+		if errors.As(err, &noSuchError) {
+			return nil
+		}
+		return err
+	}
+	common.Logger.Printf("Deleted S3 Bucket %s\n", bucketName)
+	return nil
+
 }
 
 func (s *s3) putBucketVersioning(bucketName string) error {

@@ -1,8 +1,8 @@
 # entigo-infralib-agent
 
-Entigo infralib agent prepares an AWS Account for Entigo infralib terraform modules.
+Entigo infralib agent prepares an AWS Account or Google Cloud Project for Entigo infralib terraform modules.
 Creates the required resources for S3, DynamoDB, CloudWatch, CodeBuild, CodePipeline, and IAM roles and policies.
-Executes CodePipelines which apply the specified Entigo infralib terraform modules.
+Executes CodePipelines or Cloud Deploy DeliveryPipelines which apply the specified Entigo infralib terraform modules.
 
 * [Compiling Source](#compiling-source)
 * [Requirements](#requirements)
@@ -12,6 +12,7 @@ Executes CodePipelines which apply the specified Entigo infralib terraform modul
 * [Commands](#commands)
     * [Bootstrap](#bootstrap)
     * [Run](#run)
+    * [Delete](#delete)
     * [Merge](#merge)
 * [Config](#config)
   * [Overriding config values](#overriding-config-values)
@@ -23,6 +24,10 @@ Executes CodePipelines which apply the specified Entigo infralib terraform modul
 ## Requirements
 
 AWS Service Account with administrator access, credentials provided by AWS or environment variables.
+
+or
+
+Google Cloud Service Account with owner access, credentials provided by GCP or gcloud cli tool.
 
 ## Docker
 
@@ -84,6 +89,24 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent run --config=config.yaml --branch=main --aws-prefix=entigo-infralib
+```
+
+### delete
+
+Processes config steps, removes resources used by the agent, including buckets, pipelines, and roles/service accounts.
+**Warning!** Execute destroy pipelines in reverse config order before running this command. This command will remove all pipelines and resources created by terraform will otherwise remain.
+
+OPTIONS:
+* config - config file path and name, only needed when overriding an existing config [$CONFIG]
+* branch - CodeCommit branch name (default: **main**) [$BRANCH]
+* aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+
+Example
+```bash
+bin/ei-agent delete --config=config.yaml --branch=main --aws-prefix=entigo-infralib
 ```
 
 ### merge
@@ -154,7 +177,7 @@ During merging, step name and workspace are used for identifying parent steps, m
 * base_config - base config, pulled from source
   * version - highest version of Entigo Infralib base config
   * profile - name of the config file without a suffix, empty string means no base config is used
-* prefix - prefix used for AWS resources, CodeCommit folders/files and terraform resources
+* prefix - prefix used for AWS/GCloud resources, CodeCommit folders/files and terraform resources
 * source - source repository for Entigo Infralib terraform modules
 * version - version of Entigo Infralib terraform modules to use
 * agent_version - image version of Entigo Infralib Agent to use

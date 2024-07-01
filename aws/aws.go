@@ -96,6 +96,50 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 	return a.resources
 }
 
+func (a *awsService) GetResources(branch string) model.Resources {
+	repoName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
+	return Resources{
+		CloudResources: model.CloudResources{
+			ProviderType: model.AWS,
+			CodeRepo:     NewCodeCommit(a.awsConfig, repoName, branch),
+			CodeBuild:    NewBuilder(a.awsConfig, "", "", "", ""),
+			Pipeline:     NewPipeline(a.awsConfig, branch, "", "", nil, "", ""),
+			CloudPrefix:  a.cloudPrefix,
+			Bucket:       fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId),
+		},
+		IAM:       NewIAM(a.awsConfig),
+		Region:    a.awsConfig.Region,
+		AccountId: a.accountId,
+	}
+}
+
+func (a *awsService) DeleteResources() {
+	agentProjectName := fmt.Sprintf("%s-agent", a.cloudPrefix)
+	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent pipeline: %s", err))
+	}
+	err = a.resources.GetBuilder().DeleteProject(agentProjectName, model.Step{})
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent project: %s", err))
+	}
+	s3 := NewS3(a.awsConfig)
+	err = s3.DeleteBucket(fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err))
+	}
+	err = DeleteDynamoDBTable(a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete DynamoDB table: %s", err))
+	}
+	a.deleteCloudWatchLogs()
+	err = a.resources.GetCodeRepo().Delete()
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete CodeCommit repository: %s", err))
+	}
+	a.deleteIAMRoles()
+}
+
 func getAccountId(awsConfig aws.Config) (string, error) {
 	stsService := NewSTS(awsConfig)
 	return stsService.GetAccountID()
@@ -252,4 +296,47 @@ func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, r
 
 func getBuildRoleName(prefix string) string {
 	return fmt.Sprintf("%s-build", prefix)
+}
+
+func (a *awsService) deleteCloudWatchLogs() {
+	cloudwatch := NewCloudWatch(a.awsConfig)
+	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
+	err := cloudwatch.DeleteLogStream(logGroup, logStream)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete CloudWatch log stream: %s", err))
+	}
+	err = cloudwatch.DeleteLogGroup(logGroup)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete CloudWatch log group: %s", err))
+	}
+}
+
+func (a *awsService) deleteIAMRoles() {
+	buildRole := getBuildRoleName(a.cloudPrefix)
+	err := a.resources.IAM.DeleteRole(buildRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", buildRole, err))
+	}
+	err = a.resources.IAM.DeletePolicy(buildRole, a.accountId)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", buildRole, err))
+	}
+	err = a.resources.IAM.DeletePolicy(fmt.Sprintf("%s-custom", buildRole), a.accountId)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s-custom: %s", buildRole, err))
+	}
+	pipelineRole := a.getPipelineRoleName()
+	err = a.resources.IAM.DeleteRole(pipelineRole)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", pipelineRole, err))
+	}
+	err = a.resources.IAM.DeletePolicy(pipelineRole, a.accountId)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", pipelineRole, err))
+	}
+	err = a.resources.IAM.DeletePolicy(fmt.Sprintf("%s-custom", pipelineRole), a.accountId)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s-custom: %s", pipelineRole, err))
+	}
 }

@@ -17,6 +17,8 @@ const (
 type CloudProvider interface {
 	SetupResources(branch string) Resources
 	SetupCustomCodeRepo(branch string) (CodeRepo, error)
+	GetResources(branch string) Resources
+	DeleteResources()
 }
 
 type Resources interface {
@@ -37,6 +39,7 @@ type CodeRepo interface {
 	DeleteFile(file string) error
 	CheckFolderExists(folder string) (bool, error)
 	ListFolderFiles(folder string) ([]string, error)
+	Delete() error
 }
 
 type Pipeline interface {
@@ -46,6 +49,7 @@ type Pipeline interface {
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName string, stepName string, step Step, customRepo string) (*string, error)
 	WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType StepType) error
+	DeletePipeline(projectName string) error
 }
 
 type Builder interface {
@@ -54,6 +58,7 @@ type Builder interface {
 	GetProject(projectName string) (*Project, error)
 	UpdateAgentProject(projectName string, version string, cloudPrefix string) error
 	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion string, vpcConfig *VpcConfig) error
+	DeleteProject(projectName string, step Step) error
 }
 
 type SSM interface {

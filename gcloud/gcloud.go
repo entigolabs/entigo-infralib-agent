@@ -14,6 +14,7 @@ type gcloudService struct {
 	projectId   string
 	location    string
 	zone        string
+	resources   Resources
 }
 
 type Resources struct {
@@ -42,6 +43,10 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	g.enableApiServices()
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create storage service: %s", err)
+	}
+	err = codeStorage.CreateBucket()
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage bucket: %s", err)
 	}
@@ -79,6 +84,70 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	}
 }
 
+func (g *gcloudService) GetResources(_ string) model.Resources {
+	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
+	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create storage service: %s", err)
+	}
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "")
+	if err != nil {
+		common.Logger.Fatalf("Failed to create builder: %s", err)
+	}
+	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, "", codeStorage, builder, nil)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create pipeline: %s", err)
+	}
+	g.resources = Resources{
+		CloudResources: model.CloudResources{
+			ProviderType: model.GCLOUD,
+			CodeRepo:     codeStorage,
+			CodeBuild:    builder,
+			Pipeline:     pipeline,
+			CloudPrefix:  g.cloudPrefix,
+			Bucket:       bucket,
+		},
+	}
+	return g.resources
+}
+
+func (g *gcloudService) DeleteResources() {
+	err := g.resources.GetBuilder().(*Builder).deleteJob(fmt.Sprintf("%s-agent", g.cloudPrefix))
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent job: %s", err))
+	}
+	err = g.resources.GetPipeline().(*Pipeline).deleteTargets()
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete pipeline targets: %s", err))
+	}
+	err = g.resources.GetCodeRepo().Delete()
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket: %s", err))
+	}
+	iam, err := NewIAM(g.ctx, g.projectId)
+	if err != nil {
+		common.Logger.Fatalf("Failed to create IAM service: %s", err)
+	}
+	accountName := fmt.Sprintf("%s-agent", g.cloudPrefix)
+	if len(accountName) > 30 {
+		accountName = accountName[:30]
+	}
+	err = iam.DeleteServiceAccount(accountName)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete service account: %s", err))
+	}
+}
+
+func (g *gcloudService) SetupCustomCodeRepo(_ string) (model.CodeRepo, error) {
+	bucket := fmt.Sprintf("%s-%s-custom", g.cloudPrefix, g.projectId)
+	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
+	if err != nil {
+		return nil, err
+	}
+	err = storage.CreateBucket()
+	return storage, err
+}
+
 func (g *gcloudService) enableApiServices() {
 	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
 	if err != nil {
@@ -90,11 +159,6 @@ func (g *gcloudService) enableApiServices() {
 	if err != nil {
 		common.Logger.Fatalf("Failed to enable services: %s", err)
 	}
-}
-
-func (g *gcloudService) SetupCustomCodeRepo(_ string) (model.CodeRepo, error) {
-	bucket := fmt.Sprintf("%s-%s-custom", g.cloudPrefix, g.projectId)
-	return NewStorage(g.ctx, g.projectId, g.location, bucket)
 }
 
 func (g *gcloudService) createServiceAccount(iam *IAM) string {

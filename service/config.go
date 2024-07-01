@@ -4,6 +4,7 @@ import (
 	"dario.cat/mergo"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
@@ -43,6 +44,20 @@ func GetConfig(configFile string, codeCommit model.CodeRepo) model.Config {
 		config.Version = StableVersion
 	}
 	return config
+}
+
+func MergeBaseConfig(github github.Github, release *version.Version, patchConfig model.Config) model.Config {
+	rawBaseConfig, err := github.GetRawFileContent(fmt.Sprintf("profiles/%s.yaml", patchConfig.BaseConfig.Profile),
+		release.Original())
+	if err != nil {
+		common.Logger.Fatalf("Failed to get base config: %s", err)
+	}
+	var baseConfig model.Config
+	err = yaml.Unmarshal(rawBaseConfig, &baseConfig)
+	if err != nil {
+		common.Logger.Fatalf("Failed to unmarshal base config: %s", err)
+	}
+	return MergeConfig(patchConfig, baseConfig)
 }
 
 func GetLocalConfig(configFile string) model.Config {
