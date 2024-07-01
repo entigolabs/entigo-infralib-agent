@@ -6,6 +6,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"strings"
+	"time"
 )
 
 type gcloudService struct {
@@ -168,7 +169,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 	if len(accountName) > 30 {
 		accountName = accountName[:30]
 	}
-	account, err := iam.GetOrCreateServiceAccount(accountName, "Entigo infralib service account")
+	account, created, err := iam.GetOrCreateServiceAccount(accountName, "Entigo infralib service account")
 	if err != nil {
 		common.Logger.Fatalf("Failed to create service account: %s", err)
 	}
@@ -181,6 +182,10 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor"})
 	if err != nil {
 		common.Logger.Fatalf("Failed to add roles to project: %s", err)
+	}
+	if created {
+		common.Logger.Println("Waiting for service account permissions to be applied...")
+		time.Sleep(10 * time.Second)
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1]
