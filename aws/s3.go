@@ -71,25 +71,28 @@ func (s *s3) CreateBucket(bucketName string) (string, error) {
 func (s *s3) DeleteBucket(bucketName string) error {
 	err := s.truncateBucket(bucketName)
 	if err != nil {
-		return err
+		return checkNotFoundError(err)
 	}
 	_, err = s.awsS3.DeleteBucket(context.Background(), &awsS3.DeleteBucketInput{
 		Bucket: aws.String(bucketName),
 	})
 	if err != nil {
-		var noSuchBucket *types.NoSuchBucket
-		var apiErr smithy.APIError
-		if errors.As(err, &noSuchBucket) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
-			return nil
-		}
-		return err
+		return checkNotFoundError(err)
 	}
 	common.Logger.Printf("Deleted S3 Bucket %s\n", bucketName)
 	return nil
 }
 
+func checkNotFoundError(err error) error {
+	var noSuchBucket *types.NoSuchBucket
+	var apiErr smithy.APIError
+	if errors.As(err, &noSuchBucket) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
+		return nil
+	}
+	return err
+}
+
 func (s *s3) truncateBucket(bucketName string) error {
-	common.Logger.Printf("Emptying bucket %s...\n", bucketName)
 	input := &awsS3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),
 	}
@@ -99,7 +102,7 @@ func (s *s3) truncateBucket(bucketName string) error {
 		if err != nil {
 			return err
 		}
-
+		common.Logger.Printf("Emptying bucket %s...\n", bucketName)
 		for _, version := range list.Versions {
 			_, err = s.awsS3.DeleteObjects(context.Background(), &awsS3.DeleteObjectsInput{
 				Bucket: aws.String(bucketName),

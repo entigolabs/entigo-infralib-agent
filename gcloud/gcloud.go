@@ -193,7 +193,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 	}
 	if created {
 		common.Logger.Println("Waiting for service account permissions to be applied...")
-		time.Sleep(10 * time.Second)
+		time.Sleep(15 * time.Second)
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1]
