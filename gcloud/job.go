@@ -120,6 +120,11 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 									Name:      "project",
 									MountPath: "/project",
 								}},
+								Resources: &runv1.ResourceRequirements{
+									Limits: map[string]string{
+										"memory": "1Gi",
+									},
+								},
 							}},
 							Volumes: []*runv1.Volume{{
 								Name: bucket,
@@ -190,6 +195,11 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 							Name:      "project",
 							MountPath: "/project",
 						}},
+						Resources: &runpb.ResourceRequirements{
+							Limits: map[string]string{
+								"memory": "1Gi",
+							},
+						},
 					}},
 					Volumes: []*runpb.Volume{{
 						Name: bucket,
@@ -223,6 +233,11 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 							Name:      "tmp",
 							MountPath: "/tmp",
 						}},
+						Resources: &runpb.ResourceRequirements{
+							Limits: map[string]string{
+								"memory": "1Gi",
+							},
+						},
 					}},
 					Volumes: []*runpb.Volume{{
 						Name:       "tmp",
