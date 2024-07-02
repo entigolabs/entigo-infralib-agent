@@ -1071,7 +1071,7 @@ func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
 func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
 	parameter, err := u.resources.GetSSM().GetParameter(parameterName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get ssm parameter %s: %s", parameterName, err)
+		return "", fmt.Errorf("failed to get parameter %s: %s", parameterName, err)
 	}
 	if match[2] == "" {
 		return *parameter.Value, nil

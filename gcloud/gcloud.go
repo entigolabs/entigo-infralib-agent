@@ -192,8 +192,8 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 		common.Logger.Fatalf("Failed to add roles to project: %s", err)
 	}
 	if created {
-		common.Logger.Println("Waiting for service account permissions to be applied...")
-		time.Sleep(20 * time.Second)
+		common.Logger.Println("Waiting 60 seconds for service account permissions to be applied...")
+		time.Sleep(60 * time.Second)
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1]

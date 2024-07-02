@@ -54,7 +54,6 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	}
 	modifyBackendType(file.Body(), providerType)
 	providersAttributes := make(map[string]*hclwrite.Attribute)
-	providers := make([]string, 0)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
@@ -65,7 +64,6 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 		}
 		for name, attribute := range providerAttributes {
 			providersAttributes[name] = attribute
-			providers = append(providers, name)
 		}
 	}
 	providersBlock, err := getRequiredProvidersBlock(file)
@@ -73,7 +71,7 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 		return nil, nil, err
 	}
 	baseBody := file.Body()
-	err = t.addProviderAttributes(baseBody, providersBlock, providersAttributes, providersVersion, step)
+	providers, err := t.addProviderAttributes(baseBody, providersBlock, providersAttributes, providersVersion, step)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -153,18 +151,22 @@ func (t *terraform) getProviderBlocks(providerName string, version string) []*hc
 	return providerFile.Body().Blocks()
 }
 
-func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, providersVersion string, step model.Step) error {
+func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, providersVersion string, step model.Step) ([]string, error) {
 	providerInputs := step.Provider.Inputs
 	if providerInputs == nil {
 		providerInputs = make(map[string]interface{})
 	}
+	providers := make([]string, 0)
 	for name, attribute := range providersAttributes {
 		providersBlock.Body().SetAttributeRaw(name, attribute.Expr().BuildTokens(nil))
 		providerBlocks := t.getProviderBlocks(name, providersVersion)
+		if len(providerBlocks) != 0 {
+			providers = append(providers, name)
+		}
 		for _, providerBlock := range providerBlocks {
 			err := addProviderValues(name, providerBlock.Body(), step.Provider)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			addProviderInputs(providerInputs, providerBlock)
 			baseBody.AppendBlock(providerBlock)
@@ -173,7 +175,7 @@ func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBloc
 	if len(providerInputs) > 0 {
 		common.PrintWarning(fmt.Sprintf("WARNING! Unknown provider inputs: %v for step %s", providerInputs, step.Name))
 	}
-	return nil
+	return providers, nil
 }
 
 func addProviderValues(providerType string, body *hclwrite.Body, stepProvider model.Provider) error {
