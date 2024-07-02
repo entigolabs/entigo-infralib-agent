@@ -302,6 +302,15 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep) {
 	}
 }
 
+func hasCustomTFStep(steps []model.Step) bool {
+	for _, step := range steps {
+		if step.Type == model.StepTypeTerraformCustom {
+			return true
+		}
+	}
+	return false
+}
+
 // TODO Confusing patch and base config naming
 func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
 	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))

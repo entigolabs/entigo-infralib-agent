@@ -64,7 +64,7 @@ Creates the required AWS resources and a codepipeline for executing the agent. I
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
-* aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
+* aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -81,7 +81,7 @@ Processes config steps, creates and executes CodePipelines which apply Entigo In
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
-* aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
+* aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -99,10 +99,12 @@ Processes config steps, removes resources used by the agent, including buckets, 
 OPTIONS:
 * config - config file path and name, only needed when overriding an existing config [$CONFIG]
 * branch - CodeCommit branch name (default: **main**) [$BRANCH]
-* aws-prefix - prefix used when creating aws resources (default: **config prefix**) [$AWS_PREFIX]
+* aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
+* yes - skip confirmation prompt (default: **false**) [$YES]
+* delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]
 
 Example
 ```bash

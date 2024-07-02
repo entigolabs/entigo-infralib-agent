@@ -20,6 +20,7 @@ type deleter struct {
 	github                 github.Github
 	resources              model.Resources
 	baseConfigReleaseLimit *version.Version
+	deleteBucket           bool
 }
 
 func NewDeleter(flags *common.Flags) Deleter {
@@ -51,6 +52,7 @@ func NewDeleter(flags *common.Flags) Deleter {
 		resources:              resources,
 		github:                 githubClient,
 		baseConfigReleaseLimit: stableRelease,
+		deleteBucket:           flags.Delete.DeleteBucket,
 	}
 }
 
@@ -74,7 +76,7 @@ func (d *deleter) Delete() {
 			common.PrintWarning(fmt.Sprintf("Failed to delete project %s: %s", projectName, err))
 		}
 	}
-	d.provider.DeleteResources()
+	d.provider.DeleteResources(d.deleteBucket, hasCustomTFStep(d.config.Steps))
 }
 
 func (d *deleter) Destroy() {

@@ -28,6 +28,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	switch cmd {
 	case common.MergeCommand:
 		baseFlags = append(baseFlags, &baseConfigFlag)
+	case common.DeleteCommand:
+		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag)
 	}
 	return baseFlags
 }
@@ -113,4 +115,20 @@ var zoneFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "zone used in run jobs",
 	Destination: &flags.GCloud.Zone,
+}
+
+var yesFlag = cli.BoolFlag{
+	Name:        "yes",
+	Aliases:     []string{"y"},
+	EnvVars:     []string{"YES"},
+	Usage:       "skip confirmation prompt",
+	Destination: &flags.Delete.SkipConfirmation,
+}
+
+var deleteBucketFlag = cli.BoolFlag{
+	Name:        "delete-bucket",
+	Aliases:     []string{"db"},
+	EnvVars:     []string{"DELETE_BUCKET"},
+	Usage:       "delete the bucket used by terraform state",
+	Destination: &flags.Delete.DeleteBucket,
 }

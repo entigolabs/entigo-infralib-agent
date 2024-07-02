@@ -18,7 +18,7 @@ type CloudProvider interface {
 	SetupResources(branch string) Resources
 	SetupCustomCodeRepo(branch string) (CodeRepo, error)
 	GetResources(branch string) Resources
-	DeleteResources()
+	DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 }
 
 type Resources interface {

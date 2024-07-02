@@ -114,7 +114,7 @@ func (a *awsService) GetResources(branch string) model.Resources {
 	return a.resources
 }
 
-func (a *awsService) DeleteResources() {
+func (a *awsService) DeleteResources(deleteBucket bool, hasCustomTFStep bool) {
 	agentProjectName := fmt.Sprintf("%s-agent", a.cloudPrefix)
 	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
@@ -123,11 +123,6 @@ func (a *awsService) DeleteResources() {
 	err = a.resources.GetBuilder().DeleteProject(agentProjectName, model.Step{})
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete agent project: %s", err))
-	}
-	s3 := NewS3(a.awsConfig)
-	err = s3.DeleteBucket(fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
-	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err))
 	}
 	err = DeleteDynamoDBTable(a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
@@ -139,6 +134,19 @@ func (a *awsService) DeleteResources() {
 		common.PrintWarning(fmt.Sprintf("Failed to delete CodeCommit repository: %s", err))
 	}
 	a.deleteIAMRoles()
+	if hasCustomTFStep {
+		common.PrintWarning(fmt.Sprintf("Custom terraform state bucket %s-custom-%s will not be deleted, delete it manually if needed\n",
+			a.cloudPrefix, a.accountId))
+	}
+	if !deleteBucket {
+		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucket())
+		return
+	}
+	s3 := NewS3(a.awsConfig)
+	err = s3.DeleteBucket(fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err))
+	}
 }
 
 func getAccountId(awsConfig aws.Config) (string, error) {

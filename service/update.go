@@ -133,16 +133,12 @@ func (u *updater) setupCustomCodeRepo() error {
 	if u.customCC != nil {
 		return nil
 	}
-	for _, step := range u.config.Steps {
-		if step.Type == model.StepTypeTerraformCustom {
-			var err error
-			u.customCC, err = u.provider.SetupCustomCodeRepo("main")
-			if err != nil {
-				return err
-			}
-		}
+	if !hasCustomTFStep(u.config.Steps) {
+		return nil
 	}
-	return nil
+	var err error
+	u.customCC, err = u.provider.SetupCustomCodeRepo("main")
+	return err
 }
 
 func (u *updater) ProcessSteps() {

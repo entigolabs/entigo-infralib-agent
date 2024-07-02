@@ -11,7 +11,9 @@ import (
 func Delete(flags *common.Flags) {
 	common.PrintWarning(`Execute destroy pipelines in reverse config order before running this command.
 This command will remove all pipelines and resources created by terraform will otherwise remain.`)
-	askForConfirmation()
+	if !flags.Delete.SkipConfirmation {
+		askForConfirmation()
+	}
 	deleter := service.NewDeleter(flags)
 	deleter.Delete()
 }

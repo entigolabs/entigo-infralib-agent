@@ -68,6 +68,7 @@ func (g *GStorage) Delete() error {
 	if !exists {
 		return nil
 	}
+	common.Logger.Printf("Emptying bucket %s...\n", g.bucket)
 	it := g.bucketHandle.Objects(g.ctx, &storage.Query{
 		Versions: true,
 	})

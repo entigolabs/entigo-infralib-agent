@@ -14,12 +14,18 @@ type Flags struct {
 	Branch       string
 	AWSPrefix    string
 	GCloud       GCloud
+	Delete       DeleteFlags
 }
 
 type GCloud struct {
 	ProjectId string
 	Location  string
 	Zone      string
+}
+
+type DeleteFlags struct {
+	DeleteBucket     bool
+	SkipConfirmation bool
 }
 
 func (f *Flags) Setup(cmd Command) error {

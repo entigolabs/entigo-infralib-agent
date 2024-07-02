@@ -89,6 +89,7 @@ func (s *s3) DeleteBucket(bucketName string) error {
 }
 
 func (s *s3) truncateBucket(bucketName string) error {
+	common.Logger.Printf("Emptying bucket %s...\n", bucketName)
 	input := &awsS3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),
 	}
