@@ -385,7 +385,11 @@ func (u *updater) getChangedModules(step model.Step) []string {
 		return changed
 	}
 	for _, module := range step.Modules {
-		moduleKey := fmt.Sprintf("modules/%s", module.Source)
+		source := module.Source
+		if step.Type == model.StepTypeArgoCD {
+			source = fmt.Sprintf("k8s/%s", module.Source)
+		}
+		moduleKey := fmt.Sprintf("modules/%s", source)
 		previousChecksum, ok := u.previousChecksums[moduleKey]
 		if !ok {
 			changed = append(changed, module.Name)
