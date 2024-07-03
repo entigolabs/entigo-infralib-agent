@@ -105,12 +105,14 @@ const (
 type ReplaceType string
 
 const (
-	ReplaceTypeSSM        ReplaceType = "ssm"
-	ReplaceTypeSSMCustom  ReplaceType = "ssm-custom"
-	ReplaceTypeGCSM       ReplaceType = "gcsm"
-	ReplaceTypeGCSMCustom ReplaceType = "gcsm-custom"
-	ReplaceTypeConfig     ReplaceType = "config"
-	ReplaceTypeAgent      ReplaceType = "agent"
+	ReplaceTypeSSM          ReplaceType = "ssm"
+	ReplaceTypeSSMCustom    ReplaceType = "ssm-custom"
+	ReplaceTypeGCSM         ReplaceType = "gcsm"
+	ReplaceTypeGCSMCustom   ReplaceType = "gcsm-custom"
+	ReplaceTypeOutput       ReplaceType = "output"
+	ReplaceTypeOutputCustom ReplaceType = "output-custom"
+	ReplaceTypeConfig       ReplaceType = "config"
+	ReplaceTypeAgent        ReplaceType = "agent"
 )
 
 type AgentReplaceType string

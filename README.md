@@ -217,7 +217,7 @@ During merging, step name and workspace are used for identifying parent steps, m
 
 Step, module and input field values can be overwritten by using replacement tags `{{ }}`.
 
-Replacement tags can be overwritten by values that are stored in the AWS SSM Parameter Store (ssm) and Google Cloud Secret Manager (gcsm), config itself or custom agent logic.
+Replacement tags can be overwritten by values that are stored in the AWS SSM Parameter Store `ssm` and Google Cloud Secret Manager `gcsm`, config itself or custom agent logic. It's also possible to use the keyword `output` instead to let agent choose the correct service for getting the value.
 
 For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep.workspace/key-1/key-2`.
 If the parameter type is StringList then it's possible to use an index to get a specific value, e.g `{{ .ssm.stepName.moduleName.key-1/key-2[0] }}` or a slice by using a range, e.g [0-1].

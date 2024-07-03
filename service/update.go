@@ -1022,6 +1022,8 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
 		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		switch replaceType {
+		case string(model.ReplaceTypeOutput):
+			fallthrough
 		case string(model.ReplaceTypeGCSM):
 			fallthrough
 		case string(model.ReplaceTypeSSM):
@@ -1030,6 +1032,8 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 				return "", err
 			}
 			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
+		case string(model.ReplaceTypeOutputCustom):
+			fallthrough
 		case string(model.ReplaceTypeGCSMCustom):
 			fallthrough
 		case string(model.ReplaceTypeSSMCustom):
