@@ -2,8 +2,10 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsSSM "github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
@@ -23,6 +25,10 @@ func (s *ssm) GetParameter(name string) (*model.Parameter, error) {
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
+		var notFoundErr *types.ParameterNotFound
+		if errors.As(err, &notFoundErr) {
+			return nil, &model.ParameterNotFoundError{Name: name, Err: err}
+		}
 		return nil, err
 	}
 	return &model.Parameter{

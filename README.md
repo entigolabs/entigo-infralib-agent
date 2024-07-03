@@ -85,6 +85,7 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
+* allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 
 Example
 ```bash

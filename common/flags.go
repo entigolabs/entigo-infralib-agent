@@ -8,13 +8,14 @@ const (
 )
 
 type Flags struct {
-	LoggingLevel string
-	Config       string
-	BaseConfig   string
-	Branch       string
-	AWSPrefix    string
-	GCloud       GCloud
-	Delete       DeleteFlags
+	LoggingLevel  string
+	Config        string
+	BaseConfig    string
+	Branch        string
+	AWSPrefix     string
+	AllowParallel bool
+	GCloud        GCloud
+	Delete        DeleteFlags
 }
 
 type GCloud struct {

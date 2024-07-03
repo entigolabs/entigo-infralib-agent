@@ -34,6 +34,9 @@ func TestRunGCloud(t *testing.T) {
 			Location:  location,
 			Zone:      zone,
 		},
+		Delete: common.DeleteFlags{
+			DeleteBucket: true,
+		},
 	}
 	Run(flags)
 	deleter := service.NewDeleter(flags)

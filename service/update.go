@@ -19,7 +19,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -47,6 +46,7 @@ type updater struct {
 	baseConfigReleaseLimit *version.Version
 	previousChecksums      map[string]string
 	currentChecksums       map[string]string
+	allowParallel          bool
 }
 
 func NewUpdater(flags *common.Flags) Updater {
@@ -69,6 +69,7 @@ func NewUpdater(flags *common.Flags) Updater {
 		state:                  latestState,
 		stableRelease:          stableRelease,
 		baseConfigReleaseLimit: getBaseConfigReleaseLimit(config, stableRelease),
+		allowParallel:          flags.AllowParallel,
 	}
 }
 
@@ -162,54 +163,20 @@ func (u *updater) ProcessSteps() {
 			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
 		}
 		u.currentChecksums, err = u.GetChecksums(release)
-		if err != nil {
-			common.Logger.Fatalf("Failed to get checksums for release %s: %v", release.Original(), err)
-		}
-		terraformExecuted := false
-		wg := new(sync.WaitGroup)
+		wg := new(model.SafeCounter)
 		errChan := make(chan error, 1)
 		failed := false
+		retrySteps := make([]model.Step, 0)
 		for _, step := range u.config.Steps {
-			step, err = u.replaceConfigStepValues(step, release)
+			retry, err := u.processStep(release, step, firstRunDone, wg, errChan, u.allowParallel)
 			if err != nil {
 				common.PrintError(err)
 				failed = true
 				break
 			}
-			stepSemVer, err := u.getStepSemVer(step)
-			if err != nil {
-				common.PrintError(err)
-				failed = true
-				break
+			if retry {
+				retrySteps = append(retrySteps, step)
 			}
-			stepState, err := u.getStepState(step)
-			if err != nil {
-				common.PrintError(err)
-				failed = true
-				break
-			}
-			var executePipelines bool
-			var providers []string
-			if !firstRunDone[step.Name] {
-				executePipelines, err = u.createStepFiles(step, stepState, release, stepSemVer)
-			} else {
-				executePipelines, providers, err = u.updateStepFiles(step, stepState, release, stepSemVer, terraformExecuted)
-				if executePipelines {
-					terraformExecuted = true
-				}
-			}
-			if err != nil {
-				common.PrintError(err)
-				failed = true
-				break
-			}
-			err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, providers, wg, errChan)
-			if err != nil {
-				common.PrintError(err)
-				failed = true
-				break
-			}
-			firstRunDone[step.Name] = true
 		}
 		wg.Wait()
 		close(errChan)
@@ -217,6 +184,7 @@ func (u *updater) ProcessSteps() {
 		if _, ok := <-errChan; ok || failed {
 			common.Logger.Fatalf("One or more steps failed to apply")
 		}
+		u.retrySteps(release, retrySteps, firstRunDone, wg, errChan)
 		u.previousChecksums = u.currentChecksums
 		if u.state.BaseConfig.AppliedVersion != u.state.BaseConfig.Version {
 			u.state.BaseConfig.AppliedVersion = u.state.BaseConfig.Version
@@ -224,6 +192,54 @@ func (u *updater) ProcessSteps() {
 			if err != nil {
 				common.Logger.Fatalf("Failed to put state file: %s", err)
 			}
+		}
+	}
+}
+
+func (u *updater) processStep(release *version.Version, step model.Step, firstRunDone map[string]bool, wg *model.SafeCounter, errChan chan<- error, allowParallel bool) (bool, error) {
+	step, err := u.replaceConfigStepValues(step, release)
+	if err != nil {
+		var parameterError *model.ParameterNotFoundError
+		if wg.HasCount() && errors.As(err, &parameterError) {
+			common.PrintWarning(err.Error())
+			common.Logger.Printf("Step %s will be retried if others succeed\n", step.Name)
+			return true, nil
+		}
+		return false, err
+	}
+	stepSemVer, err := u.getStepSemVer(step)
+	if err != nil {
+		return false, err
+	}
+	stepState, err := u.getStepState(step)
+	if err != nil {
+		return false, err
+	}
+	var executePipelines bool
+	var providers []string
+	if !firstRunDone[step.Name] {
+		executePipelines, err = u.createStepFiles(step, stepState, release, stepSemVer)
+	} else {
+		executePipelines, providers, err = u.updateStepFiles(step, stepState, release, stepSemVer)
+	}
+	if err != nil {
+		return false, err
+	}
+	err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, release, providers, wg, errChan, allowParallel)
+	if err != nil {
+		return false, err
+	}
+	firstRunDone[step.Name] = true
+	return false, nil
+}
+
+func (u *updater) retrySteps(release *version.Version, retrySteps []model.Step, firstRunDone map[string]bool, wg *model.SafeCounter, errChan chan<- error) {
+	for _, step := range retrySteps {
+		common.Logger.Printf("Retrying step %s\n", step.Name)
+		_, err := u.processStep(release, step, firstRunDone, wg, errChan, false)
+		if err != nil {
+			common.PrintError(err)
+			common.Logger.Fatalf("Failed to apply step %s", step.Name)
 		}
 	}
 }
@@ -262,7 +278,7 @@ func (u *updater) getStepSemVer(step model.Step) (*version.Version, error) {
 	return stepSemVer, nil
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, providers []string, wg *sync.WaitGroup, errChan chan<- error) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, release *version.Version, providers []string, wg *model.SafeCounter, errChan chan<- error, allowParallel bool) error {
 	if !executePipelines {
 		return nil
 	}
@@ -276,6 +292,9 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 			u.updateStepState(stepState)
 			return nil
 		}
+		return u.executePipeline(firstRun, step, stepState, release)
+	}
+	if !allowParallel {
 		return u.executePipeline(firstRun, step, stepState, release)
 	}
 	parallelExecution, err := appliedVersionMatchesRelease(stepState, release)
@@ -304,10 +323,19 @@ func (u *updater) hasChanged(step model.Step, providers []string) bool {
 	if u.hasProfileChanged() {
 		return true
 	}
-	if u.haveProvidersChanged(providers) {
+	changed := u.getChangedProviders(providers)
+	if len(changed) > 0 {
+		common.Logger.Printf("Step %s providers have changed: %s\n", step.Name,
+			strings.Join(changed, ", "))
 		return true
 	}
-	return u.haveModulesChanged(step)
+	changed = u.getChangedModules(step)
+	if len(changed) > 0 {
+		common.Logger.Printf("Step %s modules have changed: %s\n", step.Name,
+			strings.Join(changed, ", "))
+		return true
+	}
+	return false
 }
 
 func (u *updater) hasProfileChanged() bool {
@@ -327,46 +355,52 @@ func (u *updater) hasProfileChanged() bool {
 	return previousChecksum != currentChecksum
 }
 
-func (u *updater) haveProvidersChanged(providers []string) bool {
+func (u *updater) getChangedProviders(providers []string) []string {
+	changed := make([]string, 0)
 	if providers == nil {
-		return false
+		return changed
 	}
 	for _, provider := range providers {
 		providerKey := fmt.Sprintf("providers/%s.tf", provider)
 		previousChecksum, ok := u.previousChecksums[providerKey]
 		if !ok {
-			return true
+			changed = append(changed, provider)
+			continue
 		}
 		currentChecksum, ok := u.currentChecksums[providerKey]
 		if !ok {
-			return true
+			changed = append(changed, provider)
+			continue
 		}
 		if previousChecksum != currentChecksum {
-			return true
+			changed = append(changed, provider)
 		}
 	}
-	return false
+	return changed
 }
 
-func (u *updater) haveModulesChanged(step model.Step) bool {
+func (u *updater) getChangedModules(step model.Step) []string {
+	changed := make([]string, 0)
 	if step.Modules == nil {
-		return false
+		return changed
 	}
 	for _, module := range step.Modules {
 		moduleKey := fmt.Sprintf("modules/%s", module.Source)
 		previousChecksum, ok := u.previousChecksums[moduleKey]
 		if !ok {
-			return true
+			changed = append(changed, module.Name)
+			continue
 		}
 		currentChecksum, ok := u.currentChecksums[moduleKey]
 		if !ok {
-			return true
+			changed = append(changed, module.Name)
+			continue
 		}
 		if previousChecksum != currentChecksum {
-			return true
+			changed = append(changed, module.Name)
 		}
 	}
-	return false
+	return changed
 }
 
 func appliedVersionMatchesRelease(stepState *model.StateStep, release *version.Version) (bool, error) {
@@ -432,15 +466,13 @@ func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, r
 	return true, nil
 }
 
-func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, terraformExecuted bool) (bool, []string, error) {
+func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, []string, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, stepState, releaseTag, stepSemver)
 	case model.StepTypeArgoCD:
 		execute, err := u.updateArgoCDFiles(step, stepState, releaseTag, stepSemver)
 		return execute, nil, err
-	case model.StepTypeTerraformCustom:
-		return terraformExecuted, nil, nil
 	}
 	return true, nil, nil
 }
@@ -961,7 +993,8 @@ func (u *updater) replaceConfigStepValues(step model.Step, release *version.Vers
 	}
 	modifiedStepYaml, err := u.replaceStepYamlValues(step, string(stepYaml), release)
 	if err != nil {
-		return step, fmt.Errorf("failed to replace tags in step %s, error: %s", step.Name, err)
+		common.Logger.Printf("Failed to replace tags in step %s", step.Name)
+		return step, err
 	}
 	var modifiedStep model.Step
 	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
@@ -1071,7 +1104,7 @@ func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
 func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
 	parameter, err := u.resources.GetSSM().GetParameter(parameterName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get parameter %s: %s", parameterName, err)
+		return "", err
 	}
 	if match[2] == "" {
 		return *parameter.Value, nil
@@ -1108,7 +1141,7 @@ func (u *updater) GetChecksums(release *version.Version) (map[string]string, err
 		if errors.As(err, &fileError) {
 			return nil, nil
 		}
-		return nil, err
+		common.Logger.Fatalf("Failed to get checksums for release %s: %v", release.Original(), err)
 	}
 	checksums := make(map[string]string)
 	for _, line := range strings.Split(string(content), "\n") {

@@ -4,8 +4,11 @@ import (
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/googleapis/gax-go/v2/apierror"
+	"google.golang.org/grpc/codes"
 	"strings"
 )
 
@@ -33,10 +36,14 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/latest", s.projectId, name),
 	})
 	if err != nil {
+		var apiError *apierror.APIError
+		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+			return nil, &model.ParameterNotFoundError{Name: name, Err: err}
+		}
 		return nil, err
 	}
 	if result.Payload == nil {
-		return nil, fmt.Errorf("secret %s not found", name)
+		return nil, &model.ParameterNotFoundError{Name: name}
 	}
 	value := string(result.Payload.Data)
 	return &model.Parameter{

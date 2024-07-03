@@ -30,6 +30,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		baseFlags = append(baseFlags, &baseConfigFlag)
 	case common.DeleteCommand:
 		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag)
+	case common.RunCommand:
+		baseFlags = append(baseFlags, &allowParallelFlag)
 	}
 	return baseFlags
 }
@@ -115,6 +117,15 @@ var zoneFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "zone used in run jobs",
 	Destination: &flags.GCloud.Zone,
+}
+
+var allowParallelFlag = cli.BoolFlag{
+	Name:        "allow-parallel",
+	Aliases:     []string{"pl"},
+	EnvVars:     []string{"ALLOW_PARALLEL"},
+	Value:       true,
+	Usage:       "allow running steps in parallel on first execution cycle",
+	Destination: &flags.AllowParallel,
 }
 
 var yesFlag = cli.BoolFlag{
