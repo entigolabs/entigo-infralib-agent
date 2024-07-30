@@ -311,13 +311,12 @@ func hasCustomTFStep(steps []model.Step) bool {
 	return false
 }
 
-// TODO Confusing patch and base config naming
-func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
-	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
+func MergeConfig(patchConfig model.Config, baseConfig model.Config) model.Config {
+	err := mergo.Merge(&baseConfig, patchConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
-	return patchConfig
+	return baseConfig
 }
 
 type stepsTransformer struct {

@@ -21,6 +21,7 @@ func ChangeRunDir() {
 }
 
 func AddFakeConfigTypes() {
+	gofakeit.Seed(0)
 	gofakeit.AddFuncLookup("version", gofakeit.Info{
 		Category:    "custom",
 		Description: "Random semantic version as string",

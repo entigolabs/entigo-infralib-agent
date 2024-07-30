@@ -24,11 +24,11 @@ type Step struct {
 	Name                  string   `yaml:"name" fake:"{word}"`
 	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
 	Workspace             string   `yaml:"workspace"`
-	Before                string   `yaml:"before,omitempty"`
+	Before                string   `yaml:"before,omitempty" fake:"skip"`
 	Approve               Approve  `yaml:"approve,omitempty"`
-	Remove                bool     `yaml:"remove,omitempty"`
-	Version               string   `yaml:"version,omitempty"`
-	BaseImageVersion      string   `yaml:"base_image_version,omitempty"`
+	Remove                bool     `yaml:"remove,omitempty" fake:"skip"`
+	Version               string   `yaml:"version,omitempty" fake:"{version}"`
+	BaseImageVersion      string   `yaml:"base_image_version,omitempty" fake:"{version}"`
 	VpcId                 string   `yaml:"vpc_id,omitempty"`
 	VpcSubnetIds          string   `yaml:"vpc_subnet_ids,omitempty"`
 	VpcSecurityGroupIds   string   `yaml:"vpc_security_group_ids,omitempty"`
@@ -36,7 +36,7 @@ type Step struct {
 	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
 	RepoUrl               string   `yaml:"repo_url,omitempty"`
 	Provider              Provider `yaml:"provider,omitempty"`
-	Modules               []Module `yaml:"modules,omitempty"`
+	Modules               []Module `yaml:"modules,omitempty" fakesize:"1"`
 }
 
 type Provider struct {
@@ -90,8 +90,8 @@ type Module struct {
 	HttpUsername string                 `yaml:"http_username,omitempty"`
 	HttpPassword string                 `yaml:"http_password,omitempty"`
 	Version      string                 `yaml:"version,omitempty"`
-	Remove       bool                   `yaml:"remove,omitempty"`
-	Inputs       map[string]interface{} `yaml:"inputs,omitempty"`
+	Remove       bool                   `yaml:"remove,omitempty" fake:"skip"`
+	Inputs       map[string]interface{} `yaml:"inputs,omitempty" fakesize:"2,5"`
 }
 
 type StepType string
