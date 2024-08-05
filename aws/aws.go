@@ -13,6 +13,7 @@ import (
 )
 
 type awsService struct {
+	ctx         context.Context
 	awsConfig   aws.Config
 	cloudPrefix string
 	accountId   string
@@ -30,7 +31,7 @@ type Resources struct {
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	return map[string]string{
 		"key":            key,
-		"bucket":         r.Bucket,
+		"bucket":         r.BucketName,
 		"dynamodb_table": r.DynamoDBTable,
 		"encrypt":        "true",
 	}
@@ -43,6 +44,7 @@ func NewAWS(ctx context.Context, cloudPrefix string) model.CloudProvider {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
 	return &awsService{
+		ctx:         ctx,
 		awsConfig:   awsConfig,
 		cloudPrefix: cloudPrefix,
 		accountId:   accountId,
@@ -60,33 +62,25 @@ func GetAWSConfig(ctx context.Context) aws.Config {
 	return cfg
 }
 
-func (a *awsService) SetupResources(branch string) model.Resources {
-	codeCommit, err := a.setupCodeCommit(branch)
-	if err != nil {
-		common.Logger.Fatalf(fmt.Sprintf("%s", err))
-	}
-	repoMetadata, err := codeCommit.GetAWSRepoMetadata()
-	if err != nil {
-		common.Logger.Fatalf(fmt.Sprintf("%s", err))
-	}
-
-	bucket, s3Arn := a.createBucket()
+func (a *awsService) SetupResources() model.Resources {
+	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
+	s3, s3Arn := a.createBucket(bucket)
 	dynamoDBTable := a.createDynamoDBTable()
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
-	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *repoMetadata.Arn, *dynamoDBTable.TableArn)
+	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
 	codeBuild := NewBuilder(a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.awsConfig, branch, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
+	codePipeline := NewPipeline(a.awsConfig, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
-			CodeRepo:     codeCommit,
+			Bucket:       s3,
 			Pipeline:     codePipeline,
 			CodeBuild:    codeBuild,
 			SSM:          NewSSM(a.awsConfig),
 			CloudPrefix:  a.cloudPrefix,
-			Bucket:       bucket,
+			BucketName:   bucket,
 		},
 		IAM:           iam,
 		DynamoDBTable: *dynamoDBTable.TableName,
@@ -96,16 +90,16 @@ func (a *awsService) SetupResources(branch string) model.Resources {
 	return a.resources
 }
 
-func (a *awsService) GetResources(branch string) model.Resources {
-	repoName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
+func (a *awsService) GetResources() model.Resources {
+	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
-			CodeRepo:     NewCodeCommit(a.awsConfig, repoName, branch),
+			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    NewBuilder(a.awsConfig, "", "", "", ""),
-			Pipeline:     NewPipeline(a.awsConfig, branch, "", "", nil, "", ""),
+			Pipeline:     NewPipeline(a.awsConfig, "", "", nil, "", ""),
 			CloudPrefix:  a.cloudPrefix,
-			Bucket:       fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId),
+			BucketName:   bucket,
 		},
 		IAM:       NewIAM(a.awsConfig),
 		Region:    a.awsConfig.Region,
@@ -129,21 +123,16 @@ func (a *awsService) DeleteResources(deleteBucket bool, hasCustomTFStep bool) {
 		common.PrintWarning(fmt.Sprintf("Failed to delete DynamoDB table: %s", err))
 	}
 	a.deleteCloudWatchLogs()
-	err = a.resources.GetCodeRepo().Delete()
-	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete CodeCommit repository: %s", err))
-	}
 	a.deleteIAMRoles()
 	if hasCustomTFStep {
 		common.PrintWarning(fmt.Sprintf("Custom terraform state bucket %s-custom-%s will not be deleted, delete it manually if needed\n",
 			a.cloudPrefix, a.accountId))
 	}
 	if !deleteBucket {
-		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucket())
+		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
 		return
 	}
-	s3 := NewS3(a.awsConfig)
-	err = s3.DeleteBucket(fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	err = a.resources.GetBucket().Delete()
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err))
 	}
@@ -154,51 +143,30 @@ func getAccountId(awsConfig aws.Config) (string, error) {
 	return stsService.GetAccountID()
 }
 
-func (a *awsService) setupCodeCommit(branch string) (*CodeCommit, error) {
-	repoName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
-	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
-	created, err := codeCommit.CreateRepository()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CodeRepo repository: %w", err)
-	}
-	if created {
-		err := codeCommit.PutFile("README.md", []byte("# Entigo infralib repository\nThis repository is used to apply Entigo infralib modules."))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return codeCommit, nil
-}
-
-func (a *awsService) SetupCustomCodeRepo(branch string) (model.CodeRepo, error) {
-	repoName := fmt.Sprintf("%s-custom-%s", a.cloudPrefix, a.accountId)
-	codeCommit := NewCodeCommit(a.awsConfig, repoName, branch)
-	created, err := codeCommit.CreateRepository()
-	if err != nil {
-		common.Logger.Fatalf("Failed to create custom CodeRepo repository: %s", err)
-	}
-	if created {
-		err := codeCommit.PutFile("README.md", []byte("# Entigo infralib custom repository\nThis repository is used to apply client modules."))
-		if err != nil {
-			return nil, err
-		}
-		repoMetadata, err := codeCommit.GetAWSRepoMetadata()
-		if err != nil {
-			return nil, err
-		}
-		a.attachRolePolicies(*repoMetadata.Arn)
-	}
-	return codeCommit, nil
-}
-
-func (a *awsService) createBucket() (string, string) {
-	s3 := NewS3(a.awsConfig)
+func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
 	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
-	s3Arn, err := s3.CreateBucket(bucket)
+	s3 := NewS3(a.ctx, a.awsConfig, bucket)
+	s3Arn, created, err := s3.CreateBucket()
+	if err != nil {
+		common.Logger.Fatalf("Failed to create custom S3 Bucket: %s", err)
+	}
+	if created {
+		a.attachRolePolicies(s3Arn)
+	}
+	return s3, nil
+}
+
+func (a *awsService) createBucket(bucket string) (*S3, string) {
+	s3 := NewS3(a.ctx, a.awsConfig, bucket)
+	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
 		common.Logger.Fatalf("Failed to create S3 Bucket: %s", err)
 	}
-	return bucket, s3Arn
+	err = s3.addDummyZip()
+	if err != nil {
+		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket: %s", err)
+	}
+	return s3, s3Arn
 }
 
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
@@ -224,10 +192,10 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 	return logGroup, logGroupArn, logStream, cloudwatch
 }
 
-func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (IAM, string, string) {
+func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
-	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, repoArn, dynamoDBTableArn)
-	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn, repoArn)
+	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, dynamoDBTableArn)
+	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
 	if buildRoleCreated || pipelineRoleCreated {
 		common.Logger.Println("Waiting for roles to be available...")
@@ -237,10 +205,10 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, repoArn st
 	return iam, buildRoleArn, pipelineRoleArn
 }
 
-func (a *awsService) attachRolePolicies(roleArn string) {
+func (a *awsService) attachRolePolicies(s3Arn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
-	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineRepoPolicy(roleArn)})
+	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
 	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
@@ -248,14 +216,14 @@ func (a *awsService) attachRolePolicies(roleArn string) {
 
 	buildRoleName := getBuildRoleName(a.cloudPrefix)
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
-	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildRepoPolicy(roleArn)})
+	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
 	err = a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
 	}
 }
 
-func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (string, bool) {
+func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelineRole := iam.CreateRole(pipelineRoleName, []PolicyStatement{{
 		Effect:    "Allow",
@@ -266,7 +234,7 @@ func (a *awsService) createPipelineRole(iam IAM, s3Arn string, repoArn string) (
 		pipelineRole = iam.GetRole(pipelineRoleName)
 		return *pipelineRole.Arn, false
 	}
-	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn, repoArn))
+	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn))
 	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
@@ -278,7 +246,7 @@ func (a *awsService) getPipelineRoleName() string {
 	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
 }
 
-func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, repoArn string, dynamoDBTableArn string) (string, bool) {
+func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
 	buildRoleName := getBuildRoleName(prefix)
 	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
 		Effect:    "Allow",
@@ -295,7 +263,7 @@ func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, r
 		common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
 	}
 	buildPolicy := iam.CreatePolicy(buildRoleName,
-		CodeBuildPolicy(logGroupArn, s3Arn, repoArn, dynamoDBTableArn))
+		CodeBuildPolicy(logGroupArn, s3Arn, dynamoDBTableArn))
 	err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)

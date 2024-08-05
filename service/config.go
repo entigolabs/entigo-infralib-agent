@@ -29,7 +29,7 @@ func GetAwsPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(configFile string, codeCommit model.CodeRepo) model.Config {
+func GetConfig(configFile string, codeCommit model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
@@ -73,7 +73,7 @@ func GetLocalConfig(configFile string) model.Config {
 	return config
 }
 
-func PutConfig(codeCommit model.CodeRepo, config model.Config) {
+func PutConfig(codeCommit model.Bucket, config model.Config) {
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
@@ -84,7 +84,7 @@ func PutConfig(codeCommit model.CodeRepo, config model.Config) {
 	}
 }
 
-func GetRemoteConfig(codeCommit model.CodeRepo) model.Config {
+func GetRemoteConfig(codeCommit model.Bucket) model.Config {
 	bytes, err := codeCommit.GetFile("config.yaml")
 	if err != nil {
 		common.Logger.Fatalf("Failed to get config: %s", err)

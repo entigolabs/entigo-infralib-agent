@@ -146,7 +146,7 @@ func (i *identity) DeleteRole(roleName string) error {
 	return nil
 }
 
-func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbArn string) []PolicyStatement {
+func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{logGroupArn, fmt.Sprintf("%s:*", logGroupArn)},
@@ -159,18 +159,7 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbA
 		Effect:   "Allow",
 		Resource: []string{"arn:aws:s3:::*"},
 		Action:   []string{"s3:ListBucket"},
-	}, {
-		Effect:   "Allow",
-		Resource: []string{s3Arn},
-		Action: []string{
-			"s3:PutObject",
-			"s3:GetObject",
-			"s3:GetObjectVersion",
-			"s3:GetBucketAcl",
-			"s3:GetBucketLocation",
-			"s3:ListBucket",
-		},
-	}, CodeBuildRepoPolicy(repoArn), {
+	}, CodeBuildS3Policy(s3Arn), {
 		Effect:   "Allow",
 		Resource: []string{dynamodbArn},
 		Action: []string{
@@ -181,49 +170,44 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, repoArn string, dynamodbA
 	}}
 }
 
-func CodeBuildRepoPolicy(repoArn string) PolicyStatement {
+func CodeBuildS3Policy(s3Arn string) PolicyStatement {
 	return PolicyStatement{
 		Effect:   "Allow",
-		Resource: []string{repoArn},
+		Resource: []string{s3Arn, fmt.Sprintf("%s/*", s3Arn)},
 		Action: []string{
-			"codecommit:GetCommit",
-			"codecommit:ListBranches",
-			"codecommit:GetRepository",
-			"codecommit:GetBranch",
-			"codecommit:GitPull",
+			"s3:PutObject",
+			"s3:GetObject",
+			"s3:GetObjectVersion",
+			"s3:GetBucketAcl",
+			"s3:GetBucketLocation",
+			"s3:ListBucket",
 		},
 	}
 }
 
-func CodePipelinePolicy(s3Arn string, repoArn string) []PolicyStatement {
+func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 	return []PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{"arn:aws:s3:::*"},
+		Action:   []string{"s3:ListBucket"},
+	}, CodePipelineS3Policy(s3Arn),
+		{
+			Effect:   "Allow",
+			Resource: []string{"*"},
+			Action: []string{
+				"codebuild:StartBuild",
+				"codebuild:BatchGetBuilds",
+				"codebuild:StopBuild",
+			},
+		}}
+}
+
+func CodePipelineS3Policy(s3Arn string) PolicyStatement {
+	return PolicyStatement{
 		Effect:   "Allow",
 		Resource: []string{s3Arn, fmt.Sprintf("%s/*", s3Arn)},
 		Action: []string{
 			"s3:*",
-		},
-	}, CodePipelineRepoPolicy(repoArn), {
-		Effect:   "Allow",
-		Resource: []string{"*"},
-		Action: []string{
-			"codebuild:StartBuild",
-			"codebuild:BatchGetBuilds",
-			"codebuild:StopBuild",
-		},
-	}}
-}
-
-func CodePipelineRepoPolicy(repoArn string) PolicyStatement {
-	return PolicyStatement{
-		Effect:   "Allow",
-		Resource: []string{repoArn, fmt.Sprintf("%s/*", repoArn)},
-		Action: []string{
-			"codecommit:GetCommit",
-			"codecommit:GetBranch",
-			"codecommit:GetRepository",
-			"codecommit:UploadArchive",
-			"codecommit:GetUploadArchiveStatus",
-			"codecommit:CancelUploadArchive",
 		},
 	}
 }

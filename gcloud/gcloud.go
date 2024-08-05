@@ -25,7 +25,7 @@ type Resources struct {
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	return map[string]string{
 		"prefix": key,
-		"bucket": r.Bucket,
+		"bucket": r.BucketName,
 	}
 }
 
@@ -39,7 +39,7 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) mo
 	}
 }
 
-func (g *gcloudService) SetupResources(_ string) model.Resources {
+func (g *gcloudService) SetupResources() model.Resources {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	g.enableApiServices()
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
@@ -75,17 +75,17 @@ func (g *gcloudService) SetupResources(_ string) model.Resources {
 	return Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.GCLOUD,
-			CodeRepo:     codeStorage,
+			Bucket:       codeStorage,
 			CodeBuild:    builder,
 			Pipeline:     pipeline,
 			SSM:          sm,
-			Bucket:       bucket,
+			BucketName:   bucket,
 			CloudPrefix:  g.cloudPrefix,
 		},
 	}
 }
 
-func (g *gcloudService) GetResources(_ string) model.Resources {
+func (g *gcloudService) GetResources() model.Resources {
 	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
@@ -102,11 +102,11 @@ func (g *gcloudService) GetResources(_ string) model.Resources {
 	g.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.GCLOUD,
-			CodeRepo:     codeStorage,
+			Bucket:       codeStorage,
 			CodeBuild:    builder,
 			Pipeline:     pipeline,
 			CloudPrefix:  g.cloudPrefix,
-			Bucket:       bucket,
+			BucketName:   bucket,
 		},
 	}
 	return g.resources
@@ -139,17 +139,17 @@ func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 			g.cloudPrefix, g.projectId))
 	}
 	if !deleteBucket {
-		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucket())
+		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
 		return
 	}
-	err = g.resources.GetCodeRepo().Delete()
+	err = g.resources.GetBucket().Delete()
 	if err != nil {
 		bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket %s: %s", bucket, err))
 	}
 }
 
-func (g *gcloudService) SetupCustomCodeRepo(_ string) (model.CodeRepo, error) {
+func (g *gcloudService) SetupCustomBucket() (model.Bucket, error) {
 	bucket := fmt.Sprintf("%s-%s-custom", g.cloudPrefix, g.projectId)
 	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {

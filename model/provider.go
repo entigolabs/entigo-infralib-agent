@@ -15,24 +15,24 @@ const (
 )
 
 type CloudProvider interface {
-	SetupResources(branch string) Resources
-	SetupCustomCodeRepo(branch string) (CodeRepo, error)
-	GetResources(branch string) Resources
+	SetupResources() Resources
+	SetupCustomBucket() (Bucket, error)
+	GetResources() Resources
 	DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 }
 
 type Resources interface {
 	GetProviderType() ProviderType
-	GetCodeRepo() CodeRepo
+	GetBucket() Bucket
 	GetPipeline() Pipeline
 	GetBuilder() Builder
 	GetSSM() SSM
 	GetCloudPrefix() string
-	GetBucket() string
+	GetBucketName() string
 	GetBackendConfigVars(string) map[string]string
 }
 
-type CodeRepo interface {
+type Bucket interface {
 	GetRepoMetadata() (*RepositoryMetadata, error)
 	PutFile(file string, content []byte) error
 	GetFile(file string) ([]byte, error)
@@ -68,20 +68,20 @@ type SSM interface {
 
 type CloudResources struct {
 	ProviderType ProviderType
-	CodeRepo     CodeRepo
+	Bucket       Bucket
 	Pipeline     Pipeline
 	CodeBuild    Builder
 	SSM          SSM
 	CloudPrefix  string
-	Bucket       string
+	BucketName   string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
 	return c.ProviderType
 }
 
-func (c CloudResources) GetCodeRepo() CodeRepo {
-	return c.CodeRepo
+func (c CloudResources) GetBucket() Bucket {
+	return c.Bucket
 }
 
 func (c CloudResources) GetPipeline() Pipeline {
@@ -100,8 +100,8 @@ func (c CloudResources) GetCloudPrefix() string {
 	return c.CloudPrefix
 }
 
-func (c CloudResources) GetBucket() string {
-	return c.Bucket
+func (c CloudResources) GetBucketName() string {
+	return c.BucketName
 }
 
 type RepositoryMetadata struct {

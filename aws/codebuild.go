@@ -84,10 +84,8 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 			},
 		},
 		Source: &types.ProjectSource{
-			Type:          types.SourceTypeCodecommit,
-			GitCloneDepth: aws.Int32(0), // full clone
-			Buildspec:     b.buildSpec,
-			Location:      &repoURL,
+			Type:      types.SourceTypeNoSource,
+			Buildspec: b.buildSpec,
 		},
 		VpcConfig: getAwsVpcConfig(vpcConfig),
 	})
@@ -290,7 +288,7 @@ func buildSpec() *string {
 		Version: "0.2",
 		Phases: Phases{
 			Install: Install{
-				Commands: []string{"env", "find *"},
+				Commands: []string{"env"},
 			},
 			Build: Build{
 				Commands: []string{"/usr/bin/entrypoint.sh"},

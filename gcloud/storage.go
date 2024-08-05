@@ -20,6 +20,7 @@ type GStorage struct {
 	bucket        string
 	bucketHandle  *storage.BucketHandle
 	bucketCreated *bool
+	repoMetadata  *model.RepositoryMetadata
 }
 
 func NewStorage(ctx context.Context, projectId string, location string, bucket string) (*GStorage, error) {
@@ -107,6 +108,9 @@ func (g *GStorage) bucketExists(ctx context.Context, bucketHandle *storage.Bucke
 }
 
 func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
+	if g.repoMetadata != nil {
+		return g.repoMetadata, nil
+	}
 	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
 	if err != nil {
 		return nil, err
@@ -114,10 +118,11 @@ func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	if !exists {
 		return nil, nil
 	}
-	return &model.RepositoryMetadata{
+	g.repoMetadata = &model.RepositoryMetadata{
 		Name: g.bucket,
 		URL:  g.bucket,
-	}, nil
+	}
+	return g.repoMetadata, nil
 }
 
 func (g *GStorage) PutFile(file string, content []byte) error {
