@@ -140,7 +140,7 @@ func (s *S3) CheckFolderExists(folder string) (bool, error) {
 	output, err := s.awsS3.ListObjectsV2(s.ctx, &awsS3.ListObjectsV2Input{
 		Bucket:  aws.String(s.bucket),
 		Prefix:  aws.String(folder),
-		MaxKeys: 1,
+		MaxKeys: aws.Int32(1),
 	})
 	if err != nil {
 		return false, err
@@ -214,7 +214,7 @@ func (s *S3) truncateBucket() error {
 			}
 		}
 
-		if list.IsTruncated {
+		if list.IsTruncated != nil && *list.IsTruncated {
 			input.KeyMarker = list.NextKeyMarker
 			input.VersionIdMarker = list.NextVersionIdMarker
 		} else {
