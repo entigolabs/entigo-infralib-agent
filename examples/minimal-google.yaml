@@ -17,8 +17,8 @@ steps:
     workspace: dev
     approve: minor
     version: stable
-    vpc_id: '{{ .gcsm.net.main.vpc_name }}'
-    vpc_subnet_ids: '{{ .gcsm.net.main.private_subnets[0] }}'
+    vpc_id: "{{ .gcsm.net.main.vpc_name }}"
+    vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
     modules:
       - name: dns
         source: google/dns
@@ -33,11 +33,10 @@ steps:
         source: google/gke
         version: stable
         inputs:
-          gke_main_min_size: 3
-          ip_range_pods: '{{ .gcsm.net.main.private_subnets_pods[0] }}'
-          ip_range_services: '{{ .gcsm.net.main.private_subnets_services[0] }}'
-          subnetwork: '{{ .gcsm.net.main.private_subnets[0] }}'
-          network: '{{ .gcsm.net.main.vpc_name }}'
+          ip_range_pods: "{{ .gcsm.net.main.private_subnets_pods[0] }}"
+          ip_range_services: "{{ .gcsm.net.main.private_subnets_services[0] }}"
+          subnetwork: "{{ .gcsm.net.main.private_subnets[0] }}"
+          network: "{{ .gcsm.net.main.vpc_name }}"
           gke_tools_min_size: 3
           gke_tools_max_size: 6
           gke_mon_min_size: 1
@@ -55,10 +54,10 @@ steps:
     type: argocd-apps
     workspace: dev
     version: stable
-    vpc_id: '{{ .gcsm.net.main.vpc_name }}'
-    vpc_subnet_ids: '{{ .gcsm.net.main.private_subnets[0] }}'
-    kubernetes_cluster_name: '{{ .gcsm.infra.gke.cluster_name }}'
-    argocd_namespace: 'argocd'
+    vpc_id: "{{ .gcsm.net.main.vpc_name }}"
+    vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
+    kubernetes_cluster_name: "{{ .gcsm.infra.gke.cluster_name }}"
+    argocd_namespace: "argocd"
     modules:
       - name: argocd
         source: argocd
@@ -80,15 +79,15 @@ steps:
         version: stable
         inputs:
           google:
-            projectID: '{{ .gcsm.infra.crossplane.project_id }}'
+            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
           deploymentRuntimeConfig:
-            googleServiceAccount: '{{ .gcsm.infra.crossplane.service_account_email }}'
+            googleServiceAccount: "{{ .gcsm.infra.crossplane.service_account_email }}"
       - name: external-dns
         source: external-dns
         version: stable
         inputs:
           google:
-            projectID: '{{ .gcsm.infra.crossplane.project_id }}'
+            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
       - name: istio-base
         source: istio-base
         version: stable
