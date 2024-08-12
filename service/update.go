@@ -40,7 +40,7 @@ type updater struct {
 	resources              model.Resources
 	github                 github.Github
 	terraform              terraform.Terraform
-	customCC               model.CodeRepo
+	customCC               model.Bucket
 	state                  *model.State
 	stableRelease          *version.Version
 	baseConfigReleaseLimit *version.Version
@@ -51,11 +51,11 @@ type updater struct {
 
 func NewUpdater(flags *common.Flags) Updater {
 	provider := GetCloudProvider(context.Background(), flags)
-	resources := provider.SetupResources(flags.Branch)
-	config := GetConfig(flags.Config, resources.GetCodeRepo())
+	resources := provider.SetupResources()
+	config := GetConfig(flags.Config, resources.GetBucket())
 	githubClient := github.NewGithub(config.Source)
 	stableRelease := getLatestRelease(githubClient)
-	latestState, err := getLatestState(resources.GetCodeRepo())
+	latestState, err := getLatestState(resources.GetBucket())
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
@@ -106,7 +106,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
 	}
-	err = u.resources.GetCodeRepo().PutFile("merged_config.yaml", bytes)
+	err = u.resources.GetBucket().PutFile("merged_config.yaml", bytes)
 	if err != nil {
 		common.Logger.Fatalf("Failed to put merged config file: %s", err)
 	}
@@ -114,7 +114,7 @@ func (u *updater) mergeBaseConfig(release *version.Version) {
 	u.state.BaseConfig.Version = release
 }
 
-func getLatestState(codeCommit model.CodeRepo) (*model.State, error) {
+func getLatestState(codeCommit model.Bucket) (*model.State, error) {
 	file, err := codeCommit.GetFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state file: %w", err)
@@ -130,7 +130,7 @@ func getLatestState(codeCommit model.CodeRepo) (*model.State, error) {
 	return &state, nil
 }
 
-func (u *updater) setupCustomCodeRepo() error {
+func (u *updater) setupCustomBucket() error {
 	if u.customCC != nil {
 		return nil
 	}
@@ -138,7 +138,7 @@ func (u *updater) setupCustomCodeRepo() error {
 		return nil
 	}
 	var err error
-	u.customCC, err = u.provider.SetupCustomCodeRepo("main")
+	u.customCC, err = u.provider.SetupCustomBucket()
 	return err
 }
 
@@ -158,9 +158,9 @@ func (u *updater) ProcessSteps() {
 		if u.releaseNewerThanConfigVersions(release) {
 			break
 		}
-		err = u.setupCustomCodeRepo()
+		err = u.setupCustomBucket()
 		if err != nil {
-			common.Logger.Fatalf("Failed to setup custom CodeRepo: %s", err)
+			common.Logger.Fatalf("Failed to setup custom Bucket: %s", err)
 		}
 		u.currentChecksums, err = u.GetChecksums(release)
 		wg := new(model.SafeCounter)
@@ -516,7 +516,7 @@ func (u *updater) getRepoMetadata(stepType model.StepType) (*model.RepositoryMet
 	case model.StepTypeTerraformCustom:
 		return u.customCC.GetRepoMetadata()
 	default:
-		return u.resources.GetCodeRepo().GetRepoMetadata()
+		return u.resources.GetBucket().GetRepoMetadata()
 	}
 }
 
@@ -714,7 +714,7 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 }
 
 func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, []string, error) {
-	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetCodeRepo())
+	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetBucket())
 	if err != nil {
 		return false, nil, err
 	}
@@ -737,7 +737,7 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	err = u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
+	err = u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
 	return changed, providers, err
 }
 
@@ -801,7 +801,7 @@ func getModuleInputBytes(module model.Module) ([]byte, error) {
 	return bytes, nil
 }
 
-func (u *updater) createBackendConf(path string, codeCommit model.CodeRepo) error {
+func (u *updater) createBackendConf(path string, codeCommit model.Bucket) error {
 	key := fmt.Sprintf("%s/terraform.tfstate", path)
 	backendConfig := u.resources.GetBackendConfigVars(key)
 	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
@@ -816,7 +816,7 @@ func (u *updater) putStateFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
+	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
 func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
@@ -825,7 +825,7 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.GetCodeRepo().PutFile(stateFile, bytes)
+	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
 func (u *updater) updateStepState(stepState *model.StateStep) {
@@ -862,7 +862,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		terraform.AddInputs(module.Inputs, moduleBody)
 	}
 	if changed {
-		err := u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
+		err := u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
 		if err != nil {
 			return false, nil, err
 		}
@@ -876,7 +876,7 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.GetCodeRepo().PutFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
+	return u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
 		step.Workspace, module.Name), appBytes)
 }
 
@@ -971,7 +971,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
 	folder := fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace)
-	files, err := u.resources.GetCodeRepo().ListFolderFiles(folder)
+	files, err := u.resources.GetBucket().ListFolderFiles(folder)
 	if err != nil {
 		return err
 	}
@@ -982,7 +982,7 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		if modules.Contains(strings.TrimSuffix(file, ".yaml")) {
 			continue
 		}
-		err = u.resources.GetCodeRepo().DeleteFile(fmt.Sprintf("%s/%s", folder, file))
+		err = u.resources.GetBucket().DeleteFile(fmt.Sprintf("%s/%s", folder, file))
 		if err != nil {
 			return err
 		}

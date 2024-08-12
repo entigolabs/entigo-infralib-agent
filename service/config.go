@@ -29,7 +29,7 @@ func GetAwsPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(configFile string, codeCommit model.CodeRepo) model.Config {
+func GetConfig(configFile string, codeCommit model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
@@ -73,7 +73,7 @@ func GetLocalConfig(configFile string) model.Config {
 	return config
 }
 
-func PutConfig(codeCommit model.CodeRepo, config model.Config) {
+func PutConfig(codeCommit model.Bucket, config model.Config) {
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
@@ -84,7 +84,7 @@ func PutConfig(codeCommit model.CodeRepo, config model.Config) {
 	}
 }
 
-func GetRemoteConfig(codeCommit model.CodeRepo) model.Config {
+func GetRemoteConfig(codeCommit model.Bucket) model.Config {
 	bytes, err := codeCommit.GetFile("config.yaml")
 	if err != nil {
 		common.Logger.Fatalf("Failed to get config: %s", err)
@@ -311,13 +311,12 @@ func hasCustomTFStep(steps []model.Step) bool {
 	return false
 }
 
-// TODO Confusing patch and base config naming
-func MergeConfig(baseConfig model.Config, patchConfig model.Config) model.Config {
-	err := mergo.Merge(&patchConfig, baseConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
+func MergeConfig(patchConfig model.Config, baseConfig model.Config) model.Config {
+	err := mergo.Merge(&baseConfig, patchConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
-	return patchConfig
+	return baseConfig
 }
 
 type stepsTransformer struct {

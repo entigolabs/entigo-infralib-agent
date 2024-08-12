@@ -25,8 +25,8 @@ type deleter struct {
 
 func NewDeleter(flags *common.Flags) Deleter {
 	provider := GetCloudProvider(context.Background(), flags)
-	resources := provider.GetResources(flags.Branch)
-	repo, err := resources.GetCodeRepo().GetRepoMetadata()
+	resources := provider.GetResources()
+	repo, err := resources.GetBucket().GetRepoMetadata()
 	if err != nil {
 		common.Logger.Fatalf("Failed to get repository metadata: %s", err)
 	}
@@ -37,7 +37,7 @@ func NewDeleter(flags *common.Flags) Deleter {
 			resources: resources,
 		}
 	}
-	config := getConfig(flags.Config, resources.GetCodeRepo())
+	config := getConfig(flags.Config, resources.GetBucket())
 	if config.Version == "" {
 		config.Version = StableVersion
 	}
@@ -56,7 +56,7 @@ func NewDeleter(flags *common.Flags) Deleter {
 	}
 }
 
-func getConfig(configFile string, codeCommit model.CodeRepo) model.Config {
+func getConfig(configFile string, codeCommit model.Bucket) model.Config {
 	if configFile != "" {
 		return GetLocalConfig(configFile)
 	}

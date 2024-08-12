@@ -30,7 +30,6 @@ const applyDestroyName = "ApplyDestroy"
 
 type Pipeline struct {
 	codePipeline *codepipeline.Client
-	branch       string
 	roleArn      string
 	bucket       string
 	cloudWatch   CloudWatch
@@ -38,10 +37,9 @@ type Pipeline struct {
 	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, branch string, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
+func NewPipeline(awsConfig aws.Config, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
 	return &Pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
-		branch:       branch,
 		roleArn:      roleArn,
 		bucket:       bucket,
 		cloudWatch:   cloudWatch,
@@ -82,7 +80,7 @@ func (p *Pipeline) deletePipeline(projectName string) error {
 	return nil
 }
 
-func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) (*string, error) {
+func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, stepName string, step model.Step, bucket string) (*string, error) {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return nil, err
@@ -106,23 +104,23 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(p.bucket),
 				Type:     types.ArtifactStoreTypeS3,
-			}, Stages: []types.StageDeclaration{{
+			},
+			Stages: []types.StageDeclaration{{
 				Name: aws.String(sourceName),
 				Actions: []types.ActionDeclaration{{
 					Name: aws.String(sourceName),
 					ActionTypeId: &types.ActionTypeId{
 						Category: types.ActionCategorySource,
 						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeCommit"),
+						Provider: aws.String("S3"),
 						Version:  aws.String("1"),
 					},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
 					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
-						"RepositoryName":       repo,
-						"BranchName":           p.branch,
+						"S3Bucket":             bucket,
+						"S3ObjectKey":          model.AgentSource,
 						"PollForSourceChanges": "false",
-						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
 					},
 				},
 				},
@@ -188,7 +186,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
-func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, repo string) error {
+func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, bucket string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
@@ -219,16 +217,15 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					ActionTypeId: &types.ActionTypeId{
 						Category: types.ActionCategorySource,
 						Owner:    types.ActionOwnerAws,
-						Provider: aws.String("CodeCommit"),
+						Provider: aws.String("S3"),
 						Version:  aws.String("1"),
 					},
 					OutputArtifacts: []types.OutputArtifact{{Name: aws.String("source_output")}},
 					RunOrder:        aws.Int32(1),
 					Configuration: map[string]string{
-						"RepositoryName":       repo,
-						"BranchName":           p.branch,
+						"S3Bucket":             bucket,
+						"S3ObjectKey":          model.AgentSource,
 						"PollForSourceChanges": "false",
-						"OutputArtifactFormat": "CODEBUILD_CLONE_REF",
 					},
 				},
 				},

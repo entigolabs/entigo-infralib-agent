@@ -30,7 +30,7 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	err = a.resources.GetPipeline().CreateAgentPipeline(a.cloudPrefix, a.name, a.name, a.resources.GetBucket())
+	err = a.resources.GetPipeline().CreateAgentPipeline(a.cloudPrefix, a.name, a.name, a.resources.GetBucketName())
 	if err != nil {
 		return err
 	}

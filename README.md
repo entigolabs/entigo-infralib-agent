@@ -63,7 +63,6 @@ Creates the required AWS resources and a codepipeline for executing the agent. I
 
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* branch - CodeCommit branch name (default: **main**) [$BRANCH]
 * aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
@@ -71,7 +70,7 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent bootstrap --config=config.yaml --branch=main --aws-prefix=entigo-infralib
+bin/ei-agent bootstrap --config=config.yaml --aws-prefix=entigo-infralib
 ```
 
 ### run
@@ -80,7 +79,6 @@ Processes config steps, creates and executes CodePipelines which apply Entigo In
 
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* branch - CodeCommit branch name (default: **main**) [$BRANCH]
 * aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
@@ -89,7 +87,7 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent run --config=config.yaml --branch=main --aws-prefix=entigo-infralib
+bin/ei-agent run --config=config.yaml --aws-prefix=entigo-infralib
 ```
 
 ### delete
@@ -99,7 +97,6 @@ Processes config steps, removes resources used by the agent, including buckets, 
 
 OPTIONS:
 * config - config file path and name, only needed when overriding an existing config [$CONFIG]
-* branch - CodeCommit branch name (default: **main**) [$BRANCH]
 * aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
@@ -109,7 +106,7 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent delete --config=config.yaml --branch=main --aws-prefix=entigo-infralib
+bin/ei-agent delete --config=config.yaml --aws-prefix=entigo-infralib
 ```
 
 ### merge

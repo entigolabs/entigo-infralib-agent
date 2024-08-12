@@ -16,7 +16,6 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 	return append(flags,
 		&loggingFlag,
 		&configFlag,
-		&branchFlag,
 		&awsPrefixFlag,
 		&projectIdFlag,
 		&locationFlag,
@@ -64,17 +63,6 @@ var baseConfigFlag = cli.StringFlag{
 	Usage:       "set base config file",
 	Destination: &flags.BaseConfig,
 	Required:    true,
-}
-
-var branchFlag = cli.StringFlag{
-	Name:        "branch",
-	Aliases:     []string{"b"},
-	EnvVars:     []string{"BRANCH"},
-	DefaultText: "main",
-	Value:       "main",
-	Usage:       "set branch name",
-	Destination: &flags.Branch,
-	Required:    false,
 }
 
 var awsPrefixFlag = cli.StringFlag{

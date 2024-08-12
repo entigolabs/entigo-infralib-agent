@@ -9,8 +9,8 @@ import (
 
 func Bootstrap(flags *common.Flags) {
 	provider := service.GetCloudProvider(context.Background(), flags)
-	resources := provider.SetupResources(flags.Branch)
-	config := service.GetConfig(flags.Config, resources.GetCodeRepo())
+	resources := provider.SetupResources()
+	config := service.GetConfig(flags.Config, resources.GetBucket())
 	if config.AgentVersion == "" {
 		config.AgentVersion = model.LatestImageVersion
 	}
