@@ -194,7 +194,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
-	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, dynamoDBTableArn)
+	buildRoleArn, buildRoleCreated := a.createBuildRole(iam, logGroupArn, s3Arn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
 	if buildRoleCreated || pipelineRoleCreated {
@@ -208,15 +208,15 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTa
 func (a *awsService) attachRolePolicies(s3Arn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
-	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
+	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
 	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
 	}
 
-	buildRoleName := getBuildRoleName(a.cloudPrefix)
+	buildRoleName := a.getBuildRoleName()
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
-	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
+	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
 	err = a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
@@ -246,8 +246,8 @@ func (a *awsService) getPipelineRoleName() string {
 	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
 }
 
-func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
-	buildRoleName := getBuildRoleName(prefix)
+func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
+	buildRoleName := a.getBuildRoleName()
 	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
@@ -271,8 +271,8 @@ func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, d
 	return *buildRole.Arn, true
 }
 
-func getBuildRoleName(prefix string) string {
-	return fmt.Sprintf("%s-build", prefix)
+func (a *awsService) getBuildRoleName() string {
+	return fmt.Sprintf("%s-build", a.cloudPrefix)
 }
 
 func (a *awsService) deleteCloudWatchLogs() {
@@ -290,7 +290,7 @@ func (a *awsService) deleteCloudWatchLogs() {
 }
 
 func (a *awsService) deleteIAMRoles() {
-	buildRole := getBuildRoleName(a.cloudPrefix)
+	buildRole := a.getBuildRoleName()
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, buildRole)
 	err := a.resources.IAM.DeleteRolePolicyAttachment(policyArn, buildRole)
 	if err != nil {
