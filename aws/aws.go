@@ -147,11 +147,11 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create S3 Bucket: %s", err)
+		common.Logger.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
 	}
 	err = s3.addDummyZip()
 	if err != nil {
-		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket: %s", err)
+		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
 	}
 	return s3, s3Arn
 }
@@ -161,10 +161,15 @@ func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	s3Arn, created, err := s3.CreateBucket()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create custom S3 Bucket: %s", err)
+		common.Logger.Fatalf("Failed to create custom S3 Bucket %s: %s", bucket, err)
 	}
-	if created {
-		a.attachRolePolicies(s3Arn)
+	if !created {
+		return s3, nil
+	}
+	a.attachRolePolicies(s3Arn)
+	err = s3.addDummyZip()
+	if err != nil {
+		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
 	}
 	return s3, nil
 }
