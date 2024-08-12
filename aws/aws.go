@@ -143,19 +143,6 @@ func getAccountId(awsConfig aws.Config) (string, error) {
 	return stsService.GetAccountID()
 }
 
-func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
-	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
-	s3 := NewS3(a.ctx, a.awsConfig, bucket)
-	s3Arn, created, err := s3.CreateBucket()
-	if err != nil {
-		common.Logger.Fatalf("Failed to create custom S3 Bucket: %s", err)
-	}
-	if created {
-		a.attachRolePolicies(s3Arn)
-	}
-	return s3, nil
-}
-
 func (a *awsService) createBucket(bucket string) (*S3, string) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	s3Arn, _, err := s3.CreateBucket()
@@ -167,6 +154,19 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket: %s", err)
 	}
 	return s3, s3Arn
+}
+
+func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
+	bucket := fmt.Sprintf("%s-custom-%s", a.cloudPrefix, a.accountId)
+	s3 := NewS3(a.ctx, a.awsConfig, bucket)
+	s3Arn, created, err := s3.CreateBucket()
+	if err != nil {
+		common.Logger.Fatalf("Failed to create custom S3 Bucket: %s", err)
+	}
+	if created {
+		a.attachRolePolicies(s3Arn)
+	}
+	return s3, nil
 }
 
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
