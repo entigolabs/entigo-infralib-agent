@@ -1,0 +1,162 @@
+base_config:
+  profile: minimal
+prefix: agentgce
+source: https://github.com/entigolabs/entigo-infralib-release
+version: stable
+steps:
+  - name: net
+    type: terraform
+    workspace: dev
+    approve: minor
+    modules:
+      - name: main
+        source: google/vpc
+        version: stable
+  - name: infra
+    type: terraform
+    workspace: dev
+    approve: minor
+    version: stable
+    vpc_id: '{{ .gcsm.net.main.vpc_name }}'
+    vpc_subnet_ids: '{{ .gcsm.net.main.private_subnets[0] }}'
+    modules:
+      - name: dns
+        source: google/dns
+        version: stable
+        inputs:
+          parent_zone_id: "agent-gcp-infralib-entigo-io"
+          create_private: false
+      - name: crossplane
+        source: google/crossplane
+        version: stable
+      - name: gke
+        source: google/gke
+        version: stable
+        inputs:
+          gke_main_min_size: 3
+          ip_range_pods: '{{ .gcsm.net.main.private_subnets_pods[0] }}'
+          ip_range_services: '{{ .gcsm.net.main.private_subnets_services[0] }}'
+          subnetwork: '{{ .gcsm.net.main.private_subnets[0] }}'
+          network: '{{ .gcsm.net.main.vpc_name }}'
+          gke_tools_min_size: 3
+          gke_tools_max_size: 6
+          gke_mon_min_size: 1
+          gke_mon_max_size: 4
+          gke_main_min_size: 3
+          gke_main_max_size: 6
+          master_authorized_networks: |
+            [
+              {
+                display_name = "Allow all"
+                cidr_block   = "0.0.0.0/0"
+              }
+            ]
+  - name: applications
+    type: argocd-apps
+    workspace: dev
+    version: stable
+    vpc_id: '{{ .gcsm.net.main.vpc_name }}'
+    vpc_subnet_ids: '{{ .gcsm.net.main.private_subnets[0] }}'
+    kubernetes_cluster_name: '{{ .gcsm.infra.gke.cluster_name }}'
+    argocd_namespace: 'argocd'
+    modules:
+      - name: argocd
+        source: argocd
+        version: stable
+        inputs:
+          argocd:
+            global:
+              domain: "argocd.{{ gcsm.infra.dns.int_domain }}"
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+      - name: crossplane-system
+        source: crossplane-core
+        version: stable
+      - name: crossplane-k8s
+        source: crossplane-k8s
+        version: stable
+      - name: crossplane-google
+        source: crossplane-google
+        version: stable
+        inputs:
+          google:
+            projectID: '{{ .gcsm.infra.crossplane.project_id }}'
+          deploymentRuntimeConfig:
+            googleServiceAccount: '{{ .gcsm.infra.crossplane.service_account_email }}'
+      - name: external-dns
+        source: external-dns
+        version: stable
+        inputs:
+          google:
+            projectID: '{{ .gcsm.infra.crossplane.project_id }}'
+      - name: istio-base
+        source: istio-base
+        version: stable
+      - name: istio-system
+        source: istio-istiod
+        version: stable
+        inputs:
+          istiod:
+            pilot:
+              traceSampling: 100
+      - name: istio-gateway
+        source: istio-gateway
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "{{ gcsm.infra.dns.int_domain }}"
+      - name: grafana
+        source: grafana
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "grafana.{{ gcsm.infra.dns.int_domain }}"
+      - name: keycloak
+        source: keycloak
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "keycloak.{{ gcsm.infra.dns.int_domain }}"
+      - name: kiali
+        source: kiali
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "kiali.{{ gcsm.infra.dns.int_domain }}"
+      - name: loki
+        source: loki
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "loki.{{ gcsm.infra.dns.int_domain }}"
+            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
+          bucketName: "loki-{{ .gcsm.infra.gke.cluster_name }}"
+          loki:
+            loki:
+              storage:
+                bucketNames:
+                  chunks: "loki-{{ .gcsm.infra.gke.cluster_name }}"
+                  ruler: "loki-{{ .gcsm.infra.gke.cluster_name }}"
+                  admin: "loki-{{ .gcsm.infra.gke.cluster_name }}"
+      - name: mimir
+        source: mimir
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "mimir.{{ gcsm.infra.dns.int_domain }}"
+            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
+          global:
+            bucketName: "mimir-{{ .gcsm.infra.gke.cluster_name }}"
+      - name: prometheus
+        source: prometheus
+        version: stable
+        inputs:
+          google:
+            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+            hostname: "prometheus.{{ gcsm.infra.dns.int_domain }}"
