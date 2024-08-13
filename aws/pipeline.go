@@ -31,17 +31,15 @@ const applyDestroyName = "ApplyDestroy"
 type Pipeline struct {
 	codePipeline *codepipeline.Client
 	roleArn      string
-	bucket       string
 	cloudWatch   CloudWatch
 	logGroup     string
 	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, roleArn string, bucket string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
+func NewPipeline(awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
 	return &Pipeline{
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
 		roleArn:      roleArn,
-		bucket:       bucket,
 		cloudWatch:   cloudWatch,
 		logGroup:     logGroup,
 		logStream:    logStream,
@@ -102,7 +100,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 			Name:    aws.String(pipelineName),
 			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
+				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			},
 			Stages: []types.StageDeclaration{{
@@ -208,7 +206,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 			Name:    aws.String(pipelineName),
 			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
+				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			}, Stages: []types.StageDeclaration{{
 				Name: aws.String(sourceName),
@@ -318,7 +316,7 @@ func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 			Name:    aws.String(pipelineName),
 			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
-				Location: aws.String(p.bucket),
+				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
 			}, Stages: []types.StageDeclaration{{
 				Name: aws.String(sourceName),

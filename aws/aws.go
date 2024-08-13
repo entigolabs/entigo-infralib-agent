@@ -70,7 +70,7 @@ func (a *awsService) SetupResources() model.Resources {
 	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
 	codeBuild := NewBuilder(a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.awsConfig, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
+	codePipeline := NewPipeline(a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
@@ -97,7 +97,7 @@ func (a *awsService) GetResources() model.Resources {
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    NewBuilder(a.awsConfig, "", "", "", ""),
-			Pipeline:     NewPipeline(a.awsConfig, "", "", nil, "", ""),
+			Pipeline:     NewPipeline(a.awsConfig, "", nil, "", ""),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 		},
