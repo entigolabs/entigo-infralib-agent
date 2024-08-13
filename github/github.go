@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/go-github/v60/github"
 	"net/url"
 	"sort"
@@ -25,6 +24,7 @@ type githubClient struct {
 	client *github.Client
 	owner  string
 	repo   string
+	cache  *FileCache
 }
 
 func NewGithub(repoURL string) Github {
@@ -36,6 +36,7 @@ func NewGithub(repoURL string) Github {
 		client: github.NewClient(nil),
 		owner:  owner,
 		repo:   repo,
+		cache:  NewFileCache(),
 	}
 }
 
@@ -93,9 +94,8 @@ func (g *githubClient) GetNewerReleases(after time.Time) ([]Release, error) {
 }
 
 func (g *githubClient) GetRawFileContent(path string, release string) ([]byte, error) {
-	common.Logger.Printf("Getting raw file content %s/%s/%s with reference %s\n", g.owner, g.repo, path, release)
 	fileUrl := fmt.Sprintf("%s/%s/%s/%s/%s", rawGithubUrl, g.owner, g.repo, release, path)
-	fileContent, err := util.GetFileFromUrl(fileUrl)
+	fileContent, err := g.cache.GetFile(fileUrl)
 	if err != nil {
 		return nil, err
 	}
