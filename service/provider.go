@@ -15,5 +15,5 @@ func GetCloudProvider(ctx context.Context, flags *common.Flags) model.CloudProvi
 		common.Logger.Println("Using GCloud with project ID: ", flags.GCloud.ProjectId)
 		return gcloud.NewGCloud(ctx, strings.ToLower(prefix), flags.GCloud)
 	}
-	return aws.NewAWS(ctx, strings.ToLower(prefix))
+	return aws.NewAWS(ctx, strings.ToLower(prefix), flags.AWS)
 }

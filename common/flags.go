@@ -15,6 +15,7 @@ type Flags struct {
 	AWSPrefix     string
 	AllowParallel bool
 	GCloud        GCloud
+	AWS           AWS
 	Delete        DeleteFlags
 }
 
@@ -22,6 +23,10 @@ type GCloud struct {
 	ProjectId string
 	Location  string
 	Zone      string
+}
+
+type AWS struct {
+	RoleArn string
 }
 
 type DeleteFlags struct {

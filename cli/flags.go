@@ -20,6 +20,7 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 		&projectIdFlag,
 		&locationFlag,
 		&zoneFlag,
+		&awsRoleArnFlag,
 	)
 }
 
@@ -73,6 +74,17 @@ var awsPrefixFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "prefix used when creating aws resources",
 	Destination: &flags.AWSPrefix,
+	Required:    false,
+}
+
+var awsRoleArnFlag = cli.StringFlag{
+	Name:        "role-arn",
+	Aliases:     []string{"ra"},
+	EnvVars:     []string{"ROLE_ARN"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "role arn for assume role, used when creating aws resources in external account",
+	Destination: &flags.AWS.RoleArn,
 	Required:    false,
 }
 

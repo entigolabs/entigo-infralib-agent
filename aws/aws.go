@@ -6,7 +6,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"time"
@@ -37,8 +39,8 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewAWS(ctx context.Context, cloudPrefix string) model.CloudProvider {
-	awsConfig := GetAWSConfig(ctx)
+func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS) model.CloudProvider {
+	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
@@ -51,7 +53,7 @@ func NewAWS(ctx context.Context, cloudPrefix string) model.CloudProvider {
 	}
 }
 
-func GetAWSConfig(ctx context.Context) aws.Config {
+func GetAWSConfig(ctx context.Context, roleArn string) aws.Config {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRetryer(func() aws.Retryer {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
@@ -59,7 +61,34 @@ func GetAWSConfig(ctx context.Context) aws.Config {
 		common.Logger.Fatalf("Failed to initialize AWS session: %s", err)
 	}
 	common.Logger.Printf("AWS session initialized with region: %s\n", cfg.Region)
+	if roleArn != "" {
+		return GetAssumedConfig(ctx, cfg, roleArn)
+	}
 	return cfg
+}
+
+func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string) aws.Config {
+	stsClient := sts.NewFromConfig(baseConfig)
+	assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
+		RoleArn:         aws.String(roleArn),
+		RoleSessionName: aws.String("entigo-infralib-agent"),
+		DurationSeconds: aws.Int32(3600),
+	})
+	if err != nil {
+		common.Logger.Fatalf("Failed to assume role %s: %s", roleArn, err)
+	}
+	assumedConfig, err := config.LoadDefaultConfig(ctx,
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			*assumedRole.Credentials.AccessKeyId,
+			*assumedRole.Credentials.SecretAccessKey,
+			*assumedRole.Credentials.SessionToken,
+		)),
+		config.WithRegion(baseConfig.Region),
+	)
+	if err != nil {
+		common.Logger.Fatalf("Failed to initialize assumed AWS session: %s", err)
+	}
+	return assumedConfig
 }
 
 func (a *awsService) SetupResources() model.Resources {

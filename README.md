@@ -67,6 +67,7 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 
 Example
 ```bash
@@ -83,6 +84,7 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 
 Example
@@ -101,6 +103,7 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]
 
