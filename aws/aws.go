@@ -101,7 +101,7 @@ func (a *awsService) GetResources() model.Resources {
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 		},
-		IAM:       NewIAM(a.awsConfig),
+		IAM:       NewIAM(a.awsConfig, a.accountId),
 		Region:    a.awsConfig.Region,
 		AccountId: a.accountId,
 	}
@@ -198,7 +198,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 }
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
-	iam := NewIAM(a.awsConfig)
+	iam := NewIAM(a.awsConfig, a.accountId)
 	buildRoleArn, buildRoleCreated := a.createBuildRole(iam, logGroupArn, s3Arn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
@@ -214,18 +214,29 @@ func (a *awsService) attachRolePolicies(s3Arn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
 	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
-	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
-	if err != nil {
-		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
+	if pipelinePolicy == nil {
+		a.resources.IAM.UpdatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
+	} else {
+		err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
+		if err != nil {
+			common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
+		}
 	}
 
 	buildRoleName := a.getBuildRoleName()
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
 	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
-	err = a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
-	if err != nil {
-		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
+	if buildPolicy == nil {
+		a.resources.IAM.UpdatePolicy(buildPolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
+	} else {
+		err := a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
+		if err != nil {
+			common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
+		}
 	}
+
+	common.Logger.Println("Waiting for attached policies to be available...")
+	time.Sleep(10 * time.Second)
 }
 
 func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {

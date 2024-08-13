@@ -16,6 +16,7 @@ type IAM interface {
 	DeleteRolePolicyAttachment(policyName string, roleName string) error
 	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
 	DeletePolicy(policyName string, accountId string) error
+	UpdatePolicy(policyName string, statement []PolicyStatement) string
 	CreateRole(roleName string, statement []PolicyStatement) *types.Role
 	DeleteRole(roleName string) error
 	GetRole(roleName string) *types.Role
@@ -34,11 +35,13 @@ type PolicyStatement struct {
 }
 
 type identity struct {
+	accountId string
 	iamClient *iam.Client
 }
 
-func NewIAM(config aws.Config) IAM {
+func NewIAM(config aws.Config, accountId string) IAM {
 	return &identity{
+		accountId: accountId,
 		iamClient: iam.NewFromConfig(config),
 	}
 }
@@ -83,6 +86,31 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 	}
 	common.Logger.Printf("Created IAM policy: %s\n", policyName)
 	return result.Policy
+}
+
+func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) string {
+	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", i.accountId, policyName)
+
+	versionsOutput, err := i.iamClient.ListPolicyVersions(context.TODO(), &iam.ListPolicyVersionsInput{
+		PolicyArn: aws.String(policyArn),
+	})
+	if err != nil {
+		common.Logger.Fatalf("Failed to list policy versions for %s: %s", policyName, err)
+	}
+	if len(versionsOutput.Versions) >= 5 {
+		i.deleteOldestPolicyVersion(policyArn, versionsOutput.Versions)
+	}
+
+	_, err = i.iamClient.CreatePolicyVersion(context.TODO(), &iam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String(policyArn),
+		PolicyDocument: getPolicy(statement),
+		SetAsDefault:   true,
+	})
+	if err != nil {
+		common.Logger.Fatalf("Failed to update policy %s: %s", policyName, err)
+	}
+	common.Logger.Printf("Updated IAM policy: %s\n", policyName)
+	return policyArn
 }
 
 func getPolicy(statements []PolicyStatement) *string {
@@ -144,6 +172,24 @@ func (i *identity) DeleteRole(roleName string) error {
 	}
 	common.Logger.Printf("Deleted IAM role: %s\n", roleName)
 	return nil
+}
+
+func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.PolicyVersion) {
+	var oldestVersion *types.PolicyVersion
+	for _, version := range versions {
+		if oldestVersion == nil || version.CreateDate.Before(*oldestVersion.CreateDate) {
+			oldestVersion = &version
+		}
+	}
+	if oldestVersion != nil {
+		_, err := i.iamClient.DeletePolicyVersion(context.TODO(), &iam.DeletePolicyVersionInput{
+			PolicyArn: aws.String(policyArn),
+			VersionId: oldestVersion.VersionId,
+		})
+		if err != nil {
+			common.Logger.Fatalf("Failed to delete oldest policy version for %s: %s", policyArn, err)
+		}
+	}
 }
 
 func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []PolicyStatement {
