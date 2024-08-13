@@ -152,8 +152,8 @@ func (u *updater) ProcessSteps() {
 	for _, release := range releases {
 		if u.config.BaseConfig.Profile != "" {
 			u.mergeBaseConfig(release)
-			updateState(u.config, u.state)
 			ValidateConfig(u.config, u.state)
+			updateState(u.config, u.state)
 		}
 		if u.releaseNewerThanConfigVersions(release) {
 			break

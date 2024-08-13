@@ -137,6 +137,9 @@ func validateStep(step model.Step, steps []model.Step) {
 	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
 		common.Logger.Fatalf("VPC ID is not set for step %s-%s", step.Name, step.Workspace)
 	}
+	if step.Type == model.StepTypeTerraformCustom && step.Approve != "" && step.Approve != model.ApproveAlways && step.Approve != model.ApproveNever {
+		common.Logger.Fatalf("custom terraform step %s-%s must have approve 'always' or 'never'", step.Name, step.Workspace)
+	}
 	if step.Before != "" {
 		_, referencedStep := findStep(model.Step{Name: step.Before, Workspace: step.Workspace}, steps)
 		if referencedStep == nil {
