@@ -383,6 +383,8 @@ func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 		return pipeChanges, nil
 	}
 	switch stepType {
+	case model.StepTypeTerraformCustom:
+		fallthrough
 	case model.StepTypeTerraform:
 		return p.getTerraformChanges(pipelineName, jobName, executionName)
 	}
@@ -463,7 +465,11 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, bucket string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
-	releaseId := fmt.Sprintf("%s-%s", pipelineName, uuid.New().String())
+	prefix := pipelineName
+	if len(prefix) > 26 { // Max length for id is 63, uuid v4 is 36 chars plus hyphen, 63 - 37 = 26
+		prefix = prefix[:26]
+	}
+	releaseId := fmt.Sprintf("%s-%s", prefix, uuid.New().String())
 	releaseOp, err := p.client.CreateRelease(p.ctx, &deploypb.CreateReleaseRequest{
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location, pipelineName),
 		ReleaseId: releaseId,

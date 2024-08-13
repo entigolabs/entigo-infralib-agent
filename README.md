@@ -187,7 +187,7 @@ During merging, step name and workspace are used for identifying parent steps, m
   * type - type of the step
   * workspace - terraform workspace to use
   * before - for patch config, name of the step in the same workspace that this step should be executed before
-  * approve - approval type for the step, only applies when terraform needs to change or destroy resources, based on semver. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
+  * approve - approval type for the step, only applies when terraform needs to change resources, based on semver. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically. Custom terraform steps only support values `always` and `never`, default **always**
   * version - version of Entigo Infralib terraform modules to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * remove - whether to remove the step during merge or not, default **false**

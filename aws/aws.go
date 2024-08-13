@@ -70,7 +70,7 @@ func (a *awsService) SetupResources() model.Resources {
 	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
 	codeBuild := NewBuilder(a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.awsConfig, pipelineRoleArn, bucket, cloudwatch, logGroup, logStream)
+	codePipeline := NewPipeline(a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
@@ -97,7 +97,7 @@ func (a *awsService) GetResources() model.Resources {
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    NewBuilder(a.awsConfig, "", "", "", ""),
-			Pipeline:     NewPipeline(a.awsConfig, "", "", nil, "", ""),
+			Pipeline:     NewPipeline(a.awsConfig, "", nil, "", ""),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 		},
@@ -143,30 +143,35 @@ func getAccountId(awsConfig aws.Config) (string, error) {
 	return stsService.GetAccountID()
 }
 
-func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
-	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
-	s3 := NewS3(a.ctx, a.awsConfig, bucket)
-	s3Arn, created, err := s3.CreateBucket()
-	if err != nil {
-		common.Logger.Fatalf("Failed to create custom S3 Bucket: %s", err)
-	}
-	if created {
-		a.attachRolePolicies(s3Arn)
-	}
-	return s3, nil
-}
-
 func (a *awsService) createBucket(bucket string) (*S3, string) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create S3 Bucket: %s", err)
+		common.Logger.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
 	}
 	err = s3.addDummyZip()
 	if err != nil {
-		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket: %s", err)
+		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
 	}
 	return s3, s3Arn
+}
+
+func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
+	bucket := fmt.Sprintf("%s-custom-%s", a.cloudPrefix, a.accountId)
+	s3 := NewS3(a.ctx, a.awsConfig, bucket)
+	s3Arn, created, err := s3.CreateBucket()
+	if err != nil {
+		common.Logger.Fatalf("Failed to create custom S3 Bucket %s: %s", bucket, err)
+	}
+	if !created {
+		return s3, nil
+	}
+	a.attachRolePolicies(s3Arn)
+	err = s3.addDummyZip()
+	if err != nil {
+		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
+	}
+	return s3, nil
 }
 
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
@@ -194,7 +199,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.awsConfig)
-	buildRoleArn, buildRoleCreated := createBuildRole(iam, a.cloudPrefix, logGroupArn, s3Arn, dynamoDBTableArn)
+	buildRoleArn, buildRoleCreated := a.createBuildRole(iam, logGroupArn, s3Arn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
 	if buildRoleCreated || pipelineRoleCreated {
@@ -208,15 +213,15 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTa
 func (a *awsService) attachRolePolicies(s3Arn string) {
 	pipelineRoleName := a.getPipelineRoleName()
 	pipelinePolicyName := fmt.Sprintf("%s-custom", pipelineRoleName)
-	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
+	pipelinePolicy := a.resources.IAM.CreatePolicy(pipelinePolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
 	err := a.resources.IAM.AttachRolePolicy(*pipelinePolicy.Arn, pipelineRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", pipelineRoleName, err)
 	}
 
-	buildRoleName := getBuildRoleName(a.cloudPrefix)
+	buildRoleName := a.getBuildRoleName()
 	buildPolicyName := fmt.Sprintf("%s-custom", buildRoleName)
-	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodePipelineS3Policy(s3Arn)})
+	buildPolicy := a.resources.IAM.CreatePolicy(buildPolicyName, []PolicyStatement{CodeBuildS3Policy(s3Arn)})
 	err = a.resources.IAM.AttachRolePolicy(*buildPolicy.Arn, buildRoleName)
 	if err != nil {
 		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", buildRoleName, err)
@@ -246,8 +251,8 @@ func (a *awsService) getPipelineRoleName() string {
 	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
 }
 
-func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
-	buildRoleName := getBuildRoleName(prefix)
+func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
+	buildRoleName := a.getBuildRoleName()
 	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
@@ -271,8 +276,8 @@ func createBuildRole(iam IAM, prefix string, logGroupArn string, s3Arn string, d
 	return *buildRole.Arn, true
 }
 
-func getBuildRoleName(prefix string) string {
-	return fmt.Sprintf("%s-build", prefix)
+func (a *awsService) getBuildRoleName() string {
+	return fmt.Sprintf("%s-build", a.cloudPrefix)
 }
 
 func (a *awsService) deleteCloudWatchLogs() {
@@ -290,7 +295,7 @@ func (a *awsService) deleteCloudWatchLogs() {
 }
 
 func (a *awsService) deleteIAMRoles() {
-	buildRole := getBuildRoleName(a.cloudPrefix)
+	buildRole := a.getBuildRoleName()
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, buildRole)
 	err := a.resources.IAM.DeleteRolePolicyAttachment(policyArn, buildRole)
 	if err != nil {
