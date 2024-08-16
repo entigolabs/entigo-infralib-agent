@@ -86,11 +86,11 @@ steps:
         inputs:
           google:
             projectID: "{{ .gcsm.infra.crossplane.project_id }}"
-      - name: gcp-gateway
-        source: gcp-gateway
+      - name: google-gateway
+        source: google-gateway
         version: stable
         inputs:
-          gcp:
+          google:
             externalCertificateMap: "{{ gcsm.infra.dns.pub_zone_id }}"
           createExternal: true
           createInternal: false
