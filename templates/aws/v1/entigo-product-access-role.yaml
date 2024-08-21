@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template creates IAM role 'entigo-product-access-manager' with admin access, assumable by a specified AWS account for cross-account access.
+
+Resources:
+  EntigoProductAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: entigo-product-access-manager
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: $(CLOUD_ACCOUNT_ID)
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
