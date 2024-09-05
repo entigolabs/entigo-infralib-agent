@@ -88,18 +88,19 @@ func (t *terraform) GetEmptyTerraformProvider(version string, providerType model
 }
 
 func modifyBackendType(body *hclwrite.Body, providerType model.ProviderType) {
-	if providerType != model.GCLOUD {
-		return
-	}
 	terraformBlock := body.FirstMatchingBlock("terraform", []string{})
 	if terraformBlock == nil {
 		return
 	}
-	backendBlock := terraformBlock.Body().FirstMatchingBlock("backend", []string{"s3"})
+	backendBlock := terraformBlock.Body().FirstMatchingBlock("backend", []string{"TYPE"})
 	if backendBlock == nil {
 		return
 	}
-	backendBlock.SetLabels([]string{"gcs"})
+	if providerType == model.AWS {
+		backendBlock.SetLabels([]string{"s3"})
+	} else if providerType == model.GCLOUD {
+		backendBlock.SetLabels([]string{"gcs"})
+	}
 }
 
 func (t *terraform) getTerraformFile(filePath string, fileName string, release string) (*hclwrite.File, error) {

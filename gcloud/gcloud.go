@@ -42,7 +42,7 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) mo
 func (g *gcloudService) SetupResources() model.Resources {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	g.enableApiServices()
-	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
+	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage service: %s", err)
@@ -86,7 +86,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 }
 
 func (g *gcloudService) GetResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
+	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage service: %s", err)
@@ -150,7 +150,7 @@ func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 }
 
 func (g *gcloudService) SetupCustomBucket() (model.Bucket, error) {
-	bucket := fmt.Sprintf("%s-%s-custom", g.cloudPrefix, g.projectId)
+	bucket := fmt.Sprintf("%s-custom-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		return nil, err
