@@ -92,7 +92,7 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 }
 
 func (a *awsService) SetupResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	s3, s3Arn := a.createBucket(bucket)
 	dynamoDBTable := a.createDynamoDBTable()
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
@@ -120,7 +120,7 @@ func (a *awsService) SetupResources() model.Resources {
 }
 
 func (a *awsService) GetResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
@@ -186,7 +186,7 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 }
 
 func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
-	bucket := fmt.Sprintf("%s-custom-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+	bucket := fmt.Sprintf("%s-custom-%s", a.cloudPrefix, a.accountId)
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	s3Arn, created, err := s3.CreateBucket()
 	if err != nil {
