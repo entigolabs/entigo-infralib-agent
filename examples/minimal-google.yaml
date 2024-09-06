@@ -41,7 +41,7 @@ steps:
           gke_tools_max_size: 6
           gke_mon_min_size: 1
           gke_mon_max_size: 4
-          gke_main_min_size: 3
+          gke_main_min_size: 2
           gke_main_max_size: 6
           master_authorized_networks: |
             [
@@ -65,9 +65,7 @@ steps:
         inputs:
           argocd:
             global:
-              domain: "argocd.{{ gcsm.infra.dns.int_domain }}"
-          google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
+              domain: "argocd.{{ gcsm.infra.dns.pub_domain }}"
       - name: crossplane-system
         source: crossplane-core
         version: stable
@@ -88,6 +86,14 @@ steps:
         inputs:
           google:
             projectID: "{{ .gcsm.infra.crossplane.project_id }}"
+      - name: google-gateway
+        source: google-gateway
+        version: stable
+        inputs:
+          google:
+            externalCertificateMap: "{{ gcsm.infra.dns.pub_zone_id }}"
+          createExternal: true
+          createInternal: false
       - name: istio-base
         source: istio-base
         version: stable
@@ -103,36 +109,31 @@ steps:
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "{{ gcsm.infra.dns.int_domain }}"
+            hostname: "{{ gcsm.infra.dns.pub_domain }}"
       - name: grafana
         source: grafana
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "grafana.{{ gcsm.infra.dns.int_domain }}"
+            hostname: "grafana.{{ gcsm.infra.dns.pub_domain }}"
       - name: keycloak
         source: keycloak
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "keycloak.{{ gcsm.infra.dns.int_domain }}"
+            hostname: "keycloak.{{ gcsm.infra.dns.pub_domain }}"
       - name: kiali
         source: kiali
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "kiali.{{ gcsm.infra.dns.int_domain }}"
+            hostname: "kiali.{{ gcsm.infra.dns.pub_domain }}"
       - name: loki
         source: loki
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "loki.{{ gcsm.infra.dns.int_domain }}"
+            hostname: "loki.{{ gcsm.infra.dns.pub_domain }}"
             projectID: "{{ .gcsm.infra.crossplane.project_id }}"
           bucketName: "loki-{{ .gcsm.infra.gke.cluster_name }}"
           loki:
@@ -147,8 +148,7 @@ steps:
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "mimir.{{ gcsm.infra.dns.int_domain }}"
+            hostname: "mimir.{{ gcsm.infra.dns.pub_domain }}"
             projectID: "{{ .gcsm.infra.crossplane.project_id }}"
           global:
             bucketName: "mimir-{{ .gcsm.infra.gke.cluster_name }}"
@@ -157,5 +157,4 @@ steps:
         version: stable
         inputs:
           google:
-            certificateMap: "{{ gcsm.infra.dns.int_zone_id }}"
-            hostname: "prometheus.{{ gcsm.infra.dns.int_domain }}"
+            hostname: "prometheus.{{ gcsm.infra.dns.pub_domain }}"
