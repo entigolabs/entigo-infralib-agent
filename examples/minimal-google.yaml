@@ -76,24 +76,27 @@ steps:
         source: crossplane-google
         version: stable
         inputs:
-          google:
-            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
-          deploymentRuntimeConfig:
-            googleServiceAccount: "{{ .gcsm.infra.crossplane.service_account_email }}"
+          global:
+            google:
+              projectID: "{{ .gcsm.infra.crossplane.project_id }}"
+            deploymentRuntimeConfig:
+              googleServiceAccount: "{{ .gcsm.infra.crossplane.service_account_email }}"
       - name: external-dns
         source: external-dns
         version: stable
         inputs:
-          google:
-            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
+          global:
+            google:
+              projectID: "{{ .gcsm.infra.crossplane.project_id }}"
       - name: google-gateway
         source: google-gateway
         version: stable
         inputs:
-          google:
-            externalCertificateMap: "{{ gcsm.infra.dns.pub_zone_id }}"
-          createExternal: true
-          createInternal: false
+          global:
+            google:
+              externalCertificateMap: "{{ gcsm.infra.dns.pub_zone_id }}"
+            createExternal: true
+            createInternal: false
       - name: istio-base
         source: istio-base
         version: stable
@@ -108,34 +111,39 @@ steps:
         source: istio-gateway
         version: stable
         inputs:
-          google:
-            hostname: "{{ gcsm.infra.dns.pub_domain }}"
+          global:
+            google:
+              hostname: "{{ gcsm.infra.dns.pub_domain }}"
       - name: grafana
         source: grafana
         version: stable
         inputs:
-          google:
-            hostname: "grafana.{{ gcsm.infra.dns.pub_domain }}"
+          global:
+            google:
+              hostname: "grafana.{{ gcsm.infra.dns.pub_domain }}"
       - name: keycloak
         source: keycloak
         version: stable
         inputs:
-          google:
-            hostname: "keycloak.{{ gcsm.infra.dns.pub_domain }}"
+          global:
+            google:
+              hostname: "keycloak.{{ gcsm.infra.dns.pub_domain }}"
       - name: kiali
         source: kiali
         version: stable
         inputs:
-          google:
-            hostname: "kiali.{{ gcsm.infra.dns.pub_domain }}"
+          global:
+            google:
+              hostname: "kiali.{{ gcsm.infra.dns.pub_domain }}"
       - name: loki
         source: loki
         version: stable
         inputs:
-          google:
-            hostname: "loki.{{ gcsm.infra.dns.pub_domain }}"
-            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
-          bucketName: "loki-{{ .gcsm.infra.gke.cluster_name }}"
+          global:
+            bucketName: "loki-{{ .gcsm.infra.gke.cluster_name }}"
+            google:
+              hostname: "loki.{{ gcsm.infra.dns.pub_domain }}"
+              projectID: "{{ .gcsm.infra.crossplane.project_id }}"
           loki:
             loki:
               storage:
@@ -147,14 +155,15 @@ steps:
         source: mimir
         version: stable
         inputs:
-          google:
-            hostname: "mimir.{{ gcsm.infra.dns.pub_domain }}"
-            projectID: "{{ .gcsm.infra.crossplane.project_id }}"
           global:
             bucketName: "mimir-{{ .gcsm.infra.gke.cluster_name }}"
+            google:
+              hostname: "mimir.{{ gcsm.infra.dns.pub_domain }}"
+              projectID: "{{ .gcsm.infra.crossplane.project_id }}"
       - name: prometheus
         source: prometheus
         version: stable
         inputs:
-          google:
-            hostname: "prometheus.{{ gcsm.infra.dns.pub_domain }}"
+          global:
+            google:
+              hostname: "prometheus.{{ gcsm.infra.dns.pub_domain }}"
