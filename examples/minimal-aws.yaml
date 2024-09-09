@@ -33,7 +33,7 @@ steps:
     workspace: dev
     approve: minor
     version: stable
-    vpc_id: '{{ .ssm.net.main.vpc_id }}'
+    vpc_id: "{{ .ssm.net.main.vpc_id }}"
     vpc_subnet_ids: |
       [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
@@ -50,12 +50,12 @@ steps:
           eks_cluster_public: true
           eks_db_max_size: 0
           eks_main_max_size: 2
-          eks_main_min_size: 2
+          eks_main_desired_size: 2
           eks_main_volume_size: 100
           eks_main_instance_types: |
             ["t3.xlarge"]
           eks_spot_max_size: 0
-          eks_tools_min_size: 1
+          eks_tools_desired_size: 1
           eks_tools_max_size: 1
           eks_tools_single_subnet: true
           eks_tools_volume_size: 100
@@ -66,7 +66,7 @@ steps:
             [{{ .ssm.net.main.private_subnets }}]
           public_subnets: |
             [{{ .ssm.net.main.public_subnets }}]
-          vpc_id: '{{ .ssm.net.main.vpc_id }}'
+          vpc_id: "{{ .ssm.net.main.vpc_id }}"
       - name: crossplane
         source: aws/crossplane
         version: stable
@@ -80,13 +80,13 @@ steps:
     workspace: dev
     version: stable
     approve: never
-    vpc_id: '{{ .ssm.net.main.vpc_id }}'
+    vpc_id: "{{ .ssm.net.main.vpc_id }}"
     vpc_subnet_ids: |
       [{{ .ssm.net.main.private_subnets }}]
     vpc_security_group_ids: |
       [{{ .ssm.net.main.pipeline_security_group }}]
-    kubernetes_cluster_name: '{{ .ssm.infra.eks.cluster_name }}'
-    argocd_namespace: 'argocd'
+    kubernetes_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
+    argocd_namespace: "argocd"
     modules:
       - name: argocd
         source: argocd
@@ -98,17 +98,19 @@ steps:
                 argocd.{{ ssm.net.dns.pub_domain }}
             server:
               ingress:
-                annotations: 
+                annotations:
                   alb.ingress.kubernetes.io/group.name: external
                   alb.ingress.kubernetes.io/scheme: internet-facing
       - name: aws-alb-agent
         source: aws-alb
         version: stable
         inputs:
+          global:
+            aws:
+              account: "{{ .ssm.infra.eks.account }}"
+              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
           aws-load-balancer-controller:
-            clusterName: '{{ .ssm.infra.eks.cluster_name }}'
-          awsAccount: '{{ .ssm.infra.eks.account }}'
-          clusterOIDC: '{{ .ssm.infra.eks.oidc_provider }}'
+            clusterName: "{{ .ssm.infra.eks.cluster_name }}"
       - name: crossplane-system
         source: crossplane-core
         version: stable
@@ -119,16 +121,20 @@ steps:
         source: crossplane-aws
         version: stable
         inputs:
-          awsRole: '{{ .ssm.infra.crossplane.iam_role }}'
+          global:
+            aws:
+              role: "{{ .ssm.infra.crossplane.iam_role }}"
       - name: external-dns-agent
         source: external-dns
         version: stable
         inputs:
-          awsAccount: '{{ .ssm.infra.eks.account }}'
-          clusterOIDC: '{{ .ssm.infra.eks.oidc_provider }}'
+          global:
+            aws:
+              account: "{{ .ssm.infra.eks.account }}"
+              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
           external-dns:
             image:
-              tag: "v0.13.6"
+              tag: "v0.14.0"
             sources:
               - service
               - ingress
@@ -140,10 +146,12 @@ steps:
         source: loki
         version: stable
         inputs:
-          awsAccount: '{{ .ssm.infra.eks.account }}'
-          clusterOIDC: '{{ .ssm.infra.eks.oidc_provider }}'
-          bucketName: '{{ .config.prefix }}-entigo-loki-logs'
-          region: "{{ .ssm.infra.eks.region }}"
+          global:
+            region: "{{ .ssm.infra.eks.region }}"
+            bucketName: "{{ .config.prefix }}-entigo-loki-logs"
+            aws:
+              account: "{{ .ssm.infra.eks.account }}"
+              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
           loki:
             gateway:
               ingress:
@@ -162,13 +170,13 @@ steps:
                 s3:
                   region: "{{ .ssm.infra.eks.region }}"
                 bucketNames:
-                  chunks: '{{ .config.prefix }}-entigo-loki-logs'
-                  ruler: '{{ .config.prefix }}-entigo-loki-logs'
-                  admin: '{{ .config.prefix }}-entigo-loki-logs'
+                  chunks: "{{ .config.prefix }}-entigo-loki-logs"
+                  ruler: "{{ .config.prefix }}-entigo-loki-logs"
+                  admin: "{{ .config.prefix }}-entigo-loki-logs"
               storage_config:
                 aws:
                   region: "{{ .ssm.infra.eks.region }}"
-                  bucketnames: '{{ .config.prefix }}-entigo-loki-logs'
+                  bucketnames: "{{ .config.prefix }}-entigo-loki-logs"
       - name: prometheus
         source: prometheus
         version: stable
@@ -197,7 +205,9 @@ steps:
         source: istio-gateway
         version: stable
         inputs:
-          certificateArn: "{{ ssm.net.dns.pub_cert_arn }}"
+          global:
+            aws:
+              certificateArn: "{{ ssm.net.dns.pub_cert_arn }}"
       - name: kiali
         source: kiali
         version: stable
@@ -224,6 +234,8 @@ steps:
         source: external-secrets
         version: stable
         inputs:
-          awsRegion: "{{ .ssm.infra.eks.region }}"
-          awsAccount: "{{ .ssm.infra.eks.account }}"
-          clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
+          global:
+            aws:
+              region: "{{ .ssm.infra.eks.region }}"
+              account: "{{ .ssm.infra.eks.account }}"
+              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
