@@ -104,6 +104,8 @@ func copyModules(modules []model.Module) []model.Module {
 			Version:      module.Version,
 			Remove:       module.Remove,
 			Inputs:       copyInputMap(module.Inputs),
+			InputsFile:   module.InputsFile,
+			FileContent:  module.FileContent,
 		})
 	}
 	return copiedModules

@@ -207,7 +207,7 @@ During merging, step name and workspace are used for identifying parent steps, m
     * http_username - username for external repository authentication
     * http_password - password for external repository authentication
     * remove - whether to remove the module during merge or not, default **false**
-    * inputs - map of inputs for the module, string values need to be quoted
+    * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the ./config/<stepName> directory with a name <moduleName>.yaml.
   * provider - provider values to add
     * inputs - variables for provider tf file
     * aws - aws provider default and ignore tags to add
