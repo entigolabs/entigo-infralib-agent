@@ -29,13 +29,15 @@ func GetAwsPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(configFile string, codeCommit model.Bucket) model.Config {
+func GetConfig(configFile string, bucket model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
-		PutConfig(codeCommit, config)
+		PutConfig(bucket, config)
+		AddModuleInputFiles(&config, os.ReadFile)
+		PutModuleInputFiles(bucket, config.Steps)
 	} else {
-		config = GetRemoteConfig(codeCommit)
+		config = GetRemoteConfig(bucket)
 	}
 	if config.Source == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
@@ -73,19 +75,35 @@ func GetLocalConfig(configFile string) model.Config {
 	return config
 }
 
-func PutConfig(codeCommit model.Bucket, config model.Config) {
+func PutConfig(bucket model.Bucket, config model.Config) {
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
 		common.Logger.Fatalf("Failed to marshal config: %s", err)
 	}
-	err = codeCommit.PutFile("config.yaml", bytes)
+	err = bucket.PutFile("config.yaml", bytes)
 	if err != nil {
 		common.Logger.Fatalf("Failed to put config: %s", err)
 	}
 }
 
-func GetRemoteConfig(codeCommit model.Bucket) model.Config {
-	bytes, err := codeCommit.GetFile("config.yaml")
+func PutModuleInputFiles(bucket model.Bucket, steps []model.Step) {
+	for _, step := range steps {
+		for _, module := range step.Modules {
+			if module.InputsFile == "" {
+				continue
+			}
+			err := bucket.PutFile(module.InputsFile, module.FileContent)
+			if err != nil {
+				common.Logger.Fatalf("Failed to put module %s inputs file: %s", module.Name, err)
+			}
+			module.InputsFile = ""
+			module.FileContent = nil
+		}
+	}
+}
+
+func GetRemoteConfig(bucket model.Bucket) model.Config {
+	bytes, err := bucket.GetFile("config.yaml")
 	if err != nil {
 		common.Logger.Fatalf("Failed to get config: %s", err)
 	}
@@ -97,7 +115,54 @@ func GetRemoteConfig(codeCommit model.Bucket) model.Config {
 	if err != nil {
 		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
 	}
+	AddModuleInputFiles(&config, bucket.GetFile)
 	return config
+}
+
+func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, error)) {
+	if config.Steps == nil {
+		return
+	}
+	for _, step := range config.Steps {
+		if step.Modules == nil {
+			continue
+		}
+		if step.Name == "" {
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
+		}
+		for i := range step.Modules {
+			module := &step.Modules[i]
+			if module.Name == "" {
+				common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", step.Name)})
+			}
+			processModuleInputs(step.Name, module, readFile)
+		}
+	}
+}
+
+func processModuleInputs(stepName string, module *model.Module, readFile func(string) ([]byte, error)) {
+	yamlFile := fmt.Sprintf("config/%s/%s.yaml", stepName, module.Name)
+	yamlBytes, yamlErr := readFile(yamlFile)
+	if module.Inputs != nil {
+		if yamlErr == nil && yamlBytes != nil {
+			common.PrintWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile))
+		}
+		return
+	}
+	if yamlErr != nil {
+		common.PrintWarning(fmt.Sprintf("module %s/%s has no inputs and failed to read input file", stepName, module.Name))
+		return
+	}
+	if yamlBytes == nil {
+		return
+	}
+	module.InputsFile = yamlFile
+	module.FileContent = yamlBytes
+	err := yaml.Unmarshal(yamlBytes, &module.Inputs)
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to unmarshal input file %s: %v",
+			yamlFile, err)})
+	}
 }
 
 func ValidateConfig(config model.Config, state *model.State) {
@@ -161,7 +226,7 @@ func validateConfigModules(step model.Step, state *model.State, stepVersion stri
 		moduleVersionString := module.Version
 		if util.IsClientModule(module) {
 			if moduleVersionString == "" {
-				common.Logger.Fatalf("module version is not set for client module %s in step %s\n", module.Name, step.Name)
+				common.Logger.Fatalf("module version is not set for client module %s in step %s", module.Name, step.Name)
 			}
 			continue
 		}
@@ -173,14 +238,14 @@ func validateConfigModules(step model.Step, state *model.State, stepVersion stri
 		}
 		moduleVersion, err := version.NewVersion(moduleVersionString)
 		if err != nil {
-			common.Logger.Fatalf("failed to parse module version %s for module %s: %s\n", module.Version, module.Name, err)
+			common.Logger.Fatalf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
 		}
 		stateModuleVersion, err := version.NewVersion(stateModule.Version)
 		if err != nil {
-			common.Logger.Fatalf("failed to parse state module version %s for module %s: %s\n", stateModule.Version, module.Name, err)
+			common.Logger.Fatalf("failed to parse state module version %s for module %s: %s", stateModule.Version, module.Name, err)
 		}
 		if moduleVersion.LessThan(stateModuleVersion) {
-			common.Logger.Fatalf("config module %s version %s is less than state version %s\n", module.Name,
+			common.Logger.Fatalf("config module %s version %s is less than state version %s", module.Name,
 				moduleVersionString, stateModule.Version)
 		}
 	}
@@ -374,7 +439,7 @@ func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result 
 			continue
 		}
 		if patchStep.Remove {
-			common.PrintWarning(fmt.Sprintf("unable to remove the step %s because it does not exist in base config\n", patchStep.Name))
+			common.PrintWarning(fmt.Sprintf("unable to remove the step %s because it does not exist in base config", patchStep.Name))
 			continue
 		} else if patchStep.Before != "" {
 			index, referencedStep := findStep(model.Step{Name: patchStep.Before, Workspace: patchStep.Workspace}, result)
@@ -455,7 +520,7 @@ func addNewPatchModules(sourceModules []model.Module, patchModules []model.Modul
 		}
 		if !found {
 			if patchModule.Remove {
-				common.Logger.Printf("unable to remove the module %s because it does not exist in base config\n", patchModule.Name)
+				common.Logger.Printf("unable to remove the module %s because it does not exist in base config", patchModule.Name)
 				continue
 			}
 			result = append(result, patchModule)

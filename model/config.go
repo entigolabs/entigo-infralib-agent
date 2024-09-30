@@ -92,6 +92,8 @@ type Module struct {
 	Version      string                 `yaml:"version,omitempty"`
 	Remove       bool                   `yaml:"remove,omitempty" fake:"skip"`
 	Inputs       map[string]interface{} `yaml:"inputs,omitempty" fakesize:"2,5"`
+	InputsFile   string                 `yaml:"-"`
+	FileContent  []byte                 `yaml:"-"`
 }
 
 type StepType string
