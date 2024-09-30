@@ -745,7 +745,6 @@ func getEnvironmentVariablesList(command model.ActionCommand, stepName string, s
 	var envVars []string
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"WORKSPACE\",\"value\":\"%s\"}", step.Workspace))
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"KUBERNETES_CLUSTER_NAME\",\"value\":\"%s\"}", step.KubernetesClusterName))

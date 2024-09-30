@@ -17,8 +17,7 @@ func TestMergeConfig(t *testing.T) {
 		t.Fatalf("Failed to generate fake base config: %v", err)
 	}
 	baseConfig.Steps = append(baseConfig.Steps, model.Step{
-		Name:      "remove-this-baseStep",
-		Workspace: "remove",
+		Name: "remove-this-baseStep",
 	})
 
 	var patchConfig model.Config
@@ -27,9 +26,8 @@ func TestMergeConfig(t *testing.T) {
 		t.Fatalf("Failed to generate fake patch config: %v", err)
 	}
 	patchConfig.Steps = append(patchConfig.Steps, model.Step{
-		Name:      "remove-this-baseStep",
-		Workspace: "remove",
-		Remove:    true,
+		Name:   "remove-this-baseStep",
+		Remove: true,
 	})
 
 	var baseStep model.Step
@@ -76,7 +74,6 @@ func copyStep(step model.Step) model.Step {
 	return model.Step{
 		Name:                  step.Name,
 		Type:                  step.Type,
-		Workspace:             step.Workspace,
 		Before:                step.Before,
 		Approve:               step.Approve,
 		Remove:                step.Remove,

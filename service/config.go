@@ -166,18 +166,16 @@ func processModuleInputs(stepName string, module *model.Module, readFile func(st
 }
 
 func ValidateConfig(config model.Config, state *model.State) {
-	stepWorkspaces := model.NewSet[string]()
+	stepNames := model.NewSet[string]()
 	if config.Prefix == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
 	for _, step := range config.Steps {
 		validateStep(step, config.Steps)
-		stepWorkspace := fmt.Sprintf("%s-%s", step.Name, step.Workspace)
-		if stepWorkspaces.Contains(stepWorkspace) {
-			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace combination %s is not unique",
-				stepWorkspace)})
+		if stepNames.Contains(step.Name) {
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name %s is not unique", step.Name)})
 		}
-		stepWorkspaces.Add(stepWorkspace)
+		stepNames.Add(step.Name)
 		stepVersion := step.Version
 		if stepVersion == "" {
 			stepVersion = config.Version
@@ -190,33 +188,30 @@ func validateStep(step model.Step, steps []model.Step) {
 	if step.Name == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
 	}
-	if step.Workspace == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace is not set for step %s", step.Name)})
-	}
 	if step.Type == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s-%s", step.Name, step.Workspace)})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s", step.Name)})
 	}
 	if step.VpcId != "" && step.VpcSubnetIds == "" {
-		common.Logger.Fatalf("VPC ID is set for step %s-%s but subnet IDs are not", step.Name, step.Workspace)
+		common.Logger.Fatalf("VPC ID is set for step %s but subnet IDs are not", step.Name)
 	}
 	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
-		common.Logger.Fatalf("VPC ID is not set for step %s-%s", step.Name, step.Workspace)
+		common.Logger.Fatalf("VPC ID is not set for step %s", step.Name)
 	}
 	if step.Type == model.StepTypeTerraformCustom && step.Approve != "" && step.Approve != model.ApproveAlways && step.Approve != model.ApproveNever {
-		common.Logger.Fatalf("custom terraform step %s-%s must have approve 'always' or 'never'", step.Name, step.Workspace)
+		common.Logger.Fatalf("custom terraform step %s must have approve 'always' or 'never'", step.Name)
 	}
 	if step.Before != "" {
-		_, referencedStep := findStep(model.Step{Name: step.Before, Workspace: step.Workspace}, steps)
+		_, referencedStep := findStep(step.Before, steps)
 		if referencedStep == nil {
-			common.Logger.Fatalf("before step %s does not exist for step %s-%s", step.Before, step.Name, step.Workspace)
+			common.Logger.Fatalf("before step %s does not exist for step %s", step.Before, step.Name)
 		} else if referencedStep.Remove {
-			common.Logger.Fatalf("before step %s is marked for removal for step %s-%s", step.Before, step.Name, step.Workspace)
+			common.Logger.Fatalf("before step %s is marked for removal for step %s", step.Before, step.Name)
 		}
 	}
 }
 
 func validateConfigModules(step model.Step, state *model.State, stepVersion string) {
-	stepState := GetStepState(state, step)
+	stepState := GetStepState(state, step.Name)
 	for _, module := range step.Modules {
 		validateModule(module, step.Name)
 		if stepState == nil {
@@ -260,12 +255,12 @@ func validateModule(module model.Module, stepName string) {
 	}
 }
 
-func GetStepState(state *model.State, step model.Step) *model.StateStep {
+func GetStepState(state *model.State, stepName string) *model.StateStep {
 	if state == nil {
 		return nil
 	}
 	for _, stateStep := range state.Steps {
-		if stateStep.Name == step.Name && stateStep.Workspace == step.Workspace {
+		if stateStep.Name == stepName {
 			return stateStep
 		}
 	}
@@ -298,9 +293,8 @@ func createState(config model.Config, state *model.State) {
 			modules = append(modules, createStateModule(module))
 		}
 		steps = append(steps, &model.StateStep{
-			Name:      step.Name,
-			Workspace: step.Workspace,
-			Modules:   modules,
+			Name:    step.Name,
+			Modules: modules,
 		})
 	}
 	state.Steps = steps
@@ -319,12 +313,11 @@ func createStateModule(module model.Module) *model.StateModule {
 
 func addNewSteps(config model.Config, state *model.State) {
 	for _, step := range config.Steps {
-		stepState := GetStepState(state, step)
+		stepState := GetStepState(state, step.Name)
 		if stepState == nil {
 			stepState = &model.StateStep{
-				Name:      step.Name,
-				Workspace: step.Workspace,
-				Modules:   make([]*model.StateModule, 0),
+				Name:    step.Name,
+				Modules: make([]*model.StateModule, 0),
 			}
 			state.Steps = append(state.Steps, stepState)
 		}
@@ -342,7 +335,7 @@ func removeUnusedSteps(config model.Config, state *model.State) {
 		stepState := state.Steps[i]
 		stepFound := false
 		for _, step := range config.Steps {
-			if stepState.Name == step.Name && stepState.Workspace == step.Workspace {
+			if stepState.Name == step.Name {
 				stepFound = true
 				removeUnusedModules(step, stepState)
 				break
@@ -403,7 +396,7 @@ func (st stepsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.V
 		}
 		result := make([]model.Step, 0)
 		for _, step := range source {
-			patchStep := getPatchStep(step, target)
+			patchStep := getPatchStep(step.Name, target)
 			if patchStep == nil {
 				result = append(result, step)
 				continue
@@ -423,9 +416,9 @@ func (st stepsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.V
 	}
 }
 
-func getPatchStep(dstStep model.Step, patchSteps []model.Step) *model.Step {
+func getPatchStep(dstStep string, patchSteps []model.Step) *model.Step {
 	for _, step := range patchSteps {
-		if step.Name == dstStep.Name && step.Workspace == dstStep.Workspace {
+		if step.Name == dstStep {
 			return &step
 		}
 	}
@@ -434,7 +427,7 @@ func getPatchStep(dstStep model.Step, patchSteps []model.Step) *model.Step {
 
 func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result []model.Step) []model.Step {
 	for _, patchStep := range patchSteps {
-		_, sourceStep := findStep(patchStep, sourceSteps)
+		_, sourceStep := findStep(patchStep.Name, sourceSteps)
 		if sourceStep != nil {
 			continue
 		}
@@ -442,9 +435,9 @@ func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result 
 			common.PrintWarning(fmt.Sprintf("unable to remove the step %s because it does not exist in base config", patchStep.Name))
 			continue
 		} else if patchStep.Before != "" {
-			index, referencedStep := findStep(model.Step{Name: patchStep.Before, Workspace: patchStep.Workspace}, result)
+			index, referencedStep := findStep(patchStep.Before, result)
 			if referencedStep == nil {
-				common.Logger.Fatalf("before step %s does not exist for step %s-%s", patchStep.Before, patchStep.Name, patchStep.Workspace)
+				common.Logger.Fatalf("before step %s does not exist for step %s", patchStep.Before, patchStep.Name)
 			}
 			result = append(result[:index+1], result[index:]...)
 			result[index] = patchStep
@@ -455,9 +448,9 @@ func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result 
 	return result
 }
 
-func findStep(step model.Step, steps []model.Step) (int, *model.Step) {
+func findStep(stepName string, steps []model.Step) (int, *model.Step) {
 	for i, s := range steps {
-		if s.Name == step.Name && s.Workspace == step.Workspace {
+		if s.Name == stepName {
 			return i, &s
 		}
 	}

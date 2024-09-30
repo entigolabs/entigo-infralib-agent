@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const bucketFileFormat = "%s/%s.tar.gz"
+const bucketFileFormat = "%s.tar.gz"
 
 type skaffold struct {
 	APIVersion string    `json:"apiVersion"`
@@ -178,7 +178,7 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 		planCommand = model.PlanCommand
 		applyCommand = model.ApplyCommand
 	}
-	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
+	folder := fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName)
 	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
 		return nil, err
@@ -187,7 +187,7 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	if err != nil {
 		return nil, err
 	}
-	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
+	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName), tarContent)
 	if err != nil {
 		return nil, err
 	}
@@ -447,7 +447,7 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 		planCommand = model.PlanCommand
 		applyCommand = model.ApplyCommand
 	}
-	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
+	folder := fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName)
 	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
 		return err
@@ -456,7 +456,7 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 	if err != nil {
 		return err
 	}
-	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
+	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName), tarContent)
 	if err != nil {
 		return err
 	}
@@ -474,8 +474,8 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location, pipelineName),
 		ReleaseId: releaseId,
 		Release: &deploypb.Release{
-			SkaffoldConfigUri:  fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName, step.Workspace)),
-			SkaffoldConfigPath: fmt.Sprintf("%s/%s.yaml", step.Workspace, pipelineName),
+			SkaffoldConfigUri:  fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName)),
+			SkaffoldConfigPath: fmt.Sprintf("%s.yaml", pipelineName),
 		},
 	})
 	if err != nil {

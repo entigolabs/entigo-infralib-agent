@@ -450,7 +450,7 @@ func (u *updater) updateAgentCodeBuild() {
 }
 
 func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
-	stepState := GetStepState(u.state, step)
+	stepState := GetStepState(u.state, step.Name)
 	if stepState == nil {
 		return nil, fmt.Errorf("failed to get state for step %s", step.Name)
 	}
@@ -488,16 +488,15 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	}
 
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
-	projectName := fmt.Sprintf("%s-%s", stepName, step.Workspace)
 
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	err = u.resources.GetBuilder().CreateProject(projectName, repoMetadata.URL, stepName, step, imageVersion, vpcConfig)
+	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.createExecuteTerraformPipelines(projectName, stepName, step, autoApprove, repoMetadata.Name)
+	return u.createExecuteTerraformPipelines(stepName, stepName, step, autoApprove, repoMetadata.Name)
 }
 
 func getVpcConfig(step model.Step) *model.VpcConfig {
@@ -534,27 +533,26 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
-	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
 	repoMetadata, err := u.getRepoMetadata(step.Type)
 	if err != nil {
 		return err
 	}
-	err = u.resources.GetBuilder().UpdateProject(projectName, repoMetadata.URL, stepName, step, imageVersion, vpcConfig)
+	err = u.resources.GetBuilder().UpdateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, vpcConfig)
 	if err != nil {
 		return err
 	}
-	err = u.updatePipelines(projectName, step, repoMetadata.Name)
+	err = u.updatePipelines(stepName, step, repoMetadata.Name)
 	if err != nil {
 		return err
 	}
-	executionId, err := u.resources.GetPipeline().StartPipelineExecution(projectName, stepName, step, repoMetadata.Name)
+	executionId, err := u.resources.GetPipeline().StartPipelineExecution(stepName, stepName, step, repoMetadata.Name)
 	if err != nil {
-		return fmt.Errorf("failed to start pipeline %s execution: %w", projectName, err)
+		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
+	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step.Type)
 }
 
 func getAutoApprove(state *model.StateStep) bool {
@@ -737,7 +735,7 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	err = u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s/provider.tf", u.config.Prefix, step.Name, step.Workspace), provider)
+	err = u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/provider.tf", u.config.Prefix, step.Name), provider)
 	return changed, providers, err
 }
 
@@ -862,7 +860,7 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 		terraform.AddInputs(module.Inputs, moduleBody)
 	}
 	if changed {
-		err := u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s/main.tf", u.config.Prefix, step.Name, step.Workspace), file.Bytes())
+		err := u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/main.tf", u.config.Prefix, step.Name), file.Bytes())
 		if err != nil {
 			return false, nil, err
 		}
@@ -876,8 +874,8 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s/%s.yaml", u.config.Prefix, step.Name,
-		step.Workspace, module.Name), appBytes)
+	return u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/%s.yaml", u.config.Prefix, step.Name, module.Name),
+		appBytes)
 }
 
 func (u *updater) getModuleVersion(module model.Module, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version, approve model.Approve) (string, bool, error) {
@@ -938,7 +936,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 	if err != nil {
 		return err
 	}
-	workspacePath := fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace)
+	stepPath := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	for _, module := range step.Modules {
 		moduleState, err := getModuleState(stepState, module)
 		if err != nil {
@@ -950,7 +948,7 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 			moduleState.AutoApprove = false
 		}
 	}
-	workspaceExists, err := u.customCC.CheckFolderExists(workspacePath)
+	workspaceExists, err := u.customCC.CheckFolderExists(stepPath)
 	if err != nil {
 		return err
 	}
@@ -961,16 +959,16 @@ func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.S
 	if err != nil {
 		return fmt.Errorf("failed to create empty terraform provider: %w", err)
 	}
-	err = u.customCC.PutFile(fmt.Sprintf("%s/provider.tf", workspacePath), providerBytes)
+	err = u.customCC.PutFile(fmt.Sprintf("%s/provider.tf", stepPath), providerBytes)
 	if err != nil {
 		return err
 	}
 	mainBytes := terraform.GetMockTerraformMain()
-	return u.customCC.PutFile(fmt.Sprintf("%s/main.tf", workspacePath), mainBytes)
+	return u.customCC.PutFile(fmt.Sprintf("%s/main.tf", stepPath), mainBytes)
 }
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
-	folder := fmt.Sprintf("%s-%s/%s", u.config.Prefix, step.Name, step.Workspace)
+	folder := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
 	files, err := u.resources.GetBucket().ListFolderFiles(folder)
 	if err != nil {
 		return err
@@ -1051,7 +1049,7 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 			configYaml = strings.Replace(configYaml, replaceTag, configValue, 1)
 		case string(model.ReplaceTypeAgent):
 			key := replaceKey[strings.Index(replaceKey, ".")+1:]
-			agentValue, err := u.getReplacementAgentValue(step, key, release)
+			agentValue, err := u.getReplacementAgentValue(key, release)
 			if err != nil {
 				return "", fmt.Errorf("failed to get agent value %s: %s", key, err)
 			}
@@ -1063,14 +1061,14 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 	return configYaml, nil
 }
 
-func (u *updater) getReplacementAgentValue(step model.Step, key string, release *version.Version) (string, error) {
+func (u *updater) getReplacementAgentValue(key string, release *version.Version) (string, error) {
 	parts := strings.Split(key, ".")
 	if parts[0] == string(model.AgentReplaceTypeVersion) {
-		_, referencedStep := findStep(model.Step{Name: parts[1], Workspace: step.Workspace}, u.config.Steps)
+		_, referencedStep := findStep(parts[1], u.config.Steps)
 		if referencedStep == nil {
 			return "", fmt.Errorf("failed to find step %s", parts[1])
 		}
-		stepState := GetStepState(u.state, *referencedStep)
+		stepState := GetStepState(u.state, referencedStep.Name)
 		stepVersion, err := u.getStepSemVer(*referencedStep)
 		if err != nil {
 			return "", fmt.Errorf("failed to get step %s semver: %s", parts[1], err)
@@ -1095,7 +1093,7 @@ func (u *updater) getSSMParameter(prefix string, step model.Step, replaceKey str
 	}
 	re := regexp.MustCompile(parameterIndexRegex)
 	match := re.FindStringSubmatch(parts[3])
-	parameterName := fmt.Sprintf("%s/%s-%s-%s-%s/%s", ssmPrefix, prefix, parts[1], parts[2], step.Workspace, match[1])
+	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, prefix, parts[1], parts[2], match[1])
 	return u.getSSMParameterValue(match, replaceKey, parameterName)
 }
 

@@ -70,7 +70,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 			Image:                    aws.String(image),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, step.Workspace),
+			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName),
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
@@ -97,7 +97,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	return err
 }
 
-func (b *builder) getEnvironmentVariables(projectName string, stepName string, workspace string) []types.EnvironmentVariable {
+func (b *builder) getEnvironmentVariables(projectName string, stepName string) []types.EnvironmentVariable {
 	return []types.EnvironmentVariable{{
 		Name:  aws.String("PROJECT_NAME"),
 		Value: aws.String(projectName),
@@ -110,9 +110,6 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string, w
 	}, {
 		Name:  aws.String("TF_VAR_prefix"),
 		Value: aws.String(stepName),
-	}, {
-		Name:  aws.String("WORKSPACE"),
-		Value: aws.String(workspace),
 	}}
 }
 

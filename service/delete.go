@@ -66,7 +66,7 @@ func getConfig(configFile string, codeCommit model.Bucket) model.Config {
 func (d *deleter) Delete() {
 	for i := len(d.config.Steps) - 1; i >= 0; i-- {
 		step := d.config.Steps[i]
-		projectName := fmt.Sprintf("%s-%s-%s", d.config.Prefix, step.Name, step.Workspace)
+		projectName := fmt.Sprintf("%s-%s", d.config.Prefix, step.Name)
 		err := d.resources.GetPipeline().DeletePipeline(projectName)
 		if err != nil {
 			common.PrintWarning(fmt.Sprintf("Failed to delete pipeline %s: %s", projectName, err))
@@ -82,7 +82,7 @@ func (d *deleter) Delete() {
 func (d *deleter) Destroy() {
 	for i := len(d.config.Steps) - 1; i >= 0; i-- {
 		step := d.config.Steps[i]
-		projectName := fmt.Sprintf("%s-%s-%s", d.config.Prefix, step.Name, step.Workspace)
+		projectName := fmt.Sprintf("%s-%s", d.config.Prefix, step.Name)
 		err := d.resources.GetPipeline().StartDestroyExecution(projectName)
 		if err != nil {
 			common.PrintWarning(fmt.Sprintf("Failed to start destroy execution for pipeline %s: %s", projectName, err))

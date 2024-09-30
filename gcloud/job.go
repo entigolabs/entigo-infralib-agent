@@ -67,7 +67,7 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 	} else {
 		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand}
 	}
-	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace), 0755)
+	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName), 0755)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
 	}
@@ -86,7 +86,7 @@ func (b *Builder) createJobManifest(projectName string, command model.ActionComm
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, step.Workspace, projectName, command),
+	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, projectName, command),
 		bytes, 0644)
 }
 
@@ -475,7 +475,6 @@ func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string
 		"GOOGLE_ZONE":       b.zone,
 		"COMMAND":           string(command),
 		"TF_VAR_prefix":     stepName,
-		"WORKSPACE":         step.Workspace,
 	}
 	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
 		envVars = addTerraformEnvironmentVariables(envVars, step)

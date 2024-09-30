@@ -23,7 +23,6 @@ type BaseConfig struct {
 type Step struct {
 	Name                  string   `yaml:"name" fake:"{word}"`
 	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
-	Workspace             string   `yaml:"workspace"`
 	Before                string   `yaml:"before,omitempty" fake:"skip"`
 	Approve               Approve  `yaml:"approve,omitempty"`
 	Remove                bool     `yaml:"remove,omitempty" fake:"skip"`
@@ -145,7 +144,6 @@ type StateConfig struct {
 
 type StateStep struct {
 	Name      string         `yaml:"name"`
-	Workspace string         `yaml:"workspace"`
 	AppliedAt time.Time      `yaml:"applied_at,omitempty"`
 	Modules   []*StateModule `yaml:"modules"`
 }
