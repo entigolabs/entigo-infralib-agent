@@ -19,7 +19,7 @@ docker run --pull always -it --rm -v "$(pwd)/examples/biz.yaml":"/etc/ei-agent/c
 ```
 
 ## To remove all created resources
-Run removal pipelines in reverse order as they appear in the merged configuration. Remember to remove EBS, ALB, NLB resources and Route53 records before doing that.
+Run removal pipelines in reverse order as they appear in the configuration. Remember to remove EBS, ALB, NLB resources and Route53 records before doing that.
 
 For example:
 1) Enable all the destroy pipeline transitions

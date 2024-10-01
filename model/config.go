@@ -6,26 +6,18 @@ import (
 )
 
 type Config struct {
-	BaseConfig       BaseConfig `yaml:"base_config"`
-	Prefix           string     `yaml:"prefix,omitempty" fake:"{word}"`
-	Source           string     `yaml:"source" fake:"{url}"`
-	Version          string     `yaml:"version,omitempty" fake:"{version}"`
-	AgentVersion     string     `yaml:"agent_version,omitempty" fake:"{version}"`
-	BaseImageVersion string     `yaml:"base_image_version,omitempty"`
-	Steps            []Step     `yaml:"steps,omitempty" fakesize:"1"`
-}
-
-type BaseConfig struct {
-	Version string `yaml:"version,omitempty" fake:"{version}"`
-	Profile string `yaml:"profile" fake:"{word}"`
+	Prefix           string `yaml:"prefix,omitempty" fake:"{word}"`
+	Source           string `yaml:"source" fake:"{url}"`
+	Version          string `yaml:"version,omitempty" fake:"{version}"`
+	AgentVersion     string `yaml:"agent_version,omitempty" fake:"{version}"`
+	BaseImageVersion string `yaml:"base_image_version,omitempty"`
+	Steps            []Step `yaml:"steps,omitempty" fakesize:"1"`
 }
 
 type Step struct {
 	Name                  string   `yaml:"name" fake:"{word}"`
 	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
-	Before                string   `yaml:"before,omitempty" fake:"skip"`
 	Approve               Approve  `yaml:"approve,omitempty"`
-	Remove                bool     `yaml:"remove,omitempty" fake:"skip"`
 	Version               string   `yaml:"version,omitempty" fake:"{version}"`
 	BaseImageVersion      string   `yaml:"base_image_version,omitempty" fake:"{version}"`
 	VpcId                 string   `yaml:"vpc_id,omitempty"`
@@ -95,7 +87,6 @@ type Module struct {
 	HttpUsername string                 `yaml:"http_username,omitempty"`
 	HttpPassword string                 `yaml:"http_password,omitempty"`
 	Version      string                 `yaml:"version,omitempty"`
-	Remove       bool                   `yaml:"remove,omitempty" fake:"skip"`
 	Inputs       map[string]interface{} `yaml:"inputs,omitempty" fakesize:"2,5"`
 	InputsFile   string                 `yaml:"-"`
 	FileContent  []byte                 `yaml:"-"`

@@ -13,7 +13,6 @@ Executes CodePipelines or Cloud Deploy DeliveryPipelines which apply the specifi
     * [Bootstrap](#bootstrap)
     * [Run](#run)
     * [Delete](#delete)
-    * [Merge](#merge)
 * [Config](#config)
   * [Overriding config values](#overriding-config-values)
   * [Including terraform files in steps](#including-terraform-files-in-steps)
@@ -113,27 +112,11 @@ Example
 bin/ei-agent delete --config=config.yaml --aws-prefix=entigo-infralib
 ```
 
-### merge
-
-Merges given base and patch config files and validates the result. Merged config is printed to stdout.
-
-OPTIONS:
-* base-config - base config file path and name [$BASE_CONFIG]
-* config - patch config file path and name [$CONFIG]
-
-Example
-```bash
-bin/ei-agent merge --base-config=base.yaml --config=patch.yaml
-```
-
 ## Config
 
 Config is provided with a yaml file:
 
 ```yaml
-base_config:
-  version: stable | semver
-  profile: string
 prefix: string
 source: https://github.com/entigolabs/entigo-infralib-release
 version: stable | semver
@@ -142,11 +125,9 @@ base_image_version: stable | semver
 steps:
   - name: string
     type: terraform | argocd-apps | terraform-custom
-    before: string
     approve: minor | major | never | always
     version: stable | semver
     base_image_version: stable | semver
-    remove: bool
     vpc_id: string
     vpc_subnet_ids: multiline string
     vpc_security_group_ids: multiline string
@@ -158,7 +139,6 @@ steps:
         version: stable | semver
         http_username: string
         http_password: string
-        remove: bool
         inputs: map[string]interface{}
     provider:
       inputs: map[string]string
@@ -177,9 +157,6 @@ Complex values need to be as multiline strings with | symbol.
 Config version is overwritten by step version which in turn is overwritten by module version. Default version is **stable**.
 During merging, step name is used for identifying parent steps, modules are identified by name.
 
-* base_config - base config, pulled from source
-  * version - highest version of Entigo Infralib base config
-  * profile - name of the config file without a suffix, empty string means no base config is used
 * prefix - prefix used for AWS/GCloud resources, CodeCommit folders/files and terraform resources
 * source - source repository for Entigo Infralib terraform modules
 * version - version of Entigo Infralib terraform modules to use
@@ -188,11 +165,9 @@ During merging, step name is used for identifying parent steps, modules are iden
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
-  * before - for patch config, name of the step that this step should be executed before
   * approve - approval type for the step, only applies when terraform needs to change resources, based on semver. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically. Custom terraform steps only support values `always` and `never`, default **always**
   * version - version of Entigo Infralib terraform modules to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
-  * remove - whether to remove the step during merge or not, default **false**
   * vpc_id - vpc id for code build
   * vpc_subnet_ids - vpc subnet ids for code build
   * vpc_security_group_ids - vpc security group ids for code build
@@ -205,7 +180,6 @@ During merging, step name is used for identifying parent steps, modules are iden
     * version - version of the module to use
     * http_username - username for external repository authentication
     * http_password - password for external repository authentication
-    * remove - whether to remove the module during merge or not, default **false**
     * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the `./config/<stepName>` directory with a name `<moduleName>.yaml`.
   * provider - provider values to add
     * inputs - variables for provider tf file

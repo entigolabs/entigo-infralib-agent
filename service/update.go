@@ -60,16 +60,15 @@ func NewUpdater(flags *common.Flags) Updater {
 		common.Logger.Fatalf(fmt.Sprintf("%s", err))
 	}
 	return &updater{
-		config:                 config,
-		patchConfig:            config,
-		provider:               provider,
-		resources:              resources,
-		github:                 githubClient,
-		terraform:              terraform.NewTerraform(githubClient),
-		state:                  latestState,
-		stableRelease:          stableRelease,
-		baseConfigReleaseLimit: getBaseConfigReleaseLimit(config, stableRelease),
-		allowParallel:          flags.AllowParallel,
+		config:        config,
+		patchConfig:   config,
+		provider:      provider,
+		resources:     resources,
+		github:        githubClient,
+		terraform:     terraform.NewTerraform(githubClient),
+		state:         latestState,
+		stableRelease: stableRelease,
+		allowParallel: flags.AllowParallel,
 	}
 }
 
@@ -83,35 +82,6 @@ func getLatestRelease(githubClient github.Github) *version.Version {
 		common.Logger.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
 	}
 	return latestSemver
-}
-
-func getBaseConfigReleaseLimit(config model.Config, stableRelease *version.Version) *version.Version {
-	releaseLimit := config.BaseConfig.Version
-	if releaseLimit == "" || releaseLimit == StableVersion {
-		return stableRelease
-	}
-	limitSemver, err := version.NewVersion(releaseLimit)
-	if err != nil {
-		common.Logger.Fatalf("Failed to parse base config release version %s: %s", releaseLimit, err)
-	}
-	return limitSemver
-}
-
-func (u *updater) mergeBaseConfig(release *version.Version) {
-	if release.GreaterThan(u.baseConfigReleaseLimit) {
-		return
-	}
-	config := MergeBaseConfig(u.github, release, u.patchConfig)
-	bytes, err := yaml.Marshal(config)
-	if err != nil {
-		common.Logger.Fatalf("Failed to marshal config: %s", err)
-	}
-	err = u.resources.GetBucket().PutFile("merged_config.yaml", bytes)
-	if err != nil {
-		common.Logger.Fatalf("Failed to put merged config file: %s", err)
-	}
-	u.config = config
-	u.state.BaseConfig.Version = release
 }
 
 func getLatestState(codeCommit model.Bucket) (*model.State, error) {
@@ -150,9 +120,6 @@ func (u *updater) ProcessSteps() {
 	}
 	firstRunDone := make(map[string]bool)
 	for _, release := range releases {
-		if u.config.BaseConfig.Profile != "" {
-			u.mergeBaseConfig(release)
-		}
 		ValidateConfig(u.config, u.state)
 		updateState(u.config, u.state)
 		if u.releaseNewerThanConfigVersions(release) {
@@ -320,9 +287,6 @@ func (u *updater) hasChanged(step model.Step, providers []string) bool {
 	if u.previousChecksums == nil || u.currentChecksums == nil {
 		return true
 	}
-	if u.hasProfileChanged() {
-		return true
-	}
 	changed := u.getChangedProviders(providers)
 	if len(changed) > 0 {
 		common.Logger.Printf("Step %s providers have changed: %s\n", step.Name,
@@ -336,23 +300,6 @@ func (u *updater) hasChanged(step model.Step, providers []string) bool {
 		return true
 	}
 	return false
-}
-
-func (u *updater) hasProfileChanged() bool {
-	profile := u.config.BaseConfig.Profile
-	if profile == "" {
-		return false
-	}
-	profileKey := fmt.Sprintf("profiles/%s.yaml", profile)
-	previousChecksum, ok := u.previousChecksums[profileKey]
-	if !ok {
-		return true
-	}
-	currentChecksum, ok := u.currentChecksums[profileKey]
-	if !ok {
-		return true
-	}
-	return previousChecksum != currentChecksum
 }
 
 func (u *updater) getChangedProviders(providers []string) []string {

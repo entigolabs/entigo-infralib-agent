@@ -26,8 +26,6 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 
 func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
 	switch cmd {
-	case common.MergeCommand:
-		baseFlags = append(baseFlags, &baseConfigFlag)
 	case common.DeleteCommand:
 		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag)
 	case common.RunCommand:

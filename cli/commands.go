@@ -10,7 +10,6 @@ func cliCommands() []*cli.Command {
 		&runCommand,
 		&bootstrapCommand,
 		&deleteCommand,
-		&mergeCommand,
 	}
 }
 
@@ -36,12 +35,4 @@ var deleteCommand = cli.Command{
 	Usage:   "delete agent resources",
 	Action:  action(common.DeleteCommand),
 	Flags:   cliFlags(common.DeleteCommand),
-}
-
-var mergeCommand = cli.Command{
-	Name:    "merge",
-	Aliases: []string{"mg"},
-	Usage:   "dry merge base and patch configs",
-	Action:  action(common.MergeCommand),
-	Flags:   cliFlags(common.MergeCommand),
 }

@@ -43,9 +43,6 @@ func NewDeleter(flags *common.Flags) Deleter {
 	}
 	githubClient := github.NewGithub(config.Source)
 	stableRelease := getLatestRelease(githubClient)
-	if config.BaseConfig.Profile != "" && config.Source != "" {
-		config = MergeBaseConfig(githubClient, stableRelease, config)
-	}
 	return &deleter{
 		config:                 config,
 		provider:               provider,

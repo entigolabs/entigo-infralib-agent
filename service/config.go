@@ -1,11 +1,9 @@
 package service
 
 import (
-	"dario.cat/mergo"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
@@ -13,7 +11,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
 	"os"
-	"reflect"
 	"strings"
 )
 
@@ -55,20 +52,6 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 		config.Version = StableVersion
 	}
 	return config
-}
-
-func MergeBaseConfig(github github.Github, release *version.Version, patchConfig model.Config) model.Config {
-	rawBaseConfig, err := github.GetRawFileContent(fmt.Sprintf("profiles/%s.yaml", patchConfig.BaseConfig.Profile),
-		release.Original())
-	if err != nil {
-		common.Logger.Fatalf("Failed to get base config: %s", err)
-	}
-	var baseConfig model.Config
-	err = yaml.Unmarshal(rawBaseConfig, &baseConfig)
-	if err != nil {
-		common.Logger.Fatalf("Failed to unmarshal base config: %s", err)
-	}
-	return MergeConfig(patchConfig, baseConfig)
 }
 
 func GetLocalConfig(configFile string) model.Config {
@@ -303,7 +286,7 @@ func ValidateConfig(config model.Config, state *model.State) {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
 	for _, step := range config.Steps {
-		validateStep(step, config.Steps)
+		validateStep(step)
 		if stepNames.Contains(step.Name) {
 			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name %s is not unique", step.Name)})
 		}
@@ -316,7 +299,7 @@ func ValidateConfig(config model.Config, state *model.State) {
 	}
 }
 
-func validateStep(step model.Step, steps []model.Step) {
+func validateStep(step model.Step) {
 	if step.Name == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
 	}
@@ -331,14 +314,6 @@ func validateStep(step model.Step, steps []model.Step) {
 	}
 	if step.Type == model.StepTypeTerraformCustom && step.Approve != "" && step.Approve != model.ApproveAlways && step.Approve != model.ApproveNever {
 		common.Logger.Fatalf("custom terraform step %s must have approve 'always' or 'never'", step.Name)
-	}
-	if step.Before != "" {
-		_, referencedStep := findStep(step.Before, steps)
-		if referencedStep == nil {
-			common.Logger.Fatalf("before step %s does not exist for step %s", step.Before, step.Name)
-		} else if referencedStep.Remove {
-			common.Logger.Fatalf("before step %s is marked for removal for step %s", step.Before, step.Name)
-		}
 	}
 }
 
@@ -504,82 +479,6 @@ func hasCustomTFStep(steps []model.Step) bool {
 	return false
 }
 
-func MergeConfig(patchConfig model.Config, baseConfig model.Config) model.Config {
-	err := mergo.Merge(&baseConfig, patchConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	return baseConfig
-}
-
-type stepsTransformer struct {
-}
-
-func (st stepsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ != reflect.TypeOf([]model.Step{}) {
-		return nil
-	}
-	return func(dst, src reflect.Value) error {
-		target := src.Interface().([]model.Step)
-		source := dst.Interface().([]model.Step)
-		if len(target) == 0 {
-			dst.Set(reflect.ValueOf(source))
-			return nil
-		}
-		result := make([]model.Step, 0)
-		for _, step := range source {
-			patchStep := getPatchStep(step.Name, target)
-			if patchStep == nil {
-				result = append(result, step)
-				continue
-			}
-			if patchStep.Remove {
-				continue
-			}
-			err := mergo.Merge(&step, *patchStep, mergo.WithOverride, mergo.WithTransformers(modulesTransformer{}))
-			if err != nil {
-				return err
-			}
-			result = append(result, step)
-		}
-		result = addNewPatchSteps(source, target, result)
-		dst.Set(reflect.ValueOf(result))
-		return nil
-	}
-}
-
-func getPatchStep(dstStep string, patchSteps []model.Step) *model.Step {
-	for _, step := range patchSteps {
-		if step.Name == dstStep {
-			return &step
-		}
-	}
-	return nil
-}
-
-func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result []model.Step) []model.Step {
-	for _, patchStep := range patchSteps {
-		_, sourceStep := findStep(patchStep.Name, sourceSteps)
-		if sourceStep != nil {
-			continue
-		}
-		if patchStep.Remove {
-			common.PrintWarning(fmt.Sprintf("unable to remove the step %s because it does not exist in base config", patchStep.Name))
-			continue
-		} else if patchStep.Before != "" {
-			index, referencedStep := findStep(patchStep.Before, result)
-			if referencedStep == nil {
-				common.Logger.Fatalf("before step %s does not exist for step %s", patchStep.Before, patchStep.Name)
-			}
-			result = append(result[:index+1], result[index:]...)
-			result[index] = patchStep
-		} else {
-			result = append(result, patchStep)
-		}
-	}
-	return result
-}
-
 func findStep(stepName string, steps []model.Step) (int, *model.Step) {
 	for i, s := range steps {
 		if s.Name == stepName {
@@ -589,42 +488,6 @@ func findStep(stepName string, steps []model.Step) (int, *model.Step) {
 	return 0, nil
 }
 
-type modulesTransformer struct {
-}
-
-func (mt modulesTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ != reflect.TypeOf([]model.Module{}) {
-		return nil
-	}
-	return func(dst, src reflect.Value) error {
-		target := src.Interface().([]model.Module)
-		source := dst.Interface().([]model.Module)
-		if len(target) == 0 {
-			dst.Set(reflect.ValueOf(source))
-			return nil
-		}
-		result := make([]model.Module, 0)
-		for _, module := range source {
-			patchModule := getModule(module.Name, target)
-			if patchModule == nil {
-				result = append(result, module)
-				continue
-			}
-			if patchModule.Remove {
-				continue
-			}
-			err := mergo.Merge(&module, *patchModule, mergo.WithOverride, mergo.WithTransformers(inputsTransformer{}))
-			if err != nil {
-				return err
-			}
-			result = append(result, module)
-		}
-		result = addNewPatchModules(source, target, result)
-		dst.Set(reflect.ValueOf(result))
-		return nil
-	}
-}
-
 func getModule(moduleName string, modules []model.Module) *model.Module {
 	for _, module := range modules {
 		if module.Name == moduleName {
@@ -632,50 +495,4 @@ func getModule(moduleName string, modules []model.Module) *model.Module {
 		}
 	}
 	return nil
-}
-
-func addNewPatchModules(sourceModules []model.Module, patchModules []model.Module, result []model.Module) []model.Module {
-	for _, patchModule := range patchModules {
-		found := false
-		for _, sourceModule := range sourceModules {
-			if patchModule.Name == sourceModule.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if patchModule.Remove {
-				common.Logger.Printf("unable to remove the module %s because it does not exist in base config", patchModule.Name)
-				continue
-			}
-			result = append(result, patchModule)
-		}
-	}
-	return result
-}
-
-type inputsTransformer struct {
-}
-
-func (it inputsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ != reflect.TypeOf(map[string]interface{}{}) {
-		return nil
-	}
-	return func(dst, src reflect.Value) error {
-		target := src.Interface().(map[string]interface{})
-		source := dst.Interface().(map[string]interface{})
-		if len(target) == 0 {
-			dst.Set(reflect.ValueOf(source))
-			return nil
-		}
-		if len(source) == 0 {
-			dst.Set(reflect.ValueOf(target))
-			return nil
-		}
-		for key, value := range target {
-			source[key] = value
-		}
-		dst.Set(reflect.ValueOf(source))
-		return nil
-	}
 }

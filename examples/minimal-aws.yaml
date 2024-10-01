@@ -1,5 +1,3 @@
-base_config:
-  profile: minimal
 prefix: agent
 source: https://github.com/entigolabs/entigo-infralib-release
 version: stable
