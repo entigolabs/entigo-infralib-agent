@@ -98,8 +98,8 @@ func (a *awsService) SetupResources() model.Resources {
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
 	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
-	codeBuild := NewBuilder(a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
+	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
+	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
@@ -107,7 +107,7 @@ func (a *awsService) SetupResources() model.Resources {
 			Bucket:       s3,
 			Pipeline:     codePipeline,
 			CodeBuild:    codeBuild,
-			SSM:          NewSSM(a.awsConfig),
+			SSM:          NewSSM(a.ctx, a.awsConfig),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 		},
@@ -125,12 +125,12 @@ func (a *awsService) GetResources() model.Resources {
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
-			CodeBuild:    NewBuilder(a.awsConfig, "", "", "", ""),
-			Pipeline:     NewPipeline(a.awsConfig, "", nil, "", ""),
+			CodeBuild:    NewBuilder(a.ctx, a.awsConfig, "", "", "", ""),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", nil, "", ""),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 		},
-		IAM:       NewIAM(a.awsConfig, a.accountId),
+		IAM:       NewIAM(a.ctx, a.awsConfig, a.accountId),
 		Region:    a.awsConfig.Region,
 		AccountId: a.accountId,
 	}
@@ -147,7 +147,7 @@ func (a *awsService) DeleteResources(deleteBucket bool, hasCustomTFStep bool) {
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete agent project: %s", err))
 	}
-	err = DeleteDynamoDBTable(a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	err = DeleteDynamoDBTable(a.ctx, a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete DynamoDB table: %s", err))
 	}
@@ -204,7 +204,7 @@ func (a *awsService) SetupCustomBucket() (model.Bucket, error) {
 }
 
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
-	dynamoDBTable, err := CreateDynamoDBTable(a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	dynamoDBTable, err := CreateDynamoDBTable(a.ctx, a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
 		common.Logger.Fatalf("Failed to create DynamoDB table: %s", err)
 	}
@@ -212,7 +212,7 @@ func (a *awsService) createDynamoDBTable() *types.TableDescription {
 }
 
 func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
-	cloudwatch := NewCloudWatch(a.awsConfig)
+	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
 	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
 	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
 	if err != nil {
@@ -227,7 +227,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 }
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
-	iam := NewIAM(a.awsConfig, a.accountId)
+	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
 	buildRoleArn, buildRoleCreated := a.createBuildRole(iam, logGroupArn, s3Arn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
@@ -321,7 +321,7 @@ func (a *awsService) getBuildRoleName() string {
 }
 
 func (a *awsService) deleteCloudWatchLogs() {
-	cloudwatch := NewCloudWatch(a.awsConfig)
+	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
 	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
 	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
 	err := cloudwatch.DeleteLogStream(logGroup, logStream)

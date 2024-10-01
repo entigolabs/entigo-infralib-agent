@@ -1204,7 +1204,7 @@ func (u *updater) updateIncludedStepFiles(step model.Step) error {
 			continue
 		}
 		if !files.Contains(file) {
-			err = u.resources.GetBucket().DeleteFile(file) // TODO This also deletes terraform source_out files
+			err = u.resources.GetBucket().DeleteFile(file)
 			if err != nil {
 				return err
 			}

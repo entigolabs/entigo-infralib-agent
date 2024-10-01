@@ -37,6 +37,7 @@ type Artifacts struct {
 }
 
 type builder struct {
+	ctx          context.Context
 	codeBuild    *codebuild.Client
 	region       *string
 	buildRoleArn string
@@ -46,8 +47,9 @@ type builder struct {
 	buildSpec    *string
 }
 
-func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string) model.Builder {
+func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string) model.Builder {
 	return &builder{
+		ctx:          ctx,
 		codeBuild:    codebuild.NewFromConfig(awsConfig),
 		region:       &awsConfig.Region,
 		buildRoleArn: buildRoleArn,
@@ -60,7 +62,7 @@ func NewBuilder(awsConfig aws.Config, buildRoleArn string, logGroup string, logS
 
 func (b *builder) CreateProject(projectName string, repoURL string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
 	image := fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)
-	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
+	_, err := b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
 		ServiceRole:      aws.String(b.buildRoleArn),
@@ -115,7 +117,7 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string) [
 
 func (b *builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
 	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
-	_, err := b.codeBuild.CreateProject(context.Background(), &codebuild.CreateProjectInput{
+	_, err := b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
 		ServiceRole:      aws.String(b.buildRoleArn),
@@ -170,7 +172,7 @@ func (b *builder) GetProject(projectName string) (*model.Project, error) {
 }
 
 func (b *builder) getProject(projectName string) (*types.Project, error) {
-	projects, err := b.codeBuild.BatchGetProjects(context.Background(), &codebuild.BatchGetProjectsInput{
+	projects, err := b.codeBuild.BatchGetProjects(b.ctx, &codebuild.BatchGetProjectsInput{
 		Names: []string{projectName},
 	})
 	if err != nil {
@@ -198,7 +200,7 @@ func (b *builder) UpdateAgentProject(projectName string, version string, awsPref
 
 	project.Environment.Image = aws.String(image)
 	project.Environment.EnvironmentVariables = getAgentEnvVars(awsPrefix)
-	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
+	_, err = b.codeBuild.UpdateProject(b.ctx, &codebuild.UpdateProjectInput{
 		Name:        aws.String(projectName),
 		Environment: project.Environment,
 	})
@@ -235,7 +237,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		project.Environment.Image = aws.String(image)
 	}
 
-	_, err = b.codeBuild.UpdateProject(context.Background(), &codebuild.UpdateProjectInput{
+	_, err = b.codeBuild.UpdateProject(b.ctx, &codebuild.UpdateProjectInput{
 		Name:        aws.String(projectName),
 		VpcConfig:   awsVpcConfig,
 		Environment: project.Environment,
@@ -255,7 +257,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 }
 
 func (b *builder) DeleteProject(projectName string, _ model.Step) error {
-	_, err := b.codeBuild.DeleteProject(context.Background(), &codebuild.DeleteProjectInput{
+	_, err := b.codeBuild.DeleteProject(b.ctx, &codebuild.DeleteProjectInput{
 		Name: aws.String(projectName),
 	})
 	if err != nil {

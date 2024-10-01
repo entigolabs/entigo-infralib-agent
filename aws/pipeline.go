@@ -29,6 +29,7 @@ const destroyName = "Destroy"
 const applyDestroyName = "ApplyDestroy"
 
 type Pipeline struct {
+	ctx          context.Context
 	codePipeline *codepipeline.Client
 	roleArn      string
 	cloudWatch   CloudWatch
@@ -36,8 +37,9 @@ type Pipeline struct {
 	logStream    string
 }
 
-func NewPipeline(awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
 	return &Pipeline{
+		ctx:          ctx,
 		codePipeline: codepipeline.NewFromConfig(awsConfig),
 		roleArn:      roleArn,
 		cloudWatch:   cloudWatch,
@@ -64,7 +66,7 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 }
 
 func (p *Pipeline) deletePipeline(projectName string) error {
-	_, err := p.codePipeline.DeletePipeline(context.Background(), &codepipeline.DeletePipelineInput{
+	_, err := p.codePipeline.DeletePipeline(p.ctx, &codepipeline.DeletePipelineInput{
 		Name: aws.String(projectName),
 	})
 	if err != nil {
@@ -95,7 +97,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		planCommand = model.PlanCommand
 		applyCommand = model.ApplyCommand
 	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
+	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
 			RoleArn: aws.String(p.roleArn),
@@ -201,7 +203,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		planCommand = model.PlanDestroyCommand
 		applyCommand = model.ApplyDestroyCommand
 	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
+	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
 			RoleArn: aws.String(p.roleArn),
@@ -311,7 +313,7 @@ func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 		_, err = p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
 		return err
 	}
-	_, err = p.codePipeline.CreatePipeline(context.Background(), &codepipeline.CreatePipelineInput{
+	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
 			RoleArn: aws.String(p.roleArn),
@@ -366,7 +368,7 @@ func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
-	execution, err := p.codePipeline.StartPipelineExecution(context.Background(), &codepipeline.StartPipelineExecutionInput{
+	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
 		ClientRequestToken: aws.String(uuid.New().String()),
 	})
@@ -431,7 +433,7 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 	if !changed {
 		return nil
 	}
-	_, err := p.codePipeline.UpdatePipeline(context.Background(), &codepipeline.UpdatePipelineInput{
+	_, err := p.codePipeline.UpdatePipeline(p.ctx, &codepipeline.UpdatePipelineInput{
 		Pipeline: pipeline,
 	})
 	if err == nil {
@@ -484,13 +486,13 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return fmt.Errorf("execution id is nil")
 	}
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, pollingDelay)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
 	var pipeChanges *model.TerraformChanges
 	var approved *bool
 	for ctx.Err() == nil {
 		time.Sleep(pollingDelay * time.Second)
-		execution, err := p.codePipeline.GetPipelineExecution(context.Background(), &codepipeline.GetPipelineExecutionInput{
+		execution, err := p.codePipeline.GetPipelineExecution(p.ctx, &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
 			PipelineExecutionId: executionId,
 		})
@@ -500,7 +502,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		if execution.PipelineExecution.Status != types.PipelineExecutionStatusInProgress {
 			return getExecutionResult(execution.PipelineExecution.Status)
 		}
-		executionsList, err := p.codePipeline.ListActionExecutions(context.Background(), &codepipeline.ListActionExecutionsInput{
+		executionsList, err := p.codePipeline.ListActionExecutions(p.ctx, &codepipeline.ListActionExecutionsInput{
 			PipelineName: aws.String(pipelineName),
 			Filter:       &types.ActionExecutionFilter{PipelineExecutionId: executionId},
 		})
@@ -517,7 +519,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 
 func (p *Pipeline) getNewPipelineExecutionId(pipelineName string) (*string, error) {
 	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
-	executions, err := p.codePipeline.ListPipelineExecutions(context.Background(), &codepipeline.ListPipelineExecutionsInput{
+	executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
 		PipelineName: aws.String(pipelineName),
 	})
 	if err != nil {
@@ -658,7 +660,7 @@ func (p *Pipeline) approveStage(pipelineName string) (*bool, error) {
 		common.Logger.Printf("No approval token found yet for %s, please wait or approve manually\n", pipelineName)
 		return aws.Bool(false), nil
 	}
-	_, err := p.codePipeline.PutApprovalResult(context.Background(), &codepipeline.PutApprovalResultInput{
+	_, err := p.codePipeline.PutApprovalResult(p.ctx, &codepipeline.PutApprovalResultInput{
 		PipelineName: aws.String(pipelineName),
 		StageName:    aws.String(approveStageName),
 		ActionName:   aws.String(approveActionName),
@@ -676,7 +678,7 @@ func (p *Pipeline) approveStage(pipelineName string) (*bool, error) {
 }
 
 func (p *Pipeline) disableStageTransition(pipelineName string, stage string) error {
-	_, err := p.codePipeline.DisableStageTransition(context.Background(), &codepipeline.DisableStageTransitionInput{
+	_, err := p.codePipeline.DisableStageTransition(p.ctx, &codepipeline.DisableStageTransitionInput{
 		PipelineName:   aws.String(pipelineName),
 		StageName:      aws.String(stage),
 		Reason:         aws.String("Disable pipeline transition to prevent accidental destruction of infrastructure"),
@@ -686,7 +688,7 @@ func (p *Pipeline) disableStageTransition(pipelineName string, stage string) err
 }
 
 func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount int32) error {
-	executions, err := p.codePipeline.ListPipelineExecutions(context.Background(), &codepipeline.ListPipelineExecutionsInput{
+	executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
 		PipelineName: aws.String(pipelineName),
 		MaxResults:   aws.Int32(latestCount),
 	})
@@ -697,7 +699,7 @@ func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount
 		if execution.Status != types.PipelineExecutionStatusInProgress {
 			continue
 		}
-		_, err = p.codePipeline.StopPipelineExecution(context.Background(), &codepipeline.StopPipelineExecutionInput{
+		_, err = p.codePipeline.StopPipelineExecution(p.ctx, &codepipeline.StopPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
 			PipelineExecutionId: execution.PipelineExecutionId,
 			Abandon:             true,
@@ -711,7 +713,7 @@ func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount
 }
 
 func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration, error) {
-	pipelineOutput, err := p.codePipeline.GetPipeline(context.Background(), &codepipeline.GetPipelineInput{
+	pipelineOutput, err := p.codePipeline.GetPipeline(p.ctx, &codepipeline.GetPipelineInput{
 		Name: aws.String(pipelineName),
 	})
 	if err != nil {
@@ -759,7 +761,7 @@ func getEnvironmentVariablesList(command model.ActionCommand, stepName string, s
 }
 
 func (p *Pipeline) getApprovalToken(pipelineName string) *string {
-	state, err := p.codePipeline.GetPipelineState(context.Background(), &codepipeline.GetPipelineStateInput{
+	state, err := p.codePipeline.GetPipelineState(p.ctx, &codepipeline.GetPipelineStateInput{
 		Name: aws.String(pipelineName),
 	})
 	if err != nil {
