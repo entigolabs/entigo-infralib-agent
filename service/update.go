@@ -1018,7 +1018,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, release *version.Vers
 			return modifiedStep, fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
 		}
 		modifiedStep.Files = append(modifiedStep.Files, model.File{
-			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf("config/%s/include/", step.Name)),
+			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
 			Content: []byte(newContent),
 		})
 	}

@@ -9,13 +9,18 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
 	"os"
 	"reflect"
 	"strings"
 )
 
-const StableVersion = "stable"
+const (
+	StableVersion = "stable"
+	IncludeFormat = "config/%s/include"
+)
 
 var ReservedFiles = model.Set[string]{"main.tf": true, "provider.tf": true, "backend.conf": true}
 
@@ -89,7 +94,7 @@ func AddStepsFilesFromFolder(config *model.Config) {
 		if step.Type != model.StepTypeTerraform {
 			continue
 		}
-		addStepFilesFromFolder(step, fmt.Sprintf("config/%s/include", step.Name))
+		addStepFilesFromFolder(step, fmt.Sprintf(IncludeFormat, step.Name))
 	}
 }
 
@@ -109,12 +114,28 @@ func addStepFilesFromFolder(step *model.Step, folder string) {
 		filePath := fmt.Sprintf("%s/%s", folder, entry.Name())
 		fileBytes, err := os.ReadFile(filePath)
 		if err != nil {
-			common.Logger.Fatalf("failed to read file %s: %s", filePath, err)
+			common.Logger.Fatalf("failed to read file %s: %v", filePath, err)
 		}
+		validateStepFile(filePath, fileBytes)
 		step.Files = append(step.Files, model.File{
 			Name:    filePath,
 			Content: fileBytes,
 		})
+	}
+}
+
+func validateStepFile(file string, content []byte) {
+	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
+		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
+		if diags.HasErrors() {
+			common.Logger.Fatalf("failed to parse hcl file %s: %v", file, diags.Errs())
+		}
+	} else if strings.HasSuffix(file, ".yaml") {
+		var yamlContent map[string]interface{}
+		err := yaml.Unmarshal(content, &yamlContent)
+		if err != nil {
+			common.Logger.Fatalf("failed to unmarshal yaml file %s: %v", file, err)
+		}
 	}
 }
 
@@ -132,12 +153,7 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
 	for _, step := range steps {
 		if step.Files != nil {
-			for _, file := range step.Files {
-				err := bucket.PutFile(file.Name, file.Content)
-				if err != nil {
-					common.Logger.Fatalf("Failed to put step file %s: %s", file.Name, err)
-				}
-			}
+			putStepFiles(bucket, step)
 		}
 		if step.Modules == nil {
 			continue
@@ -152,6 +168,30 @@ func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
 			}
 			module.InputsFile = ""
 			module.FileContent = nil
+		}
+	}
+}
+
+func putStepFiles(bucket model.Bucket, step model.Step) {
+	files := model.NewSet[string]()
+	for _, file := range step.Files {
+		err := bucket.PutFile(file.Name, file.Content)
+		if err != nil {
+			common.Logger.Fatalf("Failed to put step file %s: %s", file.Name, err)
+		}
+		files.Add(file.Name)
+	}
+	bucketFiles, err := bucket.ListFolderFiles(fmt.Sprintf(IncludeFormat, step.Name))
+	if err != nil {
+		common.Logger.Fatalf("Failed to list folder files: %s", err)
+	}
+	for _, bucketFile := range bucketFiles {
+		if files.Contains(bucketFile) {
+			continue
+		}
+		err = bucket.DeleteFile(bucketFile)
+		if err != nil {
+			common.Logger.Fatalf("Failed to delete file %s: %s", bucketFile, err)
 		}
 	}
 }
@@ -188,7 +228,7 @@ func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) {
 }
 
 func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
-	folder := fmt.Sprintf("config/%s/include", step.Name)
+	folder := fmt.Sprintf(IncludeFormat, step.Name)
 	files, err := bucket.ListFolderFiles(folder)
 	if err != nil {
 		common.Logger.Fatalf("Failed to list folder files: %s", err)
@@ -204,6 +244,7 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 		if fileBytes == nil {
 			continue
 		}
+		validateStepFile(file, fileBytes)
 		step.Files = append(step.Files, model.File{
 			Name:    file,
 			Content: fileBytes,
