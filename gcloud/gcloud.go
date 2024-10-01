@@ -166,7 +166,7 @@ func (g *gcloudService) enableApiServices() {
 	}
 	err = apiUsage.EnableServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
-		"clouddeploy.googleapis.com"})
+		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com"})
 	if err != nil {
 		common.Logger.Fatalf("Failed to enable services: %s", err)
 	}
