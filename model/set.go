@@ -1,5 +1,10 @@
 package model
 
+import (
+	"fmt"
+	"strings"
+)
+
 type Set[T comparable] map[T]bool
 
 func NewSet[T comparable]() Set[T] {
@@ -29,4 +34,13 @@ func (s Set[T]) ToSlice() []T {
 		slice = append(slice, item)
 	}
 	return slice
+}
+
+func (s Set[T]) String() string {
+	items := s.ToSlice()
+	strItems := make([]string, len(items))
+	for i, item := range items {
+		strItems[i] = fmt.Sprintf("%v", item)
+	}
+	return fmt.Sprintf("%s", strings.Join(strItems, ", "))
 }

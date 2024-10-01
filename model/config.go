@@ -36,6 +36,7 @@ type Step struct {
 	RepoUrl               string   `yaml:"repo_url,omitempty"`
 	Provider              Provider `yaml:"provider,omitempty"`
 	Modules               []Module `yaml:"modules,omitempty" fakesize:"1"`
+	Files                 []File   `yaml:"-"`
 }
 
 type Provider struct {
@@ -61,6 +62,11 @@ type AwsDefaultTags struct {
 type KubernetesProvider struct {
 	IgnoreAnnotations []string `yaml:"ignore_annotations,omitempty"`
 	IgnoreLabels      []string `yaml:"ignore_labels,omitempty"`
+}
+
+type File struct {
+	Name    string `yaml:"-"`
+	Content []byte `yaml:"-"`
 }
 
 func (p Provider) IsEmpty() bool {

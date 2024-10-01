@@ -2,6 +2,7 @@ package service
 
 import (
 	"dario.cat/mergo"
+	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
@@ -11,9 +12,12 @@ import (
 	"gopkg.in/yaml.v3"
 	"os"
 	"reflect"
+	"strings"
 )
 
 const StableVersion = "stable"
+
+var ReservedFiles = model.Set[string]{"main.tf": true, "provider.tf": true, "backend.conf": true}
 
 func GetAwsPrefix(flags *common.Flags) string {
 	if flags.AWSPrefix != "" {
@@ -35,7 +39,7 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 		config = GetLocalConfig(configFile)
 		PutConfig(bucket, config)
 		AddModuleInputFiles(&config, os.ReadFile)
-		PutModuleInputFiles(bucket, config.Steps)
+		PutAdditionalFiles(bucket, config.Steps)
 	} else {
 		config = GetRemoteConfig(bucket)
 	}
@@ -72,7 +76,46 @@ func GetLocalConfig(configFile string) model.Config {
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
+	AddStepsFilesFromFolder(&config)
 	return config
+}
+
+func AddStepsFilesFromFolder(config *model.Config) {
+	if config.Steps == nil {
+		return
+	}
+	for i := range config.Steps {
+		step := &config.Steps[i]
+		if step.Type != model.StepTypeTerraform {
+			continue
+		}
+		addStepFilesFromFolder(step, fmt.Sprintf("config/%s/include", step.Name))
+	}
+}
+
+func addStepFilesFromFolder(step *model.Step, folder string) {
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			addStepFilesFromFolder(step, fmt.Sprintf("%s/%s", folder, entry.Name()))
+			continue
+		}
+		if ReservedFiles.Contains(entry.Name()) {
+			common.Logger.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
+		}
+		filePath := fmt.Sprintf("%s/%s", folder, entry.Name())
+		fileBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			common.Logger.Fatalf("failed to read file %s: %s", filePath, err)
+		}
+		step.Files = append(step.Files, model.File{
+			Name:    filePath,
+			Content: fileBytes,
+		})
+	}
 }
 
 func PutConfig(bucket model.Bucket, config model.Config) {
@@ -86,8 +129,19 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 	}
 }
 
-func PutModuleInputFiles(bucket model.Bucket, steps []model.Step) {
+func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
 	for _, step := range steps {
+		if step.Files != nil {
+			for _, file := range step.Files {
+				err := bucket.PutFile(file.Name, file.Content)
+				if err != nil {
+					common.Logger.Fatalf("Failed to put step file %s: %s", file.Name, err)
+				}
+			}
+		}
+		if step.Modules == nil {
+			continue
+		}
 		for _, module := range step.Modules {
 			if module.InputsFile == "" {
 				continue
@@ -115,8 +169,46 @@ func GetRemoteConfig(bucket model.Bucket) model.Config {
 	if err != nil {
 		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
 	}
+	AddStepsFilesFromBucket(&config, bucket)
 	AddModuleInputFiles(&config, bucket.GetFile)
 	return config
+}
+
+func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) {
+	if config.Steps == nil {
+		return
+	}
+	for i := range config.Steps {
+		step := &config.Steps[i]
+		if step.Type != model.StepTypeTerraform {
+			continue
+		}
+		addStepFilesFromBucket(step, bucket)
+	}
+}
+
+func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
+	folder := fmt.Sprintf("config/%s/include", step.Name)
+	files, err := bucket.ListFolderFiles(folder)
+	if err != nil {
+		common.Logger.Fatalf("Failed to list folder files: %s", err)
+	}
+	for _, file := range files {
+		if ReservedFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
+			common.Logger.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
+		}
+		fileBytes, err := bucket.GetFile(file)
+		if err != nil {
+			common.Logger.Fatalf("Failed to get file %s: %s", file, err)
+		}
+		if fileBytes == nil {
+			continue
+		}
+		step.Files = append(step.Files, model.File{
+			Name:    file,
+			Content: fileBytes,
+		})
+	}
 }
 
 func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, error)) {
@@ -142,23 +234,22 @@ func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, er
 
 func processModuleInputs(stepName string, module *model.Module, readFile func(string) ([]byte, error)) {
 	yamlFile := fmt.Sprintf("config/%s/%s.yaml", stepName, module.Name)
-	yamlBytes, yamlErr := readFile(yamlFile)
+	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
-		if yamlErr == nil && yamlBytes != nil {
+		if err == nil && bytes != nil {
 			common.PrintWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile))
 		}
 		return
 	}
-	if yamlErr != nil {
-		common.PrintWarning(fmt.Sprintf("module %s/%s has no inputs and failed to read input file", stepName, module.Name))
+	if bytes == nil && (err == nil || errors.Is(err, os.ErrNotExist)) {
 		return
 	}
-	if yamlBytes == nil {
-		return
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to read input file %s: %v", yamlFile, err)})
 	}
 	module.InputsFile = yamlFile
-	module.FileContent = yamlBytes
-	err := yaml.Unmarshal(yamlBytes, &module.Inputs)
+	module.FileContent = bytes
+	err = yaml.Unmarshal(bytes, &module.Inputs)
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to unmarshal input file %s: %v",
 			yamlFile, err)})

@@ -230,4 +230,4 @@ Agent example `{{ .agent.version.step.module }}` will be overwritten by the valu
 
 ### Including terraform files in steps
 
-It's possible to include terraform files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf` or `provider.tf` as they are reserved for the agent. Files will be copied into the step directory which is used by terraform as step context.
+It's possible to include terraform files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. Files will be copied into the step directory which is used by terraform as step context.

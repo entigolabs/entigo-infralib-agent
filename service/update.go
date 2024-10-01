@@ -724,8 +724,15 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return false, nil, err
 	}
+	hasFiles := step.Files != nil && len(step.Files) > 0
+	if hasFiles {
+		err = u.updateIncludedStepFiles(step)
+		if err != nil {
+			return false, nil, err
+		}
+	}
 	if !changed {
-		return false, nil, nil
+		return hasFiles, nil, nil
 	}
 	if len(moduleVersions) == 0 {
 		// Add a version for external providers fallback
@@ -736,7 +743,7 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
 	err = u.resources.GetBucket().PutFile(fmt.Sprintf("%s-%s/provider.tf", u.config.Prefix, step.Name), provider)
-	return changed, providers, err
+	return true, providers, err
 }
 
 func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, releaseTag *version.Version, stepSemver *version.Version) (bool, error) {
@@ -885,8 +892,8 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		return "", false, err
 	}
 	if util.IsClientModule(module) {
-		clientModuleVersion, moduleChanged := getClientModuleVersion(module, moduleState)
-		return clientModuleVersion, moduleChanged, nil
+		moduleState.Version = module.Version
+		return module.Version, true, nil
 	}
 	var moduleSemver *version.Version
 	if moduleVersion == "" {
@@ -900,7 +907,7 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		}
 	}
 	moduleState.AutoApprove = true
-	if moduleState.Version == "" {
+	if moduleState.AppliedVersion == nil {
 		if moduleSemver.GreaterThan(releaseTag) {
 			moduleState.Version = getFormattedVersion(releaseTag)
 			return getFormattedVersion(releaseTag), true, nil
@@ -910,9 +917,9 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		}
 	}
 	var moduleStateSemver *version.Version
-	moduleStateSemver, err = version.NewVersion(moduleState.Version)
+	moduleStateSemver, err = version.NewVersion(*moduleState.AppliedVersion)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to parse module state version %s: %s", moduleVersion, err)
+		return "", false, fmt.Errorf("failed to parse module state applied version %s: %s", moduleVersion, err)
 	}
 	if moduleSemver.Equal(moduleStateSemver) && moduleSemver.LessThan(releaseTag) {
 		return getFormattedVersion(moduleStateSemver), false, nil
@@ -924,11 +931,6 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		moduleState.Version = getFormattedVersion(releaseTag)
 		return getFormattedVersion(releaseTag), true, nil
 	}
-}
-
-func getClientModuleVersion(module model.Module, moduleState *model.StateModule) (string, bool) {
-	moduleState.Version = module.Version
-	return module.Version, module.Version != moduleState.Version
 }
 
 func (u *updater) createCustomTerraformFiles(step model.Step, stepState *model.StateStep, semver *version.Version) error {
@@ -980,7 +982,7 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		if modules.Contains(strings.TrimSuffix(file, ".yaml")) {
 			continue
 		}
-		err = u.resources.GetBucket().DeleteFile(fmt.Sprintf("%s/%s", folder, file))
+		err = u.resources.GetBucket().DeleteFile(file)
 		if err != nil {
 			return err
 		}
@@ -991,9 +993,9 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 func (u *updater) replaceConfigStepValues(step model.Step, release *version.Version) (model.Step, error) {
 	stepYaml, err := yaml.Marshal(step)
 	if err != nil {
-		return step, fmt.Errorf("failed to convert step %s to yaml, error: %s", step.Name, err)
+		return step, fmt.Errorf("failed to convert step %s to yaml, error: %v", step.Name, err)
 	}
-	modifiedStepYaml, err := u.replaceStepYamlValues(step, string(stepYaml), release)
+	modifiedStepYaml, err := u.replaceStringValues(step, string(stepYaml), release)
 	if err != nil {
 		common.Logger.Printf("Failed to replace tags in step %s", step.Name)
 		return step, err
@@ -1001,16 +1003,33 @@ func (u *updater) replaceConfigStepValues(step model.Step, release *version.Vers
 	var modifiedStep model.Step
 	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
 	if err != nil {
-		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %s", step.Name, err)
+		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
+	}
+	if step.Files == nil {
+		return modifiedStep, nil
+	}
+	for _, file := range step.Files {
+		if !strings.HasSuffix(file.Name, ".tf") && !strings.HasSuffix(file.Name, ".yaml") &&
+			!strings.HasSuffix(file.Name, ".hcl") {
+			continue
+		}
+		newContent, err := u.replaceStringValues(step, string(file.Content), release)
+		if err != nil {
+			return modifiedStep, fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
+		}
+		modifiedStep.Files = append(modifiedStep.Files, model.File{
+			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf("config/%s/include/", step.Name)),
+			Content: []byte(newContent),
+		})
 	}
 	return modifiedStep, nil
 }
 
-func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, release *version.Version) (string, error) {
+func (u *updater) replaceStringValues(step model.Step, content string, release *version.Version) (string, error) {
 	re := regexp.MustCompile(replaceRegex)
-	matches := re.FindAllStringSubmatch(configYaml, -1)
+	matches := re.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
-		return configYaml, nil
+		return content, nil
 	}
 	for _, match := range matches {
 		if len(match) != 2 {
@@ -1029,7 +1048,7 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 			if err != nil {
 				return "", err
 			}
-			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
+			content = strings.Replace(content, replaceTag, parameter, 1)
 		case string(model.ReplaceTypeOutputCustom):
 			fallthrough
 		case string(model.ReplaceTypeGCSMCustom):
@@ -1039,26 +1058,26 @@ func (u *updater) replaceStepYamlValues(step model.Step, configYaml string, rele
 			if err != nil {
 				return "", err
 			}
-			configYaml = strings.Replace(configYaml, replaceTag, parameter, 1)
+			content = strings.Replace(content, replaceTag, parameter, 1)
 		case string(model.ReplaceTypeConfig):
 			configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
 			configValue, err := util.GetValueFromStruct(configKey, u.config)
 			if err != nil {
 				return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
 			}
-			configYaml = strings.Replace(configYaml, replaceTag, configValue, 1)
+			content = strings.Replace(content, replaceTag, configValue, 1)
 		case string(model.ReplaceTypeAgent):
 			key := replaceKey[strings.Index(replaceKey, ".")+1:]
 			agentValue, err := u.getReplacementAgentValue(key, release)
 			if err != nil {
 				return "", fmt.Errorf("failed to get agent value %s: %s", key, err)
 			}
-			configYaml = strings.Replace(configYaml, replaceTag, agentValue, 1)
+			content = strings.Replace(content, replaceTag, agentValue, 1)
 		default:
 			return "", fmt.Errorf("unknown replace type in tag %s", match[0])
 		}
 	}
-	return configYaml, nil
+	return content, nil
 }
 
 func (u *updater) getReplacementAgentValue(key string, release *version.Version) (string, error) {
@@ -1163,6 +1182,35 @@ func (u *updater) GetChecksums(release *version.Version) (map[string]string, err
 		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
 	}
 	return checksums, nil
+}
+
+func (u *updater) updateIncludedStepFiles(step model.Step) error {
+	files := model.Set[string]{}
+	folder := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
+	for _, file := range step.Files {
+		target := fmt.Sprintf("%s/%s", folder, file.Name)
+		err := u.resources.GetBucket().PutFile(target, file.Content)
+		if err != nil {
+			return err
+		}
+		files.Add(target)
+	}
+	folderFiles, err := u.resources.GetBucket().ListFolderFiles(folder)
+	if err != nil {
+		return err
+	}
+	for _, file := range folderFiles {
+		if ReservedFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
+			continue
+		}
+		if !files.Contains(file) {
+			err = u.resources.GetBucket().DeleteFile(file) // TODO This also deletes terraform source_out files
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func getSSMParameterValueFromList(match []string, parameter *model.Parameter, replaceKey string, parameterName string) (string, error) {
