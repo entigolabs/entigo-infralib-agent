@@ -43,7 +43,7 @@ type Bucket interface {
 }
 
 type Pipeline interface {
-	CreatePipeline(projectName string, stepName string, step Step, repo string) (*string, error)
+	CreatePipeline(projectName string, stepName string, step Step, bucket Bucket) (*string, error)
 	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
 	UpdatePipeline(pipelineName string, stepName string, step Step, bucket string) error
 	StartAgentExecution(pipelineName string) error

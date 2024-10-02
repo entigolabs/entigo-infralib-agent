@@ -168,7 +168,7 @@ func (p *Pipeline) deleteTargets() error {
 	return nil
 }
 
-func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket string) (*string, error) {
+func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket model.Bucket) (*string, error) {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
@@ -178,8 +178,12 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 		planCommand = model.PlanCommand
 		applyCommand = model.ApplyCommand
 	}
-	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
-	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
+	bucketMeta, err := bucket.GetRepoMetadata()
+	if err != nil {
+		return nil, err
+	}
+	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucketMeta.Name, stepName, step.Workspace)
+	err = p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +191,7 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	if err != nil {
 		return nil, err
 	}
-	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
+	err = bucket.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +199,7 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	if err != nil {
 		return nil, err
 	}
-	return p.StartPipelineExecution(projectName, stepName, step, bucket)
+	return p.StartPipelineExecution(projectName, stepName, step, bucketMeta.Name)
 }
 
 func (p *Pipeline) DeletePipeline(projectName string) error {
