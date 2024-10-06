@@ -429,7 +429,8 @@ func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, r
 }
 
 func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
-	repoMetadata, err := u.getRepoMetadata(step.Type)
+	bucket := u.getStepBucket(step.Type)
+	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
 		return err
 	}
@@ -443,7 +444,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.createExecuteTerraformPipelines(stepName, stepName, step, autoApprove, repoMetadata.Name)
+	return u.createExecuteTerraformPipelines(stepName, stepName, step, autoApprove, bucket)
 }
 
 func getVpcConfig(step model.Step) *model.VpcConfig {
@@ -457,17 +458,17 @@ func getVpcConfig(step model.Step) *model.VpcConfig {
 	}
 }
 
-func (u *updater) getRepoMetadata(stepType model.StepType) (*model.RepositoryMetadata, error) {
+func (u *updater) getStepBucket(stepType model.StepType) model.Bucket {
 	switch stepType {
 	case model.StepTypeTerraformCustom:
-		return u.customCC.GetRepoMetadata()
+		return u.customCC
 	default:
-		return u.resources.GetBucket().GetRepoMetadata()
+		return u.resources.GetBucket()
 	}
 }
 
-func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, repo string) error {
-	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, repo)
+func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket) error {
+	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, bucket)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
@@ -480,9 +481,11 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, release *version.Version) error {
 	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
+	projectName := fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, step.Workspace)
 	vpcConfig := getVpcConfig(step)
 	imageVersion := u.getBaseImageVersion(step, release)
-	repoMetadata, err := u.getRepoMetadata(step.Type)
+	bucket := u.getStepBucket(step.Type)
+	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
 		return err
 	}

@@ -48,12 +48,16 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 	}
 }
 
-func (p *Pipeline) CreatePipeline(projectName string, stepName string, step model.Step, repo string) (*string, error) {
-	execution, err := p.CreateApplyPipeline(projectName, projectName, stepName, step, repo)
+func (p *Pipeline) CreatePipeline(projectName string, stepName string, step model.Step, bucket model.Bucket) (*string, error) {
+	metadata, err := bucket.GetRepoMetadata()
 	if err != nil {
 		return nil, err
 	}
-	err = p.CreateDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, repo)
+	execution, err := p.CreateApplyPipeline(projectName, projectName, stepName, step, metadata.Name)
+	if err != nil {
+		return nil, err
+	}
+	err = p.CreateDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step, metadata.Name)
 	return execution, err
 }
 
