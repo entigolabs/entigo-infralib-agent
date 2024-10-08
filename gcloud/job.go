@@ -456,7 +456,7 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 
 func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runv1.EnvVar {
 	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
-	envVars := make([]*runv1.EnvVar, len(rawEnvVars))
+	var envVars []*runv1.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
 	}
@@ -465,7 +465,7 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 
 func (b *Builder) getJobEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runpb.EnvVar {
 	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
-	envVars := make([]*runpb.EnvVar, 0)
+	var envVars []*runpb.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
 	}

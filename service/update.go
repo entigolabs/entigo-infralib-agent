@@ -1183,7 +1183,8 @@ func (u *updater) updateIncludedStepFiles(step model.Step) error {
 		return err
 	}
 	for _, file := range folderFiles {
-		if ReservedFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
+		relativeFile := strings.TrimPrefix(file, folder+"/")
+		if ReservedFiles.Contains(relativeFile) || strings.HasPrefix(relativeFile, terraformCache) {
 			continue
 		}
 		if !files.Contains(file) {

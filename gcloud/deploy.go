@@ -233,7 +233,7 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 
 func (p *Pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
 	skaffoldManifest := skaffold{
-		APIVersion: "skaffold/v4beta7",
+		APIVersion: "skaffold/v4beta11",
 		Kind:       "Config",
 		Metadata:   metadata{Name: name},
 		Deploy:     runDeploy{},
@@ -465,7 +465,7 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 	return nil
 }
 
-func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, bucket string) (*string, error) {
+func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, _ model.Step, bucket string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	prefix := pipelineName
 	if len(prefix) > 26 { // Max length for id is 63, uuid v4 is 36 chars plus hyphen, 63 - 37 = 26
@@ -477,7 +477,7 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 		ReleaseId: releaseId,
 		Release: &deploypb.Release{
 			SkaffoldConfigUri:  fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName)),
-			SkaffoldConfigPath: fmt.Sprintf("%s.yaml", pipelineName),
+			SkaffoldConfigPath: fmt.Sprintf("%s/%s.yaml", stepName, pipelineName),
 		},
 	})
 	if err != nil {

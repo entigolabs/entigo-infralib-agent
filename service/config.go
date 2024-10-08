@@ -18,7 +18,8 @@ const (
 	StableVersion = "stable"
 	IncludeFormat = "config/%s/include"
 
-	EntigoSource = "github.com/entigolabs/entigo-infralib-release"
+	EntigoSource   = "github.com/entigolabs/entigo-infralib-release"
+	terraformCache = ".terraform"
 )
 
 var ReservedFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
