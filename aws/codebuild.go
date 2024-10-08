@@ -60,8 +60,11 @@ func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, 
 	}
 }
 
-func (b *builder) CreateProject(projectName string, repoURL string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
-	image := fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)
+func (b *builder) CreateProject(projectName string, repoURL string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+	if imageSource == "" {
+		imageSource = model.ProjectImage
+	}
+	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	_, err := b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -93,7 +96,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, "", "", step, imageVersion, vpcConfig)
+		return b.UpdateProject(projectName, "", "", step, imageVersion, imageSource, vpcConfig)
 	}
 	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -207,7 +210,7 @@ func (b *builder) UpdateAgentProject(projectName string, version string, awsPref
 	return err
 }
 
-func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
+func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return err
@@ -222,7 +225,10 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		!util.EqualLists(project.VpcConfig.Subnets, awsVpcConfig.Subnets) ||
 		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))
 
-	image := fmt.Sprintf("%s:%s", model.ProjectImage, imageVersion)
+	if imageSource == "" {
+		imageSource = model.ProjectImage
+	}
+	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	imageChanged := image != "" && project.Environment != nil && project.Environment.Image != nil &&
 		*project.Environment.Image != image
 

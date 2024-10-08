@@ -8,6 +8,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -25,8 +26,7 @@ const versionsFile = "versions.tf"
 const awsTagsRegex = `(\w+)\s*=\s*"([^"]+)"`
 
 type Terraform interface {
-	GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, []string, error)
-	GetEmptyTerraformProvider(version string, providerType model.ProviderType) ([]byte, error)
+	GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error)
 }
 
 type terraform struct {
@@ -39,52 +39,61 @@ func NewTerraform(github github.Github) Terraform {
 	}
 }
 
-func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType) ([]byte, []string, error) {
+func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error) {
 	if len(moduleVersions) == 0 {
-		return make([]byte, 0), []string{}, nil
+		return make([]byte, 0), map[string]model.Set[string]{}, nil
 	}
-	versions := util.MapValues(moduleVersions)
-	providersVersion, err := util.GetNewestVersion(versions)
+	sourceVersions, err := getSourceVersions(step, moduleVersions, moduleSources)
 	if err != nil {
 		return nil, nil, err
 	}
-	file, err := t.getTerraformFile(providerPath, baseFile, providersVersion)
+	file, baseSource, err := t.findTerraformFile(providerPath, baseFile, sources, sourceVersions)
 	if err != nil {
 		return nil, nil, err
 	}
 	modifyBackendType(file.Body(), providerType)
-	providersAttributes := make(map[string]*hclwrite.Attribute)
-	for _, module := range step.Modules {
-		if util.IsClientModule(module) {
-			continue
-		}
-		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name])
-		if err != nil {
-			return nil, nil, err
-		}
-		for name, attribute := range providerAttributes {
-			providersAttributes[name] = attribute
-		}
+	providersAttributes, err := t.getProvidersAttributes(step, moduleVersions, moduleSources)
+	if err != nil {
+		return nil, nil, err
 	}
 	providersBlock, err := getRequiredProvidersBlock(file)
 	if err != nil {
 		return nil, nil, err
 	}
 	baseBody := file.Body()
-	providers, err := t.addProviderAttributes(baseBody, providersBlock, providersAttributes, providersVersion, step)
+	providers := make(map[string]model.Set[string])
+	providers[baseSource] = model.ToSet([]string{baseFile})
+	attrProviders, err := t.addProviderAttributes(baseBody, providersBlock, providersAttributes, step, sources, sourceVersions)
 	if err != nil {
 		return nil, nil, err
+	}
+	for provider, providerSource := range attrProviders {
+		if providers[providerSource] == nil {
+			providers[providerSource] = model.NewSet[string]()
+		}
+		providers[providerSource].Add(provider)
 	}
 	return hclwrite.Format(file.Bytes()), providers, nil
 }
 
-func (t *terraform) GetEmptyTerraformProvider(version string, providerType model.ProviderType) ([]byte, error) {
-	file, err := t.getTerraformFile(providerPath, baseFile, version)
-	if err != nil {
-		return nil, err
+func getSourceVersions(step model.Step, moduleVersions map[string]string, moduleSources map[string]string) (map[string]*version.Version, error) {
+	sourceVersions := make(map[string]*version.Version)
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
+		source := moduleSources[module.Source]
+		moduleVersion, err := version.NewVersion(moduleVersions[module.Name])
+		if err != nil {
+			return nil, err
+		}
+		if sourceVersions[source] == nil {
+			sourceVersions[source] = moduleVersion
+		} else if moduleVersion.GreaterThan(sourceVersions[source]) {
+			sourceVersions[source] = moduleVersion
+		}
 	}
-	modifyBackendType(file.Body(), providerType)
-	return hclwrite.Format(file.Bytes()), nil
+	return sourceVersions, nil
 }
 
 func modifyBackendType(body *hclwrite.Body, providerType model.ProviderType) {
@@ -103,20 +112,54 @@ func modifyBackendType(body *hclwrite.Body, providerType model.ProviderType) {
 	}
 }
 
-func (t *terraform) getTerraformFile(filePath string, fileName string, release string) (*hclwrite.File, error) {
-	baseFile, err := t.github.GetRawFileContent(fmt.Sprintf("%s/%s", filePath, fileName), release)
-	if err != nil {
-		return nil, err
+func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[string]string, moduleSources map[string]string) (map[string]*hclwrite.Attribute, error) {
+	providersAttributes := make(map[string]*hclwrite.Attribute)
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
+		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name], moduleSources[module.Source])
+		if err != nil {
+			return nil, err
+		}
+		for name, attribute := range providerAttributes {
+			providersAttributes[name] = attribute
+		}
 	}
-	file, err := UnmarshalTerraformFile(fileName, baseFile)
-	if err != nil {
-		return nil, err
-	}
-	return file, nil
+	return providersAttributes, nil
 }
 
-func (t *terraform) getProviderAttributes(module model.Module, version string) (map[string]*hclwrite.Attribute, error) {
-	file, err := t.getTerraformFile(fmt.Sprintf(moduleTemplate, module.Source), versionsFile, version)
+func (t *terraform) findTerraformFile(filePath string, fileName string, sources map[string]*model.Source, sourceVersions map[string]*version.Version) (*hclwrite.File, string, error) {
+	providerName := fmt.Sprintf("providers/%s", fileName)
+	sourceURL := ""
+	release := ""
+	for _, source := range sources {
+		if source.CurrentChecksums[providerName] == "" {
+			continue
+		}
+		sourceURL = source.URL
+		release = sourceVersions[sourceURL].Original()
+	}
+	if sourceURL == "" {
+		return nil, "", github.NewFileNotFoundError(fileName)
+	}
+	return t.getTerraformFile(sourceURL, filePath, fileName, release)
+}
+
+func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release string) (*hclwrite.File, string, error) {
+	rawFile, err := t.github.GetRawFileContent(sourceURL, fmt.Sprintf("%s/%s", filePath, fileName), release)
+	if err != nil {
+		return nil, "", err
+	}
+	file, err := UnmarshalTerraformFile(fileName, rawFile)
+	if err != nil {
+		return nil, "", err
+	}
+	return file, sourceURL, nil
+}
+
+func (t *terraform) getProviderAttributes(module model.Module, version, sourceURL string) (map[string]*hclwrite.Attribute, error) {
+	file, _, err := t.getTerraformFile(sourceURL, fmt.Sprintf(moduleTemplate, module.Source), versionsFile, version)
 	if err != nil {
 		return nil, err
 	}
@@ -139,30 +182,30 @@ func getRequiredProvidersBlock(file *hclwrite.File) (*hclwrite.Block, error) {
 	return providersBlock, nil
 }
 
-func (t *terraform) getProviderBlocks(providerName string, version string) []*hclwrite.Block {
-	providerFile, err := t.getTerraformFile(providerPath, fmt.Sprintf("%s.tf", providerName), version)
+func (t *terraform) getProviderBlocks(providerName string, sources map[string]*model.Source, sourceVersions map[string]*version.Version) ([]*hclwrite.Block, string) {
+	providerFile, providerSource, err := t.findTerraformFile(providerPath, fmt.Sprintf("%s.tf", providerName), sources, sourceVersions)
 	if err != nil {
 		var fileNotFoundError github.FileNotFoundError
 		if errors.As(err, &fileNotFoundError) {
 			fmt.Printf("Provider file not found for %s\n", providerName)
-			return []*hclwrite.Block{}
+			return []*hclwrite.Block{}, ""
 		}
-		return nil
+		return nil, ""
 	}
-	return providerFile.Body().Blocks()
+	return providerFile.Body().Blocks(), providerSource
 }
 
-func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, providersVersion string, step model.Step) ([]string, error) {
+func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, step model.Step, sources map[string]*model.Source, sourceVersions map[string]*version.Version) (map[string]string, error) {
 	providerInputs := step.Provider.Inputs
 	if providerInputs == nil {
 		providerInputs = make(map[string]interface{})
 	}
-	providers := make([]string, 0)
+	providers := make(map[string]string)
 	for name, attribute := range providersAttributes {
 		providersBlock.Body().SetAttributeRaw(name, attribute.Expr().BuildTokens(nil))
-		providerBlocks := t.getProviderBlocks(name, providersVersion)
+		providerBlocks, providerSource := t.getProviderBlocks(name, sources, sourceVersions)
 		if len(providerBlocks) != 0 {
-			providers = append(providers, name)
+			providers[name] = providerSource
 		}
 		for _, providerBlock := range providerBlocks {
 			err := addProviderValues(name, providerBlock.Body(), step.Provider)
@@ -363,11 +406,4 @@ func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File
 		return nil, diags
 	}
 	return hclFile, nil
-}
-
-func GetMockTerraformMain() []byte {
-	file := hclwrite.NewEmptyFile()
-	output := file.Body().AppendNewBlock("output", []string{"hello_world"})
-	output.Body().SetAttributeValue("value", cty.StringVal("Hello, World!"))
-	return hclwrite.Format(file.Bytes())
 }

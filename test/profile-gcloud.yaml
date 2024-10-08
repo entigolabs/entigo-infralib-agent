@@ -1,11 +1,11 @@
 prefix: at
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 version: stable
 agent_version: latest
 steps:
   - name: net
     type: terraform
-    workspace: dev
     approve: never
     modules:
       - name: main

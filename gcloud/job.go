@@ -47,8 +47,11 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 	}, nil
 }
 
-func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
-	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
+func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+	if imageSource == "" {
+		imageSource = model.ProjectImageDocker
+	}
+	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 	if err != nil {
 		return err
@@ -309,8 +312,11 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 	return err
 }
 
-func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
-	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
+func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+	if imageSource == "" {
+		imageSource = model.ProjectImageDocker
+	}
+	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 	if err != nil {
 		return err
@@ -476,7 +482,7 @@ func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string
 		"COMMAND":           string(command),
 		"TF_VAR_prefix":     stepName,
 	}
-	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
+	if step.Type == model.StepTypeTerraform {
 		envVars = addTerraformEnvironmentVariables(envVars, step)
 	}
 	if step.Type == model.StepTypeArgoCD {

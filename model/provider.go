@@ -16,9 +16,8 @@ const (
 
 type CloudProvider interface {
 	SetupResources() Resources
-	SetupCustomBucket() (Bucket, error)
 	GetResources() Resources
-	DeleteResources(deleteBucket bool, hasCustomTFStep bool)
+	DeleteResources(deleteBucket bool)
 }
 
 type Resources interface {
@@ -43,22 +42,22 @@ type Bucket interface {
 }
 
 type Pipeline interface {
-	CreatePipeline(projectName string, stepName string, step Step, bucket Bucket) (*string, error)
-	CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error
-	UpdatePipeline(pipelineName string, stepName string, step Step, bucket string) error
+	CreatePipeline(projectName, stepName string, step Step, bucket Bucket) (*string, error)
+	CreateAgentPipeline(prefix, pipelineName, projectName, bucket string) error
+	UpdatePipeline(pipelineName, stepName string, step Step, bucket string) error
 	StartAgentExecution(pipelineName string) error
-	StartPipelineExecution(pipelineName string, stepName string, step Step, customRepo string) (*string, error)
-	WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType StepType) error
+	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
+	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, stepType StepType) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string) error
 }
 
 type Builder interface {
-	CreateProject(projectName string, repoURL string, stepName string, step Step, imageVersion string, vpcConfig *VpcConfig) error
+	CreateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig) error
 	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
 	GetProject(projectName string) (*Project, error)
-	UpdateAgentProject(projectName string, version string, cloudPrefix string) error
-	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion string, vpcConfig *VpcConfig) error
+	UpdateAgentProject(projectName, version, cloudPrefix string) error
+	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig) error
 	DeleteProject(projectName string, step Step) error
 }
 

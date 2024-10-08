@@ -7,8 +7,8 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
-func Bootstrap(flags *common.Flags) {
-	provider := service.GetCloudProvider(context.Background(), flags)
+func Bootstrap(ctx context.Context, flags *common.Flags) {
+	provider := service.GetCloudProvider(ctx, flags)
 	resources := provider.SetupResources()
 	config := service.GetConfig(flags.Config, resources.GetBucket())
 	if config.AgentVersion == "" {

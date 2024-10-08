@@ -112,7 +112,7 @@ func (g *gcloudService) GetResources() model.Resources {
 	return g.resources
 }
 
-func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool) {
+func (g *gcloudService) DeleteResources(deleteBucket bool) {
 	agentJob := fmt.Sprintf("%s-agent", g.cloudPrefix)
 	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
@@ -134,10 +134,6 @@ func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err))
 	}
-	if hasCustomTFStep {
-		common.PrintWarning(fmt.Sprintf("Custom terraform state bucket %s-custom-%s will not be deleted, delete it manually if needed\n",
-			g.cloudPrefix, g.projectId))
-	}
 	if !deleteBucket {
 		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
 		return
@@ -147,16 +143,6 @@ func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 		bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket %s: %s", bucket, err))
 	}
-}
-
-func (g *gcloudService) SetupCustomBucket() (model.Bucket, error) {
-	bucket := fmt.Sprintf("%s-custom-%s", g.cloudPrefix, g.projectId)
-	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
-	if err != nil {
-		return nil, err
-	}
-	err = storage.CreateBucket()
-	return storage, err
 }
 
 func (g *gcloudService) enableApiServices() {

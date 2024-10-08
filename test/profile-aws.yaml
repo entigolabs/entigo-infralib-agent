@@ -1,11 +1,11 @@
 prefix: at
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 version: stable
 agent_version: latest
 steps:
   - name: infra
     type: terraform
-    workspace: test
     provider:
       aws:
         default_tags:
@@ -23,7 +23,3 @@ steps:
           create_private: false
           create_public: false
           create_cert: false
-  - name: additional
-    type: terraform-custom
-    workspace: test
-    approve: never

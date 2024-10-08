@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
 	"github.com/entigolabs/entigo-infralib-agent/commands/delete"
@@ -14,19 +15,19 @@ func action(cmd common.Command) func(c *cli.Context) error {
 		if err := flags.Setup(cmd); err != nil {
 			common.Logger.Fatal(&common.PrefixedError{Reason: err})
 		}
-		run(cmd)
+		run(c.Context, cmd)
 		return nil
 	}
 }
 
-func run(cmd common.Command) {
+func run(ctx context.Context, cmd common.Command) {
 	switch cmd {
 	case common.RunCommand:
-		agentRun.Run(flags)
+		agentRun.Run(ctx, flags)
 	case common.BootstrapCommand:
-		bootstrap.Bootstrap(flags)
+		bootstrap.Bootstrap(ctx, flags)
 	case common.DeleteCommand:
-		delete.Delete(flags)
+		delete.Delete(ctx, flags)
 	default:
 		common.Logger.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
 	}

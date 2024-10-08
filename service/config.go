@@ -17,9 +17,11 @@ import (
 const (
 	StableVersion = "stable"
 	IncludeFormat = "config/%s/include"
+
+	EntigoSource = "github.com/entigolabs/entigo-infralib-release"
 )
 
-var ReservedFiles = model.Set[string]{"main.tf": true, "provider.tf": true, "backend.conf": true}
+var ReservedFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
 
 func GetAwsPrefix(flags *common.Flags) string {
 	if flags.AWSPrefix != "" {
@@ -44,12 +46,6 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 		PutAdditionalFiles(bucket, config.Steps)
 	} else {
 		config = GetRemoteConfig(bucket)
-	}
-	if config.Source == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
-	}
-	if config.Version == "" {
-		config.Version = StableVersion
 	}
 	return config
 }
@@ -285,17 +281,31 @@ func ValidateConfig(config model.Config, state *model.State) {
 	if config.Prefix == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
+	if config.Source != "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config Source is deprecated, use sources")})
+	}
+	if config.Sources == nil || len(config.Sources) == 0 {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("sources are not set")})
+
+	}
+	for i, source := range config.Sources {
+		if source.URL == "" {
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("Source[%d] is missing the repository url", i)})
+		}
+		if source.Version != "" && source.Version != StableVersion {
+			_, err := version.NewVersion(source.Version)
+			if err != nil {
+				common.Logger.Fatalf("Source[%d] version must follow semantic versioning: %s", i, err)
+			}
+		}
+	}
 	for _, step := range config.Steps {
 		validateStep(step)
 		if stepNames.Contains(step.Name) {
 			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name %s is not unique", step.Name)})
 		}
 		stepNames.Add(step.Name)
-		stepVersion := step.Version
-		if stepVersion == "" {
-			stepVersion = config.Version
-		}
-		validateConfigModules(step, state, stepVersion)
+		validateConfigModules(step, state)
 	}
 }
 
@@ -312,12 +322,9 @@ func validateStep(step model.Step) {
 	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
 		common.Logger.Fatalf("VPC ID is not set for step %s", step.Name)
 	}
-	if step.Type == model.StepTypeTerraformCustom && step.Approve != "" && step.Approve != model.ApproveAlways && step.Approve != model.ApproveNever {
-		common.Logger.Fatalf("custom terraform step %s must have approve 'always' or 'never'", step.Name)
-	}
 }
 
-func validateConfigModules(step model.Step, state *model.State, stepVersion string) {
+func validateConfigModules(step model.Step, state *model.State) {
 	stepState := GetStepState(state, step.Name)
 	for _, module := range step.Modules {
 		validateModule(module, step.Name)
@@ -332,15 +339,15 @@ func validateConfigModules(step model.Step, state *model.State, stepVersion stri
 			}
 			continue
 		}
-		if moduleVersionString == "" {
-			moduleVersionString = stepVersion
-		}
-		if stateModule == nil || stateModule.Version == "" || moduleVersionString == StableVersion {
+		if moduleVersionString == "" || moduleVersionString == StableVersion {
 			continue
 		}
 		moduleVersion, err := version.NewVersion(moduleVersionString)
 		if err != nil {
 			common.Logger.Fatalf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
+		}
+		if stateModule == nil || stateModule.Version == "" {
+			continue
 		}
 		stateModuleVersion, err := version.NewVersion(stateModule.Version)
 		if err != nil {
@@ -358,7 +365,7 @@ func validateModule(module model.Module, stepName string) {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", stepName)})
 	}
 	if module.Source == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module source is not set for module %s in step %s", module.Name, stepName)})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module Source is not set for module %s in step %s", module.Name, stepName)})
 	}
 }
 
@@ -468,15 +475,6 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep) {
 			stepState.Modules = append(stepState.Modules[:i], stepState.Modules[i+1:]...)
 		}
 	}
-}
-
-func hasCustomTFStep(steps []model.Step) bool {
-	for _, step := range steps {
-		if step.Type == model.StepTypeTerraformCustom {
-			return true
-		}
-	}
-	return false
 }
 
 func findStep(stepName string, steps []model.Step) (int, *model.Step) {

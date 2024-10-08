@@ -118,15 +118,19 @@ Config is provided with a yaml file:
 
 ```yaml
 prefix: string
-source: https://github.com/entigolabs/entigo-infralib-release
-version: stable | semver
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
+    version: stable | semver
+    include: []string
+    exclude: []string
 agent_version: latest | semver
+base_image_source: string
 base_image_version: stable | semver
 steps:
   - name: string
-    type: terraform | argocd-apps | terraform-custom
+    type: terraform | argocd-apps
     approve: minor | major | never | always
-    version: stable | semver
+    base_image_source: string
     base_image_version: stable | semver
     vpc_id: string
     vpc_subnet_ids: multiline string
@@ -154,19 +158,22 @@ steps:
 ```
 Complex values need to be as multiline strings with | symbol.
 
-Config version is overwritten by step version which in turn is overwritten by module version. Default version is **stable**.
-During merging, step name is used for identifying parent steps, modules are identified by name.
+Source version is overwritten by module version. Default version is **stable** which means latest release of the source repository.
 
 * prefix - prefix used for AWS/GCloud resources, CodeCommit folders/files and terraform resources
-* source - source repository for Entigo Infralib terraform modules
-* version - version of Entigo Infralib terraform modules to use
+* sources - list of source repositories for Entigo Infralib modules
+  * url - url of the source repository
+  * version - highest version of Entigo Infralib modules to use
+  * include - list of modules to include from the source repository
+  * exclude - list of modules to exclude from the source repository
 * agent_version - image version of Entigo Infralib Agent to use
+* base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
-  * approve - approval type for the step, only applies when terraform needs to change resources, based on semver. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically. Custom terraform steps only support values `always` and `never`, default **always**
-  * version - version of Entigo Infralib terraform modules to use
+  * approve - approval type for the step, only applies when terraform needs to change resources, based on semver. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
+  * base_image_source - source of Entigo Infralib Base Image to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * vpc_id - vpc id for code build
   * vpc_subnet_ids - vpc subnet ids for code build
@@ -177,7 +184,7 @@ During merging, step name is used for identifying parent steps, modules are iden
   * modules - list of modules to apply
     * name - name of the module
     * source - source of the terraform module, can be an external git repository beginning with git:: or git@
-    * version - version of the module to use
+    * version - highest version of the module to use
     * http_username - username for external repository authentication
     * http_password - password for external repository authentication
     * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the `./config/<stepName>` directory with a name `<moduleName>.yaml`.

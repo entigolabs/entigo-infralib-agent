@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/google/go-github/v60/github"
+	"github.com/hashicorp/go-version"
 	"net/url"
 	"sort"
 	"strings"
@@ -12,41 +13,39 @@ import (
 )
 
 type Github interface {
-	GetLatestReleaseTag() (*Release, error)
-	GetReleaseByTag(tag string) (*Release, error)
-	GetNewerReleases(after time.Time) ([]Release, error)
-	GetRawFileContent(path string, release string) ([]byte, error)
+	GetLatestReleaseTag(repoURL string) (*Release, error)
+	GetReleaseByTag(repoURL string, tag string) (*Release, error)
+	GetReleases(repoURL string, oldestRelease Release, newestRelease *Release) ([]*version.Version, error)
+	GetRawFileContent(repoURL string, path string, release string) ([]byte, error)
 }
 
 const rawGithubUrl = "https://raw.githubusercontent.com"
 
 type githubClient struct {
+	ctx    context.Context
 	client *github.Client
-	owner  string
-	repo   string
 	cache  *FileCache
 }
 
-func NewGithub(repoURL string) Github {
-	owner, repo, err := getGithubOwnerAndRepo(repoURL)
-	if err != nil {
-		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
-	}
+func NewGithub(ctx context.Context) Github {
 	return &githubClient{
+		ctx:    ctx,
 		client: github.NewClient(nil),
-		owner:  owner,
-		repo:   repo,
 		cache:  NewFileCache(),
 	}
 }
 
-func (g *githubClient) GetLatestReleaseTag() (*Release, error) {
-	release, _, err := g.client.Repositories.GetLatestRelease(context.Background(), g.owner, g.repo)
+func (g *githubClient) GetLatestReleaseTag(repoURL string) (*Release, error) {
+	owner, repo, err := getGithubOwnerAndRepo(repoURL)
 	if err != nil {
-		return nil, err
+		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+	}
+	release, _, err := g.client.Repositories.GetLatestRelease(g.ctx, owner, repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest release for %s/%s: %w", owner, repo, err)
 	}
 	if release == nil {
-		return nil, fmt.Errorf("no releases found for %s/%s", g.owner, g.repo)
+		return nil, fmt.Errorf("no releases found for %s/%s", owner, repo)
 	}
 	return &Release{
 		Tag:         release.GetTagName(),
@@ -54,13 +53,17 @@ func (g *githubClient) GetLatestReleaseTag() (*Release, error) {
 	}, nil
 }
 
-func (g *githubClient) GetReleaseByTag(tag string) (*Release, error) {
-	release, _, err := g.client.Repositories.GetReleaseByTag(context.Background(), g.owner, g.repo, tag)
+func (g *githubClient) GetReleaseByTag(repoURL string, tag string) (*Release, error) {
+	owner, repo, err := getGithubOwnerAndRepo(repoURL)
+	if err != nil {
+		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+	}
+	release, _, err := g.client.Repositories.GetReleaseByTag(g.ctx, owner, repo, tag)
 	if err != nil {
 		return nil, err
 	}
 	if release == nil {
-		return nil, fmt.Errorf("no release found for %s/%s with tag %s", g.owner, g.repo, tag)
+		return nil, fmt.Errorf("no release found for %s/%s with tag %s", owner, repo, tag)
 	}
 	return &Release{
 		Tag:         release.GetTagName(),
@@ -68,33 +71,68 @@ func (g *githubClient) GetReleaseByTag(tag string) (*Release, error) {
 	}, nil
 }
 
-func (g *githubClient) GetNewerReleases(after time.Time) ([]Release, error) {
-	newReleases := make([]Release, 0)
+func (g *githubClient) GetReleases(repoURL string, oldestRelease Release, newestRelease *Release) ([]*version.Version, error) {
+	owner, repo, err := getGithubOwnerAndRepo(repoURL)
+	if err != nil {
+		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+	}
+
+	oldestVersion, err := version.NewVersion(oldestRelease.Tag)
+	if err != nil {
+		return nil, err
+	}
+	var newestVersion *version.Version
+	if newestRelease != nil {
+		newestVersion, err = version.NewVersion(newestRelease.Tag)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return g.getReleases(owner, repo, oldestRelease, oldestVersion, newestRelease, newestVersion)
+}
+
+func (g *githubClient) getReleases(owner, repo string, oldestRelease Release, oldestVersion *version.Version, newestRelease *Release, newestVersion *version.Version) ([]*version.Version, error) {
+	newReleases := make([]*version.Version, 0)
 	options := &github.ListOptions{Page: 1}
 	for {
-		releases, response, err := g.client.Repositories.ListReleases(context.Background(), g.owner, g.repo, options)
+		releases, response, err := g.client.Repositories.ListReleases(g.ctx, owner, repo, options)
 		if err != nil {
 			return nil, err
 		}
 		for _, release := range releases {
-			if !release.GetPublishedAt().Before(after) {
-				newReleases = append(newReleases, Release{
-					Tag:         release.GetTagName(),
-					PublishedAt: release.GetPublishedAt().Time,
-				})
+			if newestRelease != nil && release.GetPublishedAt().After(newestRelease.PublishedAt) {
+				continue
+			}
+			if !release.GetPublishedAt().Before(oldestRelease.PublishedAt) {
+				newVersion, err := version.NewVersion(release.GetTagName())
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse version %s in %s/%s: %v", release.GetTagName(),
+						owner, repo, err)
+				}
+				if newVersion.LessThan(oldestVersion) || (newestVersion != nil && newVersion.GreaterThan(newestVersion)) {
+					continue
+				}
+				newReleases = append(newReleases, newVersion)
 			} else {
-				return sortReleasesByPublishedAt(newReleases), nil
+				sort.Sort(version.Collection(newReleases))
+				return newReleases, nil
 			}
 		}
 		if response.NextPage == 0 {
-			return sortReleasesByPublishedAt(newReleases), nil
+			sort.Sort(version.Collection(newReleases))
+			return newReleases, nil
 		}
 		options.Page = response.NextPage
 	}
 }
 
-func (g *githubClient) GetRawFileContent(path string, release string) ([]byte, error) {
-	fileUrl := fmt.Sprintf("%s/%s/%s/%s/%s", rawGithubUrl, g.owner, g.repo, release, path)
+func (g *githubClient) GetRawFileContent(repoURL string, path string, release string) ([]byte, error) {
+	owner, repo, err := getGithubOwnerAndRepo(repoURL)
+	if err != nil {
+		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+	}
+	fileUrl := fmt.Sprintf("%s/%s/%s/%s/%s", rawGithubUrl, owner, repo, release, path)
 	fileContent, err := g.cache.GetFile(fileUrl)
 	if err != nil {
 		return nil, err
@@ -103,13 +141,6 @@ func (g *githubClient) GetRawFileContent(path string, release string) ([]byte, e
 		return nil, FileNotFoundError{fileName: path}
 	}
 	return fileContent, nil
-}
-
-func sortReleasesByPublishedAt(releases []Release) []Release {
-	sort.Slice(releases, func(i, j int) bool {
-		return releases[i].PublishedAt.Before(releases[j].PublishedAt)
-	})
-	return releases
 }
 
 func getGithubOwnerAndRepo(repoURL string) (string, string, error) {
@@ -136,6 +167,10 @@ type Release struct {
 
 type FileNotFoundError struct {
 	fileName string
+}
+
+func NewFileNotFoundError(fileName string) FileNotFoundError {
+	return FileNotFoundError{fileName: fileName}
 }
 
 func (e FileNotFoundError) Error() string {

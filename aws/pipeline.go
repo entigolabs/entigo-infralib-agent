@@ -370,7 +370,7 @@ func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 	return err
 }
 
-func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, customRepo string) (*string, error) {
+func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model.Step, _ string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
@@ -448,7 +448,7 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 
 func getActionEnvironmentVariables(actionName string, stepName string, step model.Step) string {
 	command := getCommand(actionName, step.Type)
-	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
+	if step.Type == model.StepTypeTerraform {
 		return getTerraformEnvironmentVariables(command, stepName, step)
 	} else {
 		return getEnvironmentVariables(command, stepName, step)
@@ -593,8 +593,6 @@ func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 		return pipeChanges, nil
 	}
 	switch stepType {
-	case model.StepTypeTerraformCustom:
-		fallthrough
 	case model.StepTypeTerraform:
 		return p.getTerraformChanges(pipelineName, actions)
 	}

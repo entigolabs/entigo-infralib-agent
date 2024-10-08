@@ -387,8 +387,6 @@ func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 		return pipeChanges, nil
 	}
 	switch stepType {
-	case model.StepTypeTerraformCustom:
-		fallthrough
 	case model.StepTypeTerraform:
 		return p.getTerraformChanges(pipelineName, jobName, executionName)
 	}

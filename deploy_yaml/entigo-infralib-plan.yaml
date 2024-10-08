@@ -35,8 +35,6 @@ spec:
                   value: plan
                 - name: TF_VAR_prefix
                   value: ep-net
-                - name: WORKSPACE
-                  value: dev
               volumeMounts:
                 - name: bucket
                   mountPath: /bucket

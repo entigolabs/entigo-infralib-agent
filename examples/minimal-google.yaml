@@ -1,10 +1,10 @@
 prefix: agentgce
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 version: stable
 steps:
   - name: net
     type: terraform
-    workspace: dev
     approve: minor
     modules:
       - name: main
@@ -12,7 +12,6 @@ steps:
         version: stable
   - name: infra
     type: terraform
-    workspace: dev
     approve: minor
     version: stable
     vpc_id: "{{ .gcsm.net.main.vpc_name }}"
@@ -50,7 +49,6 @@ steps:
             ]
   - name: applications
     type: argocd-apps
-    workspace: dev
     version: stable
     vpc_id: "{{ .gcsm.net.main.vpc_name }}"
     vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"

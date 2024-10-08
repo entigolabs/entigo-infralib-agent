@@ -1,10 +1,8 @@
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 prefix: ep
-base_config:
-  profile: biz
 steps:
   - name: infra
-    workspace: test
     modules:
       - name: dns
         inputs:
@@ -13,20 +11,9 @@ steps:
         inputs:
           eks_cluster_public: true
   - name: helm
-    workspace: test
     modules:
       - name: argocd
         inputs:
           ingress_group_name: "external"
           ingress_scheme: "internet-facing"
-  - name: mycustomtf
-    before: helm
-    type: terraform-custom
-    workspace: test
-    vpc_id: "{{ .ssm.net.vpc.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.net.vpc.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.net.vpc.pipeline_security_group }}]
-    approve: never
 

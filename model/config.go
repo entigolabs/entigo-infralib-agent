@@ -6,19 +6,27 @@ import (
 )
 
 type Config struct {
-	Prefix           string `yaml:"prefix,omitempty" fake:"{word}"`
-	Source           string `yaml:"source" fake:"{url}"`
-	Version          string `yaml:"version,omitempty" fake:"{version}"`
-	AgentVersion     string `yaml:"agent_version,omitempty" fake:"{version}"`
-	BaseImageVersion string `yaml:"base_image_version,omitempty"`
-	Steps            []Step `yaml:"steps,omitempty" fakesize:"1"`
+	Prefix           string         `yaml:"prefix,omitempty" fake:"{word}"`
+	Source           string         `yaml:"source" fake:"{url}"`
+	Sources          []ConfigSource `yaml:"sources,omitempty" fakesize:"1"`
+	AgentVersion     string         `yaml:"agent_version,omitempty" fake:"{version}"`
+	BaseImageSource  string         `yaml:"base_image_source,omitempty"`
+	BaseImageVersion string         `yaml:"base_image_version,omitempty"`
+	Steps            []Step         `yaml:"steps,omitempty" fakesize:"1"`
+}
+
+type ConfigSource struct {
+	URL     string   `yaml:"url" fake:"{url}"`
+	Version string   `yaml:"version,omitempty"`
+	Include []string `yaml:"include,omitempty"`
+	Exclude []string `yaml:"exclude,omitempty"`
 }
 
 type Step struct {
 	Name                  string   `yaml:"name" fake:"{word}"`
 	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
 	Approve               Approve  `yaml:"approve,omitempty"`
-	Version               string   `yaml:"version,omitempty" fake:"{version}"`
+	BaseImageSource       string   `yaml:"base_image_source,omitempty"`
 	BaseImageVersion      string   `yaml:"base_image_version,omitempty" fake:"{version}"`
 	VpcId                 string   `yaml:"vpc_id,omitempty"`
 	VpcSubnetIds          string   `yaml:"vpc_subnet_ids,omitempty"`
@@ -95,9 +103,8 @@ type Module struct {
 type StepType string
 
 const (
-	StepTypeTerraform       StepType = "terraform"
-	StepTypeArgoCD          StepType = "argocd-apps"
-	StepTypeTerraformCustom StepType = "terraform-custom"
+	StepTypeTerraform StepType = "terraform"
+	StepTypeArgoCD    StepType = "argocd-apps"
 )
 
 type ReplaceType string
@@ -130,13 +137,7 @@ const (
 )
 
 type State struct {
-	BaseConfig StateConfig  `yaml:"base_config"`
-	Steps      []*StateStep `yaml:"steps"`
-}
-
-type StateConfig struct {
-	Version        *version.Version `yaml:"version,omitempty"`
-	AppliedVersion *version.Version `yaml:"applied_version,omitempty"`
+	Steps []*StateStep `yaml:"steps"`
 }
 
 type StateStep struct {
@@ -149,6 +150,7 @@ type StateModule struct {
 	Name           string      `yaml:"name"`
 	Version        string      `yaml:"version,omitempty"`
 	AppliedVersion *string     `yaml:"applied_version,omitempty"`
+	Source         string      `yaml:"source,omitempty"`
 	Type           *ModuleType `yaml:"type,omitempty"`
 	AutoApprove    bool        `yaml:"-"` // always omit
 }
@@ -158,3 +160,14 @@ type ModuleType string
 const (
 	ModuleTypeCustom ModuleType = "custom"
 )
+
+type Source struct {
+	URL               string
+	Version           *version.Version
+	NewestVersion     *version.Version
+	StableVersion     *version.Version
+	Releases          []*version.Version
+	Modules           Set[string]
+	PreviousChecksums map[string]string
+	CurrentChecksums  map[string]string
+}
