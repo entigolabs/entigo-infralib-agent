@@ -116,6 +116,7 @@ const (
 	ReplaceTypeGCSMCustom   ReplaceType = "gcsm-custom"
 	ReplaceTypeOutput       ReplaceType = "output"
 	ReplaceTypeOutputCustom ReplaceType = "output-custom"
+	ReplaceTypeTOutput      ReplaceType = "toutput"
 	ReplaceTypeConfig       ReplaceType = "config"
 	ReplaceTypeAgent        ReplaceType = "agent"
 )

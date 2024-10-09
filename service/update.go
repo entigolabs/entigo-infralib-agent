@@ -26,10 +26,11 @@ const (
 	stateFile     = "state.yaml"
 	checksumsFile = "checksums.sha256"
 
-	replaceRegex        = `{{(.*?)}}`
-	parameterIndexRegex = `(\w+)(\[(\d+)(-(\d+))?])?`
-	ssmPrefix           = "/entigo-infralib"
+	replaceRegex = `{{(.*?)}}`
+	ssmPrefix    = "/entigo-infralib"
 )
+
+var parameterIndexRegex = regexp.MustCompile(`(\w+)(\[(\d+)(-(\d+))?])?`)
 
 type Updater interface {
 	ProcessSteps()
@@ -1008,7 +1009,7 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		case string(model.ReplaceTypeGCSM):
 			fallthrough
 		case string(model.ReplaceTypeSSM):
-			parameter, err := u.getSSMParameter(u.config.Prefix, step, replaceKey)
+			parameter, err := u.getSSMParameter(step, replaceKey)
 			if err != nil {
 				return "", err
 			}
@@ -1019,6 +1020,12 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			fallthrough
 		case string(model.ReplaceTypeSSMCustom):
 			parameter, err := u.getSSMCustomParameter(replaceKey)
+			if err != nil {
+				return "", err
+			}
+			content = strings.Replace(content, replaceTag, parameter, 1)
+		case string(model.ReplaceTypeTOutput):
+			parameter, err := u.getTypedSSMParameter(step, replaceKey)
 			if err != nil {
 				return "", err
 			}
@@ -1064,15 +1071,14 @@ func (u *updater) getReplacementAgentValue(key string, index int) (string, error
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
 
-func (u *updater) getSSMParameter(prefix string, step model.Step, replaceKey string) (string, error) {
+func (u *updater) getSSMParameter(step model.Step, replaceKey string) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) != 4 {
 		return "", fmt.Errorf("failed to parse ssm parameter key %s for step %s, got %d split parts instead of 4",
 			replaceKey, step.Name, len(parts))
 	}
-	re := regexp.MustCompile(parameterIndexRegex)
-	match := re.FindStringSubmatch(parts[3])
-	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, prefix, parts[1], parts[2], match[1])
+	match := parameterIndexRegex.FindStringSubmatch(parts[3])
+	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.config.Prefix, parts[1], parts[2], match[1])
 	return u.getSSMParameterValue(match, replaceKey, parameterName)
 }
 
@@ -1081,15 +1087,29 @@ func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
 	if len(parts) != 2 {
 		return "", fmt.Errorf("failed to parse ssm custom parameter key %s, got %d split parts instead of 2", replaceKey, len(parts))
 	}
-	re := regexp.MustCompile(parameterIndexRegex)
-	match := re.FindStringSubmatch(parts[1])
-	return u.getSSMParameterValue(match, replaceKey, parts[1])
+	match := parameterIndexRegex.FindStringSubmatch(parts[1])
+	return u.getSSMParameterValue(match, replaceKey, match[1])
+}
+
+func (u *updater) getTypedSSMParameter(step model.Step, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("failed to parse toutput key %s for step %s, got %d split parts instead of 3",
+			replaceKey, step.Name, len(parts))
+	}
+	stepName, moduleName, err := u.findStepModuleByType(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to find step and module for toutput key %s: %s", replaceKey, err)
+	}
+	match := parameterIndexRegex.FindStringSubmatch(parts[2])
+	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.config.Prefix, stepName, moduleName, match[1])
+	return u.getSSMParameterValue(match, replaceKey, parameterName)
 }
 
 func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
 	parameter, err := u.resources.GetSSM().GetParameter(parameterName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("ssm parameter %s %s", parameterName, err)
 	}
 	if match[2] == "" {
 		return *parameter.Value, nil
@@ -1098,6 +1118,30 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
+}
+
+func (u *updater) findStepModuleByType(moduleType string) (string, string, error) {
+	var stepName, moduleName string
+	for _, configStep := range u.config.Steps {
+		for _, module := range configStep.Modules {
+			moduleSource := module.Source
+			if util.IsClientModule(module) {
+				moduleSource = moduleSource[strings.LastIndex(moduleSource, "//")+2:]
+			}
+			currentType := moduleSource[strings.Index(module.Source, "/")+1:]
+			if currentType == moduleType {
+				if stepName != "" {
+					return "", "", fmt.Errorf("found multiple modules with type %s", moduleType)
+				}
+				stepName = configStep.Name
+				moduleName = module.Name
+			}
+		}
+	}
+	if stepName == "" {
+		return "", "", fmt.Errorf("no module found with type %s", moduleType)
+	}
+	return stepName, moduleName, nil
 }
 
 func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {

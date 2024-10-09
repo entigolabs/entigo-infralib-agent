@@ -283,7 +283,7 @@ func ValidateConfig(config model.Config, state *model.State) {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
 	if config.Source != "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config Source is deprecated, use sources")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is deprecated, use sources instead")})
 	}
 	if config.Sources == nil || len(config.Sources) == 0 {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("sources are not set")})
