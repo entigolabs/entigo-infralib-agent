@@ -6,6 +6,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
 	"github.com/entigolabs/entigo-infralib-agent/commands/delete"
 	agentRun "github.com/entigolabs/entigo-infralib-agent/commands/run"
+	"github.com/entigolabs/entigo-infralib-agent/commands/update"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/urfave/cli/v2"
 )
@@ -24,6 +25,8 @@ func run(ctx context.Context, cmd common.Command) {
 	switch cmd {
 	case common.RunCommand:
 		agentRun.Run(ctx, flags)
+	case common.UpdateCommand:
+		update.Update(ctx, flags)
 	case common.BootstrapCommand:
 		bootstrap.Bootstrap(ctx, flags)
 	case common.DeleteCommand:
@@ -31,5 +34,4 @@ func run(ctx context.Context, cmd common.Command) {
 	default:
 		common.Logger.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
 	}
-
 }

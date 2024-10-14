@@ -222,7 +222,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 	return err
 }
 
-func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
+func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string, cmd common.Command) error {
 	jobOp, err := b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
 		Job: &runpb.Job{
@@ -231,6 +231,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 					Containers: []*runpb.Container{{
 						Name:  "agent",
 						Image: model.AgentImageDocker + ":" + imageVersion,
+						Args:  []string{"ei-agent", string(cmd)},
 						Env:   b.getAgentEnvVars(awsPrefix),
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      "tmp",

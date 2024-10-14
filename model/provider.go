@@ -1,5 +1,7 @@
 package model
 
+import "github.com/entigolabs/entigo-infralib-agent/common"
+
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
@@ -43,7 +45,7 @@ type Bucket interface {
 
 type Pipeline interface {
 	CreatePipeline(projectName, stepName string, step Step, bucket Bucket) (*string, error)
-	CreateAgentPipeline(prefix, pipelineName, projectName, bucket string) error
+	CreateAgentPipelines(prefix, projectName, bucket string) error
 	UpdatePipeline(pipelineName, stepName string, step Step, bucket string) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
@@ -54,7 +56,7 @@ type Pipeline interface {
 
 type Builder interface {
 	CreateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig) error
-	CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error
+	CreateAgentProject(projectName string, awsPrefix string, imageVersion string, cmd common.Command) error
 	GetProject(projectName string) (*Project, error)
 	UpdateAgentProject(projectName, version, cloudPrefix string) error
 	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig) error

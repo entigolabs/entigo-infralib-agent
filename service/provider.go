@@ -10,7 +10,7 @@ import (
 )
 
 func GetCloudProvider(ctx context.Context, flags *common.Flags) model.CloudProvider {
-	prefix := GetAwsPrefix(flags)
+	prefix := GetProviderPrefix(flags)
 	if flags.GCloud.ProjectId != "" {
 		common.Logger.Println("Using GCloud with project ID: ", flags.GCloud.ProjectId)
 		return gcloud.NewGCloud(ctx, strings.ToLower(prefix), flags.GCloud)

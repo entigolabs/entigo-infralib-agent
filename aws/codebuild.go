@@ -118,8 +118,7 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string) [
 	}}
 }
 
-func (b *builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
-	common.Logger.Printf("Creating CodeBuild project %s\n", projectName)
+func (b *builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string, cmd common.Command) error {
 	_, err := b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -145,9 +144,12 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 		},
 		Source: &types.ProjectSource{
 			Type:      types.SourceTypeNoSource,
-			Buildspec: agentBuildSpec(),
+			Buildspec: agentBuildSpec(cmd),
 		},
 	})
+	if err == nil {
+		common.Logger.Printf("Created CodeBuild project %s\n", projectName)
+	}
 	return err
 }
 
@@ -306,12 +308,12 @@ func buildSpec() *string {
 	return buildSpecYaml(spec)
 }
 
-func agentBuildSpec() *string {
+func agentBuildSpec(cmd common.Command) *string {
 	spec := BuildSpec{
 		Version: "0.2",
 		Phases: Phases{
 			Build: Build{
-				Commands: []string{"cd /etc/ei-agent && /usr/bin/ei-agent run"},
+				Commands: []string{fmt.Sprintf("cd /etc/ei-agent && /usr/bin/ei-agent %s", cmd)},
 			},
 		},
 		Artifacts: Artifacts{

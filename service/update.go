@@ -33,12 +33,12 @@ const (
 var parameterIndexRegex = regexp.MustCompile(`(\w+)(\[(\d+)(-(\d+))?])?`)
 
 type Updater interface {
-	ProcessSteps()
+	Run()
+	Update()
 }
 
 type updater struct {
 	config        model.Config
-	patchConfig   model.Config
 	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
@@ -46,6 +46,7 @@ type updater struct {
 	state         *model.State
 	moduleSources map[string]string
 	sources       map[string]*model.Source
+	firstRunDone  map[string]bool
 	allowParallel bool
 }
 
@@ -56,13 +57,9 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	githubClient := github.NewGithub(ctx)
-	moduleSources, sources, err := getSources(githubClient, config, state)
-	if err != nil {
-		common.Logger.Fatalf("Failed to get module sources: %s", err)
-	}
+	sources, moduleSources := createSources(githubClient, config, state)
 	return &updater{
 		config:        config,
-		patchConfig:   config,
 		provider:      provider,
 		resources:     resources,
 		terraform:     terraform.NewTerraform(githubClient),
@@ -70,6 +67,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		state:         state,
 		moduleSources: moduleSources,
 		sources:       sources,
+		firstRunDone:  make(map[string]bool),
 		allowParallel: flags.AllowParallel,
 	}
 }
@@ -90,15 +88,73 @@ func getLatestState(codeCommit model.Bucket) *model.State {
 	return &state
 }
 
-func getSources(githubClient github.Github, config model.Config, state *model.State) (map[string]string, map[string]*model.Source, error) {
-	moduleSources, sources, err := getModuleSources(config, githubClient)
-	if err != nil {
-		return nil, nil, err
+func createSources(githubClient github.Github, config model.Config, state *model.State) (map[string]*model.Source, map[string]string) {
+	sources := make(map[string]*model.Source)
+	for _, source := range config.Sources {
+		stableVersion := getLatestRelease(githubClient, source.URL)
+		checksums, err := getChecksums(githubClient, source.URL, stableVersion.Original())
+		if err != nil || checksums == nil {
+			common.Logger.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
+		}
+		sources[source.URL] = &model.Source{
+			URL:              source.URL,
+			StableVersion:    getLatestRelease(githubClient, source.URL),
+			Modules:          model.NewSet[string](),
+			Includes:         model.ToSet(source.Include),
+			Excludes:         model.ToSet(source.Exclude),
+			CurrentChecksums: checksums,
+		}
 	}
+	moduleSources := addSourceModules(config, sources)
+	addSourceReleases(githubClient, config, state, sources)
+	return sources, moduleSources
+}
+
+func addSourceModules(config model.Config, sources map[string]*model.Source) map[string]string {
+	moduleSources := make(map[string]string)
+	for _, step := range config.Steps {
+		for _, module := range step.Modules {
+			if moduleSources[module.Source] != "" {
+				continue
+			}
+			moduleSource, err := getModuleSource(step, module, sources)
+			if err != nil {
+				common.Logger.Fatalf("Module %s in step %s is not included in any Source", module.Name, step.Name)
+			}
+			moduleSources[module.Source] = moduleSource
+		}
+	}
+	return moduleSources
+}
+
+func getModuleSource(step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
+	for _, source := range sources {
+		moduleSource := module.Source
+		if source.Includes.Contains(moduleSource) {
+			sources[source.URL].Modules.Add(moduleSource)
+			return source.URL, nil
+		}
+		if source.Excludes.Contains(moduleSource) {
+			continue
+		}
+		if step.Type == model.StepTypeArgoCD {
+			moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
+		}
+		moduleKey := fmt.Sprintf("modules/%s", moduleSource)
+		if source.CurrentChecksums[moduleKey] != "" {
+			sources[source.URL].Modules.Add(moduleSource)
+			return source.URL, nil
+		}
+	}
+	return "", fmt.Errorf("module %s source not found", module.Name)
+}
+
+func addSourceReleases(githubClient github.Github, config model.Config, state *model.State, sources map[string]*model.Source) {
 	for _, cSource := range config.Sources {
 		source := sources[cSource.URL]
 		upperVersion := source.StableVersion
 		if cSource.Version != "" && cSource.Version != StableVersion {
+			var err error
 			upperVersion, err = version.NewVersion(cSource.Version)
 			if err != nil {
 				common.Logger.Fatalf("Failed to parse version %s: %s", cSource.Version, err)
@@ -115,94 +171,53 @@ func getSources(githubClient github.Github, config model.Config, state *model.St
 		source.NewestVersion = newestVersion
 		source.Releases = releases
 	}
-	return moduleSources, sources, nil
 }
 
-func getModuleSources(config model.Config, githubClient github.Github) (map[string]string, map[string]*model.Source, error) {
-	moduleSources := make(map[string]string)
-	sources := make(map[string]*model.Source)
-
-	sourceIncludes := make(map[string]model.Set[string])
-	sourceExcludes := make(map[string]model.Set[string])
-	for _, source := range config.Sources {
-		if source.Include == nil || len(source.Include) == 0 {
-			sourceIncludes[source.URL] = model.NewSet[string]()
-		} else {
-			sourceIncludes[source.URL] = model.ToSet(source.Include)
+func (u *updater) Run() {
+	u.updateAgentJob(common.RunCommand)
+	index := 0
+	updateState(u.config, u.state)
+	wg := new(model.SafeCounter)
+	errChan := make(chan error, 1)
+	failed := false
+	retrySteps := make([]model.Step, 0)
+	for _, step := range u.config.Steps {
+		retry, err := u.processStep(index, step, wg, errChan)
+		if err != nil {
+			common.PrintError(err)
+			failed = true
+			break
 		}
-		if source.Exclude == nil || len(source.Exclude) == 0 {
-			sourceExcludes[source.URL] = model.NewSet[string]()
-		} else {
-			sourceExcludes[source.URL] = model.ToSet(source.Exclude)
-		}
-		latestVersion := getLatestRelease(githubClient, source.URL)
-		sources[source.URL] = &model.Source{
-			URL:           source.URL,
-			StableVersion: latestVersion,
-			Modules:       model.NewSet[string](),
+		if retry {
+			retrySteps = append(retrySteps, step)
 		}
 	}
-	GetChecksums(sources, githubClient, nil)
-	for _, source := range sources {
-		if source.CurrentChecksums == nil {
-			return nil, nil, fmt.Errorf("failed to get checksums for source %s", source.URL)
-		}
+	wg.Wait()
+	close(errChan)
+	time.Sleep(1 * time.Second)
+	u.putStateFileOrDie()
+	if _, ok := <-errChan; ok || failed {
+		common.Logger.Fatalf("One or more steps failed to apply")
 	}
-
-	for _, step := range config.Steps {
-		for _, module := range step.Modules {
-			if moduleSources[module.Source] != "" {
-				continue
-			}
-			found := false
-			for _, source := range config.Sources {
-				if sourceIncludes[source.URL].Contains(module.Name) {
-					moduleSources[module.Source] = source.URL
-					sources[source.URL].Modules.Add(module.Name)
-					found = true
-					break
-				}
-			}
-			if found {
-				continue
-			}
-			for _, source := range sources {
-				if sourceExcludes[source.URL].Contains(module.Name) {
-					continue
-				}
-				moduleSource := module.Source
-				if step.Type == model.StepTypeArgoCD {
-					moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
-				}
-				moduleKey := fmt.Sprintf("modules/%s", moduleSource)
-				if source.CurrentChecksums[moduleKey] != "" {
-					moduleSources[module.Source] = source.URL
-					sources[source.URL].Modules.Add(module.Name)
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, nil, fmt.Errorf("module %s in step %s is not included in any Source", module.Name, step.Name)
-			}
-		}
-	}
-	return moduleSources, sources, nil
+	u.retrySteps(index, retrySteps, wg, errChan)
 }
 
-func (u *updater) ProcessSteps() {
-	u.updateAgentCodeBuild()
+func (u *updater) Update() {
+	u.updateAgentJob(common.UpdateCommand)
 	mostReleases := u.getMostReleases()
-	firstRunDone := make(map[string]bool)
-	for index := 0; index < mostReleases; index++ {
+	if mostReleases < 2 {
+		common.Logger.Println("No updates found")
+		return
+	}
+	for index := 1; index < mostReleases; index++ {
 		updateState(u.config, u.state)
-		GetChecksums(u.sources, u.github, &index)
+		u.GetChecksums(index)
 		wg := new(model.SafeCounter)
 		errChan := make(chan error, 1)
 		failed := false
 		retrySteps := make([]model.Step, 0)
 		for _, step := range u.config.Steps {
-			retry, err := u.processStep(index, step, firstRunDone, wg, errChan, u.allowParallel)
+			retry, err := u.processStep(index, step, wg, errChan)
 			if err != nil {
 				common.PrintError(err)
 				failed = true
@@ -215,21 +230,13 @@ func (u *updater) ProcessSteps() {
 		wg.Wait()
 		close(errChan)
 		time.Sleep(1 * time.Second)
+		u.putStateFileOrDie()
 		if _, ok := <-errChan; ok || failed {
 			common.Logger.Fatalf("One or more steps failed to apply")
 		}
-		u.retrySteps(index, retrySteps, firstRunDone, wg, errChan)
+		u.retrySteps(index, retrySteps, wg, errChan)
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
-		}
-		err := u.putStateFile()
-		if err != nil {
-			state, err := yaml.Marshal(u.state)
-			if err == nil {
-				common.Logger.Println(state)
-				common.Logger.Println("Update the state file manually to avoid reapplying steps")
-			}
-			common.Logger.Fatalf("Failed to put state file: %v", err)
 		}
 	}
 }
@@ -244,7 +251,7 @@ func (u *updater) getMostReleases() int {
 	return mostReleases
 }
 
-func (u *updater) processStep(index int, step model.Step, firstRunDone map[string]bool, wg *model.SafeCounter, errChan chan<- error, allowParallel bool) (bool, error) {
+func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- error) (bool, error) {
 	step, err := u.replaceConfigStepValues(step, index)
 	if err != nil {
 		var parameterError *model.ParameterNotFoundError
@@ -261,7 +268,7 @@ func (u *updater) processStep(index int, step model.Step, firstRunDone map[strin
 	}
 	var executePipelines bool
 	var providers map[string]model.Set[string]
-	if !firstRunDone[step.Name] {
+	if !u.firstRunDone[step.Name] {
 		executePipelines, err = u.createStepFiles(step, stepState, index)
 	} else {
 		executePipelines, providers, err = u.updateStepFiles(step, stepState, index)
@@ -269,26 +276,30 @@ func (u *updater) processStep(index int, step model.Step, firstRunDone map[strin
 	if err != nil {
 		return false, err
 	}
-	err = u.applyRelease(!firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, allowParallel)
+	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan)
 	if err != nil {
 		return false, err
 	}
-	firstRunDone[step.Name] = true
+	u.firstRunDone[step.Name] = true
 	return false, nil
 }
 
-func (u *updater) retrySteps(index int, retrySteps []model.Step, firstRunDone map[string]bool, wg *model.SafeCounter, errChan chan<- error) {
+func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeCounter, errChan chan<- error) {
+	u.allowParallel = false
 	for _, step := range retrySteps {
 		common.Logger.Printf("Retrying step %s\n", step.Name)
-		_, err := u.processStep(index, step, firstRunDone, wg, errChan, false)
+		_, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
 			common.PrintError(err)
 			common.Logger.Fatalf("Failed to apply step %s", step.Name)
 		}
 	}
+	if len(retrySteps) > 0 {
+		u.putStateFileOrDie()
+	}
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, allowParallel bool) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error) error {
 	if !executePipelines {
 		return nil
 	}
@@ -304,7 +315,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		}
 		return u.executePipeline(firstRun, step, stepState, index)
 	}
-	if !allowParallel {
+	if !u.allowParallel {
 		return u.executePipeline(firstRun, step, stepState, index)
 	}
 	parallelExecution, err := u.appliedVersionMatchesRelease(step, stepState, index)
@@ -439,9 +450,9 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	return u.putAppliedStateFile(stepState)
 }
 
-func (u *updater) updateAgentCodeBuild() {
+func (u *updater) updateAgentJob(cmd common.Command) {
 	agent := NewAgent(u.resources)
-	err := agent.UpdateProjectImage(u.config.AgentVersion)
+	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
 	if err != nil {
 		common.Logger.Fatalf("Failed to update agent codebuild: %s", err)
 	}
@@ -801,6 +812,18 @@ func (u *updater) createBackendConf(path string, codeCommit model.Bucket) error 
 		return fmt.Errorf("failed to convert backend config values: %w", err)
 	}
 	return codeCommit.PutFile(fmt.Sprintf("steps/%s/backend.conf", path), bytes)
+}
+
+func (u *updater) putStateFileOrDie() {
+	err := u.putStateFile()
+	if err != nil {
+		state, err := yaml.Marshal(u.state)
+		if err == nil {
+			common.Logger.Println(state)
+			common.Logger.Println("Update the state file manually to avoid reapplying steps")
+		}
+		common.Logger.Fatalf("Failed to put state file: %v", err)
+	}
 }
 
 func (u *updater) putStateFile() error {
@@ -1177,38 +1200,42 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 	return release, imageSource
 }
 
-func GetChecksums(sources map[string]*model.Source, githubClient github.Github, index *int) {
-	for url, source := range sources {
-		if index != nil && (len(source.Releases)-1 < *index) {
+func (u *updater) GetChecksums(index int) {
+	for url, source := range u.sources {
+		if len(source.Releases)-1 < index {
 			continue
 		}
-		release := source.StableVersion.Original()
-		if index != nil {
-			release = source.Releases[*index].Original()
+		checksums, err := getChecksums(u.github, url, source.Releases[index].Original())
+		if err != nil || checksums == nil {
+			common.Logger.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
-		content, err := githubClient.GetRawFileContent(source.URL, checksumsFile, release)
-		if err != nil {
-			var fileError github.FileNotFoundError
-			if errors.As(err, &fileError) {
-				return
-			}
-			common.Logger.Fatalf("Failed to get checksums for release %s: %v", release, err)
-		}
-		checksums := make(map[string]string)
-		for _, line := range strings.Split(string(content), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, " ", 2)
-			if len(parts) != 2 {
-				fmt.Printf("Invalid line: %s\n", line)
-				continue
-			}
-			checksums[strings.TrimRight(parts[0], ":")] = parts[1]
-		}
-		sources[url].CurrentChecksums = checksums
+		source.CurrentChecksums = checksums
 	}
+}
+
+func getChecksums(githubClient github.Github, sourceURL string, release string) (map[string]string, error) {
+	content, err := githubClient.GetRawFileContent(sourceURL, checksumsFile, release)
+	if err != nil {
+		var fileError model.FileNotFoundError
+		if errors.As(err, &fileError) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	checksums := make(map[string]string)
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			fmt.Printf("Invalid line: %s\n", line)
+			continue
+		}
+		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
+	}
+	return checksums, nil
 }
 
 func (u *updater) updateIncludedStepFiles(step model.Step) error {

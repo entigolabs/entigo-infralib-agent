@@ -1,8 +1,8 @@
-# entigo-infralib-agent
+# Entigo Infralib Agent
 
 Entigo infralib agent prepares an AWS Account or Google Cloud Project for Entigo infralib terraform modules.
-Creates the required resources for S3, DynamoDB, CloudWatch, CodeBuild, CodePipeline, and IAM roles and policies.
-Executes CodePipelines or Cloud Deploy DeliveryPipelines which apply the specified Entigo infralib terraform modules.
+Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
+Executes pipelines which apply the specified Entigo infralib terraform modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 
 * [Compiling Source](#compiling-source)
 * [Requirements](#requirements)
@@ -12,6 +12,7 @@ Executes CodePipelines or Cloud Deploy DeliveryPipelines which apply the specifi
 * [Commands](#commands)
     * [Bootstrap](#bootstrap)
     * [Run](#run)
+    * [Update](#update)
     * [Delete](#delete)
 * [Config](#config)
   * [Overriding config values](#overriding-config-values)
@@ -55,15 +56,15 @@ To execute the [bootstrap](#bootstrap), override the default command.
 
 ## Commands
 
-For bootstrap and run commands you must either provide a config file or an aws-prefix value. This is required for creating and finding AWS resources. Bootstrap adds that value as an environment variable for the agent pipeline.
+For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding AWS resources. Bootstrap adds that value as an environment variable for the agent pipeline.
 
 ### bootstrap
 
-Creates the required AWS resources and a codepipeline for executing the agent. If the pipeline already exists, the agent image version will be updated if needed and a new execution will be started.
+Creates the required AWS resources and a codepipeline for executing the agent. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started.
 
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -71,16 +72,17 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent bootstrap --config=config.yaml --aws-prefix=entigo-infralib
+bin/ei-agent bootstrap --config=config.yaml --prefix=entigo-infralib
 ```
 
 ### run
 
 Processes config steps, creates and executes CodePipelines which apply Entigo Infralib terraform modules.
+Run command only executes a single cycle of the pipeline. Can be used to apply config changes.
 
 OPTIONS:
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -89,7 +91,25 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent run --config=config.yaml --aws-prefix=entigo-infralib
+bin/ei-agent run --config=config.yaml --prefix=entigo-infralib
+```
+
+### update
+
+Processes config steps, creates and executes CodePipelines which apply Entigo Infralib terraform modules.
+Update command updates all modules to the latest or specified versions. Returns if there are no updates available.
+
+OPTIONS:
+* config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+
+Example
+```bash
+bin/ei-agent update --config=config.yaml --prefix=entigo-infralib
 ```
 
 ### delete
@@ -99,7 +119,7 @@ Processes config steps, removes resources used by the agent, including buckets, 
 
 OPTIONS:
 * config - config file path and name, only needed when overriding an existing config [$CONFIG]
-* aws-prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -109,7 +129,7 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent delete --config=config.yaml --aws-prefix=entigo-infralib
+bin/ei-agent delete --config=config.yaml --prefix=entigo-infralib
 ```
 
 ## Config
@@ -201,6 +221,13 @@ Replacement tags can be overwritten by values that are stored in the AWS SSM Par
 
 For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1/key-2`.
 If the parameter type is StringList then it's possible to use an index to get a specific value, e.g `{{ .ssm.stepName.moduleName.key-1/key-2[0] }}` or a slice by using a range, e.g [0-1].
+
+It's possible to build a custom array by using yaml multiline string, even mixing replaced values with inputted values. For example creating a list of strings for terraform:
+```yaml
+inputs:
+  key-1: |
+    ["{{ .ssm.stepName.moduleName.key-1 }}", "value-1", "value-2"]
+```
 
 Custom SSM parameter example `{{ .ssm-custom.key }}` will be overwritten by the value of the custom SSM parameter `key`.
 For custom GCloud SM, replace the ssm with gcsm.

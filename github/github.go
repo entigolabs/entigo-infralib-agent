@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/google/go-github/v60/github"
 	"github.com/hashicorp/go-version"
 	"net/url"
@@ -138,7 +139,7 @@ func (g *githubClient) GetRawFileContent(repoURL string, path string, release st
 		return nil, err
 	}
 	if fileContent == nil {
-		return nil, FileNotFoundError{fileName: path}
+		return nil, model.NewFileNotFoundError(path)
 	}
 	return fileContent, nil
 }
@@ -163,20 +164,4 @@ func getGithubOwnerAndRepo(repoURL string) (string, string, error) {
 type Release struct {
 	Tag         string
 	PublishedAt time.Time
-}
-
-type FileNotFoundError struct {
-	fileName string
-}
-
-func NewFileNotFoundError(fileName string) FileNotFoundError {
-	return FileNotFoundError{fileName: fileName}
-}
-
-func (e FileNotFoundError) Error() string {
-	return fmt.Sprintf("file %s not found", e.fileName)
-}
-
-func (e FileNotFoundError) Unwrap() error {
-	return nil
 }

@@ -113,8 +113,13 @@ func (g *gcloudService) GetResources() model.Resources {
 }
 
 func (g *gcloudService) DeleteResources(deleteBucket bool) {
-	agentJob := fmt.Sprintf("%s-agent", g.cloudPrefix)
+	agentJob := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.RunCommand)
 	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
+	}
+	agentJob = fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.UpdateCommand)
+	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
 	}

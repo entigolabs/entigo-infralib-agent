@@ -8,29 +8,38 @@ import (
 func cliCommands() []*cli.Command {
 	return []*cli.Command{
 		&runCommand,
+		&updateCommand,
 		&bootstrapCommand,
 		&deleteCommand,
 	}
 }
 
 var runCommand = cli.Command{
-	Name:    "run",
+	Name:    string(common.RunCommand),
 	Aliases: []string{""},
 	Usage:   "run agent",
 	Action:  action(common.RunCommand),
 	Flags:   cliFlags(common.RunCommand),
 }
 
+var updateCommand = cli.Command{
+	Name:    string(common.UpdateCommand),
+	Aliases: []string{"up"},
+	Usage:   "update modules",
+	Action:  action(common.UpdateCommand),
+	Flags:   cliFlags(common.UpdateCommand),
+}
+
 var bootstrapCommand = cli.Command{
-	Name:    "bootstrap",
+	Name:    string(common.BootstrapCommand),
 	Aliases: []string{"bs"},
-	Usage:   "bootstraps agent codepipeline and codebuild",
+	Usage:   "bootstraps agent pipeline and build job",
 	Action:  action(common.BootstrapCommand),
 	Flags:   cliFlags(common.BootstrapCommand),
 }
 
 var deleteCommand = cli.Command{
-	Name:    "delete",
+	Name:    string(common.DeleteCommand),
 	Aliases: []string{"del"},
 	Usage:   "delete agent resources",
 	Action:  action(common.DeleteCommand),

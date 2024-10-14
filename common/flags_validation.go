@@ -6,6 +6,8 @@ func (f *Flags) validate(cmd Command) error {
 	switch cmd {
 	case RunCommand:
 		fallthrough
+	case UpdateCommand:
+		fallthrough
 	case DeleteCommand:
 		fallthrough
 	case BootstrapCommand:

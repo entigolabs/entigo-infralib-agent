@@ -308,18 +308,39 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, projectName string, bucket string) error {
-	pipe, err := p.getPipeline(pipelineName)
+func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string) error {
+	updatePipeline := fmt.Sprintf("%s-%s", projectName, common.UpdateCommand)
+	pipe, err := p.getPipeline(updatePipeline)
+	if err != nil {
+		return err
+	}
+	if pipe == nil {
+		err = p.createAgentPipeline(prefix, updatePipeline, bucket)
+		if err != nil {
+			return err
+		}
+		err = p.stopLatestPipelineExecutions(updatePipeline, 1)
+		if err != nil {
+			return err
+		}
+	}
+
+	runPipeline := fmt.Sprintf("%s-%s", projectName, common.RunCommand)
+	pipe, err = p.getPipeline(runPipeline)
 	if err != nil {
 		return err
 	}
 	if pipe != nil {
-		_, err = p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
+		_, err = p.StartPipelineExecution(runPipeline, "", model.Step{}, "")
 		return err
 	}
-	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
+	return p.createAgentPipeline(prefix, runPipeline, bucket)
+}
+
+func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket string) error {
+	_, err := p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
+			Name:    aws.String(projectName),
 			RoleArn: aws.String(p.roleArn),
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
@@ -366,7 +387,9 @@ func (p *Pipeline) CreateAgentPipeline(prefix string, pipelineName string, proje
 			},
 		},
 	})
-	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
+	if err == nil {
+		common.Logger.Printf("Created CodePipeline %s\n", projectName)
+	}
 	return err
 }
 

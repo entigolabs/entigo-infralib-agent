@@ -71,7 +71,7 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 func getModuleApplicationFile(git github.Github, release, moduleSource, sourceURL string) (map[string]interface{}, error) {
 	bytes, err := git.GetRawFileContent(sourceURL, fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
-		var fileError github.FileNotFoundError
+		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {
 			return nil, nil
 		}

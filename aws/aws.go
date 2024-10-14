@@ -138,15 +138,26 @@ func (a *awsService) GetResources() model.Resources {
 }
 
 func (a *awsService) DeleteResources(deleteBucket bool) {
-	agentProjectName := fmt.Sprintf("%s-agent", a.cloudPrefix)
+	agentProjectName := fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.RunCommand)
 	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent pipeline: %s", err))
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent run pipeline: %s", err))
 	}
 	err = a.resources.GetBuilder().DeleteProject(agentProjectName, model.Step{})
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent project: %s", err))
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent run project: %s", err))
 	}
+
+	agentProjectName = fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.UpdateCommand)
+	err = a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent update pipeline: %s", err))
+	}
+	err = a.resources.GetBuilder().DeleteProject(agentProjectName, model.Step{})
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent update project: %s", err))
+	}
+
 	err = DeleteDynamoDBTable(a.ctx, a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete DynamoDB table: %s", err))

@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 	"github.com/entigolabs/entigo-infralib-agent/test"
@@ -13,11 +14,11 @@ func TestRunAWS(t *testing.T) {
 	test.ChangeRunDir()
 	awsPrefix := os.Getenv(common.AwsPrefixEnv)
 	flags := &common.Flags{
-		Config:    "test/profile-aws.yaml",
-		Branch:    "main",
-		AWSPrefix: awsPrefix,
+		Config: "test/profile-aws.yaml",
+		Branch: "main",
+		Prefix: awsPrefix,
 	}
-	Run(flags)
+	Run(context.Background(), flags)
 }
 
 func TestRunGCloud(t *testing.T) {
@@ -27,8 +28,8 @@ func TestRunGCloud(t *testing.T) {
 	location := os.Getenv(common.GCloudLocationEnv)
 	zone := os.Getenv(common.GCloudZoneEnv)
 	flags := &common.Flags{
-		Config:    "test/profile-gcloud.yaml",
-		AWSPrefix: os.Getenv(common.AwsPrefixEnv),
+		Config: "test/profile-gcloud.yaml",
+		Prefix: os.Getenv(common.AwsPrefixEnv),
 		GCloud: common.GCloud{
 			ProjectId: projectId,
 			Location:  location,
@@ -38,8 +39,8 @@ func TestRunGCloud(t *testing.T) {
 			DeleteBucket: true,
 		},
 	}
-	Run(flags)
-	deleter := service.NewDeleter(flags)
+	Run(context.Background(), flags)
+	deleter := service.NewDeleter(context.Background(), flags)
 	deleter.Destroy()
 	deleter.Delete()
 }

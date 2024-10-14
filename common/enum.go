@@ -1,11 +1,12 @@
 package common
 
-type Command int
+type Command string
 
 const (
-	RunCommand Command = iota
-	BootstrapCommand
-	DeleteCommand
+	RunCommand       Command = "run"
+	BootstrapCommand Command = "bootstrap"
+	DeleteCommand    Command = "delete"
+	UpdateCommand    Command = "update"
 )
 
 type LoggingLevel int

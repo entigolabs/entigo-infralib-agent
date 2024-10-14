@@ -141,7 +141,7 @@ func (t *terraform) findTerraformFile(filePath string, fileName string, sources 
 		release = sourceVersions[sourceURL].Original()
 	}
 	if sourceURL == "" {
-		return nil, "", github.NewFileNotFoundError(fileName)
+		return nil, "", model.NewFileNotFoundError(fileName)
 	}
 	return t.getTerraformFile(sourceURL, filePath, fileName, release)
 }
@@ -185,7 +185,7 @@ func getRequiredProvidersBlock(file *hclwrite.File) (*hclwrite.Block, error) {
 func (t *terraform) getProviderBlocks(providerName string, sources map[string]*model.Source, sourceVersions map[string]*version.Version) ([]*hclwrite.Block, string) {
 	providerFile, providerSource, err := t.findTerraformFile(providerPath, fmt.Sprintf("%s.tf", providerName), sources, sourceVersions)
 	if err != nil {
-		var fileNotFoundError github.FileNotFoundError
+		var fileNotFoundError model.FileNotFoundError
 		if errors.As(err, &fileNotFoundError) {
 			fmt.Printf("Provider file not found for %s\n", providerName)
 			return []*hclwrite.Block{}, ""

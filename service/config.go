@@ -24,12 +24,12 @@ const (
 
 var ReservedFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
 
-func GetAwsPrefix(flags *common.Flags) string {
-	if flags.AWSPrefix != "" {
-		return flags.AWSPrefix
+func GetProviderPrefix(flags *common.Flags) string {
+	if flags.Prefix != "" {
+		return flags.Prefix
 	}
 	if flags.Config == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("aws prefix or config must be provided")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("prefix or config must be provided")})
 	}
 	prefix := GetLocalConfig(flags.Config).Prefix
 	if prefix == "" {

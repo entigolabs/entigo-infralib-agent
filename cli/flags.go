@@ -65,13 +65,13 @@ var baseConfigFlag = cli.StringFlag{
 }
 
 var awsPrefixFlag = cli.StringFlag{
-	Name:        "aws-prefix",
-	Aliases:     []string{"ap"},
+	Name:        "prefix",
+	Aliases:     []string{"p", "ap", "aws-prefix"},
 	EnvVars:     []string{common.AwsPrefixEnv},
 	DefaultText: "",
 	Value:       "",
-	Usage:       "prefix used when creating aws resources",
-	Destination: &flags.AWSPrefix,
+	Usage:       "prefix used when creating cloud resources",
+	Destination: &flags.Prefix,
 	Required:    false,
 }
 

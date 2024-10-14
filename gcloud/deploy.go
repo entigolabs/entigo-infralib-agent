@@ -434,7 +434,7 @@ func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, exec
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
 }
 
-func (p *Pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, _ string) error {
+func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string) error {
 	_, err := p.builder.executeJob(pipelineName, false)
 	return err
 }

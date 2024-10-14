@@ -171,4 +171,6 @@ type Source struct {
 	Modules           Set[string]
 	PreviousChecksums map[string]string
 	CurrentChecksums  map[string]string
+	Includes          Set[string]
+	Excludes          Set[string]
 }
