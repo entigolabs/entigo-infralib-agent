@@ -1,6 +1,7 @@
 prefix: at
 sources:
   - url: https://github.com/entigolabs/entigo-infralib-release
+base_image_version: 1.0.0-alpha12
 steps:
   - name: net
     type: terraform
