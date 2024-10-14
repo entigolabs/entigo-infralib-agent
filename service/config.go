@@ -277,12 +277,15 @@ func processModuleInputs(stepName string, module *model.Module, readFile func(st
 	}
 }
 
-func ProcessStepsVpc(config *model.Config) {
+func ProcessSteps(config *model.Config) {
 	for i, step := range config.Steps {
 		if step.Vpc.Attach == nil {
 			if step.Type == model.StepTypeArgoCD {
 				attach := true
 				step.Vpc.Attach = &attach
+				if step.KubernetesClusterName == "" {
+					step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
+				}
 			} else if step.Type == model.StepTypeTerraform {
 				attach := false
 				step.Vpc.Attach = &attach

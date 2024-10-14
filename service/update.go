@@ -56,7 +56,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	config := GetConfig(flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
-	ProcessStepsVpc(&config)
+	ProcessSteps(&config)
 	githubClient := github.NewGithub(ctx)
 	sources, moduleSources := createSources(githubClient, config, state)
 	return &updater{
