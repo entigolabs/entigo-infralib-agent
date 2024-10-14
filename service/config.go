@@ -277,6 +277,27 @@ func processModuleInputs(stepName string, module *model.Module, readFile func(st
 	}
 }
 
+func ProcessStepsVpc(config *model.Config) {
+	for i, step := range config.Steps {
+		if step.Vpc.Attach == nil {
+			if step.Type == model.StepTypeArgoCD {
+				attach := true
+				step.Vpc.Attach = &attach
+			} else if step.Type == model.StepTypeTerraform {
+				attach := false
+				step.Vpc.Attach = &attach
+			}
+		}
+		if !*step.Vpc.Attach || step.Vpc.Id != "" {
+			continue
+		}
+		step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+		step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+		config.Steps[i] = step
+	}
+}
+
 func ValidateConfig(config model.Config, state *model.State) {
 	stepNames := model.NewSet[string]()
 	if config.Prefix == "" {
@@ -317,10 +338,10 @@ func validateStep(step model.Step) {
 	if step.Type == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s", step.Name)})
 	}
-	if step.VpcId != "" && step.VpcSubnetIds == "" {
+	if step.Vpc.Id != "" && step.Vpc.SubnetIds == "" {
 		common.Logger.Fatalf("VPC ID is set for step %s but subnet IDs are not", step.Name)
 	}
-	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
+	if (step.Vpc.SubnetIds != "" || step.Vpc.SecurityGroupIds != "") && step.Vpc.Id == "" {
 		common.Logger.Fatalf("VPC ID is not set for step %s", step.Name)
 	}
 }

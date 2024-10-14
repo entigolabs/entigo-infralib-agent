@@ -152,9 +152,11 @@ steps:
     approve: minor | major | never | always
     base_image_source: string
     base_image_version: stable | semver
-    vpc_id: string
-    vpc_subnet_ids: multiline string
-    vpc_security_group_ids: multiline string
+    vpc:
+      attach: bool
+      id: string
+      subnet_ids: multiline string
+      security_group_ids: multiline string
     kubernetes_cluster_name: string
     repo_url: string
     modules:
@@ -195,9 +197,11 @@ Source version is overwritten by module version. Default version is **stable** w
   * approve - approval type for the step, only applies when terraform needs to change resources, based on semver. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
   * base_image_source - source of Entigo Infralib Base Image to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
-  * vpc_id - vpc id for code build
-  * vpc_subnet_ids - vpc subnet ids for code build
-  * vpc_security_group_ids - vpc security group ids for code build
+  * vpc - vpc values to add
+    * attach - attach vpc to code build/cloud run job, if other fields are empty then uses default vpc based on typed output of a vpc module, default **nil**. When nil, the value will be set based on the step type
+    * id - vpc id for code build/cloud run job
+    * subnet_ids - vpc subnet ids for code build/cloud run job
+    * security_group_ids - vpc security group ids for code build/cloud run job
   * kubernetes_cluster_name - kubernetes cluster name for argocd-apps steps
   * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
   * repo_url - for argocd-apps steps, repo to use for cloning

@@ -56,6 +56,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	config := GetConfig(flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
+	ProcessStepsVpc(&config)
 	githubClient := github.NewGithub(ctx)
 	sources, moduleSources := createSources(githubClient, config, state)
 	return &updater{
@@ -508,13 +509,13 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 }
 
 func getVpcConfig(step model.Step) *model.VpcConfig {
-	if step.VpcId == "" {
+	if !*step.Vpc.Attach {
 		return nil
 	}
 	return &model.VpcConfig{
-		VpcId:            &step.VpcId,
-		Subnets:          util.ToList(step.VpcSubnetIds),
-		SecurityGroupIds: util.ToList(step.VpcSecurityGroupIds),
+		VpcId:            &step.Vpc.Id,
+		Subnets:          util.ToList(step.Vpc.SubnetIds),
+		SecurityGroupIds: util.ToList(step.Vpc.SecurityGroupIds),
 	}
 }
 

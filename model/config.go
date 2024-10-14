@@ -28,15 +28,20 @@ type Step struct {
 	Approve               Approve  `yaml:"approve,omitempty"`
 	BaseImageSource       string   `yaml:"base_image_source,omitempty"`
 	BaseImageVersion      string   `yaml:"base_image_version,omitempty" fake:"{version}"`
-	VpcId                 string   `yaml:"vpc_id,omitempty"`
-	VpcSubnetIds          string   `yaml:"vpc_subnet_ids,omitempty"`
-	VpcSecurityGroupIds   string   `yaml:"vpc_security_group_ids,omitempty"`
+	Vpc                   VPC      `yaml:"vpc,omitempty"`
 	KubernetesClusterName string   `yaml:"kubernetes_cluster_name,omitempty"`
 	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
 	RepoUrl               string   `yaml:"repo_url,omitempty"`
 	Provider              Provider `yaml:"provider,omitempty"`
 	Modules               []Module `yaml:"modules,omitempty" fakesize:"1"`
 	Files                 []File   `yaml:"-"`
+}
+
+type VPC struct {
+	Attach           *bool  `yaml:"attach,omitempty"`
+	Id               string `yaml:"id,omitempty"`
+	SubnetIds        string `yaml:"subnet_ids,omitempty"`
+	SecurityGroupIds string `yaml:"security_group_ids,omitempty"`
 }
 
 type Provider struct {
