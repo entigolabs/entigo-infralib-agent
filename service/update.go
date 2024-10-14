@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"dario.cat/mergo"
 	"errors"
 	"fmt"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
@@ -55,8 +56,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	resources := provider.SetupResources()
 	config := GetConfig(flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
-	ValidateConfig(config, state)
-	ProcessSteps(&config)
+	ValidateConfig(&config, state)
+	ProcessSteps(&config, resources.GetProviderType())
 	githubClient := github.NewGithub(ctx)
 	sources, moduleSources := createSources(githubClient, config, state)
 	return &updater{
@@ -253,7 +254,19 @@ func (u *updater) getMostReleases() int {
 }
 
 func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- error) (bool, error) {
-	step, err := u.replaceConfigStepValues(step, index)
+	stepState, err := u.getStepState(step)
+	if err != nil {
+		return false, err
+	}
+	moduleVersions, err := u.getModuleVersions(step, stepState, index)
+	if err != nil {
+		return false, err
+	}
+	step, err = u.mergeModuleInputs(step, moduleVersions)
+	if err != nil {
+		return false, err
+	}
+	step, err = u.replaceConfigStepValues(step, index)
 	if err != nil {
 		var parameterError *model.ParameterNotFoundError
 		if wg.HasCount() && errors.As(err, &parameterError) {
@@ -263,16 +276,12 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		}
 		return false, err
 	}
-	stepState, err := u.getStepState(step)
-	if err != nil {
-		return false, err
-	}
 	var executePipelines bool
 	var providers map[string]model.Set[string]
 	if !u.firstRunDone[step.Name] {
-		executePipelines, err = u.createStepFiles(step, stepState, index)
+		executePipelines, err = u.createStepFiles(step, moduleVersions, index)
 	} else {
-		executePipelines, providers, err = u.updateStepFiles(step, stepState, index)
+		executePipelines, providers, err = u.updateStepFiles(step, moduleVersions, index)
 	}
 	if err != nil {
 		return false, err
@@ -467,23 +476,23 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 	return stepState, nil
 }
 
-func (u *updater) createStepFiles(step model.Step, stepState *model.StateStep, index int) (bool, error) {
+func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
-		execute, _, err := u.createTerraformFiles(step, stepState, index)
+		execute, _, err := u.createTerraformFiles(step, moduleVersions, index)
 		return execute, err
 	case model.StepTypeArgoCD:
-		return u.createArgoCDFiles(step, stepState, index)
+		return u.createArgoCDFiles(step, moduleVersions)
 	}
 	return true, nil
 }
 
-func (u *updater) updateStepFiles(step model.Step, stepState *model.StateStep, index int) (bool, map[string]model.Set[string], error) {
+func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
-		return u.updateTerraformFiles(step, stepState, index)
+		return u.updateTerraformFiles(step, moduleVersions, index)
 	case model.StepTypeArgoCD:
-		execute, err := u.updateArgoCDFiles(step, stepState, index)
+		execute, err := u.updateArgoCDFiles(step, moduleVersions)
 		return execute, nil, err
 	}
 	return true, nil, nil
@@ -710,16 +719,16 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) createTerraformFiles(step model.Step, stepState *model.StateStep, index int) (bool, map[string]model.Set[string], error) {
+func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
 	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetBucket())
 	if err != nil {
 		return false, nil, err
 	}
-	return u.updateTerraformFiles(step, stepState, index)
+	return u.updateTerraformFiles(step, moduleVersions, index)
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateStep, index int) (bool, map[string]model.Set[string], error) {
-	changed, moduleVersions, err := u.createTerraformMain(step, stepState, index)
+func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
+	changed, err := u.createTerraformMain(step, moduleVersions, index)
 	if err != nil {
 		return false, nil, err
 	}
@@ -745,22 +754,22 @@ func (u *updater) updateTerraformFiles(step model.Step, stepState *model.StateSt
 	return true, providers, err
 }
 
-func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep, index int) (bool, error) {
+func (u *updater) createArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
 	executePipeline := false
 	activeModules := model.NewSet[string]()
 	for _, module := range step.Modules {
-		moduleVersion, changed, err := u.getModuleVersion(module, stepState, index, step.Approve)
-		if err != nil {
-			return false, err
+		moduleVersion, found := moduleVersions[module.Name]
+		if !found {
+			return false, fmt.Errorf("module %s version not found", module.Name)
 		}
-		if changed {
+		if moduleVersion.Changed {
 			executePipeline = true
 		}
 		inputBytes, err := getModuleInputBytes(module)
 		if err != nil {
 			return false, err
 		}
-		err = u.createArgoCDApp(module, step, moduleVersion, inputBytes)
+		err = u.createArgoCDApp(module, step, moduleVersion.Version, inputBytes)
 		if err != nil {
 			return false, err
 		}
@@ -770,14 +779,14 @@ func (u *updater) createArgoCDFiles(step model.Step, stepState *model.StateStep,
 	return executePipeline, err
 }
 
-func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep, index int) (bool, error) {
+func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
 	executePipeline := false
 	for _, module := range step.Modules {
-		moduleVersion, changed, err := u.getModuleVersion(module, stepState, index, step.Approve)
-		if err != nil {
-			return false, err
+		moduleVersion, found := moduleVersions[module.Name]
+		if !found {
+			return false, fmt.Errorf("module %s version not found", module.Name)
 		}
-		if !changed {
+		if !moduleVersion.Changed {
 			continue
 		}
 		inputBytes, err := getModuleInputBytes(module)
@@ -785,7 +794,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, stepState *model.StateStep,
 			return false, err
 		}
 		executePipeline = true
-		err = u.createArgoCDApp(module, step, moduleVersion, inputBytes)
+		err = u.createArgoCDApp(module, step, moduleVersion.Version, inputBytes)
 		if err != nil {
 			return false, err
 		}
@@ -851,29 +860,28 @@ func (u *updater) updateStepState(stepState *model.StateStep) {
 	}
 }
 
-func (u *updater) createTerraformMain(step model.Step, stepState *model.StateStep, index int) (bool, map[string]string, error) {
+func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 	changed := false
-	moduleVersions := make(map[string]string)
 	for _, module := range step.Modules {
-		moduleVersion, moduleChanged, err := u.getModuleVersion(module, stepState, index, step.Approve)
-		if err != nil {
-			return false, nil, err
+		moduleVersion, found := moduleVersions[module.Name]
+		if !found {
+			return false, fmt.Errorf("module %s version not found", module.Name)
 		}
-		if moduleChanged {
+		if moduleVersion.Changed {
 			changed = true
 		}
 		newModule := body.AppendNewBlock("module", []string{module.Name})
 		moduleBody := newModule.Body()
 		if util.IsClientModule(module) {
 			moduleBody.SetAttributeValue("source",
-				cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion)))
+				cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion.Version)))
 		} else {
 			moduleSource := u.getModuleSource(module.Source)
 			moduleBody.SetAttributeValue("source",
-				cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleSource.URL, module.Source, moduleVersion)))
-			moduleVersions[module.Name] = moduleVersion
+				cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleSource.URL, module.Source,
+					moduleVersion.Version)))
 		}
 		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, module.Name)))
 		terraform.AddInputs(module.Inputs, moduleBody)
@@ -881,10 +889,10 @@ func (u *updater) createTerraformMain(step model.Step, stepState *model.StateSte
 	if changed {
 		err := u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/main.tf", u.config.Prefix, step.Name), file.Bytes())
 		if err != nil {
-			return false, nil, err
+			return false, err
 		}
 	}
-	return changed, moduleVersions, nil
+	return changed, nil
 }
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) error {
@@ -896,6 +904,21 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	}
 	return u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/%s.yaml", u.config.Prefix, step.Name, module.Name),
 		appBytes)
+}
+
+func (u *updater) getModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
+	moduleVersions := make(map[string]model.ModuleVersion)
+	for _, module := range step.Modules {
+		moduleVersion, changed, err := u.getModuleVersion(module, stepState, index, step.Approve)
+		if err != nil {
+			return nil, err
+		}
+		moduleVersions[module.Name] = model.ModuleVersion{
+			Version: moduleVersion,
+			Changed: changed,
+		}
+	}
+	return moduleVersions, nil
 }
 
 func (u *updater) getModuleVersion(module model.Module, stepState *model.StateStep, index int, approve model.Approve) (string, bool, error) {
@@ -1267,6 +1290,89 @@ func (u *updater) updateIncludedStepFiles(step model.Step) error {
 		}
 	}
 	return nil
+}
+
+func (u *updater) mergeModuleInputs(step model.Step, moduleVersions map[string]model.ModuleVersion) (model.Step, error) {
+	for i, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
+		moduleVersion, found := moduleVersions[module.Name]
+		if !found {
+			return step, fmt.Errorf("module %s version not found", module.Name)
+		}
+		moduleSource := u.getModuleSource(module.Source)
+		inputs, err := u.getModuleInputs(module, moduleSource, moduleVersion.Version)
+		if err != nil {
+			return step, err
+		}
+		step.Modules[i].Inputs = inputs
+	}
+	return step, nil
+}
+
+func (u *updater) getModuleInputs(module model.Module, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
+	filePath := fmt.Sprintf("modules/%s/agent_input.yaml", module.Source)
+	defaultInputs, err := u.getModuleDefaultInputs(filePath, moduleSource, moduleVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	providerType := u.resources.GetProviderType()
+	if providerType == model.AWS {
+		providerType = "aws"
+	} else if providerType == model.GCLOUD {
+		providerType = "google"
+	}
+	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", module.Source, providerType)
+	providerInputs, err := u.getModuleDefaultInputs(filePath, moduleSource, moduleVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	inputs, err := mergeInputs(defaultInputs, providerInputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge inputs: %v", err)
+	}
+	inputs, err = mergeInputs(inputs, module.Inputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge inputs: %v", err)
+	}
+	return inputs, nil
+}
+
+func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
+	defaultInputsRaw, err := u.github.GetRawFileContent(moduleSource.URL, filePath, moduleVersion)
+	if err != nil {
+		var fileError model.FileNotFoundError
+		if errors.As(err, &fileError) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get module file %s: %v", filePath, err)
+	}
+	var defaultInputs map[string]interface{}
+	err = yaml.Unmarshal(defaultInputsRaw, &defaultInputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal default inputs: %v", err)
+	}
+	return defaultInputs, nil
+}
+
+func mergeInputs(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {
+	if baseInputs != nil && patchInputs == nil {
+		return baseInputs, nil
+	}
+	if baseInputs == nil && patchInputs != nil {
+		return patchInputs, nil
+	}
+	if baseInputs == nil && patchInputs == nil {
+		return nil, nil
+	}
+	err := mergo.Merge(&baseInputs, patchInputs, mergo.WithOverride)
+	if err != nil {
+		return nil, err
+	}
+	return baseInputs, nil
 }
 
 func getSSMParameterValueFromList(match []string, parameter *model.Parameter, replaceKey string, parameterName string) (string, error) {

@@ -14,8 +14,10 @@ steps:
     type: terraform
     approve: minor
     version: stable
-    vpc_id: "{{ .gcsm.net.main.vpc_name }}"
-    vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
+    vpc:
+      attach: true
+      id: "{{ .gcsm.net.main.vpc_name }}"
+      subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
     modules:
       - name: dns
         source: google/dns
@@ -50,9 +52,6 @@ steps:
   - name: applications
     type: argocd-apps
     version: stable
-    vpc_id: "{{ .gcsm.net.main.vpc_name }}"
-    vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
-    kubernetes_cluster_name: "{{ .gcsm.infra.gke.cluster_name }}"
     argocd_namespace: "argocd"
     modules:
       - name: argocd

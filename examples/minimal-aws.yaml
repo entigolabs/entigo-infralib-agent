@@ -30,11 +30,13 @@ steps:
     type: terraform
     approve: minor
     version: stable
-    vpc_id: "{{ .ssm.net.main.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.net.main.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.net.main.pipeline_security_group }}]
+    vpc:
+      attach: true
+      id: "{{ .ssm.net.main.vpc_id }}"
+      subnet_ids: |
+        [{{ .ssm.net.main.private_subnets }}]
+      security_group_ids: |
+        [{{ .ssm.net.main.pipeline_security_group }}]
     modules:
       - name: eks
         source: aws/eks
@@ -76,12 +78,6 @@ steps:
     type: argocd-apps
     version: stable
     approve: never
-    vpc_id: "{{ .ssm.net.main.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.net.main.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.net.main.pipeline_security_group }}]
-    kubernetes_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
     argocd_namespace: "argocd"
     modules:
       - name: argocd

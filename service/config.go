@@ -277,34 +277,39 @@ func processModuleInputs(stepName string, module *model.Module, readFile func(st
 	}
 }
 
-func ProcessSteps(config *model.Config) {
+func ProcessSteps(config *model.Config, providerType model.ProviderType) {
 	for i, step := range config.Steps {
 		if step.Vpc.Attach == nil {
-			if step.Type == model.StepTypeArgoCD {
-				attach := true
-				step.Vpc.Attach = &attach
-				if step.KubernetesClusterName == "" {
-					step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
-				}
-			} else if step.Type == model.StepTypeTerraform {
-				attach := false
-				step.Vpc.Attach = &attach
+			attach := step.Type == model.StepTypeArgoCD
+			if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
+				step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
 			}
+			step.Vpc.Attach = &attach
+			config.Steps[i] = step
 		}
 		if !*step.Vpc.Attach || step.Vpc.Id != "" {
 			continue
 		}
-		step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
-		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
-		step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+		if providerType == model.AWS {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+		} else if providerType == model.GCLOUD {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		}
 		config.Steps[i] = step
 	}
 }
 
-func ValidateConfig(config model.Config, state *model.State) {
+func ValidateConfig(config *model.Config, state *model.State) {
 	stepNames := model.NewSet[string]()
 	if config.Prefix == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
+	}
+	if len(config.Prefix) > 10 {
+		common.PrintWarning("config prefix longer than 10 characters, trimming to fit")
+		config.Prefix = config.Prefix[:10]
 	}
 	if config.Source != "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is deprecated, use sources instead")})

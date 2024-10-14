@@ -182,7 +182,7 @@ Complex values need to be as multiline strings with | symbol.
 
 Source version is overwritten by module version. Default version is **stable** which means latest release of the source repository.
 
-* prefix - prefix used for AWS/GCloud resources, CodeCommit folders/files and terraform resources
+* prefix - prefix used for AWS/GCloud resources, CodeCommit folders/files and terraform resources, limit 10 characters
 * sources - list of source repositories for Entigo Infralib modules
   * url - url of the source repository
   * version - highest version of Entigo Infralib modules to use

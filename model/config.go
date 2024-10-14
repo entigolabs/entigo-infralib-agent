@@ -179,3 +179,8 @@ type Source struct {
 	Includes          Set[string]
 	Excludes          Set[string]
 }
+
+type ModuleVersion struct {
+	Version string
+	Changed bool
+}

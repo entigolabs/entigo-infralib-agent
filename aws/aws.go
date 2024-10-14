@@ -92,7 +92,7 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 }
 
 func (a *awsService) SetupResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
+	bucket := fmt.Sprintf("%s-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
 	s3, s3Arn := a.createBucket(bucket)
 	dynamoDBTable := a.createDynamoDBTable()
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
@@ -248,7 +248,7 @@ func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {
 }
 
 func (a *awsService) getPipelineRoleName() string {
-	return fmt.Sprintf("%s-pipeline", a.cloudPrefix)
+	return fmt.Sprintf("%s-pipeline-%s", a.cloudPrefix, a.awsConfig.Region)
 }
 
 func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
@@ -277,7 +277,7 @@ func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, 
 }
 
 func (a *awsService) getBuildRoleName() string {
-	return fmt.Sprintf("%s-build", a.cloudPrefix)
+	return fmt.Sprintf("%s-build-%s", a.cloudPrefix, a.awsConfig.Region)
 }
 
 func (a *awsService) deleteCloudWatchLogs() {

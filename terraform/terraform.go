@@ -26,7 +26,7 @@ const versionsFile = "versions.tf"
 const awsTagsRegex = `(\w+)\s*=\s*"([^"]+)"`
 
 type Terraform interface {
-	GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error)
+	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error)
 }
 
 type terraform struct {
@@ -39,13 +39,13 @@ func NewTerraform(github github.Github) Terraform {
 	}
 }
 
-func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]string, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error) {
-	if len(moduleVersions) == 0 {
-		return make([]byte, 0), map[string]model.Set[string]{}, nil
-	}
+func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error) {
 	sourceVersions, err := getSourceVersions(step, moduleVersions, moduleSources)
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(sourceVersions) == 0 {
+		return make([]byte, 0), map[string]model.Set[string]{}, nil
 	}
 	file, baseSource, err := t.findTerraformFile(providerPath, baseFile, sources, sourceVersions)
 	if err != nil {
@@ -76,14 +76,14 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	return hclwrite.Format(file.Bytes()), providers, nil
 }
 
-func getSourceVersions(step model.Step, moduleVersions map[string]string, moduleSources map[string]string) (map[string]*version.Version, error) {
+func getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, moduleSources map[string]string) (map[string]*version.Version, error) {
 	sourceVersions := make(map[string]*version.Version)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
 		}
 		source := moduleSources[module.Source]
-		moduleVersion, err := version.NewVersion(moduleVersions[module.Name])
+		moduleVersion, err := version.NewVersion(moduleVersions[module.Name].Version)
 		if err != nil {
 			return nil, err
 		}
@@ -112,13 +112,14 @@ func modifyBackendType(body *hclwrite.Body, providerType model.ProviderType) {
 	}
 }
 
-func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[string]string, moduleSources map[string]string) (map[string]*hclwrite.Attribute, error) {
+func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[string]model.ModuleVersion, moduleSources map[string]string) (map[string]*hclwrite.Attribute, error) {
 	providersAttributes := make(map[string]*hclwrite.Attribute)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
 		}
-		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name], moduleSources[module.Source])
+		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name].Version,
+			moduleSources[module.Source])
 		if err != nil {
 			return nil, err
 		}
