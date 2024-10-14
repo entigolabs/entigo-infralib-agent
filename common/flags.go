@@ -12,7 +12,7 @@ type Flags struct {
 	Config        string
 	BaseConfig    string
 	Branch        string
-	AWSPrefix     string
+	Prefix        string
 	AllowParallel bool
 	GCloud        GCloud
 	AWS           AWS

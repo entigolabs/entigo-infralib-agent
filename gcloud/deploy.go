@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const bucketFileFormat = "%s/%s.tar.gz"
+const bucketFileFormat = "%s.tar.gz"
 
 type skaffold struct {
 	APIVersion string    `json:"apiVersion"`
@@ -182,7 +182,7 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	if err != nil {
 		return nil, err
 	}
-	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucketMeta.Name, stepName, step.Workspace)
+	folder := fmt.Sprintf("%s/%s/%s", tempFolder, bucketMeta.Name, stepName)
 	err = p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 	if err != nil {
 		return nil, err
 	}
-	err = bucket.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
+	err = bucket.PutFile(fmt.Sprintf(bucketFileFormat, stepName), tarContent)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 
 func (p *Pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
 	skaffoldManifest := skaffold{
-		APIVersion: "skaffold/v4beta7",
+		APIVersion: "skaffold/v4beta11",
 		Kind:       "Config",
 		Metadata:   metadata{Name: name},
 		Deploy:     runDeploy{},
@@ -387,8 +387,6 @@ func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 		return pipeChanges, nil
 	}
 	switch stepType {
-	case model.StepTypeTerraformCustom:
-		fallthrough
 	case model.StepTypeTerraform:
 		return p.getTerraformChanges(pipelineName, jobName, executionName)
 	}
@@ -436,7 +434,7 @@ func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, exec
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
 }
 
-func (p *Pipeline) CreateAgentPipeline(_ string, pipelineName string, _ string, _ string) error {
+func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string) error {
 	_, err := p.builder.executeJob(pipelineName, false)
 	return err
 }
@@ -451,7 +449,7 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 		planCommand = model.PlanCommand
 		applyCommand = model.ApplyCommand
 	}
-	folder := fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace)
+	folder := fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName)
 	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
 		return err
@@ -460,14 +458,14 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 	if err != nil {
 		return err
 	}
-	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName, step.Workspace), tarContent)
+	err = p.storage.PutFile(fmt.Sprintf(bucketFileFormat, stepName), tarContent)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, step model.Step, bucket string) (*string, error) {
+func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, _ model.Step, bucket string) (*string, error) {
 	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
 	prefix := pipelineName
 	if len(prefix) > 26 { // Max length for id is 63, uuid v4 is 36 chars plus hyphen, 63 - 37 = 26
@@ -478,8 +476,8 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location, pipelineName),
 		ReleaseId: releaseId,
 		Release: &deploypb.Release{
-			SkaffoldConfigUri:  fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName, step.Workspace)),
-			SkaffoldConfigPath: fmt.Sprintf("%s/%s.yaml", step.Workspace, pipelineName),
+			SkaffoldConfigUri:  fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName)),
+			SkaffoldConfigPath: fmt.Sprintf("%s/%s.yaml", stepName, pipelineName),
 		},
 	})
 	if err != nil {

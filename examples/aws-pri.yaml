@@ -1,17 +1,14 @@
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 prefix: ep
-base_config:
-  profile: pri
 steps:
   - name: net
-    workspace: test
     modules:
       - name: vpc
         inputs:
           azs: 3
           vpc_cidr: "10.185.0.0/18"
   - name: infra
-    workspace: test
     modules:
       - name: dns
         inputs:

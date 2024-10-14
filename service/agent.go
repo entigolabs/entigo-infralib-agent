@@ -8,7 +8,7 @@ import (
 
 type Agent interface {
 	CreatePipeline(version string) error
-	UpdateProjectImage(version string) error
+	UpdateProjectImage(version string, cmd common.Command) error
 }
 
 type agent struct {
@@ -26,20 +26,25 @@ func NewAgent(resources model.Resources) Agent {
 }
 
 func (a *agent) CreatePipeline(version string) error {
-	err := a.createCodeBuild(version)
+	err := a.createCodeBuild(version, common.RunCommand)
 	if err != nil {
 		return err
 	}
-	err = a.resources.GetPipeline().CreateAgentPipeline(a.cloudPrefix, a.name, a.name, a.resources.GetBucketName())
+	err = a.createCodeBuild(version, common.UpdateCommand)
 	if err != nil {
 		return err
 	}
-	common.Logger.Println("Agent pipeline execution started")
+	err = a.resources.GetPipeline().CreateAgentPipelines(a.cloudPrefix, a.name, a.resources.GetBucketName())
+	if err != nil {
+		return err
+	}
+	common.Logger.Println("Agent run pipeline execution started")
 	return nil
 }
 
-func (a *agent) createCodeBuild(version string) error {
-	project, err := a.resources.GetBuilder().GetProject(a.name)
+func (a *agent) createCodeBuild(version string, cmd common.Command) error {
+	projectName := fmt.Sprintf("%s-%s", a.name, cmd)
+	project, err := a.resources.GetBuilder().GetProject(projectName)
 	if err != nil {
 		return err
 	}
@@ -47,16 +52,16 @@ func (a *agent) createCodeBuild(version string) error {
 		_, err = a.updateProjectImage(project, version)
 		return err
 	}
-	return a.resources.GetBuilder().CreateAgentProject(a.name, a.cloudPrefix, version)
+	return a.resources.GetBuilder().CreateAgentProject(projectName, a.cloudPrefix, version, cmd)
 }
 
-func (a *agent) UpdateProjectImage(version string) error {
-	project, err := a.resources.GetBuilder().GetProject(a.name)
+func (a *agent) UpdateProjectImage(version string, cmd common.Command) error {
+	projectName := fmt.Sprintf("%s-%s", a.name, cmd)
+	project, err := a.resources.GetBuilder().GetProject(projectName)
 	if err != nil {
 		return err
 	}
 	if project == nil {
-		common.Logger.Printf("Agent CodeBuild project not found\n")
 		return nil
 	}
 	updated, err := a.updateProjectImage(project, version)
@@ -66,7 +71,7 @@ func (a *agent) UpdateProjectImage(version string) error {
 	if !updated {
 		return nil
 	}
-	err = a.resources.GetPipeline().StartAgentExecution(a.name)
+	err = a.resources.GetPipeline().StartAgentExecution(projectName)
 	if err != nil {
 		return fmt.Errorf("failed to start another execution: %w", err)
 	}

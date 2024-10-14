@@ -1,26 +1,35 @@
 package service
 
 import (
-	"dario.cat/mergo"
+	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
 	"os"
-	"reflect"
+	"strings"
 )
 
-const StableVersion = "stable"
+const (
+	StableVersion = "stable"
+	IncludeFormat = "config/%s/include"
 
-func GetAwsPrefix(flags *common.Flags) string {
-	if flags.AWSPrefix != "" {
-		return flags.AWSPrefix
+	EntigoSource   = "github.com/entigolabs/entigo-infralib-release"
+	terraformCache = ".terraform"
+)
+
+var ReservedFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
+
+func GetProviderPrefix(flags *common.Flags) string {
+	if flags.Prefix != "" {
+		return flags.Prefix
 	}
 	if flags.Config == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("aws prefix or config must be provided")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("prefix or config must be provided")})
 	}
 	prefix := GetLocalConfig(flags.Config).Prefix
 	if prefix == "" {
@@ -35,31 +44,11 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 		config = GetLocalConfig(configFile)
 		PutConfig(bucket, config)
 		AddModuleInputFiles(&config, os.ReadFile)
-		PutModuleInputFiles(bucket, config.Steps)
+		PutAdditionalFiles(bucket, config.Steps)
 	} else {
 		config = GetRemoteConfig(bucket)
 	}
-	if config.Source == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is not set")})
-	}
-	if config.Version == "" {
-		config.Version = StableVersion
-	}
 	return config
-}
-
-func MergeBaseConfig(github github.Github, release *version.Version, patchConfig model.Config) model.Config {
-	rawBaseConfig, err := github.GetRawFileContent(fmt.Sprintf("profiles/%s.yaml", patchConfig.BaseConfig.Profile),
-		release.Original())
-	if err != nil {
-		common.Logger.Fatalf("Failed to get base config: %s", err)
-	}
-	var baseConfig model.Config
-	err = yaml.Unmarshal(rawBaseConfig, &baseConfig)
-	if err != nil {
-		common.Logger.Fatalf("Failed to unmarshal base config: %s", err)
-	}
-	return MergeConfig(patchConfig, baseConfig)
 }
 
 func GetLocalConfig(configFile string) model.Config {
@@ -72,7 +61,62 @@ func GetLocalConfig(configFile string) model.Config {
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
+	AddStepsFilesFromFolder(&config)
 	return config
+}
+
+func AddStepsFilesFromFolder(config *model.Config) {
+	if config.Steps == nil {
+		return
+	}
+	for i := range config.Steps {
+		step := &config.Steps[i]
+		if step.Type != model.StepTypeTerraform {
+			continue
+		}
+		addStepFilesFromFolder(step, fmt.Sprintf(IncludeFormat, step.Name))
+	}
+}
+
+func addStepFilesFromFolder(step *model.Step, folder string) {
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			addStepFilesFromFolder(step, fmt.Sprintf("%s/%s", folder, entry.Name()))
+			continue
+		}
+		if ReservedFiles.Contains(entry.Name()) {
+			common.Logger.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
+		}
+		filePath := fmt.Sprintf("%s/%s", folder, entry.Name())
+		fileBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			common.Logger.Fatalf("failed to read file %s: %v", filePath, err)
+		}
+		validateStepFile(filePath, fileBytes)
+		step.Files = append(step.Files, model.File{
+			Name:    filePath,
+			Content: fileBytes,
+		})
+	}
+}
+
+func validateStepFile(file string, content []byte) {
+	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
+		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
+		if diags.HasErrors() {
+			common.Logger.Fatalf("failed to parse hcl file %s: %v", file, diags.Errs())
+		}
+	} else if strings.HasSuffix(file, ".yaml") {
+		var yamlContent map[string]interface{}
+		err := yaml.Unmarshal(content, &yamlContent)
+		if err != nil {
+			common.Logger.Fatalf("failed to unmarshal yaml file %s: %v", file, err)
+		}
+	}
 }
 
 func PutConfig(bucket model.Bucket, config model.Config) {
@@ -86,8 +130,14 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 	}
 }
 
-func PutModuleInputFiles(bucket model.Bucket, steps []model.Step) {
+func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
 	for _, step := range steps {
+		if step.Files != nil {
+			putStepFiles(bucket, step)
+		}
+		if step.Modules == nil {
+			continue
+		}
 		for _, module := range step.Modules {
 			if module.InputsFile == "" {
 				continue
@@ -98,6 +148,30 @@ func PutModuleInputFiles(bucket model.Bucket, steps []model.Step) {
 			}
 			module.InputsFile = ""
 			module.FileContent = nil
+		}
+	}
+}
+
+func putStepFiles(bucket model.Bucket, step model.Step) {
+	files := model.NewSet[string]()
+	for _, file := range step.Files {
+		err := bucket.PutFile(file.Name, file.Content)
+		if err != nil {
+			common.Logger.Fatalf("Failed to put step file %s: %s", file.Name, err)
+		}
+		files.Add(file.Name)
+	}
+	bucketFiles, err := bucket.ListFolderFiles(fmt.Sprintf(IncludeFormat, step.Name))
+	if err != nil {
+		common.Logger.Fatalf("Failed to list folder files: %s", err)
+	}
+	for _, bucketFile := range bucketFiles {
+		if files.Contains(bucketFile) {
+			continue
+		}
+		err = bucket.DeleteFile(bucketFile)
+		if err != nil {
+			common.Logger.Fatalf("Failed to delete file %s: %s", bucketFile, err)
 		}
 	}
 }
@@ -115,8 +189,47 @@ func GetRemoteConfig(bucket model.Bucket) model.Config {
 	if err != nil {
 		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
 	}
+	AddStepsFilesFromBucket(&config, bucket)
 	AddModuleInputFiles(&config, bucket.GetFile)
 	return config
+}
+
+func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) {
+	if config.Steps == nil {
+		return
+	}
+	for i := range config.Steps {
+		step := &config.Steps[i]
+		if step.Type != model.StepTypeTerraform {
+			continue
+		}
+		addStepFilesFromBucket(step, bucket)
+	}
+}
+
+func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
+	folder := fmt.Sprintf(IncludeFormat, step.Name)
+	files, err := bucket.ListFolderFiles(folder)
+	if err != nil {
+		common.Logger.Fatalf("Failed to list folder files: %s", err)
+	}
+	for _, file := range files {
+		if ReservedFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
+			common.Logger.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
+		}
+		fileBytes, err := bucket.GetFile(file)
+		if err != nil {
+			common.Logger.Fatalf("Failed to get file %s: %s", file, err)
+		}
+		if fileBytes == nil {
+			continue
+		}
+		validateStepFile(file, fileBytes)
+		step.Files = append(step.Files, model.File{
+			Name:    file,
+			Content: fileBytes,
+		})
+	}
 }
 
 func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, error)) {
@@ -142,81 +255,107 @@ func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, er
 
 func processModuleInputs(stepName string, module *model.Module, readFile func(string) ([]byte, error)) {
 	yamlFile := fmt.Sprintf("config/%s/%s.yaml", stepName, module.Name)
-	yamlBytes, yamlErr := readFile(yamlFile)
+	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
-		if yamlErr == nil && yamlBytes != nil {
+		if err == nil && bytes != nil {
 			common.PrintWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile))
 		}
 		return
 	}
-	if yamlErr != nil {
-		common.PrintWarning(fmt.Sprintf("module %s/%s has no inputs and failed to read input file", stepName, module.Name))
+	if bytes == nil && (err == nil || errors.Is(err, os.ErrNotExist)) {
 		return
 	}
-	if yamlBytes == nil {
-		return
+	if err != nil {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to read input file %s: %v", yamlFile, err)})
 	}
 	module.InputsFile = yamlFile
-	module.FileContent = yamlBytes
-	err := yaml.Unmarshal(yamlBytes, &module.Inputs)
+	module.FileContent = bytes
+	err = yaml.Unmarshal(bytes, &module.Inputs)
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to unmarshal input file %s: %v",
 			yamlFile, err)})
 	}
 }
 
-func ValidateConfig(config model.Config, state *model.State) {
-	stepWorkspaces := model.NewSet[string]()
+func ProcessSteps(config *model.Config, providerType model.ProviderType) {
+	for i, step := range config.Steps {
+		if step.Vpc.Attach == nil {
+			attach := step.Type == model.StepTypeArgoCD
+			if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
+				step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
+			}
+			step.Vpc.Attach = &attach
+			config.Steps[i] = step
+		}
+		if !*step.Vpc.Attach || step.Vpc.Id != "" {
+			continue
+		}
+		if providerType == model.AWS {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+		} else if providerType == model.GCLOUD {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		}
+		config.Steps[i] = step
+	}
+}
+
+func ValidateConfig(config *model.Config, state *model.State) {
+	stepNames := model.NewSet[string]()
 	if config.Prefix == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
+	if len(config.Prefix) > 10 {
+		common.PrintWarning("config prefix longer than 10 characters, trimming to fit")
+		config.Prefix = config.Prefix[:10]
+	}
+	if config.Source != "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is deprecated, use sources instead")})
+	}
+	if config.Sources == nil || len(config.Sources) == 0 {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("sources are not set")})
+
+	}
+	for i, source := range config.Sources {
+		if source.URL == "" {
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("Source[%d] is missing the repository url", i)})
+		}
+		if source.Version != "" && source.Version != StableVersion {
+			_, err := version.NewVersion(source.Version)
+			if err != nil {
+				common.Logger.Fatalf("Source[%d] version must follow semantic versioning: %s", i, err)
+			}
+		}
+	}
 	for _, step := range config.Steps {
-		validateStep(step, config.Steps)
-		stepWorkspace := fmt.Sprintf("%s-%s", step.Name, step.Workspace)
-		if stepWorkspaces.Contains(stepWorkspace) {
-			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace combination %s is not unique",
-				stepWorkspace)})
+		validateStep(step)
+		if stepNames.Contains(step.Name) {
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name %s is not unique", step.Name)})
 		}
-		stepWorkspaces.Add(stepWorkspace)
-		stepVersion := step.Version
-		if stepVersion == "" {
-			stepVersion = config.Version
-		}
-		validateConfigModules(step, state, stepVersion)
+		stepNames.Add(step.Name)
+		validateConfigModules(step, state)
 	}
 }
 
-func validateStep(step model.Step, steps []model.Step) {
+func validateStep(step model.Step) {
 	if step.Name == "" {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
 	}
-	if step.Workspace == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step workspace is not set for step %s", step.Name)})
-	}
 	if step.Type == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s-%s", step.Name, step.Workspace)})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s", step.Name)})
 	}
-	if step.VpcId != "" && step.VpcSubnetIds == "" {
-		common.Logger.Fatalf("VPC ID is set for step %s-%s but subnet IDs are not", step.Name, step.Workspace)
+	if step.Vpc.Id != "" && step.Vpc.SubnetIds == "" {
+		common.Logger.Fatalf("VPC ID is set for step %s but subnet IDs are not", step.Name)
 	}
-	if (step.VpcSubnetIds != "" || step.VpcSecurityGroupIds != "") && step.VpcId == "" {
-		common.Logger.Fatalf("VPC ID is not set for step %s-%s", step.Name, step.Workspace)
-	}
-	if step.Type == model.StepTypeTerraformCustom && step.Approve != "" && step.Approve != model.ApproveAlways && step.Approve != model.ApproveNever {
-		common.Logger.Fatalf("custom terraform step %s-%s must have approve 'always' or 'never'", step.Name, step.Workspace)
-	}
-	if step.Before != "" {
-		_, referencedStep := findStep(model.Step{Name: step.Before, Workspace: step.Workspace}, steps)
-		if referencedStep == nil {
-			common.Logger.Fatalf("before step %s does not exist for step %s-%s", step.Before, step.Name, step.Workspace)
-		} else if referencedStep.Remove {
-			common.Logger.Fatalf("before step %s is marked for removal for step %s-%s", step.Before, step.Name, step.Workspace)
-		}
+	if (step.Vpc.SubnetIds != "" || step.Vpc.SecurityGroupIds != "") && step.Vpc.Id == "" {
+		common.Logger.Fatalf("VPC ID is not set for step %s", step.Name)
 	}
 }
 
-func validateConfigModules(step model.Step, state *model.State, stepVersion string) {
-	stepState := GetStepState(state, step)
+func validateConfigModules(step model.Step, state *model.State) {
+	stepState := GetStepState(state, step.Name)
 	for _, module := range step.Modules {
 		validateModule(module, step.Name)
 		if stepState == nil {
@@ -230,15 +369,15 @@ func validateConfigModules(step model.Step, state *model.State, stepVersion stri
 			}
 			continue
 		}
-		if moduleVersionString == "" {
-			moduleVersionString = stepVersion
-		}
-		if stateModule == nil || stateModule.Version == "" || moduleVersionString == StableVersion {
+		if moduleVersionString == "" || moduleVersionString == StableVersion {
 			continue
 		}
 		moduleVersion, err := version.NewVersion(moduleVersionString)
 		if err != nil {
 			common.Logger.Fatalf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
+		}
+		if stateModule == nil || stateModule.Version == "" {
+			continue
 		}
 		stateModuleVersion, err := version.NewVersion(stateModule.Version)
 		if err != nil {
@@ -256,16 +395,16 @@ func validateModule(module model.Module, stepName string) {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", stepName)})
 	}
 	if module.Source == "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module source is not set for module %s in step %s", module.Name, stepName)})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module Source is not set for module %s in step %s", module.Name, stepName)})
 	}
 }
 
-func GetStepState(state *model.State, step model.Step) *model.StateStep {
+func GetStepState(state *model.State, stepName string) *model.StateStep {
 	if state == nil {
 		return nil
 	}
 	for _, stateStep := range state.Steps {
-		if stateStep.Name == step.Name && stateStep.Workspace == step.Workspace {
+		if stateStep.Name == stepName {
 			return stateStep
 		}
 	}
@@ -298,9 +437,8 @@ func createState(config model.Config, state *model.State) {
 			modules = append(modules, createStateModule(module))
 		}
 		steps = append(steps, &model.StateStep{
-			Name:      step.Name,
-			Workspace: step.Workspace,
-			Modules:   modules,
+			Name:    step.Name,
+			Modules: modules,
 		})
 	}
 	state.Steps = steps
@@ -319,12 +457,11 @@ func createStateModule(module model.Module) *model.StateModule {
 
 func addNewSteps(config model.Config, state *model.State) {
 	for _, step := range config.Steps {
-		stepState := GetStepState(state, step)
+		stepState := GetStepState(state, step.Name)
 		if stepState == nil {
 			stepState = &model.StateStep{
-				Name:      step.Name,
-				Workspace: step.Workspace,
-				Modules:   make([]*model.StateModule, 0),
+				Name:    step.Name,
+				Modules: make([]*model.StateModule, 0),
 			}
 			state.Steps = append(state.Steps, stepState)
 		}
@@ -342,7 +479,7 @@ func removeUnusedSteps(config model.Config, state *model.State) {
 		stepState := state.Steps[i]
 		stepFound := false
 		for _, step := range config.Steps {
-			if stepState.Name == step.Name && stepState.Workspace == step.Workspace {
+			if stepState.Name == step.Name {
 				stepFound = true
 				removeUnusedModules(step, stepState)
 				break
@@ -370,134 +507,13 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep) {
 	}
 }
 
-func hasCustomTFStep(steps []model.Step) bool {
-	for _, step := range steps {
-		if step.Type == model.StepTypeTerraformCustom {
-			return true
-		}
-	}
-	return false
-}
-
-func MergeConfig(patchConfig model.Config, baseConfig model.Config) model.Config {
-	err := mergo.Merge(&baseConfig, patchConfig, mergo.WithOverride, mergo.WithTransformers(stepsTransformer{}))
-	if err != nil {
-		common.Logger.Fatal(&common.PrefixedError{Reason: err})
-	}
-	return baseConfig
-}
-
-type stepsTransformer struct {
-}
-
-func (st stepsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ != reflect.TypeOf([]model.Step{}) {
-		return nil
-	}
-	return func(dst, src reflect.Value) error {
-		target := src.Interface().([]model.Step)
-		source := dst.Interface().([]model.Step)
-		if len(target) == 0 {
-			dst.Set(reflect.ValueOf(source))
-			return nil
-		}
-		result := make([]model.Step, 0)
-		for _, step := range source {
-			patchStep := getPatchStep(step, target)
-			if patchStep == nil {
-				result = append(result, step)
-				continue
-			}
-			if patchStep.Remove {
-				continue
-			}
-			err := mergo.Merge(&step, *patchStep, mergo.WithOverride, mergo.WithTransformers(modulesTransformer{}))
-			if err != nil {
-				return err
-			}
-			result = append(result, step)
-		}
-		result = addNewPatchSteps(source, target, result)
-		dst.Set(reflect.ValueOf(result))
-		return nil
-	}
-}
-
-func getPatchStep(dstStep model.Step, patchSteps []model.Step) *model.Step {
-	for _, step := range patchSteps {
-		if step.Name == dstStep.Name && step.Workspace == dstStep.Workspace {
-			return &step
-		}
-	}
-	return nil
-}
-
-func addNewPatchSteps(sourceSteps []model.Step, patchSteps []model.Step, result []model.Step) []model.Step {
-	for _, patchStep := range patchSteps {
-		_, sourceStep := findStep(patchStep, sourceSteps)
-		if sourceStep != nil {
-			continue
-		}
-		if patchStep.Remove {
-			common.PrintWarning(fmt.Sprintf("unable to remove the step %s because it does not exist in base config", patchStep.Name))
-			continue
-		} else if patchStep.Before != "" {
-			index, referencedStep := findStep(model.Step{Name: patchStep.Before, Workspace: patchStep.Workspace}, result)
-			if referencedStep == nil {
-				common.Logger.Fatalf("before step %s does not exist for step %s-%s", patchStep.Before, patchStep.Name, patchStep.Workspace)
-			}
-			result = append(result[:index+1], result[index:]...)
-			result[index] = patchStep
-		} else {
-			result = append(result, patchStep)
-		}
-	}
-	return result
-}
-
-func findStep(step model.Step, steps []model.Step) (int, *model.Step) {
+func findStep(stepName string, steps []model.Step) (int, *model.Step) {
 	for i, s := range steps {
-		if s.Name == step.Name && s.Workspace == step.Workspace {
+		if s.Name == stepName {
 			return i, &s
 		}
 	}
 	return 0, nil
-}
-
-type modulesTransformer struct {
-}
-
-func (mt modulesTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ != reflect.TypeOf([]model.Module{}) {
-		return nil
-	}
-	return func(dst, src reflect.Value) error {
-		target := src.Interface().([]model.Module)
-		source := dst.Interface().([]model.Module)
-		if len(target) == 0 {
-			dst.Set(reflect.ValueOf(source))
-			return nil
-		}
-		result := make([]model.Module, 0)
-		for _, module := range source {
-			patchModule := getModule(module.Name, target)
-			if patchModule == nil {
-				result = append(result, module)
-				continue
-			}
-			if patchModule.Remove {
-				continue
-			}
-			err := mergo.Merge(&module, *patchModule, mergo.WithOverride, mergo.WithTransformers(inputsTransformer{}))
-			if err != nil {
-				return err
-			}
-			result = append(result, module)
-		}
-		result = addNewPatchModules(source, target, result)
-		dst.Set(reflect.ValueOf(result))
-		return nil
-	}
 }
 
 func getModule(moduleName string, modules []model.Module) *model.Module {
@@ -507,50 +523,4 @@ func getModule(moduleName string, modules []model.Module) *model.Module {
 		}
 	}
 	return nil
-}
-
-func addNewPatchModules(sourceModules []model.Module, patchModules []model.Module, result []model.Module) []model.Module {
-	for _, patchModule := range patchModules {
-		found := false
-		for _, sourceModule := range sourceModules {
-			if patchModule.Name == sourceModule.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if patchModule.Remove {
-				common.Logger.Printf("unable to remove the module %s because it does not exist in base config", patchModule.Name)
-				continue
-			}
-			result = append(result, patchModule)
-		}
-	}
-	return result
-}
-
-type inputsTransformer struct {
-}
-
-func (it inputsTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ != reflect.TypeOf(map[string]interface{}{}) {
-		return nil
-	}
-	return func(dst, src reflect.Value) error {
-		target := src.Interface().(map[string]interface{})
-		source := dst.Interface().(map[string]interface{})
-		if len(target) == 0 {
-			dst.Set(reflect.ValueOf(source))
-			return nil
-		}
-		if len(source) == 0 {
-			dst.Set(reflect.ValueOf(target))
-			return nil
-		}
-		for key, value := range target {
-			source[key] = value
-		}
-		dst.Set(reflect.ValueOf(source))
-		return nil
-	}
 }

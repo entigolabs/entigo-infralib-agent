@@ -1,12 +1,10 @@
-base_config:
-  profile: minimal
 prefix: agentgce
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 version: stable
 steps:
   - name: net
     type: terraform
-    workspace: dev
     approve: minor
     modules:
       - name: main
@@ -14,11 +12,12 @@ steps:
         version: stable
   - name: infra
     type: terraform
-    workspace: dev
     approve: minor
     version: stable
-    vpc_id: "{{ .gcsm.net.main.vpc_name }}"
-    vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
+    vpc:
+      attach: true
+      id: "{{ .gcsm.net.main.vpc_name }}"
+      subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
     modules:
       - name: dns
         source: google/dns
@@ -52,11 +51,7 @@ steps:
             ]
   - name: applications
     type: argocd-apps
-    workspace: dev
     version: stable
-    vpc_id: "{{ .gcsm.net.main.vpc_name }}"
-    vpc_subnet_ids: "{{ .gcsm.net.main.private_subnets[0] }}"
-    kubernetes_cluster_name: "{{ .gcsm.infra.gke.cluster_name }}"
     argocd_namespace: "argocd"
     modules:
       - name: argocd

@@ -11,12 +11,12 @@ import (
 	"strings"
 )
 
-func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl string, version string, values []byte, provider model.ProviderType) ([]byte, error) {
+func GetApplicationFile(github github.Github, module model.Module, sourceURL, repoSSHUrl, version string, values []byte, provider model.ProviderType) ([]byte, error) {
 	baseBytes, err := getBaseApplicationFile()
 	if err != nil {
 		return nil, err
 	}
-	moduleFile, err := getModuleApplicationFile(github, version, module.Source)
+	moduleFile, err := getModuleApplicationFile(github, version, module.Source, sourceURL)
 	if err != nil {
 		return nil, err
 	}
@@ -24,14 +24,14 @@ func GetApplicationFile(github github.Github, module model.Module, repoSSHUrl st
 	if err != nil {
 		return nil, err
 	}
-	return replacePlaceholders(bytes, module, repoSSHUrl, version, values, provider), nil
+	return replacePlaceholders(bytes, module, sourceURL, repoSSHUrl, version, values, provider), nil
 }
 
 func getBaseApplicationFile() ([]byte, error) {
 	return os.ReadFile("app.yaml")
 }
 
-func replacePlaceholders(bytes []byte, module model.Module, repoSSHUrl string, version string, values []byte, provider model.ProviderType) []byte {
+func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, repoSSHUrl string, version string, values []byte, provider model.ProviderType) []byte {
 	file := string(bytes)
 	var cloudProvider string
 	if provider == model.GCLOUD {
@@ -39,9 +39,13 @@ func replacePlaceholders(bytes []byte, module model.Module, repoSSHUrl string, v
 	} else {
 		cloudProvider = "aws"
 	}
+	url := sourceURL
+	if !strings.HasSuffix(url, ".git") {
+		url += ".git"
+	}
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{codeRepoSSHUrl}}", repoSSHUrl,
 		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{moduleValues}}",
-		getValuesString(file, bytes, values), "{{cloudProvider}}", cloudProvider)
+		getValuesString(file, bytes, values), "{{cloudProvider}}", cloudProvider, "{{moduleSourceURL}}", url)
 	return []byte(replacer.Replace(file))
 }
 
@@ -64,10 +68,10 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 	return strings.Join(replaceLines, "\n")
 }
 
-func getModuleApplicationFile(git github.Github, release string, moduleSource string) (map[string]interface{}, error) {
-	bytes, err := git.GetRawFileContent(fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
+func getModuleApplicationFile(git github.Github, release, moduleSource, sourceURL string) (map[string]interface{}, error) {
+	bytes, err := git.GetRawFileContent(sourceURL, fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
-		var fileError github.FileNotFoundError
+		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {
 			return nil, nil
 		}

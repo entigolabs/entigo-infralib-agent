@@ -9,9 +9,9 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
-func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
+func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
 	dynamodbClient := dynamodb.NewFromConfig(awsConfig)
-	table, err := dynamodbClient.CreateTable(context.Background(), &dynamodb.CreateTableInput{
+	table, err := dynamodbClient.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName:   aws.String(tableName),
 		BillingMode: types.BillingModePayPerRequest,
 		KeySchema: []types.KeySchemaElement{{
@@ -27,7 +27,7 @@ func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDe
 		var resourceError *types.ResourceInUseException
 		var tableError *types.TableAlreadyExistsException
 		if errors.As(err, &tableError) || errors.As(err, &resourceError) {
-			return GetDynamoDBTable(dynamodbClient, tableName)
+			return GetDynamoDBTable(ctx, dynamodbClient, tableName)
 		} else {
 			return nil, err
 		}
@@ -36,9 +36,9 @@ func CreateDynamoDBTable(awsConfig aws.Config, tableName string) (*types.TableDe
 	return table.TableDescription, nil
 }
 
-func DeleteDynamoDBTable(awsConfig aws.Config, tableName string) error {
+func DeleteDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName string) error {
 	client := dynamodb.NewFromConfig(awsConfig)
-	_, err := client.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{
+	_, err := client.DeleteTable(ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(tableName),
 	})
 	if err != nil {
@@ -53,8 +53,8 @@ func DeleteDynamoDBTable(awsConfig aws.Config, tableName string) error {
 	return nil
 }
 
-func GetDynamoDBTable(client *dynamodb.Client, tableName string) (*types.TableDescription, error) {
-	table, err := client.DescribeTable(context.Background(), &dynamodb.DescribeTableInput{
+func GetDynamoDBTable(ctx context.Context, client *dynamodb.Client, tableName string) (*types.TableDescription, error) {
+	table, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	})
 	if err != nil {

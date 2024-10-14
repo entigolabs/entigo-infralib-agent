@@ -8,7 +8,7 @@ spec:
     namespace: '{{moduleName}}'
   project: default
   sources:
-    - repoURL: "https://github.com/entigolabs/entigo-infralib-release.git"
+    - repoURL: '{{moduleSourceURL}}'
       targetRevision: '{{moduleVersion}}'
       path: "modules/k8s/{{moduleSource}}"
       helm:

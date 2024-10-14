@@ -19,17 +19,19 @@ type CloudWatch interface {
 }
 
 type cloudWatch struct {
+	ctx            context.Context
 	cloudwatchlogs *cloudwatchlogs.Client
 }
 
-func NewCloudWatch(awsConfig aws.Config) CloudWatch {
+func NewCloudWatch(ctx context.Context, awsConfig aws.Config) CloudWatch {
 	return &cloudWatch{
+		ctx:            ctx,
 		cloudwatchlogs: cloudwatchlogs.NewFromConfig(awsConfig),
 	}
 }
 
 func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
-	_, err := c.cloudwatchlogs.CreateLogGroup(context.Background(), &cloudwatchlogs.CreateLogGroupInput{
+	_, err := c.cloudwatchlogs.CreateLogGroup(c.ctx, &cloudwatchlogs.CreateLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
 	})
 	if err != nil {
@@ -45,7 +47,7 @@ func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
 }
 
 func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
-	groups, err := c.cloudwatchlogs.DescribeLogGroups(context.Background(), &cloudwatchlogs.DescribeLogGroupsInput{
+	groups, err := c.cloudwatchlogs.DescribeLogGroups(c.ctx, &cloudwatchlogs.DescribeLogGroupsInput{
 		LogGroupNamePrefix: aws.String(logGroupName),
 	})
 	if err != nil {
@@ -58,7 +60,7 @@ func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
 }
 
 func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) error {
-	_, err := c.cloudwatchlogs.CreateLogStream(context.Background(), &cloudwatchlogs.CreateLogStreamInput{
+	_, err := c.cloudwatchlogs.CreateLogStream(c.ctx, &cloudwatchlogs.CreateLogStreamInput{
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(logStreamName),
 	})
@@ -71,7 +73,7 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 }
 
 func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error) {
-	response, err := c.cloudwatchlogs.GetLogEvents(context.Background(), &cloudwatchlogs.GetLogEventsInput{
+	response, err := c.cloudwatchlogs.GetLogEvents(c.ctx, &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(logStreamName),
 		Limit:         aws.Int32(limit),
@@ -87,7 +89,7 @@ func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string, limit in
 }
 
 func (c *cloudWatch) DeleteLogGroup(logGroupName string) error {
-	_, err := c.cloudwatchlogs.DeleteLogGroup(context.Background(), &cloudwatchlogs.DeleteLogGroupInput{
+	_, err := c.cloudwatchlogs.DeleteLogGroup(c.ctx, &cloudwatchlogs.DeleteLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
 	})
 	if err != nil {
@@ -102,7 +104,7 @@ func (c *cloudWatch) DeleteLogGroup(logGroupName string) error {
 }
 
 func (c *cloudWatch) DeleteLogStream(logGroupName, logStreamName string) error {
-	_, err := c.cloudwatchlogs.DeleteLogStream(context.Background(), &cloudwatchlogs.DeleteLogStreamInput{
+	_, err := c.cloudwatchlogs.DeleteLogStream(c.ctx, &cloudwatchlogs.DeleteLogStreamInput{
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(logStreamName),
 	})

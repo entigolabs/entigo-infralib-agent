@@ -183,7 +183,7 @@ func (g *GStorage) ListFolderFiles(folder string) ([]string, error) {
 		if !strings.HasPrefix(obj.Name, folder+"/") {
 			continue
 		}
-		files = append(files, strings.TrimPrefix(obj.Name, folder+"/"))
+		files = append(files, obj.Name)
 	}
 	return files, nil
 }

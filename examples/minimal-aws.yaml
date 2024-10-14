@@ -1,13 +1,11 @@
-base_config:
-  profile: minimal
 prefix: agent
-source: https://github.com/entigolabs/entigo-infralib-release
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
 version: stable
 agent_version: latest
 steps:
   - name: net
     type: terraform
-    workspace: dev
     approve: minor
     modules:
       - name: main
@@ -30,14 +28,15 @@ steps:
           public_subdomain_name: agent
   - name: infra
     type: terraform
-    workspace: dev
     approve: minor
     version: stable
-    vpc_id: "{{ .ssm.net.main.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.net.main.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.net.main.pipeline_security_group }}]
+    vpc:
+      attach: true
+      id: "{{ .ssm.net.main.vpc_id }}"
+      subnet_ids: |
+        [{{ .ssm.net.main.private_subnets }}]
+      security_group_ids: |
+        [{{ .ssm.net.main.pipeline_security_group }}]
     modules:
       - name: eks
         source: aws/eks
@@ -77,15 +76,8 @@ steps:
             module.eks.oidc_provider_arn
   - name: applications
     type: argocd-apps
-    workspace: dev
     version: stable
     approve: never
-    vpc_id: "{{ .ssm.net.main.vpc_id }}"
-    vpc_subnet_ids: |
-      [{{ .ssm.net.main.private_subnets }}]
-    vpc_security_group_ids: |
-      [{{ .ssm.net.main.pipeline_security_group }}]
-    kubernetes_cluster_name: "{{ .ssm.infra.eks.cluster_name }}"
     argocd_namespace: "argocd"
     modules:
       - name: argocd

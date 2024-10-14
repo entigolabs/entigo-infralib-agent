@@ -6,37 +6,42 @@ import (
 )
 
 type Config struct {
-	BaseConfig       BaseConfig `yaml:"base_config"`
-	Prefix           string     `yaml:"prefix,omitempty" fake:"{word}"`
-	Source           string     `yaml:"source" fake:"{url}"`
-	Version          string     `yaml:"version,omitempty" fake:"{version}"`
-	AgentVersion     string     `yaml:"agent_version,omitempty" fake:"{version}"`
-	BaseImageVersion string     `yaml:"base_image_version,omitempty"`
-	Steps            []Step     `yaml:"steps,omitempty" fakesize:"1"`
+	Prefix           string         `yaml:"prefix,omitempty" fake:"{word}"`
+	Source           string         `yaml:"source" fake:"{url}"`
+	Sources          []ConfigSource `yaml:"sources,omitempty" fakesize:"1"`
+	AgentVersion     string         `yaml:"agent_version,omitempty" fake:"{version}"`
+	BaseImageSource  string         `yaml:"base_image_source,omitempty"`
+	BaseImageVersion string         `yaml:"base_image_version,omitempty"`
+	Steps            []Step         `yaml:"steps,omitempty" fakesize:"1"`
 }
 
-type BaseConfig struct {
-	Version string `yaml:"version,omitempty" fake:"{version}"`
-	Profile string `yaml:"profile" fake:"{word}"`
+type ConfigSource struct {
+	URL     string   `yaml:"url" fake:"{url}"`
+	Version string   `yaml:"version,omitempty"`
+	Include []string `yaml:"include,omitempty"`
+	Exclude []string `yaml:"exclude,omitempty"`
 }
 
 type Step struct {
 	Name                  string   `yaml:"name" fake:"{word}"`
 	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
-	Workspace             string   `yaml:"workspace"`
-	Before                string   `yaml:"before,omitempty" fake:"skip"`
 	Approve               Approve  `yaml:"approve,omitempty"`
-	Remove                bool     `yaml:"remove,omitempty" fake:"skip"`
-	Version               string   `yaml:"version,omitempty" fake:"{version}"`
+	BaseImageSource       string   `yaml:"base_image_source,omitempty"`
 	BaseImageVersion      string   `yaml:"base_image_version,omitempty" fake:"{version}"`
-	VpcId                 string   `yaml:"vpc_id,omitempty"`
-	VpcSubnetIds          string   `yaml:"vpc_subnet_ids,omitempty"`
-	VpcSecurityGroupIds   string   `yaml:"vpc_security_group_ids,omitempty"`
+	Vpc                   VPC      `yaml:"vpc,omitempty"`
 	KubernetesClusterName string   `yaml:"kubernetes_cluster_name,omitempty"`
 	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
 	RepoUrl               string   `yaml:"repo_url,omitempty"`
 	Provider              Provider `yaml:"provider,omitempty"`
 	Modules               []Module `yaml:"modules,omitempty" fakesize:"1"`
+	Files                 []File   `yaml:"-"`
+}
+
+type VPC struct {
+	Attach           *bool  `yaml:"attach,omitempty"`
+	Id               string `yaml:"id,omitempty"`
+	SubnetIds        string `yaml:"subnet_ids,omitempty"`
+	SecurityGroupIds string `yaml:"security_group_ids,omitempty"`
 }
 
 type Provider struct {
@@ -62,6 +67,11 @@ type AwsDefaultTags struct {
 type KubernetesProvider struct {
 	IgnoreAnnotations []string `yaml:"ignore_annotations,omitempty"`
 	IgnoreLabels      []string `yaml:"ignore_labels,omitempty"`
+}
+
+type File struct {
+	Name    string `yaml:"-"`
+	Content []byte `yaml:"-"`
 }
 
 func (p Provider) IsEmpty() bool {
@@ -90,7 +100,6 @@ type Module struct {
 	HttpUsername string                 `yaml:"http_username,omitempty"`
 	HttpPassword string                 `yaml:"http_password,omitempty"`
 	Version      string                 `yaml:"version,omitempty"`
-	Remove       bool                   `yaml:"remove,omitempty" fake:"skip"`
 	Inputs       map[string]interface{} `yaml:"inputs,omitempty" fakesize:"2,5"`
 	InputsFile   string                 `yaml:"-"`
 	FileContent  []byte                 `yaml:"-"`
@@ -99,9 +108,8 @@ type Module struct {
 type StepType string
 
 const (
-	StepTypeTerraform       StepType = "terraform"
-	StepTypeArgoCD          StepType = "argocd-apps"
-	StepTypeTerraformCustom StepType = "terraform-custom"
+	StepTypeTerraform StepType = "terraform"
+	StepTypeArgoCD    StepType = "argocd-apps"
 )
 
 type ReplaceType string
@@ -113,6 +121,7 @@ const (
 	ReplaceTypeGCSMCustom   ReplaceType = "gcsm-custom"
 	ReplaceTypeOutput       ReplaceType = "output"
 	ReplaceTypeOutputCustom ReplaceType = "output-custom"
+	ReplaceTypeTOutput      ReplaceType = "toutput"
 	ReplaceTypeConfig       ReplaceType = "config"
 	ReplaceTypeAgent        ReplaceType = "agent"
 )
@@ -134,18 +143,11 @@ const (
 )
 
 type State struct {
-	BaseConfig StateConfig  `yaml:"base_config"`
-	Steps      []*StateStep `yaml:"steps"`
-}
-
-type StateConfig struct {
-	Version        *version.Version `yaml:"version,omitempty"`
-	AppliedVersion *version.Version `yaml:"applied_version,omitempty"`
+	Steps []*StateStep `yaml:"steps"`
 }
 
 type StateStep struct {
 	Name      string         `yaml:"name"`
-	Workspace string         `yaml:"workspace"`
 	AppliedAt time.Time      `yaml:"applied_at,omitempty"`
 	Modules   []*StateModule `yaml:"modules"`
 }
@@ -154,6 +156,7 @@ type StateModule struct {
 	Name           string      `yaml:"name"`
 	Version        string      `yaml:"version,omitempty"`
 	AppliedVersion *string     `yaml:"applied_version,omitempty"`
+	Source         string      `yaml:"source,omitempty"`
 	Type           *ModuleType `yaml:"type,omitempty"`
 	AutoApprove    bool        `yaml:"-"` // always omit
 }
@@ -163,3 +166,21 @@ type ModuleType string
 const (
 	ModuleTypeCustom ModuleType = "custom"
 )
+
+type Source struct {
+	URL               string
+	Version           *version.Version
+	NewestVersion     *version.Version
+	StableVersion     *version.Version
+	Releases          []*version.Version
+	Modules           Set[string]
+	PreviousChecksums map[string]string
+	CurrentChecksums  map[string]string
+	Includes          Set[string]
+	Excludes          Set[string]
+}
+
+type ModuleVersion struct {
+	Version string
+	Changed bool
+}

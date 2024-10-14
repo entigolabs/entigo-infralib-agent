@@ -22,7 +22,6 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: eu-north-1
-          AWS_PREFIX: entigo-infralib-test-${{ github.event.pull_request.head.ref }}
           PROJECT_ID: entigo-infralib-agent
           LOCATION: europe-north1
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}

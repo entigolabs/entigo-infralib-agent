@@ -10,17 +10,19 @@ import (
 )
 
 type ssm struct {
+	ctx       context.Context
 	ssmClient *awsSSM.Client
 }
 
-func NewSSM(awsConfig aws.Config) model.SSM {
+func NewSSM(ctx context.Context, awsConfig aws.Config) model.SSM {
 	return &ssm{
+		ctx:       ctx,
 		ssmClient: awsSSM.NewFromConfig(awsConfig),
 	}
 }
 
 func (s *ssm) GetParameter(name string) (*model.Parameter, error) {
-	result, err := s.ssmClient.GetParameter(context.Background(), &awsSSM.GetParameterInput{
+	result, err := s.ssmClient.GetParameter(s.ctx, &awsSSM.GetParameterInput{
 		Name:           aws.String(name),
 		WithDecryption: aws.Bool(true),
 	})

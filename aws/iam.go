@@ -35,19 +35,21 @@ type PolicyStatement struct {
 }
 
 type identity struct {
+	ctx       context.Context
 	accountId string
 	iamClient *iam.Client
 }
 
-func NewIAM(config aws.Config, accountId string) IAM {
+func NewIAM(ctx context.Context, config aws.Config, accountId string) IAM {
 	return &identity{
+		ctx:       ctx,
 		accountId: accountId,
 		iamClient: iam.NewFromConfig(config),
 	}
 }
 
 func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *types.Role {
-	result, err := i.iamClient.CreateRole(context.Background(), &iam.CreateRoleInput{
+	result, err := i.iamClient.CreateRole(i.ctx, &iam.CreateRoleInput{
 		AssumeRolePolicyDocument: getPolicy(statement),
 		RoleName:                 aws.String(roleName),
 	})
@@ -64,7 +66,7 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 }
 
 func (i *identity) GetRole(roleName string) *types.Role {
-	role, err := i.iamClient.GetRole(context.Background(), &iam.GetRoleInput{RoleName: aws.String(roleName)})
+	role, err := i.iamClient.GetRole(i.ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
 		common.Logger.Fatalf("Failed to get role %s: %s", roleName, err)
 	}
@@ -72,7 +74,7 @@ func (i *identity) GetRole(roleName string) *types.Role {
 }
 
 func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy {
-	result, err := i.iamClient.CreatePolicy(context.Background(), &iam.CreatePolicyInput{
+	result, err := i.iamClient.CreatePolicy(i.ctx, &iam.CreatePolicyInput{
 		PolicyDocument: getPolicy(statement),
 		PolicyName:     aws.String(policyName),
 	})
@@ -91,7 +93,7 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) string {
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", i.accountId, policyName)
 
-	versionsOutput, err := i.iamClient.ListPolicyVersions(context.TODO(), &iam.ListPolicyVersionsInput{
+	versionsOutput, err := i.iamClient.ListPolicyVersions(i.ctx, &iam.ListPolicyVersionsInput{
 		PolicyArn: aws.String(policyArn),
 	})
 	if err != nil {
@@ -101,7 +103,7 @@ func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) 
 		i.deleteOldestPolicyVersion(policyArn, versionsOutput.Versions)
 	}
 
-	_, err = i.iamClient.CreatePolicyVersion(context.TODO(), &iam.CreatePolicyVersionInput{
+	_, err = i.iamClient.CreatePolicyVersion(i.ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn:      aws.String(policyArn),
 		PolicyDocument: getPolicy(statement),
 		SetAsDefault:   true,
@@ -126,7 +128,7 @@ func getPolicy(statements []PolicyStatement) *string {
 }
 
 func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
-	_, err := i.iamClient.AttachRolePolicy(context.Background(), &iam.AttachRolePolicyInput{
+	_, err := i.iamClient.AttachRolePolicy(i.ctx, &iam.AttachRolePolicyInput{
 		PolicyArn: aws.String(policyArn),
 		RoleName:  aws.String(roleName),
 	})
@@ -134,7 +136,7 @@ func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
 }
 
 func (i *identity) DeleteRolePolicyAttachment(policyArn string, roleName string) error {
-	_, err := i.iamClient.DetachRolePolicy(context.Background(), &iam.DetachRolePolicyInput{
+	_, err := i.iamClient.DetachRolePolicy(i.ctx, &iam.DetachRolePolicyInput{
 		PolicyArn: aws.String(policyArn),
 		RoleName:  aws.String(roleName),
 	})
@@ -149,7 +151,7 @@ func (i *identity) DeleteRolePolicyAttachment(policyArn string, roleName string)
 
 func (i *identity) DeletePolicy(policyName string, accountId string) error {
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", accountId, policyName)
-	_, err := i.iamClient.DeletePolicy(context.Background(), &iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
+	_, err := i.iamClient.DeletePolicy(i.ctx, &iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
 	if err != nil {
 		var awsError *types.NoSuchEntityException
 		if errors.As(err, &awsError) {
@@ -162,7 +164,7 @@ func (i *identity) DeletePolicy(policyName string, accountId string) error {
 }
 
 func (i *identity) DeleteRole(roleName string) error {
-	_, err := i.iamClient.DeleteRole(context.Background(), &iam.DeleteRoleInput{RoleName: aws.String(roleName)})
+	_, err := i.iamClient.DeleteRole(i.ctx, &iam.DeleteRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
 		var awsError *types.NoSuchEntityException
 		if errors.As(err, &awsError) {
@@ -182,7 +184,7 @@ func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.
 		}
 	}
 	if oldestVersion != nil {
-		_, err := i.iamClient.DeletePolicyVersion(context.TODO(), &iam.DeletePolicyVersionInput{
+		_, err := i.iamClient.DeletePolicyVersion(i.ctx, &iam.DeletePolicyVersionInput{
 			PolicyArn: aws.String(policyArn),
 			VersionId: oldestVersion.VersionId,
 		})

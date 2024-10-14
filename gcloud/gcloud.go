@@ -42,7 +42,7 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) mo
 func (g *gcloudService) SetupResources() model.Resources {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	g.enableApiServices()
-	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
+	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage service: %s", err)
@@ -86,7 +86,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 }
 
 func (g *gcloudService) GetResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
+	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create storage service: %s", err)
@@ -112,9 +112,14 @@ func (g *gcloudService) GetResources() model.Resources {
 	return g.resources
 }
 
-func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool) {
-	agentJob := fmt.Sprintf("%s-agent", g.cloudPrefix)
+func (g *gcloudService) DeleteResources(deleteBucket bool) {
+	agentJob := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.RunCommand)
 	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
+	}
+	agentJob = fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.UpdateCommand)
+	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
 	}
@@ -126,17 +131,13 @@ func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 	if err != nil {
 		common.Logger.Fatalf("Failed to create IAM service: %s", err)
 	}
-	accountName := fmt.Sprintf("%s-agent", g.cloudPrefix)
+	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
 	if len(accountName) > 30 {
 		accountName = accountName[:30]
 	}
 	err = iam.DeleteServiceAccount(accountName)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err))
-	}
-	if hasCustomTFStep {
-		common.PrintWarning(fmt.Sprintf("Custom terraform state bucket %s-custom-%s will not be deleted, delete it manually if needed\n",
-			g.cloudPrefix, g.projectId))
 	}
 	if !deleteBucket {
 		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
@@ -147,16 +148,6 @@ func (g *gcloudService) DeleteResources(deleteBucket bool, hasCustomTFStep bool)
 		bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
 		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket %s: %s", bucket, err))
 	}
-}
-
-func (g *gcloudService) SetupCustomBucket() (model.Bucket, error) {
-	bucket := fmt.Sprintf("%s-custom-%s", g.cloudPrefix, g.projectId)
-	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
-	if err != nil {
-		return nil, err
-	}
-	err = storage.CreateBucket()
-	return storage, err
 }
 
 func (g *gcloudService) enableApiServices() {
@@ -173,7 +164,7 @@ func (g *gcloudService) enableApiServices() {
 }
 
 func (g *gcloudService) createServiceAccount(iam *IAM) string {
-	accountName := fmt.Sprintf("%s-agent", g.cloudPrefix)
+	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
 	if len(accountName) > 30 {
 		accountName = accountName[:30]
 	}

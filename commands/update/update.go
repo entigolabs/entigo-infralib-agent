@@ -1,4 +1,4 @@
-package run
+package update
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
-func Run(ctx context.Context, flags *common.Flags) {
+func Update(ctx context.Context, flags *common.Flags) {
 	common.PrintVersion()
 	updater := service.NewUpdater(ctx, flags)
-	updater.Run()
+	updater.Update()
 }

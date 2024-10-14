@@ -47,8 +47,11 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 	}, nil
 }
 
-func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
-	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
+func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+	if imageSource == "" {
+		imageSource = model.ProjectImageDocker
+	}
+	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 	if err != nil {
 		return err
@@ -67,7 +70,7 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 	} else {
 		commands = []model.ActionCommand{model.PlanCommand, model.ApplyCommand}
 	}
-	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s/%s", tempFolder, bucket, stepName, step.Workspace), 0755)
+	err = os.MkdirAll(fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName), 0755)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
 	}
@@ -86,7 +89,7 @@ func (b *Builder) createJobManifest(projectName string, command model.ActionComm
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, step.Workspace, projectName, command),
+	return os.WriteFile(fmt.Sprintf("%s/%s/%s/%s-%s.yaml", tempFolder, bucket, stepName, projectName, command),
 		bytes, 0644)
 }
 
@@ -219,7 +222,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 	return err
 }
 
-func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string) error {
+func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string, cmd common.Command) error {
 	jobOp, err := b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
 		Job: &runpb.Job{
@@ -228,6 +231,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 					Containers: []*runpb.Container{{
 						Name:  "agent",
 						Image: model.AgentImageDocker + ":" + imageVersion,
+						Args:  []string{"ei-agent", string(cmd)},
 						Env:   b.getAgentEnvVars(awsPrefix),
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      "tmp",
@@ -309,8 +313,11 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 	return err
 }
 
-func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion string, vpcConfig *model.VpcConfig) error {
-	image := fmt.Sprintf("%s:%s", model.ProjectImageDocker, imageVersion)
+func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+	if imageSource == "" {
+		imageSource = model.ProjectImageDocker
+	}
+	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
 	if err != nil {
 		return err
@@ -450,7 +457,7 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 
 func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runv1.EnvVar {
 	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
-	envVars := make([]*runv1.EnvVar, len(rawEnvVars))
+	var envVars []*runv1.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
 	}
@@ -459,7 +466,7 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 
 func (b *Builder) getJobEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runpb.EnvVar {
 	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
-	envVars := make([]*runpb.EnvVar, 0)
+	var envVars []*runpb.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
 	}
@@ -475,9 +482,8 @@ func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string
 		"GOOGLE_ZONE":       b.zone,
 		"COMMAND":           string(command),
 		"TF_VAR_prefix":     stepName,
-		"WORKSPACE":         step.Workspace,
 	}
-	if step.Type == model.StepTypeTerraform || step.Type == model.StepTypeTerraformCustom {
+	if step.Type == model.StepTypeTerraform {
 		envVars = addTerraformEnvironmentVariables(envVars, step)
 	}
 	if step.Type == model.StepTypeArgoCD {
