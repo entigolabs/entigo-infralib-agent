@@ -991,7 +991,7 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 		if !strings.HasSuffix(file, ".yaml") {
 			continue
 		}
-		if modules.Contains(strings.TrimSuffix(file, ".yaml")) {
+		if modules.Contains(strings.TrimPrefix(strings.TrimSuffix(file, ".yaml"), folder+"/")) {
 			continue
 		}
 		err = u.resources.GetBucket().DeleteFile(file)

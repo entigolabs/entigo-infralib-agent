@@ -9,7 +9,7 @@ import (
 
 type Deleter interface {
 	Delete()
-	Destroy()
+	Destroy() bool
 }
 
 type deleter struct {
@@ -65,13 +65,16 @@ func (d *deleter) Delete() {
 	d.provider.DeleteResources(d.deleteBucket)
 }
 
-func (d *deleter) Destroy() {
+func (d *deleter) Destroy() bool {
+	failed := false
 	for i := len(d.config.Steps) - 1; i >= 0; i-- {
 		step := d.config.Steps[i]
 		projectName := fmt.Sprintf("%s-%s", d.config.Prefix, step.Name)
 		err := d.resources.GetPipeline().StartDestroyExecution(projectName)
 		if err != nil {
 			common.PrintWarning(fmt.Sprintf("Failed to start destroy execution for pipeline %s: %s", projectName, err))
+			failed = true
 		}
 	}
+	return failed
 }
