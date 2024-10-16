@@ -461,7 +461,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState *model
 }
 
 func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
-	common.Logger.Printf("applying release for step %s\n", index+1, step.Name)
+	common.Logger.Printf("applying release for step %s\n", step.Name)
 	var err error
 	if firstRun {
 		err = u.createExecuteStepPipelines(step, stepState, index)
@@ -471,7 +471,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("release applied successfully for step %s\n", index+1, step.Name)
+	common.Logger.Printf("release applied successfully for step %s\n", step.Name)
 	return u.putAppliedStateFile(stepState)
 }
 
