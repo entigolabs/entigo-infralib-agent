@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -41,7 +42,8 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
 		PutConfig(bucket, config)
-		AddModuleInputFiles(&config, os.ReadFile)
+		basePath := filepath.Base(configFile) + "/"
+		AddModuleInputFiles(&config, basePath, os.ReadFile)
 		PutAdditionalFiles(bucket, config.Steps)
 	} else {
 		config = GetRemoteConfig(bucket)
@@ -172,7 +174,7 @@ func GetRemoteConfig(bucket model.Bucket) model.Config {
 		common.Logger.Fatalf("Failed to unmarshal config: %s", err)
 	}
 	AddStepsFilesFromBucket(&config, bucket)
-	AddModuleInputFiles(&config, bucket.GetFile)
+	AddModuleInputFiles(&config, "", bucket.GetFile)
 	return config
 }
 
@@ -213,7 +215,7 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 	}
 }
 
-func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, error)) {
+func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error)) {
 	if config.Steps == nil {
 		return
 	}
@@ -229,13 +231,13 @@ func AddModuleInputFiles(config *model.Config, readFile func(string) ([]byte, er
 			if module.Name == "" {
 				common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", step.Name)})
 			}
-			processModuleInputs(step.Name, module, readFile)
+			processModuleInputs(step.Name, module, basePath, readFile)
 		}
 	}
 }
 
-func processModuleInputs(stepName string, module *model.Module, readFile func(string) ([]byte, error)) {
-	yamlFile := fmt.Sprintf("config/%s/%s.yaml", stepName, module.Name)
+func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error)) {
+	yamlFile := fmt.Sprintf("%sconfig/%s/%s.yaml", basePath, stepName, module.Name)
 	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
 		if err == nil && bytes != nil {
