@@ -93,7 +93,7 @@ func addStepFilesFromFolder(step *model.Step, basePath, folder string) {
 			common.Logger.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
 		}
 		filePath := fmt.Sprintf("%s/%s", folder, entry.Name())
-		fileBytes, err := os.ReadFile(filePath)
+		fileBytes, err := os.ReadFile(basePath + filePath)
 		if err != nil {
 			common.Logger.Fatalf("failed to read file %s: %v", filePath, err)
 		}
