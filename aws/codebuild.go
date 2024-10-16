@@ -60,7 +60,7 @@ func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, 
 	}
 }
 
-func (b *builder) CreateProject(projectName string, repoURL string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+func (b *builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
 	if imageSource == "" {
 		imageSource = model.ProjectImage
 	}
@@ -75,7 +75,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 			Image:                    aws.String(image),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName),
+			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, bucket),
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
@@ -102,7 +102,7 @@ func (b *builder) CreateProject(projectName string, repoURL string, stepName str
 	return err
 }
 
-func (b *builder) getEnvironmentVariables(projectName string, stepName string) []types.EnvironmentVariable {
+func (b *builder) getEnvironmentVariables(projectName, stepName, bucket string) []types.EnvironmentVariable {
 	return []types.EnvironmentVariable{{
 		Name:  aws.String("PROJECT_NAME"),
 		Value: aws.String(projectName),
@@ -115,6 +115,9 @@ func (b *builder) getEnvironmentVariables(projectName string, stepName string) [
 	}, {
 		Name:  aws.String("TF_VAR_prefix"),
 		Value: aws.String(stepName),
+	}, {
+		Name:  aws.String("INFRALIB_BUCKET"),
+		Value: aws.String(bucket),
 	}}
 }
 

@@ -115,7 +115,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,
-								Env:   b.getEnvironmentVariables(projectName, stepName, step, "/bucket", command),
+								Env:   b.getEnvironmentVariables(projectName, stepName, step, bucket, "/bucket", command),
 								VolumeMounts: []*runv1.VolumeMount{{
 									Name:      bucket,
 									MountPath: "/bucket",
@@ -174,7 +174,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 		return err
 	}
 	if job != nil {
-		return b.updateJob(projectName, stepName, step, image, vpcConfig, command)
+		return b.updateJob(projectName, stepName, step, bucket, image, vpcConfig, command)
 	}
 	_, err = b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
@@ -190,7 +190,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 					Containers: []*runpb.Container{{
 						Name:  "infralib",
 						Image: image,
-						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, "/bucket", command),
+						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, bucket, "/bucket", command),
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      bucket,
 							MountPath: "/bucket",
@@ -355,14 +355,14 @@ func (b *Builder) updateDestroyJobs(projectName string, bucket string, stepName 
 		planCommand = model.PlanDestroyCommand
 		applyCommand = model.ApplyDestroyCommand
 	}
-	err := b.updateJob(fmt.Sprintf("%s-plan-destroy", projectName), stepName, step, image, vpcConfig, planCommand)
+	err := b.updateJob(fmt.Sprintf("%s-plan-destroy", projectName), stepName, step, bucket, image, vpcConfig, planCommand)
 	if err != nil {
 		return err
 	}
-	return b.updateJob(fmt.Sprintf("%s-apply-destroy", projectName), stepName, step, image, vpcConfig, applyCommand)
+	return b.updateJob(fmt.Sprintf("%s-apply-destroy", projectName), stepName, step, bucket, image, vpcConfig, applyCommand)
 }
 
-func (b *Builder) updateJob(projectName string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, command model.ActionCommand) error {
+func (b *Builder) updateJob(projectName string, stepName string, step model.Step, bucket, image string, vpcConfig *model.VpcConfig, command model.ActionCommand) error {
 	job, err := b.getJob(projectName)
 	if err != nil {
 		return err
@@ -371,7 +371,7 @@ func (b *Builder) updateJob(projectName string, stepName string, step model.Step
 		return fmt.Errorf("job %s not found", projectName)
 	}
 	job.Template.Template.Containers[0].Image = image
-	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, "/bucket", command)
+	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, "/bucket", command)
 	job.Template.Template.VpcAccess = getGCloudVpcAccess(vpcConfig)
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
@@ -455,8 +455,8 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	}
 }
 
-func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runv1.EnvVar {
-	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
+func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, bucket, dir string, command model.ActionCommand) []*runv1.EnvVar {
+	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, dir, command)
 	var envVars []*runv1.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
@@ -464,8 +464,8 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 	return envVars
 }
 
-func (b *Builder) getJobEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) []*runpb.EnvVar {
-	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, dir, command)
+func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step model.Step, bucket, dir string, command model.ActionCommand) []*runpb.EnvVar {
+	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, dir, command)
 	var envVars []*runpb.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
@@ -473,7 +473,7 @@ func (b *Builder) getJobEnvironmentVariables(projectName string, stepName string
 	return envVars
 }
 
-func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string, step model.Step, dir string, command model.ActionCommand) map[string]string {
+func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step model.Step, bucket, dir string, command model.ActionCommand) map[string]string {
 	envVars := map[string]string{
 		"PROJECT_NAME":      projectName,
 		"CODEBUILD_SRC_DIR": dir,
@@ -482,6 +482,7 @@ func (b *Builder) getRawEnvironmentVariables(projectName string, stepName string
 		"GOOGLE_ZONE":       b.zone,
 		"COMMAND":           string(command),
 		"TF_VAR_prefix":     stepName,
+		"INFRALIB_BUCKET":   bucket,
 	}
 	if step.Type == model.StepTypeTerraform {
 		envVars = addTerraformEnvironmentVariables(envVars, step)

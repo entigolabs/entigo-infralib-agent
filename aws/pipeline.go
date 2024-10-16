@@ -90,7 +90,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return nil, err
 	}
 	if pipe != nil {
-		return p.startUpdatedPipeline(pipe, stepName, step)
+		return p.startUpdatedPipeline(pipe, stepName, step, bucket)
 	}
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
@@ -144,7 +144,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step, bucket),
 					},
 				},
 				},
@@ -175,7 +175,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step, bucket),
 					},
 				},
 				},
@@ -196,7 +196,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		return err
 	}
 	if pipe != nil {
-		return p.updatePipeline(pipe, stepName, step)
+		return p.updatePipeline(pipe, stepName, step, bucket)
 	}
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
@@ -249,7 +249,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step, bucket),
 					},
 				},
 				},
@@ -280,7 +280,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step),
+						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step, bucket),
 					},
 				},
 				},
@@ -411,15 +411,15 @@ func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 	return err
 }
 
-func (p *Pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) (*string, error) {
-	err := p.updatePipeline(pipeline, stepName, step)
+func (p *Pipeline) startUpdatedPipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step, bucket string) (*string, error) {
+	err := p.updatePipeline(pipeline, stepName, step, bucket)
 	if err != nil {
 		return nil, err
 	}
 	return p.StartPipelineExecution(*pipeline.Name, stepName, step, "")
 }
 
-func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step, _ string) error {
+func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step model.Step, bucket string) error {
 	pipe, err := p.getPipeline(pipelineName)
 	if err != nil {
 		return err
@@ -427,7 +427,7 @@ func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 	if pipe == nil {
 		return fmt.Errorf("pipeline %s not found", pipelineName)
 	}
-	err = p.updatePipeline(pipe, stepName, step)
+	err = p.updatePipeline(pipe, stepName, step, bucket)
 	if err != nil {
 		return err
 	}
@@ -439,17 +439,17 @@ func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 	if pipe == nil {
 		return nil
 	}
-	return p.updatePipeline(pipe, stepName, step)
+	return p.updatePipeline(pipe, stepName, step, bucket)
 }
 
-func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step) error {
+func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step, bucket string) error {
 	changed := false
 	for _, stage := range pipeline.Stages {
 		if *stage.Name == sourceName || *stage.Name == approveStageName {
 			continue
 		}
 		for _, action := range stage.Actions {
-			envVars := getActionEnvironmentVariables(*action.Name, stepName, step)
+			envVars := getActionEnvironmentVariables(*action.Name, stepName, step, bucket)
 			if action.Configuration == nil || action.Configuration["EnvironmentVariables"] == envVars {
 				continue
 			}
@@ -470,12 +470,12 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 	return err
 }
 
-func getActionEnvironmentVariables(actionName string, stepName string, step model.Step) string {
+func getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string) string {
 	command := getCommand(actionName, step.Type)
 	if step.Type == model.StepTypeTerraform {
-		return getTerraformEnvironmentVariables(command, stepName, step)
+		return getTerraformEnvironmentVariables(command, stepName, step, bucket)
 	} else {
-		return getEnvironmentVariables(command, stepName, step)
+		return getEnvironmentVariables(command, stepName, step, bucket)
 	}
 }
 
@@ -752,8 +752,8 @@ func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 	return pipelineOutput.Pipeline, nil
 }
 
-func getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step)
+func getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string) string {
+	envVars := getEnvironmentVariablesList(command, stepName, step, bucket)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}", strings.ToUpper(module.Name), module.HttpUsername))
@@ -764,15 +764,16 @@ func getTerraformEnvironmentVariables(command model.ActionCommand, stepName stri
 	return "[" + strings.Join(envVars, ",") + "]"
 }
 
-func getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step)
+func getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string) string {
+	envVars := getEnvironmentVariablesList(command, stepName, step, bucket)
 	return "[" + strings.Join(envVars, ",") + "]"
 }
 
-func getEnvironmentVariablesList(command model.ActionCommand, stepName string, step model.Step) []string {
+func getEnvironmentVariablesList(command model.ActionCommand, stepName string, step model.Step, bucket string) []string {
 	var envVars []string
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))
+	envVars = append(envVars, fmt.Sprintf("{\"name\":\"INFRALIB_BUCKET\",\"value\":\"%s\"}", bucket))
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"KUBERNETES_CLUSTER_NAME\",\"value\":\"%s\"}", step.KubernetesClusterName))
