@@ -319,6 +319,7 @@ func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucke
 		if err != nil {
 			return err
 		}
+		time.Sleep(5 * time.Second) // Wait for pipeline to start executing
 		err = p.stopLatestPipelineExecutions(updatePipeline, 1)
 		if err != nil {
 			return err

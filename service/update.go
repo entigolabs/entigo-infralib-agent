@@ -179,6 +179,7 @@ func addSourceReleases(githubClient github.Github, config model.Config, state *m
 func (u *updater) Run() {
 	u.updateAgentJob(common.RunCommand)
 	index := 0
+	u.logReleases(index)
 	updateState(u.config, u.state)
 	wg := new(model.SafeCounter)
 	errChan := make(chan error, 1)
@@ -205,6 +206,18 @@ func (u *updater) Run() {
 	u.retrySteps(index, retrySteps, wg, errChan)
 }
 
+func (u *updater) logReleases(index int) {
+	var builder strings.Builder
+	builder.WriteString("Applying releases: ")
+	for url, source := range u.sources {
+		if index < len(source.Releases) {
+			release := source.Releases[index]
+			builder.WriteString(fmt.Sprintf("%s %s, ", url, release.Original()))
+		}
+	}
+	common.Logger.Println(builder.String())
+}
+
 func (u *updater) Update() {
 	u.updateAgentJob(common.UpdateCommand)
 	mostReleases := u.getMostReleases()
@@ -213,6 +226,7 @@ func (u *updater) Update() {
 		return
 	}
 	for index := 1; index < mostReleases; index++ {
+		u.logReleases(index)
 		updateState(u.config, u.state)
 		u.GetChecksums(index)
 		wg := new(model.SafeCounter)
@@ -447,7 +461,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState *model
 }
 
 func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
-	common.Logger.Printf("applying %d. release for step %s\n", index+1, step.Name)
+	common.Logger.Printf("applying release for step %s\n", index+1, step.Name)
 	var err error
 	if firstRun {
 		err = u.createExecuteStepPipelines(step, stepState, index)
@@ -457,7 +471,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("%d. release applied successfully for step %s\n", index+1, step.Name)
+	common.Logger.Printf("release applied successfully for step %s\n", index+1, step.Name)
 	return u.putAppliedStateFile(stepState)
 }
 
