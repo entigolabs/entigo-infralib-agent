@@ -14,6 +14,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
@@ -1026,15 +1027,32 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 			continue
 		}
 		newContent, err := u.replaceStringValues(step, string(file.Content), index)
+		content := []byte(newContent)
 		if err != nil {
 			return modifiedStep, fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
 		}
+		validateStepFile(file.Name, content)
 		modifiedStep.Files = append(modifiedStep.Files, model.File{
 			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
-			Content: []byte(newContent),
+			Content: content,
 		})
 	}
 	return modifiedStep, nil
+}
+
+func validateStepFile(file string, content []byte) {
+	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
+		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
+		if diags.HasErrors() {
+			common.Logger.Fatalf("failed to parse hcl file %s: %v", file, diags.Errs())
+		}
+	} else if strings.HasSuffix(file, ".yaml") {
+		var yamlContent map[string]interface{}
+		err := yaml.Unmarshal(content, &yamlContent)
+		if err != nil {
+			common.Logger.Fatalf("failed to unmarshal yaml file %s: %v", file, err)
+		}
+	}
 }
 
 func (u *updater) replaceStringValues(step model.Step, content string, index int) (string, error) {

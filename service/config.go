@@ -7,8 +7,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
 	"os"
 	"strings"
@@ -96,26 +94,10 @@ func addStepFilesFromFolder(step *model.Step, folder string) {
 		if err != nil {
 			common.Logger.Fatalf("failed to read file %s: %v", filePath, err)
 		}
-		validateStepFile(filePath, fileBytes)
 		step.Files = append(step.Files, model.File{
 			Name:    filePath,
 			Content: fileBytes,
 		})
-	}
-}
-
-func validateStepFile(file string, content []byte) {
-	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
-		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
-		if diags.HasErrors() {
-			common.Logger.Fatalf("failed to parse hcl file %s: %v", file, diags.Errs())
-		}
-	} else if strings.HasSuffix(file, ".yaml") {
-		var yamlContent map[string]interface{}
-		err := yaml.Unmarshal(content, &yamlContent)
-		if err != nil {
-			common.Logger.Fatalf("failed to unmarshal yaml file %s: %v", file, err)
-		}
 	}
 }
 
@@ -224,7 +206,6 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 		if fileBytes == nil {
 			continue
 		}
-		validateStepFile(file, fileBytes)
 		step.Files = append(step.Files, model.File{
 			Name:    file,
 			Content: fileBytes,
