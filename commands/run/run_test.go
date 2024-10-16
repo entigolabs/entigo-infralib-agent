@@ -41,6 +41,9 @@ func TestRunGCloud(t *testing.T) {
 	}
 	Run(context.Background(), flags)
 	deleter := service.NewDeleter(context.Background(), flags)
-	deleter.Destroy()
+	failed := deleter.Destroy()
+	if failed {
+		common.Logger.Fatalf("Running destroy pipelines failed")
+	}
 	deleter.Delete()
 }

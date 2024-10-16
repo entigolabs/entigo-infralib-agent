@@ -42,7 +42,7 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
 		PutConfig(bucket, config)
-		basePath := filepath.Base(configFile) + "/"
+		basePath := filepath.Dir(configFile) + "/"
 		AddModuleInputFiles(&config, basePath, os.ReadFile)
 		PutAdditionalFiles(bucket, config.Steps)
 	} else {
@@ -61,11 +61,12 @@ func GetLocalConfig(configFile string) model.Config {
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: err})
 	}
-	AddStepsFilesFromFolder(&config)
+	basePath := filepath.Dir(configFile) + "/"
+	AddStepsFilesFromFolder(&config, basePath)
 	return config
 }
 
-func AddStepsFilesFromFolder(config *model.Config) {
+func AddStepsFilesFromFolder(config *model.Config, basePath string) {
 	if config.Steps == nil {
 		return
 	}
@@ -74,18 +75,18 @@ func AddStepsFilesFromFolder(config *model.Config) {
 		if step.Type != model.StepTypeTerraform {
 			continue
 		}
-		addStepFilesFromFolder(step, fmt.Sprintf(IncludeFormat, step.Name))
+		addStepFilesFromFolder(step, basePath, fmt.Sprintf(IncludeFormat, step.Name))
 	}
 }
 
-func addStepFilesFromFolder(step *model.Step, folder string) {
-	entries, err := os.ReadDir(folder)
+func addStepFilesFromFolder(step *model.Step, basePath, folder string) {
+	entries, err := os.ReadDir(fmt.Sprintf("%s%s", basePath, folder))
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			addStepFilesFromFolder(step, fmt.Sprintf("%s/%s", folder, entry.Name()))
+			addStepFilesFromFolder(step, basePath, fmt.Sprintf("%s/%s", folder, entry.Name()))
 			continue
 		}
 		if ReservedFiles.Contains(entry.Name()) {
@@ -116,7 +117,9 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 
 func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
 	for _, step := range steps {
-		if step.Files != nil {
+		if step.Files == nil || len(step.Files) == 0 {
+			removeStepIncludeFolder(bucket, step.Name)
+		} else if step.Files != nil {
 			putStepFiles(bucket, step)
 		}
 		if step.Modules == nil {
@@ -124,14 +127,42 @@ func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
 		}
 		for _, module := range step.Modules {
 			if module.InputsFile == "" {
-				continue
+				inputsFile := fmt.Sprintf("config/%s/%s.yaml", step.Name, module.Name)
+				bytes, err := bucket.GetFile(inputsFile)
+				if err != nil {
+					common.Logger.Fatalf("Failed to get module %s inputs file: %s", module.Name, err)
+				}
+				if bytes != nil {
+					err = bucket.DeleteFile(inputsFile)
+					if err != nil {
+						common.Logger.Fatalf("Failed to delete module %s inputs file: %s", module.Name, err)
+					}
+				}
+			} else {
+				err := bucket.PutFile(module.InputsFile, module.FileContent)
+				if err != nil {
+					common.Logger.Fatalf("Failed to put module %s inputs file: %s", module.Name, err)
+				}
+				module.InputsFile = ""
+				module.FileContent = nil
 			}
-			err := bucket.PutFile(module.InputsFile, module.FileContent)
-			if err != nil {
-				common.Logger.Fatalf("Failed to put module %s inputs file: %s", module.Name, err)
-			}
-			module.InputsFile = ""
-			module.FileContent = nil
+		}
+	}
+}
+
+func removeStepIncludeFolder(bucket model.Bucket, name string) {
+	files, err := bucket.ListFolderFiles(fmt.Sprintf(IncludeFormat, name))
+	if err != nil {
+		common.Logger.Fatalf("Failed to list folder files: %s", err)
+	}
+	if files == nil || len(files) == 0 {
+		return
+	}
+	common.Logger.Printf("Removing included files for step %s", name)
+	for _, file := range files {
+		err = bucket.DeleteFile(file)
+		if err != nil {
+			common.Logger.Fatalf("Failed to delete file %s: %s", file, err)
 		}
 	}
 }
@@ -251,7 +282,7 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 	if err != nil {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to read input file %s: %v", yamlFile, err)})
 	}
-	module.InputsFile = yamlFile
+	module.InputsFile = strings.TrimPrefix(yamlFile, basePath)
 	module.FileContent = bytes
 	err = yaml.Unmarshal(bytes, &module.Inputs)
 	if err != nil {
