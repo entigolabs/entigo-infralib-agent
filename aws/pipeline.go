@@ -12,8 +12,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -519,6 +517,14 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	var pipeChanges *model.TerraformChanges
 	var approved *bool
 	for ctx.Err() == nil {
+		if pipeChanges != nil && pipeChanges.NoChanges {
+			common.Logger.Printf("Stopping pipeline %s\n", pipelineName)
+			err := p.stopPipelineExecution(pipelineName, *executionId, "No changes detected")
+			if err != nil {
+				common.PrintWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error()))
+			}
+			return nil
+		}
 		time.Sleep(pollingDelay * time.Second)
 		execution, err := p.codePipeline.GetPipelineExecution(p.ctx, &codepipeline.GetPipelineExecutionInput{
 			PipelineName:        aws.String(pipelineName),
@@ -600,6 +606,9 @@ func (p *Pipeline) processStateStages(pipelineName string, actions []types.Actio
 		if err != nil {
 			return pipeChanges, approved, err
 		}
+		if pipeChanges != nil && pipeChanges.NoChanges {
+			return pipeChanges, aws.Bool(true), nil
+		}
 		if pipeChanges != nil && pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove) {
 			approved, err = p.approveStage(pipelineName)
 			if err != nil {
@@ -632,31 +641,13 @@ func (p *Pipeline) getTerraformChanges(pipelineName string, actions []types.Acti
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(terraform.PlanRegex)
 	for _, log := range logs {
-		matches := re.FindStringSubmatch(log)
-		tfChanges := model.TerraformChanges{}
-		if matches != nil {
-			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
-			changed := matches[2]
-			destroyed := matches[3]
-			if changed != "0" || destroyed != "0" {
-				tfChanges.Changed, err = strconv.Atoi(changed)
-				if err != nil {
-					return nil, err
-				}
-				tfChanges.Destroyed, err = strconv.Atoi(destroyed)
-				if err != nil {
-					return nil, err
-				}
-				return &tfChanges, nil
-			} else {
-				return &tfChanges, nil
-			}
-		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") ||
-			strings.HasPrefix(log, "You can apply this plan to save these new output values") {
-			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
-			return &tfChanges, nil
+		tfChanges, err := terraform.ParseLogChanges(pipelineName, log)
+		if err != nil {
+			return nil, err
+		}
+		if tfChanges != nil {
+			return tfChanges, nil
 		}
 	}
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
@@ -725,15 +716,28 @@ func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount
 		if execution.Status != types.PipelineExecutionStatusInProgress {
 			continue
 		}
-		_, err = p.codePipeline.StopPipelineExecution(p.ctx, &codepipeline.StopPipelineExecutionInput{
-			PipelineName:        aws.String(pipelineName),
-			PipelineExecutionId: execution.PipelineExecutionId,
-			Abandon:             true,
-			Reason:              aws.String("Abandon pipeline execution to prevent accidental destruction of infrastructure"),
-		})
+		err = p.stopPipelineExecution(pipelineName, *execution.PipelineExecutionId,
+			"Abandoned pipeline execution")
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (p *Pipeline) stopPipelineExecution(pipelineName string, executionId string, reason string) error {
+	_, err := p.codePipeline.StopPipelineExecution(p.ctx, &codepipeline.StopPipelineExecutionInput{
+		PipelineName:        &pipelineName,
+		PipelineExecutionId: &executionId,
+		Abandon:             true,
+		Reason:              &reason,
+	})
+	if err != nil {
+		var awsError *types.PipelineExecutionNotStoppableException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }

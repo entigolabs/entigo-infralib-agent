@@ -115,29 +115,18 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,
-								Env:   b.getEnvironmentVariables(projectName, stepName, step, bucket, "/bucket", command),
+								Env:   b.getEnvironmentVariables(projectName, stepName, step, bucket, command),
 								VolumeMounts: []*runv1.VolumeMount{{
-									Name:      bucket,
-									MountPath: "/bucket",
-								}, {
 									Name:      "project",
 									MountPath: "/project",
 								}},
 								Resources: &runv1.ResourceRequirements{
 									Limits: map[string]string{
-										"memory": "1Gi",
+										"memory": "2Gi",
 									},
 								},
 							}},
 							Volumes: []*runv1.Volume{{
-								Name: bucket,
-								Csi: &runv1.CSIVolumeSource{
-									Driver: "gcsfuse.run.googleapis.com",
-									VolumeAttributes: map[string]string{
-										"bucketName": bucket,
-									},
-								},
-							}, {
 								Name: "project",
 								EmptyDir: &runv1.EmptyDirVolumeSource{
 									SizeLimit: "1Gi",
@@ -190,26 +179,18 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 					Containers: []*runpb.Container{{
 						Name:  "infralib",
 						Image: image,
-						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, bucket, "/bucket", command),
+						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command),
 						VolumeMounts: []*runpb.VolumeMount{{
-							Name:      bucket,
-							MountPath: "/bucket",
-						}, {
 							Name:      "project",
 							MountPath: "/project",
 						}},
 						Resources: &runpb.ResourceRequirements{
 							Limits: map[string]string{
-								"memory": "1Gi",
+								"memory": "2Gi",
 							},
 						},
 					}},
 					Volumes: []*runpb.Volume{{
-						Name: bucket,
-						VolumeType: &runpb.Volume_Gcs{
-							Gcs: &runpb.GCSVolumeSource{Bucket: bucket},
-						},
-					}, {
 						Name: "project",
 						VolumeType: &runpb.Volume_EmptyDir{
 							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "1Gi"},
@@ -371,7 +352,7 @@ func (b *Builder) updateJob(projectName string, stepName string, step model.Step
 		return fmt.Errorf("job %s not found", projectName)
 	}
 	job.Template.Template.Containers[0].Image = image
-	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, "/bucket", command)
+	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command)
 	job.Template.Template.VpcAccess = getGCloudVpcAccess(vpcConfig)
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
@@ -455,8 +436,8 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	}
 }
 
-func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, bucket, dir string, command model.ActionCommand) []*runv1.EnvVar {
-	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, dir, command)
+func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, bucket string, command model.ActionCommand) []*runv1.EnvVar {
+	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, command)
 	var envVars []*runv1.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
@@ -464,8 +445,8 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 	return envVars
 }
 
-func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step model.Step, bucket, dir string, command model.ActionCommand) []*runpb.EnvVar {
-	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, dir, command)
+func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step model.Step, bucket string, command model.ActionCommand) []*runpb.EnvVar {
+	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, command)
 	var envVars []*runpb.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
@@ -473,16 +454,15 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 	return envVars
 }
 
-func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step model.Step, bucket, dir string, command model.ActionCommand) map[string]string {
+func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step model.Step, bucket string, command model.ActionCommand) map[string]string {
 	envVars := map[string]string{
-		"PROJECT_NAME":      projectName,
-		"CODEBUILD_SRC_DIR": dir,
-		"GOOGLE_REGION":     b.location,
-		"GOOGLE_PROJECT":    b.projectId,
-		"GOOGLE_ZONE":       b.zone,
-		"COMMAND":           string(command),
-		"TF_VAR_prefix":     stepName,
-		"INFRALIB_BUCKET":   bucket,
+		"PROJECT_NAME":    projectName,
+		"GOOGLE_REGION":   b.location,
+		"GOOGLE_PROJECT":  b.projectId,
+		"GOOGLE_ZONE":     b.zone,
+		"COMMAND":         string(command),
+		"TF_VAR_prefix":   stepName,
+		"INFRALIB_BUCKET": bucket,
 	}
 	if step.Type == model.StepTypeTerraform {
 		envVars = addTerraformEnvironmentVariables(envVars, step)

@@ -16,9 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"os"
-	"regexp"
 	k8syaml "sigs.k8s.io/yaml"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -314,7 +312,7 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 	}
 }
 
-func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool) error {
+func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool, pipeChanges *model.TerraformChanges) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
@@ -323,7 +321,6 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 	}
 	approved := false
 	delay := 1
-	var pipeChanges *model.TerraformChanges
 	for {
 		select {
 		case <-ctx.Done():
@@ -355,6 +352,12 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 				pipeChanges, err = p.getChanges(pipelineName, pipeChanges, stepType, jobName, executionName)
 				if err != nil {
 					return err
+				}
+				if pipeChanges != nil && pipeChanges.NoChanges {
+					_, _ = p.client.CancelRollout(p.ctx, &deploypb.CancelRolloutRequest{
+						Name: rollout.GetName(),
+					})
+					return nil
 				}
 				if pipeChanges != nil && pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove) {
 					_, err = p.client.ApproveRollout(p.ctx, &deploypb.ApproveRolloutRequest{
@@ -394,7 +397,6 @@ func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformC
 }
 
 func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, executionName string) (*model.TerraformChanges, error) {
-	re := regexp.MustCompile(terraform.PlanRegex)
 	lastSlash := strings.LastIndex(executionName, "/")
 	logIterator := p.logging.GetJobExecutionLogs(jobName, executionName[lastSlash+1:], p.location)
 	for {
@@ -406,29 +408,12 @@ func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, exec
 			return nil, err
 		}
 		log := entry.GetTextPayload()
-		matches := re.FindStringSubmatch(log)
-		tfChanges := model.TerraformChanges{}
-		if matches != nil {
-			common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
-			changed := matches[2]
-			destroyed := matches[3]
-			if changed != "0" || destroyed != "0" {
-				tfChanges.Changed, err = strconv.Atoi(changed)
-				if err != nil {
-					return nil, err
-				}
-				tfChanges.Destroyed, err = strconv.Atoi(destroyed)
-				if err != nil {
-					return nil, err
-				}
-				return &tfChanges, nil
-			} else {
-				return &tfChanges, nil
-			}
-		} else if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") ||
-			strings.HasPrefix(log, "You can apply this plan to save these new output values") {
-			common.Logger.Printf("Pipeline %s: %s", pipelineName, entry.GetTextPayload())
-			return &tfChanges, nil
+		tfChanges, err := terraform.ParseLogChanges(pipelineName, log)
+		if err != nil {
+			return nil, err
+		}
+		if tfChanges != nil {
+			return tfChanges, nil
 		}
 	}
 	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
@@ -513,7 +498,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	fmt.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, stepType, "", "", autoApprove)
+	err = p.waitForRollout(rollout, pipelineName, stepType, "", "", autoApprove, nil)
 	if err != nil {
 		return err
 	}
@@ -531,6 +516,20 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
+	pipeChanges, err := p.getChanges(pipelineName, nil, stepType, planJob, executionName)
+	if err != nil {
+		return err
+	}
+	if pipeChanges != nil && pipeChanges.NoChanges {
+		common.Logger.Printf("Stopping pipeline %s\n", pipelineName)
+		_, err = p.client.AbandonRelease(p.ctx, &deploypb.AbandonReleaseRequest{
+			Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
+		})
+		if err != nil {
+			common.PrintWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error()))
+		}
+		return nil
+	}
 	rolloutId = fmt.Sprintf("%s-rollout-apply", pipelineName)
 	rollout, err = p.client.CreateRollout(p.ctx, &deploypb.CreateRolloutRequest{
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
@@ -543,7 +542,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	fmt.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, stepType, planJob, executionName, autoApprove)
+	err = p.waitForRollout(rollout, pipelineName, stepType, planJob, executionName, autoApprove, pipeChanges)
 	if err != nil {
 		return err
 	}

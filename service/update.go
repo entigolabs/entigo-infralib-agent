@@ -207,15 +207,14 @@ func (u *updater) Run() {
 }
 
 func (u *updater) logReleases(index int) {
-	var builder strings.Builder
-	builder.WriteString("Applying releases: ")
+	var sourceReleases []string
 	for url, source := range u.sources {
 		if index < len(source.Releases) {
 			release := source.Releases[index]
-			builder.WriteString(fmt.Sprintf("%s %s, ", url, release.Original()))
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s, ", url, release.Original()))
 		}
 	}
-	common.Logger.Println(builder.String())
+	common.Logger.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
 func (u *updater) Update() {

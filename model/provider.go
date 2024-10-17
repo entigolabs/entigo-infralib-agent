@@ -142,4 +142,5 @@ type Parameter struct {
 type TerraformChanges struct {
 	Changed   int
 	Destroyed int
+	NoChanges bool
 }

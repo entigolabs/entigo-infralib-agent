@@ -15,15 +15,19 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-const PlanRegex = `Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`
-const providerPath = "providers"
-const moduleTemplate = "modules/%s"
-const baseFile = "base.tf"
-const versionsFile = "versions.tf"
-const awsTagsRegex = `(\w+)\s*=\s*"([^"]+)"`
+const (
+	providerPath   = "providers"
+	moduleTemplate = "modules/%s"
+	baseFile       = "base.tf"
+	versionsFile   = "versions.tf"
+	awsTagsRegex   = `(\w+)\s*=\s*"([^"]+)"`
+)
+
+var planRegex = regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, providerType model.ProviderType, sources map[string]*model.Source, moduleSources map[string]string) ([]byte, map[string]model.Set[string], error)
@@ -407,4 +411,42 @@ func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File
 		return nil, diags
 	}
 	return hclFile, nil
+}
+
+func ParseLogChanges(pipelineName, log string) (*model.TerraformChanges, error) {
+	tfChanges := model.TerraformChanges{}
+	if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") {
+		common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+		tfChanges.NoChanges = true
+		return &tfChanges, nil
+	} else if strings.HasPrefix(log, "You can apply this plan to save these new output values") {
+		common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+		return &tfChanges, nil
+	}
+
+	matches := planRegex.FindStringSubmatch(log)
+	if matches == nil {
+		return nil, nil
+	}
+	common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+	added := matches[1]
+	changed := matches[2]
+	destroyed := matches[3]
+	if added == "0" && changed == "0" && destroyed == "0" {
+		tfChanges.NoChanges = true
+		return &tfChanges, nil
+	}
+	if changed == "0" && destroyed == "0" {
+		return &tfChanges, nil
+	}
+	var err error
+	tfChanges.Changed, err = strconv.Atoi(changed)
+	if err != nil {
+		return nil, err
+	}
+	tfChanges.Destroyed, err = strconv.Atoi(destroyed)
+	if err != nil {
+		return nil, err
+	}
+	return &tfChanges, nil
 }
