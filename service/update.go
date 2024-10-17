@@ -211,7 +211,7 @@ func (u *updater) logReleases(index int) {
 	for url, source := range u.sources {
 		if index < len(source.Releases) {
 			release := source.Releases[index]
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s, ", url, release.Original()))
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
 		}
 	}
 	common.Logger.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
@@ -640,26 +640,29 @@ func getOldestVersion(config model.Config, source *model.Source, state *model.St
 	oldestVersion := source.Version.Original()
 	var err error
 	for _, step := range config.Steps {
+		stepState := GetStepState(state, step.Name)
 		for _, module := range step.Modules {
-			if util.IsClientModule(module) || !source.Modules.Contains(module.Name) {
+			if util.IsClientModule(module) || !source.Modules.Contains(module.Source) {
 				continue
 			}
 			oldestVersion, err = getOlderVersion(oldestVersion, module.Version)
 			if err != nil {
 				return "", err
 			}
-		}
-	}
-	for _, step := range state.Steps {
-		for _, module := range step.Modules {
-			if (module.Type != nil && *module.Type == model.ModuleTypeCustom) || !source.Modules.Contains(module.Name) {
+			if stepState == nil {
 				continue
 			}
-			moduleVersion := ""
-			if module.Version != "" {
-				moduleVersion = module.Version
+			moduleState := GetModuleState(stepState, module.Name)
+			if moduleState == nil {
+				continue
 			}
-			oldestVersion, err = getOlderVersion(oldestVersion, moduleVersion)
+			moduleStateVersion := ""
+			if moduleState.AppliedVersion != nil {
+				moduleStateVersion = *moduleState.AppliedVersion
+			} else if moduleState.Version != "" {
+				moduleStateVersion = moduleState.Version
+			}
+			oldestVersion, err = getOlderVersion(oldestVersion, moduleStateVersion)
 			if err != nil {
 				return "", err
 			}
@@ -695,7 +698,7 @@ func getNewestVersion(config model.Config, source *model.Source) (string, error)
 	var err error
 	for _, step := range config.Steps {
 		for _, module := range step.Modules {
-			if util.IsClientModule(module) || !source.Modules.Contains(module.Name) {
+			if util.IsClientModule(module) || !source.Modules.Contains(module.Source) {
 				continue
 			}
 			if module.Version == StableVersion {
