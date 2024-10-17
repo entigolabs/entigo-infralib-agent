@@ -145,7 +145,7 @@ func getModuleSource(step model.Step, module model.Module, sources map[string]*m
 		}
 		moduleKey := fmt.Sprintf("modules/%s", moduleSource)
 		if source.CurrentChecksums[moduleKey] != "" {
-			sources[source.URL].Modules.Add(moduleSource)
+			sources[source.URL].Modules.Add(module.Source)
 			return source.URL, nil
 		}
 	}
@@ -410,12 +410,12 @@ func (u *updater) getChangedModules(step model.Step) []string {
 		return changed
 	}
 	for _, module := range step.Modules {
-		source := module.Source
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.PreviousChecksums == nil || moduleSource.CurrentChecksums == nil {
 			changed = append(changed, module.Name)
 			continue
 		}
+		source := module.Source
 		if step.Type == model.StepTypeArgoCD {
 			source = fmt.Sprintf("k8s/%s", module.Source)
 		}
@@ -844,9 +844,9 @@ func (u *updater) createBackendConf(path string, codeCommit model.Bucket) error 
 func (u *updater) putStateFileOrDie() {
 	err := u.putStateFile()
 	if err != nil {
-		state, err := yaml.Marshal(u.state)
-		if err == nil {
-			common.Logger.Println(state)
+		state, _ := yaml.Marshal(u.state)
+		if state != nil {
+			common.Logger.Println(string(state))
 			common.Logger.Println("Update the state file manually to avoid reapplying steps")
 		}
 		common.Logger.Fatalf("Failed to put state file: %v", err)
@@ -1336,7 +1336,7 @@ func (u *updater) mergeModuleInputs(step model.Step, moduleVersions map[string]m
 			return step, fmt.Errorf("module %s version not found", module.Name)
 		}
 		moduleSource := u.getModuleSource(module.Source)
-		inputs, err := u.getModuleInputs(module, moduleSource, moduleVersion.Version)
+		inputs, err := u.getModuleInputs(step.Type, module, moduleSource, moduleVersion.Version)
 		if err != nil {
 			return step, err
 		}
@@ -1345,9 +1345,13 @@ func (u *updater) mergeModuleInputs(step model.Step, moduleVersions map[string]m
 	return step, nil
 }
 
-func (u *updater) getModuleInputs(module model.Module, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
-	filePath := fmt.Sprintf("modules/%s/agent_input.yaml", module.Source)
-	defaultInputs, err := u.getModuleDefaultInputs(filePath, moduleSource, moduleVersion)
+func (u *updater) getModuleInputs(stepType model.StepType, module model.Module, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
+	moduleSource := module.Source
+	if stepType == model.StepTypeArgoCD {
+		moduleSource = fmt.Sprintf("k8s/%s", module.Source)
+	}
+	filePath := fmt.Sprintf("modules/%s/agent_input.yaml", moduleSource)
+	defaultInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -1358,8 +1362,8 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource *model.Sourc
 	} else if providerType == model.GCLOUD {
 		providerType = "google"
 	}
-	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", module.Source, providerType)
-	providerInputs, err := u.getModuleDefaultInputs(filePath, moduleSource, moduleVersion)
+	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
+	providerInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
 	}

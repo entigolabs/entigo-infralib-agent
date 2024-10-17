@@ -186,8 +186,8 @@ Source version is overwritten by module version. Default version is **stable** w
 * sources - list of source repositories for Entigo Infralib modules
   * url - url of the source repository
   * version - highest version of Entigo Infralib modules to use
-  * include - list of modules to include from the source repository
-  * exclude - list of modules to exclude from the source repository
+  * include - list of module sources to include from the source repository
+  * exclude - list of module sources to exclude from the source repository
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
