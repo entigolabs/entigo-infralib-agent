@@ -614,7 +614,7 @@ func getSourceReleases(githubClient github.Github, config model.Config, source *
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to get newest release %s: %w", oldestVersion, err)
 		}
-		common.Logger.Printf("Newest module version for %s is %s\n", source.URL, oldestRelease.Tag)
+		common.Logger.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Tag)
 	}
 
 	releases, err := githubClient.GetReleases(source.URL, *oldestRelease, newestRelease)
