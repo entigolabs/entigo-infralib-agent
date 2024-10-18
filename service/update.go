@@ -656,6 +656,9 @@ func getOldestVersion(config model.Config, source *model.Source, state *model.St
 			if moduleState == nil {
 				continue
 			}
+			if moduleState.Source != source.URL {
+				continue
+			}
 			moduleStateVersion := ""
 			if moduleState.AppliedVersion != nil {
 				moduleStateVersion = *moduleState.AppliedVersion

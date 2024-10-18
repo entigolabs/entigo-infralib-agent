@@ -142,8 +142,12 @@ func (t *terraform) findTerraformFile(filePath string, fileName string, sources 
 		if source.CurrentChecksums[providerName] == "" {
 			continue
 		}
+		sourceVersion := sourceVersions[source.URL]
+		if sourceVersion == nil {
+			continue
+		}
 		sourceURL = source.URL
-		release = sourceVersions[sourceURL].Original()
+		release = sourceVersion.Original()
 	}
 	if sourceURL == "" {
 		return nil, "", model.NewFileNotFoundError(fileName)
