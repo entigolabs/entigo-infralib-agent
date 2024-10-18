@@ -120,7 +120,7 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 			if moduleSources[module.Source] != "" {
 				continue
 			}
-			moduleSource, err := getModuleSource(step, module, sources)
+			moduleSource, err := getModuleSource(config, step, module, sources)
 			if err != nil {
 				common.Logger.Fatalf("Module %s in step %s is not included in any Source", module.Name, step.Name)
 			}
@@ -130,8 +130,9 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 	return moduleSources
 }
 
-func getModuleSource(step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
-	for _, source := range sources {
+func getModuleSource(config model.Config, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
+	for _, configSource := range config.Sources {
+		source := sources[configSource.URL]
 		moduleSource := module.Source
 		if source.Includes.Contains(moduleSource) {
 			sources[source.URL].Modules.Add(moduleSource)
