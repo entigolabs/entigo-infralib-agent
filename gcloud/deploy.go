@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
@@ -312,7 +313,7 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 	}
 }
 
-func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool, pipeChanges *model.TerraformChanges) error {
+func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
@@ -385,18 +386,20 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 	}
 }
 
-func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, stepType model.StepType, jobName string, executionName string) (*model.TerraformChanges, error) {
+func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.PipelineChanges, stepType model.StepType, jobName string, executionName string) (*model.PipelineChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
 	switch stepType {
 	case model.StepTypeTerraform:
-		return p.getTerraformChanges(pipelineName, jobName, executionName)
+		return p.getPipelineChanges(pipelineName, jobName, executionName, terraform.ParseLogChanges)
+	case model.StepTypeArgoCD:
+		return p.getPipelineChanges(pipelineName, jobName, executionName, argocd.ParseLogChanges)
 	}
-	return &model.TerraformChanges{}, nil
+	return &model.PipelineChanges{}, nil
 }
 
-func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, executionName string) (*model.TerraformChanges, error) {
+func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, executionName string, logParser func(string, string) (*model.PipelineChanges, error)) (*model.PipelineChanges, error) {
 	lastSlash := strings.LastIndex(executionName, "/")
 	logIterator := p.logging.GetJobExecutionLogs(jobName, executionName[lastSlash+1:], p.location)
 	for {
@@ -408,15 +411,15 @@ func (p *Pipeline) getTerraformChanges(pipelineName string, jobName string, exec
 			return nil, err
 		}
 		log := entry.GetTextPayload()
-		tfChanges, err := terraform.ParseLogChanges(pipelineName, log)
+		changes, err := logParser(pipelineName, log)
 		if err != nil {
 			return nil, err
 		}
-		if tfChanges != nil {
-			return tfChanges, nil
+		if changes != nil {
+			return changes, nil
 		}
 	}
-	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
+	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
 }
 
 func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string) error {

@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
+	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
@@ -514,7 +515,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, pollingDelay)
 	ctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
-	var pipeChanges *model.TerraformChanges
+	var pipeChanges *model.PipelineChanges
 	var approved *bool
 	for ctx.Err() == nil {
 		if pipeChanges != nil && pipeChanges.NoChanges {
@@ -592,7 +593,7 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 	return fmt.Errorf("unknown pipeline execution status %s", status)
 }
 
-func (p *Pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.TerraformChanges, approved *bool, autoApprove bool) (*model.TerraformChanges, *bool, error) {
+func (p *Pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.PipelineChanges, approved *bool, autoApprove bool) (*model.PipelineChanges, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -621,18 +622,20 @@ func (p *Pipeline) processStateStages(pipelineName string, actions []types.Actio
 	return pipeChanges, approved, nil
 }
 
-func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.TerraformChanges, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.TerraformChanges, error) {
+func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.PipelineChanges, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.PipelineChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
 	switch stepType {
 	case model.StepTypeTerraform:
-		return p.getTerraformChanges(pipelineName, actions)
+		return p.getPipelineChanges(pipelineName, actions, terraform.ParseLogChanges)
+	case model.StepTypeArgoCD:
+		return p.getPipelineChanges(pipelineName, actions, argocd.ParseLogChanges)
 	}
-	return &model.TerraformChanges{}, nil
+	return &model.PipelineChanges{}, nil
 }
 
-func (p *Pipeline) getTerraformChanges(pipelineName string, actions []types.ActionExecutionDetail) (*model.TerraformChanges, error) {
+func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.ActionExecutionDetail, logParser func(string, string) (*model.PipelineChanges, error)) (*model.PipelineChanges, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -642,15 +645,15 @@ func (p *Pipeline) getTerraformChanges(pipelineName string, actions []types.Acti
 		return nil, err
 	}
 	for _, log := range logs {
-		tfChanges, err := terraform.ParseLogChanges(pipelineName, log)
+		changes, err := logParser(pipelineName, log)
 		if err != nil {
 			return nil, err
 		}
-		if tfChanges != nil {
-			return tfChanges, nil
+		if changes != nil {
+			return changes, nil
 		}
 	}
-	return nil, fmt.Errorf("couldn't find terraform plan output from logs for %s", pipelineName)
+	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
 }
 
 func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {

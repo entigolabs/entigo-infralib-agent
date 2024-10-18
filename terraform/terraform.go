@@ -413,8 +413,8 @@ func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File
 	return hclFile, nil
 }
 
-func ParseLogChanges(pipelineName, log string) (*model.TerraformChanges, error) {
-	tfChanges := model.TerraformChanges{}
+func ParseLogChanges(pipelineName, log string) (*model.PipelineChanges, error) {
+	tfChanges := model.PipelineChanges{}
 	if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") {
 		common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
 		tfChanges.NoChanges = true

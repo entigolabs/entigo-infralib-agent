@@ -180,7 +180,7 @@ func (u *updater) Run() {
 	u.updateAgentJob(common.RunCommand)
 	index := 0
 	u.logReleases(index)
-	updateState(u.config, u.state)
+	updateState(u.config, u.state, u.resources.GetBucket())
 	wg := new(model.SafeCounter)
 	errChan := make(chan error, 1)
 	failed := false
@@ -226,7 +226,7 @@ func (u *updater) Update() {
 	}
 	for index := 1; index < mostReleases; index++ {
 		u.logReleases(index)
-		updateState(u.config, u.state)
+		updateState(u.config, u.state, u.resources.GetBucket())
 		u.GetChecksums(index)
 		wg := new(model.SafeCounter)
 		errChan := make(chan error, 1)
@@ -1047,7 +1047,10 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		if err != nil {
 			return modifiedStep, fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
 		}
-		validateStepFile(file.Name, content)
+		err = validateStepFile(file.Name, content)
+		if err != nil {
+			return modifiedStep, err
+		}
 		modifiedStep.Files = append(modifiedStep.Files, model.File{
 			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
 			Content: content,
@@ -1056,19 +1059,20 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 	return modifiedStep, nil
 }
 
-func validateStepFile(file string, content []byte) {
+func validateStepFile(file string, content []byte) error {
 	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
 		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
 		if diags.HasErrors() {
-			common.Logger.Fatalf("failed to parse hcl file %s: %v", file, diags.Errs())
+			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}
 	} else if strings.HasSuffix(file, ".yaml") {
 		var yamlContent map[string]interface{}
 		err := yaml.Unmarshal(content, &yamlContent)
 		if err != nil {
-			common.Logger.Fatalf("failed to unmarshal yaml file %s: %v", file, err)
+			return fmt.Errorf("failed to unmarshal yaml file %s: %v", file, err)
 		}
 	}
+	return nil
 }
 
 func (u *updater) replaceStringValues(step model.Step, content string, index int) (string, error) {

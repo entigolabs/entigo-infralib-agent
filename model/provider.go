@@ -139,7 +139,7 @@ type Parameter struct {
 	Type  string
 }
 
-type TerraformChanges struct {
+type PipelineChanges struct {
 	Changed   int
 	Destroyed int
 	NoChanges bool

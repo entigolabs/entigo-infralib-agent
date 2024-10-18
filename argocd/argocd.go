@@ -4,12 +4,17 @@ import (
 	"dario.cat/mergo"
 	"errors"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 
 func GetApplicationFile(github github.Github, module model.Module, sourceURL, repoSSHUrl, version string, values []byte, provider model.ProviderType) ([]byte, error) {
 	baseBytes, err := getBaseApplicationFile()
@@ -93,4 +98,29 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 		return nil, err
 	}
 	return util.MapToYamlBytes(baseFile)
+}
+
+func ParseLogChanges(pipelineName, log string) (*model.PipelineChanges, error) {
+	matches := planRegex.FindStringSubmatch(log)
+	if matches == nil {
+		return nil, nil
+	}
+	common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+	changed := matches[1]
+	destroyed := matches[2]
+	argoChanges := model.PipelineChanges{}
+	if changed == "0" && destroyed == "0" {
+		argoChanges.NoChanges = true
+		return &argoChanges, nil
+	}
+	var err error
+	argoChanges.Changed, err = strconv.Atoi(changed)
+	if err != nil {
+		return nil, err
+	}
+	argoChanges.Destroyed, err = strconv.Atoi(destroyed)
+	if err != nil {
+		return nil, err
+	}
+	return &argoChanges, nil
 }

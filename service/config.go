@@ -325,16 +325,13 @@ func ValidateConfig(config *model.Config, state *model.State) {
 		common.PrintWarning("config prefix longer than 10 characters, trimming to fit")
 		config.Prefix = config.Prefix[:10]
 	}
-	if config.Source != "" {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config source is deprecated, use sources instead")})
-	}
 	if config.Sources == nil || len(config.Sources) == 0 {
-		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("sources are not set")})
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("at least one source must be provided")})
 
 	}
 	for i, source := range config.Sources {
 		if source.URL == "" {
-			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("Source[%d] is missing the repository url", i)})
+			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("source[%d] is missing the repository url", i)})
 		}
 		if source.Version != "" && source.Version != StableVersion {
 			_, err := version.NewVersion(source.Version)
@@ -434,12 +431,12 @@ func GetModuleState(stepState *model.StateStep, moduleName string) *model.StateM
 	return nil
 }
 
-func updateState(config model.Config, state *model.State) {
+func updateState(config model.Config, state *model.State, bucket model.Bucket) {
 	if len(state.Steps) == 0 {
 		createState(config, state)
 		return
 	}
-	removeUnusedSteps(config, state)
+	removeUnusedSteps(config, state, bucket)
 	addNewSteps(config, state)
 }
 
@@ -488,24 +485,26 @@ func addNewSteps(config model.Config, state *model.State) {
 	}
 }
 
-func removeUnusedSteps(config model.Config, state *model.State) {
+func removeUnusedSteps(config model.Config, state *model.State, bucket model.Bucket) {
 	for i := len(state.Steps) - 1; i >= 0; i-- {
 		stepState := state.Steps[i]
 		stepFound := false
 		for _, step := range config.Steps {
 			if stepState.Name == step.Name {
 				stepFound = true
-				removeUnusedModules(step, stepState)
+				removeUnusedModules(step, stepState, bucket)
 				break
 			}
 		}
 		if !stepFound {
 			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
+			removeUnusedFiles(bucket, fmt.Sprintf("steps/%s-%s", config.Prefix, stepState.Name))
+			removeUnusedFiles(bucket, fmt.Sprintf("config/%s", stepState.Name))
 		}
 	}
 }
 
-func removeUnusedModules(step model.Step, stepState *model.StateStep) {
+func removeUnusedModules(step model.Step, stepState *model.StateStep, bucket model.Bucket) {
 	for i := len(stepState.Modules) - 1; i >= 0; i-- {
 		moduleState := stepState.Modules[i]
 		moduleFound := false
@@ -517,6 +516,22 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep) {
 		}
 		if !moduleFound {
 			stepState.Modules = append(stepState.Modules[:i], stepState.Modules[i+1:]...)
+			inputsFile := fmt.Sprintf("config/%s/%s.yaml", step.Name, moduleState.Name)
+			_ = bucket.DeleteFile(inputsFile)
+		}
+	}
+}
+
+func removeUnusedFiles(bucket model.Bucket, folder string) {
+	stepFiles, err := bucket.ListFolderFiles(folder)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to list files in unused folder %s: %v", folder, err))
+		return
+	}
+	for _, file := range stepFiles {
+		err = bucket.DeleteFile(file)
+		if err != nil {
+			common.PrintWarning(fmt.Sprintf("Failed to delete unused file %s: %v", file, err))
 		}
 	}
 }
