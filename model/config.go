@@ -7,7 +7,6 @@ import (
 
 type Config struct {
 	Prefix           string         `yaml:"prefix,omitempty" fake:"{word}"`
-	Source           string         `yaml:"source,omitempty" fake:"{url}"`
 	Sources          []ConfigSource `yaml:"sources,omitempty" fakesize:"1"`
 	AgentVersion     string         `yaml:"agent_version,omitempty" fake:"{version}"`
 	BaseImageSource  string         `yaml:"base_image_source,omitempty"`

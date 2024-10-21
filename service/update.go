@@ -133,14 +133,14 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 func getModuleSource(config model.Config, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
 	for _, configSource := range config.Sources {
 		source := sources[configSource.URL]
-		if source.Includes.Contains(module.Source) {
-			sources[source.URL].Modules.Add(module.Source)
-			return source.URL, nil
-		}
-	}
-	for _, configSource := range config.Sources {
-		source := sources[configSource.URL]
 		moduleSource := module.Source
+		if source.Includes != nil && len(source.Includes) > 0 {
+			if source.Includes.Contains(module.Source) {
+				sources[source.URL].Modules.Add(module.Source)
+				return source.URL, nil
+			}
+			continue
+		}
 		if source.Excludes.Contains(moduleSource) {
 			continue
 		}

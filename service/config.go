@@ -329,16 +329,8 @@ func ValidateConfig(config *model.Config, state *model.State) {
 		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("at least one source must be provided")})
 
 	}
-	for i, source := range config.Sources {
-		if source.URL == "" {
-			common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("source[%d] is missing the repository url", i)})
-		}
-		if source.Version != "" && source.Version != StableVersion {
-			_, err := version.NewVersion(source.Version)
-			if err != nil {
-				common.Logger.Fatalf("Source[%d] version must follow semantic versioning: %s", i, err)
-			}
-		}
+	for index, source := range config.Sources {
+		validateSource(index, source)
 	}
 	for _, step := range config.Steps {
 		validateStep(step)
@@ -347,6 +339,21 @@ func ValidateConfig(config *model.Config, state *model.State) {
 		}
 		stepNames.Add(step.Name)
 		validateConfigModules(step, state)
+	}
+}
+
+func validateSource(index int, source model.ConfigSource) {
+	if source.URL == "" {
+		common.Logger.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. source URL is not set", index+1)})
+	}
+	if source.Version != "" && source.Version != StableVersion {
+		_, err := version.NewVersion(source.Version)
+		if err != nil {
+			common.Logger.Fatalf("source %s version must follow semantic versioning: %s", source.URL, err)
+		}
+	}
+	if source.Include != nil && source.Exclude != nil {
+		common.Logger.Fatalf("source %s can't have both include and exclude", source.URL)
 	}
 }
 
