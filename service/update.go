@@ -96,7 +96,7 @@ func createSources(githubClient github.Github, config model.Config, state *model
 	for _, source := range config.Sources {
 		stableVersion := getLatestRelease(githubClient, source.URL)
 		checksums, err := getChecksums(githubClient, source.URL, stableVersion.Original())
-		if err != nil || checksums == nil {
+		if err != nil {
 			common.Logger.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
 		}
 		sources[source.URL] = &model.Source{
@@ -1294,7 +1294,7 @@ func (u *updater) GetChecksums(index int) {
 			continue
 		}
 		checksums, err := getChecksums(u.github, url, source.Releases[index].Original())
-		if err != nil || checksums == nil {
+		if err != nil {
 			common.Logger.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
 		source.CurrentChecksums = checksums
@@ -1306,7 +1306,7 @@ func getChecksums(githubClient github.Github, sourceURL string, release string) 
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {
-			return nil, nil
+			return make(map[string]string), nil
 		}
 		return nil, err
 	}
