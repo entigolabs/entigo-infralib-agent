@@ -181,6 +181,7 @@ type Source struct {
 }
 
 type ModuleVersion struct {
-	Version string
-	Changed bool
+	Version   string
+	Changed   bool
+	SourceURL string
 }

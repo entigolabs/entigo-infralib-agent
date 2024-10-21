@@ -65,7 +65,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		config:        config,
 		provider:      provider,
 		resources:     resources,
-		terraform:     terraform.NewTerraform(githubClient),
+		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, githubClient),
 		github:        githubClient,
 		state:         state,
 		moduleSources: moduleSources,
@@ -769,13 +769,43 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if len(moduleVersions) == 0 {
 		return false, nil, errors.New("no module versions found")
 	}
-	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, u.resources.GetProviderType(),
-		u.sources, u.moduleSources)
+	sourceVersions, err := u.getSourceVersions(step, moduleVersions, index)
+	if err != nil {
+		return false, nil, err
+	}
+	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, sourceVersions)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
 	err = u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/provider.tf", u.config.Prefix, step.Name), provider)
 	return true, providers, err
+}
+
+func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (map[string]*version.Version, error) {
+	sourceVersions := make(map[string]*version.Version)
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
+		source := moduleVersions[module.Name].SourceURL
+		moduleVersion, err := version.NewVersion(moduleVersions[module.Name].Version)
+		if err != nil {
+			return nil, err
+		}
+		if sourceVersions[source] == nil {
+			sourceVersions[source] = moduleVersion
+		} else if moduleVersion.GreaterThan(sourceVersions[source]) {
+			sourceVersions[source] = moduleVersion
+		}
+	}
+	for sourceURL, source := range u.sources {
+		_, exists := sourceVersions[sourceURL]
+		if exists {
+			continue
+		}
+		sourceVersions[sourceURL] = source.Releases[util.MinInt(index, len(source.Releases)-1)]
+	}
+	return sourceVersions, nil
 }
 
 func (u *updater) createArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
@@ -902,9 +932,8 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 			moduleBody.SetAttributeValue("source",
 				cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion.Version)))
 		} else {
-			moduleSource := u.getModuleSource(module.Source)
 			moduleBody.SetAttributeValue("source",
-				cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleSource.URL, module.Source,
+				cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.SourceURL, module.Source,
 					moduleVersion.Version)))
 		}
 		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, module.Name)))
@@ -938,8 +967,9 @@ func (u *updater) getModuleVersions(step model.Step, stepState *model.StateStep,
 			return nil, err
 		}
 		moduleVersions[module.Name] = model.ModuleVersion{
-			Version: moduleVersion,
-			Changed: changed,
+			Version:   moduleVersion,
+			Changed:   changed,
+			SourceURL: u.moduleSources[module.Source],
 		}
 	}
 	return moduleVersions, nil
