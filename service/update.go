@@ -1136,6 +1136,12 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 				return "", fmt.Errorf("failed to get agent value %s: %s", key, err)
 			}
 			content = strings.Replace(content, replaceTag, agentValue, 1)
+		case string(model.ReplaceTypeModule):
+			parameter, err := u.getTypedModuleName(step, replaceKey)
+			if err != nil {
+				return "", err
+			}
+			content = strings.Replace(content, replaceTag, parameter, 1)
 		default:
 			return "", fmt.Errorf("unknown replace type in tag %s", match[0])
 		}
@@ -1210,6 +1216,19 @@ func (u *updater) getSSMParameterValue(match []string, replaceKey string, parame
 		return "", fmt.Errorf("parameter index was given, but ssm parameter %s is not a string list", match[1])
 	}
 	return getSSMParameterValueFromList(match, parameter, replaceKey, match[1])
+}
+
+func (u *updater) getTypedModuleName(step model.Step, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse tmodule key %s for step %s, got %d split parts instead of 2",
+			replaceKey, step.Name, len(parts))
+	}
+	_, moduleName, err := u.findStepModuleByType(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to find step and module for tmodule key %s: %s", replaceKey, err)
+	}
+	return moduleName, nil
 }
 
 func (u *updater) findStepModuleByType(moduleType string) (string, string, error) {

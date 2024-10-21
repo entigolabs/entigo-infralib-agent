@@ -123,6 +123,7 @@ const (
 	ReplaceTypeTOutput      ReplaceType = "toutput"
 	ReplaceTypeConfig       ReplaceType = "config"
 	ReplaceTypeAgent        ReplaceType = "agent"
+	ReplaceTypeModule       ReplaceType = "tmodule"
 )
 
 type AgentReplaceType string
