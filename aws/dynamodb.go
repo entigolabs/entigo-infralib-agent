@@ -27,7 +27,7 @@ func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 		var resourceError *types.ResourceInUseException
 		var tableError *types.TableAlreadyExistsException
 		if errors.As(err, &tableError) || errors.As(err, &resourceError) {
-			return GetDynamoDBTable(ctx, dynamodbClient, tableName)
+			return GetExistingDynamoDBTable(ctx, dynamodbClient, tableName)
 		} else {
 			return nil, err
 		}
@@ -45,15 +45,27 @@ func DeleteDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 		var resourceError *types.ResourceNotFoundException
 		if errors.As(err, &resourceError) {
 			return nil
-		} else {
-			return err
 		}
+		return err
 	}
 	log.Printf("Deleted DynamoDB table %s\n", tableName)
 	return nil
 }
 
-func GetDynamoDBTable(ctx context.Context, client *dynamodb.Client, tableName string) (*types.TableDescription, error) {
+func GetDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
+	dynamodbClient := dynamodb.NewFromConfig(awsConfig)
+	table, err := GetExistingDynamoDBTable(ctx, dynamodbClient, tableName)
+	if err != nil {
+		var resourceError *types.ResourceNotFoundException
+		if errors.As(err, &resourceError) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return table, nil
+}
+
+func GetExistingDynamoDBTable(ctx context.Context, client *dynamodb.Client, tableName string) (*types.TableDescription, error) {
 	table, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	})

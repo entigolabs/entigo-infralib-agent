@@ -35,6 +35,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 		}
 	}
 	config := getConfig(flags.Config, resources.GetBucket())
+	ValidateConfig(&config, nil)
 	return &deleter{
 		config:       config,
 		provider:     provider,

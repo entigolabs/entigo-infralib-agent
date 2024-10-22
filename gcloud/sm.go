@@ -50,3 +50,25 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 		Value: &value,
 	}, nil
 }
+
+func (s *sm) PutParameter(name string, value string) error {
+	secret, err := s.client.CreateSecret(s.ctx, &secretmanagerpb.CreateSecretRequest{
+		Parent:   fmt.Sprintf("projects/%s", s.projectId),
+		SecretId: name,
+		Secret: &secretmanagerpb.Secret{
+			Replication: &secretmanagerpb.Replication{
+				Replication: &secretmanagerpb.Replication_Automatic_{},
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.client.AddSecretVersion(s.ctx, &secretmanagerpb.AddSecretVersionRequest{
+		Parent: secret.Name,
+		Payload: &secretmanagerpb.SecretPayload{
+			Data: []byte(value),
+		},
+	})
+	return err
+}

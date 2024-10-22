@@ -11,6 +11,7 @@ func cliCommands() []*cli.Command {
 		&updateCommand,
 		&bootstrapCommand,
 		&deleteCommand,
+		&SACommand,
 	}
 }
 
@@ -44,4 +45,12 @@ var deleteCommand = cli.Command{
 	Usage:   "delete agent resources",
 	Action:  action(common.DeleteCommand),
 	Flags:   cliFlags(common.DeleteCommand),
+}
+
+var SACommand = cli.Command{
+	Name:    string(common.SACommand),
+	Aliases: []string{"sa"},
+	Usage:   "create a service account",
+	Action:  action(common.SACommand),
+	Flags:   cliFlags(common.SACommand),
 }

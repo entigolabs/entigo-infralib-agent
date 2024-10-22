@@ -14,11 +14,13 @@ func TestRunAWS(t *testing.T) {
 	t.Parallel()
 	common.ChooseLogger(string(common.DebugLogLevel))
 	test.ChangeRunDir()
-	awsPrefix := os.Getenv(common.AwsPrefixEnv)
+	prefix := os.Getenv(common.AwsPrefixEnv)
+	if len(prefix) > 10 {
+		prefix = prefix[:10]
+	}
 	flags := &common.Flags{
 		Config: "test/profile-aws.yaml",
-		Branch: "main",
-		Prefix: awsPrefix,
+		Prefix: prefix,
 	}
 	Run(context.Background(), flags)
 }
@@ -30,9 +32,13 @@ func TestRunGCloud(t *testing.T) {
 	projectId := os.Getenv(common.GCloudProjectIdEnv)
 	location := os.Getenv(common.GCloudLocationEnv)
 	zone := os.Getenv(common.GCloudZoneEnv)
+	prefix := os.Getenv(common.AwsPrefixEnv)
+	if len(prefix) > 10 {
+		prefix = prefix[:10]
+	}
 	flags := &common.Flags{
 		Config: "test/profile-gcloud.yaml",
-		Prefix: os.Getenv(common.AwsPrefixEnv),
+		Prefix: prefix,
 		GCloud: common.GCloud{
 			ProjectId: projectId,
 			Location:  location,

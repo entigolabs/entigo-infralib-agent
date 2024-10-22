@@ -67,7 +67,7 @@ func (iam *IAM) GetOrCreateServiceAccount(name, displayName string) (*iamv1.Serv
 	if err != nil {
 		return nil, false, err
 	}
-	log.Printf("Created new service account: %v", account.Name)
+	log.Printf("Created new service account: %s@%s.iam.gserviceaccount.com", name, iam.projectId)
 	return account, true, nil
 }
 
@@ -134,4 +134,8 @@ func (iam *IAM) DeleteServiceAccount(name string) error {
 	}
 	log.Printf("Deleted service account: %s", name)
 	return nil
+}
+
+func (iam *IAM) CreateServiceAccountKey(serviceAccountName string) (*iamv1.ServiceAccountKey, error) {
+	return iam.service.Projects.ServiceAccounts.Keys.Create(serviceAccountName, &iamv1.CreateServiceAccountKeyRequest{}).Do()
 }

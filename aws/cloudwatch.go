@@ -11,7 +11,9 @@ import (
 )
 
 type CloudWatch interface {
+	GetLogGroup(logGroupName string) (string, error)
 	CreateLogGroup(logGroupName string) (string, error)
+	LogStreamExists(logGroupName string, logStreamName string) (bool, error)
 	CreateLogStream(logGroupName string, logStreamName string) error
 	GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error)
 	DeleteLogGroup(logGroupName string) error
@@ -30,6 +32,23 @@ func NewCloudWatch(ctx context.Context, awsConfig aws.Config) CloudWatch {
 	}
 }
 
+func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
+	groups, err := c.cloudwatchlogs.DescribeLogGroups(c.ctx, &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePrefix: aws.String(logGroupName),
+	})
+	if err != nil {
+		var awsError *types.ResourceNotFoundException
+		if errors.As(err, &awsError) {
+			return "", nil
+		}
+		return "", err
+	}
+	if len(groups.LogGroups) == 0 {
+		return "", nil
+	}
+	return *groups.LogGroups[0].Arn, nil
+}
+
 func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
 	_, err := c.cloudwatchlogs.CreateLogGroup(c.ctx, &cloudwatchlogs.CreateLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
@@ -37,16 +56,15 @@ func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
 	if err != nil {
 		var awsError *types.ResourceAlreadyExistsException
 		if errors.As(err, &awsError) {
-			return c.GetLogGroup(logGroupName)
-		} else {
-			return "", err
+			return c.getLogGroup(logGroupName)
 		}
+		return "", err
 	}
 	log.Printf("Created log group %s\n", logGroupName)
-	return c.GetLogGroup(logGroupName)
+	return c.getLogGroup(logGroupName)
 }
 
-func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
+func (c *cloudWatch) getLogGroup(logGroupName string) (string, error) {
 	groups, err := c.cloudwatchlogs.DescribeLogGroups(c.ctx, &cloudwatchlogs.DescribeLogGroupsInput{
 		LogGroupNamePrefix: aws.String(logGroupName),
 	})
@@ -57,6 +75,21 @@ func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
 		return "", fmt.Errorf("expected 1 log group, got %d", len(groups.LogGroups))
 	}
 	return *groups.LogGroups[0].Arn, nil
+}
+
+func (c *cloudWatch) LogStreamExists(logGroupName string, logStreamName string) (bool, error) {
+	streams, err := c.cloudwatchlogs.DescribeLogStreams(c.ctx, &cloudwatchlogs.DescribeLogStreamsInput{
+		LogGroupName:        aws.String(logGroupName),
+		LogStreamNamePrefix: aws.String(logStreamName),
+	})
+	if err != nil {
+		var awsError *types.ResourceNotFoundException
+		if err != nil && errors.As(err, &awsError) {
+			return false, nil
+		}
+		return false, err
+	}
+	return len(streams.LogStreams) > 0, nil
 }
 
 func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) error {

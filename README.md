@@ -14,6 +14,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Run](#run)
     * [Update](#update)
     * [Delete](#delete)
+    * [Service Account](#service-account)
 * [Config](#config)
   * [Overriding config values](#overriding-config-values)
   * [Including terraform files in steps](#including-terraform-files-in-steps)
@@ -134,6 +135,23 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent delete --config=config.yaml --prefix=entigo-infralib
+```
+
+### service-account
+
+Creates a service account and a key for the account. The key is stored in the AWS SSM Parameter Store or Google Cloud Secret Manager.
+This account can be used for running the agent in a CI/CD pipeline.
+
+OPTIONS:
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+
+Example
+```bash
+bin/ei-agent service-account --prefix=entigo-infralib
 ```
 
 ## Config

@@ -38,3 +38,13 @@ func (s *ssm) GetParameter(name string) (*model.Parameter, error) {
 		Type:  string(result.Parameter.Type),
 	}, nil
 }
+
+func (s *ssm) PutParameter(name string, value string) error {
+	_, err := s.ssmClient.PutParameter(s.ctx, &awsSSM.PutParameterInput{
+		Name:      aws.String(name),
+		Value:     aws.String(value),
+		Type:      types.ParameterTypeSecureString,
+		Overwrite: aws.Bool(true),
+	})
+	return err
+}

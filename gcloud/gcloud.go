@@ -43,7 +43,7 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) mo
 func (g *gcloudService) SetupResources() model.Resources {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	g.enableApiServices()
-	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
+	bucket := g.getBucketName()
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		log.Fatalf("Failed to create storage service: %s", err)
@@ -87,7 +87,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 }
 
 func (g *gcloudService) GetResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
+	bucket := g.getBucketName()
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
 		log.Fatalf("Failed to create storage service: %s", err)
@@ -189,4 +189,51 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1]
+}
+
+func (g *gcloudService) getBucketName() string {
+	return fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
+}
+
+func (g *gcloudService) CreateServiceAccount() {
+	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
+	if len(username) > 30 {
+		log.Fatalf("Service account name %s is too long, must be fewer than 30 characters", username)
+	}
+	iam, err := NewIAM(g.ctx, g.projectId)
+	if err != nil {
+		log.Fatalf("Failed to create IAM service: %s", err)
+	}
+	secrets, err := NewSM(g.ctx, g.projectId)
+	if err != nil {
+		log.Fatalf("Failed to create secret manager: %s", err)
+	}
+	account, created, err := iam.GetOrCreateServiceAccount(username, "Entigo infralib CI/CD service account")
+	if err != nil {
+		log.Fatalf("Failed to create service account: %s", err)
+	}
+	if !created {
+		log.Printf("Service account %s already exists\n", account.Name)
+		return
+	}
+	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
+	if err != nil {
+		log.Fatalf("Failed to add roles to service account: %s", err)
+	}
+	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
+	if err != nil {
+		log.Fatalf("Failed to add roles to project: %s", err)
+	}
+	time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
+	key, err := iam.CreateServiceAccountKey(account.Name)
+	if err != nil {
+		log.Fatalf("Failed to create service account key: %v", err)
+	}
+
+	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
+	err = secrets.PutParameter(keyParam, key.PrivateKeyData)
+	if err != nil {
+		log.Fatalf("Failed to create secret %s: %v", keyParam, err)
+	}
+	log.Printf("Service account secret %s stored in SM", keyParam)
 }

@@ -10,8 +10,6 @@ const (
 type Flags struct {
 	LogLevel      string
 	Config        string
-	BaseConfig    string
-	Branch        string
 	Prefix        string
 	AllowParallel bool
 	GCloud        GCloud
@@ -35,5 +33,9 @@ type DeleteFlags struct {
 }
 
 func (f *Flags) Setup(cmd Command) error {
+	if len(f.Prefix) > 10 {
+		PrintWarning("prefix longer than 10 characters, trimming to fit")
+		f.Prefix = f.Prefix[:10]
+	}
 	return f.validate(cmd)
 }

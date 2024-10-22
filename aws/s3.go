@@ -83,7 +83,7 @@ func (s *S3) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	if s.repoMetadata != nil {
 		return s.repoMetadata, nil
 	}
-	exists, err := s.bucketExists()
+	exists, err := s.BucketExists()
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func (s *S3) ListFolderFiles(folder string) ([]string, error) {
 	return files, nil
 }
 
-func (s *S3) bucketExists() (bool, error) {
+func (s *S3) BucketExists() (bool, error) {
 	_, err := s.awsS3.HeadBucket(s.ctx, &awsS3.HeadBucketInput{
 		Bucket: aws.String(s.bucket),
 	})
@@ -179,8 +179,9 @@ func (s *S3) bucketExists() (bool, error) {
 
 func checkNotFoundError(err error) error {
 	var noSuchBucket *types.NoSuchBucket
+	var notFound *types.NotFound
 	var apiErr smithy.APIError
-	if errors.As(err, &noSuchBucket) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
+	if errors.As(err, &noSuchBucket) || errors.As(err, &notFound) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
 		return nil
 	}
 	return err

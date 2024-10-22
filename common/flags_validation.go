@@ -10,6 +10,8 @@ func (f *Flags) validate(cmd Command) error {
 		fallthrough
 	case DeleteCommand:
 		fallthrough
+	case SACommand:
+		fallthrough
 	case BootstrapCommand:
 		if f.GCloud.ProjectId != "" {
 			if f.GCloud.Location == "" || f.GCloud.Zone == "" {
