@@ -14,10 +14,9 @@ func TestRunAWS(t *testing.T) {
 	t.Parallel()
 	common.ChooseLogger(string(common.DebugLogLevel))
 	test.ChangeRunDir()
-	awsPrefix := os.Getenv(common.AwsPrefixEnv)
 	flags := &common.Flags{
 		Config: "test/profile-aws.yaml",
-		Prefix: awsPrefix,
+		Prefix: os.Getenv(common.AwsPrefixEnv),
 	}
 	Run(context.Background(), flags)
 }
