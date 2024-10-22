@@ -38,10 +38,10 @@ var loggingFlag = cli.StringFlag{
 	Name:        "logging",
 	Aliases:     []string{"l"},
 	EnvVars:     []string{"LOGGING"},
-	DefaultText: "prod",
-	Value:       "prod",
-	Usage:       "set `logging level` (prod | dev)",
-	Destination: &flags.LoggingLevel,
+	DefaultText: "info",
+	Value:       "info",
+	Usage:       "set logging level (debug | info | warn | error)",
+	Destination: &flags.LogLevel,
 }
 
 var configFlag = cli.StringFlag{
@@ -52,16 +52,6 @@ var configFlag = cli.StringFlag{
 	Usage:       "set config file",
 	Destination: &flags.Config,
 	Required:    false,
-}
-
-var baseConfigFlag = cli.StringFlag{
-	Name:        "base-config",
-	Aliases:     []string{"bc"},
-	EnvVars:     []string{"BASE_CONFIG"},
-	Value:       "",
-	Usage:       "set base config file",
-	Destination: &flags.BaseConfig,
-	Required:    true,
 }
 
 var awsPrefixFlag = cli.StringFlag{

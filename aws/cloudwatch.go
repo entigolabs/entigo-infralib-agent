@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
-	"github.com/entigolabs/entigo-infralib-agent/common"
+	"log"
 )
 
 type CloudWatch interface {
@@ -42,7 +42,7 @@ func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
 			return "", err
 		}
 	}
-	common.Logger.Printf("Created log group %s\n", logGroupName)
+	log.Printf("Created log group %s\n", logGroupName)
 	return c.GetLogGroup(logGroupName)
 }
 
@@ -68,7 +68,7 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 	if err != nil && errors.As(err, &awsError) {
 		return nil
 	}
-	common.Logger.Printf("Created log stream %s\n", logStreamName)
+	log.Printf("Created log stream %s\n", logStreamName)
 	return err
 }
 
@@ -99,7 +99,7 @@ func (c *cloudWatch) DeleteLogGroup(logGroupName string) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted log group %s\n", logGroupName)
+	log.Printf("Deleted log group %s\n", logGroupName)
 	return nil
 }
 
@@ -115,6 +115,6 @@ func (c *cloudWatch) DeleteLogStream(logGroupName, logStreamName string) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted log stream %s\n", logStreamName)
+	log.Printf("Deleted log stream %s\n", logStreamName)
 	return nil
 }

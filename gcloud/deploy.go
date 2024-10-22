@@ -16,6 +16,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"log"
 	"os"
 	k8syaml "sigs.k8s.io/yaml"
 	"strings"
@@ -151,7 +152,7 @@ func (p *Pipeline) deleteTargets() error {
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("Deleted target %s-plan\n", p.cloudPrefix)
+	log.Printf("Deleted target %s-plan\n", p.cloudPrefix)
 	targetOp, err = p.client.DeleteTarget(p.ctx, &deploypb.DeleteTargetRequest{
 		Name:         fmt.Sprintf("projects/%s/locations/%s/targets/%s-apply", p.projectId, p.location, p.cloudPrefix),
 		AllowMissing: true,
@@ -163,7 +164,7 @@ func (p *Pipeline) deleteTargets() error {
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("Deleted target %s-apply\n", p.cloudPrefix)
+	log.Printf("Deleted target %s-apply\n", p.cloudPrefix)
 	return nil
 }
 
@@ -345,7 +346,7 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 					continue
 				}
 				if executionName == "" {
-					common.Logger.Println("Execution name not found, please approve manually")
+					log.Println("Execution name not found, please approve manually")
 					time.Sleep(time.Duration(delay) * time.Second)
 					delay = util.MinInt(delay*2, 30)
 					continue
@@ -366,13 +367,13 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 						Approved: true,
 					})
 					if err != nil {
-						common.Logger.Printf("Failed to approve rollout, please approve manually: %s", err)
+						log.Printf("Failed to approve rollout, please approve manually: %s", err)
 					} else {
-						common.Logger.Printf("Approved %s\n", pipelineName)
+						log.Printf("Approved %s\n", pipelineName)
 						approved = true
 					}
 				} else {
-					common.Logger.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 				}
 				time.Sleep(time.Duration(delay) * time.Second)
 				delay = util.MinInt(delay*2, 30)
@@ -454,7 +455,7 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 }
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, _ model.Step, bucket string) (*string, error) {
-	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
+	log.Printf("Starting pipeline %s\n", pipelineName)
 	prefix := pipelineName
 	if len(prefix) > 26 { // Max length for id is 63, uuid v4 is 36 chars plus hyphen, 63 - 37 = 26
 		prefix = prefix[:26]
@@ -484,7 +485,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if releaseId == nil {
 		return fmt.Errorf("release id is nil")
 	}
-	common.Logger.Printf("Waiting for pipeline %s to complete\n", pipelineName)
+	log.Printf("Waiting for pipeline %s to complete\n", pipelineName)
 	err := p.waitForReleaseRender(pipelineName, *releaseId)
 	if err != nil {
 		return err
@@ -524,7 +525,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	if pipeChanges != nil && pipeChanges.NoChanges {
-		common.Logger.Printf("Stopping pipeline %s\n", pipelineName)
+		log.Printf("Stopping pipeline %s\n", pipelineName)
 		_, err = p.client.AbandonRelease(p.ctx, &deploypb.AbandonReleaseRequest{
 			Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
 		})
@@ -554,7 +555,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 }
 
 func (p *Pipeline) StartDestroyExecution(projectName string) error {
-	common.Logger.Printf("Starting destroy execution for pipeline %s\n", projectName)
+	log.Printf("Starting destroy execution for pipeline %s\n", projectName)
 	_, err := p.builder.executeJob(fmt.Sprintf("%s-plan-destroy", projectName), true)
 	if err != nil {
 		return err
@@ -563,6 +564,6 @@ func (p *Pipeline) StartDestroyExecution(projectName string) error {
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("Successfully executed destroy pipeline %s\n", projectName)
+	log.Printf("Successfully executed destroy pipeline %s\n", projectName)
 	return nil
 }

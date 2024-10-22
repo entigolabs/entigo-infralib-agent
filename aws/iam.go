@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
-	"github.com/entigolabs/entigo-infralib-agent/common"
+	"log"
 )
 
 type IAM interface {
@@ -58,17 +58,17 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 		if errors.As(err, &awsError) {
 			return nil
 		} else {
-			common.Logger.Fatalf("Failed to create role %s: %s", roleName, err)
+			log.Fatalf("Failed to create role %s: %s", roleName, err)
 		}
 	}
-	common.Logger.Printf("Created IAM role: %s\n", roleName)
+	log.Printf("Created IAM role: %s\n", roleName)
 	return result.Role
 }
 
 func (i *identity) GetRole(roleName string) *types.Role {
 	role, err := i.iamClient.GetRole(i.ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
-		common.Logger.Fatalf("Failed to get role %s: %s", roleName, err)
+		log.Fatalf("Failed to get role %s: %s", roleName, err)
 	}
 	return role.Role
 }
@@ -83,10 +83,10 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 		if errors.As(err, &awsError) {
 			return nil
 		} else {
-			common.Logger.Fatalf("Failed to create policy %s: %s", policyName, err)
+			log.Fatalf("Failed to create policy %s: %s", policyName, err)
 		}
 	}
-	common.Logger.Printf("Created IAM policy: %s\n", policyName)
+	log.Printf("Created IAM policy: %s\n", policyName)
 	return result.Policy
 }
 
@@ -97,7 +97,7 @@ func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) 
 		PolicyArn: aws.String(policyArn),
 	})
 	if err != nil {
-		common.Logger.Fatalf("Failed to list policy versions for %s: %s", policyName, err)
+		log.Fatalf("Failed to list policy versions for %s: %s", policyName, err)
 	}
 	if len(versionsOutput.Versions) >= 5 {
 		i.deleteOldestPolicyVersion(policyArn, versionsOutput.Versions)
@@ -109,9 +109,9 @@ func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) 
 		SetAsDefault:   true,
 	})
 	if err != nil {
-		common.Logger.Fatalf("Failed to update policy %s: %s", policyName, err)
+		log.Fatalf("Failed to update policy %s: %s", policyName, err)
 	}
-	common.Logger.Printf("Updated IAM policy: %s\n", policyName)
+	log.Printf("Updated IAM policy: %s\n", policyName)
 	return policyArn
 }
 
@@ -122,7 +122,7 @@ func getPolicy(statements []PolicyStatement) *string {
 	}
 	policyBytes, err := json.Marshal(policy)
 	if err != nil {
-		common.Logger.Fatalf("Failed to marshal policy: %s", err)
+		log.Fatalf("Failed to marshal policy: %s", err)
 	}
 	return aws.String(string(policyBytes))
 }
@@ -159,7 +159,7 @@ func (i *identity) DeletePolicy(policyName string, accountId string) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted IAM policy: %s\n", policyName)
+	log.Printf("Deleted IAM policy: %s\n", policyName)
 	return nil
 }
 
@@ -172,7 +172,7 @@ func (i *identity) DeleteRole(roleName string) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted IAM role: %s\n", roleName)
+	log.Printf("Deleted IAM role: %s\n", roleName)
 	return nil
 }
 
@@ -189,7 +189,7 @@ func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.
 			VersionId: oldestVersion.VersionId,
 		})
 		if err != nil {
-			common.Logger.Fatalf("Failed to delete oldest policy version for %s: %s", policyArn, err)
+			log.Fatalf("Failed to delete oldest policy version for %s: %s", policyArn, err)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/service"
+	"log"
 )
 
 func Bootstrap(ctx context.Context, flags *common.Flags) {
@@ -15,10 +16,10 @@ func Bootstrap(ctx context.Context, flags *common.Flags) {
 		config.AgentVersion = model.LatestImageVersion
 	}
 
-	common.Logger.Printf("Agent version: %s\n", config.AgentVersion)
+	log.Printf("Agent version: %s\n", config.AgentVersion)
 	agent := service.NewAgent(resources)
 	err := agent.CreatePipeline(config.AgentVersion)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create agent pipeline: %s", err)
+		log.Fatalf("Failed to create agent pipeline: %s", err)
 	}
 }

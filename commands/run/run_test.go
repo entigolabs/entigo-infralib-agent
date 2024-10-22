@@ -5,12 +5,14 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 	"github.com/entigolabs/entigo-infralib-agent/test"
+	"log"
 	"os"
 	"testing"
 )
 
 func TestRunAWS(t *testing.T) {
 	t.Parallel()
+	common.ChooseLogger(string(common.DebugLogLevel))
 	test.ChangeRunDir()
 	awsPrefix := os.Getenv(common.AwsPrefixEnv)
 	flags := &common.Flags{
@@ -23,6 +25,7 @@ func TestRunAWS(t *testing.T) {
 
 func TestRunGCloud(t *testing.T) {
 	t.Parallel()
+	common.ChooseLogger(string(common.DebugLogLevel))
 	test.ChangeRunDir()
 	projectId := os.Getenv(common.GCloudProjectIdEnv)
 	location := os.Getenv(common.GCloudLocationEnv)
@@ -43,7 +46,7 @@ func TestRunGCloud(t *testing.T) {
 	deleter := service.NewDeleter(context.Background(), flags)
 	failed := deleter.Destroy()
 	if failed {
-		common.Logger.Fatalf("Running destroy pipelines failed")
+		log.Fatalf("Running destroy pipelines failed")
 	}
 	deleter.Delete()
 }

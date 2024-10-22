@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
+	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -397,22 +398,22 @@ func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File
 	return hclFile, nil
 }
 
-func ParseLogChanges(pipelineName, log string) (*model.PipelineChanges, error) {
+func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, error) {
 	tfChanges := model.PipelineChanges{}
-	if strings.HasPrefix(log, "No changes. Your infrastructure matches the configuration.") {
-		common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+	if strings.HasPrefix(message, "No changes. Your infrastructure matches the configuration.") {
+		log.Printf("Pipeline %s: %s", pipelineName, message)
 		tfChanges.NoChanges = true
 		return &tfChanges, nil
-	} else if strings.HasPrefix(log, "You can apply this plan to save these new output values") {
-		common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+	} else if strings.HasPrefix(message, "You can apply this plan to save these new output values") {
+		log.Printf("Pipeline %s: %s", pipelineName, message)
 		return &tfChanges, nil
 	}
 
-	matches := planRegex.FindStringSubmatch(log)
+	matches := planRegex.FindStringSubmatch(message)
 	if matches == nil {
 		return nil, nil
 	}
-	common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+	log.Printf("Pipeline %s: %s", pipelineName, message)
 	added := matches[1]
 	changed := matches[2]
 	destroyed := matches[3]

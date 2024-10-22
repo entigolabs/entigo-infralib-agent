@@ -13,6 +13,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
+	"log"
 	"strings"
 	"time"
 )
@@ -79,7 +80,7 @@ func (p *Pipeline) deletePipeline(projectName string) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted CodePipeline %s\n", projectName)
+	log.Printf("Deleted CodePipeline %s\n", projectName)
 	return nil
 }
 
@@ -185,7 +186,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 	if err != nil {
 		return nil, err
 	}
-	common.Logger.Printf("Created CodePipeline %s\n", pipelineName)
+	log.Printf("Created CodePipeline %s\n", pipelineName)
 	return p.getNewPipelineExecutionId(pipelineName)
 }
 
@@ -290,7 +291,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("Created destroy CodePipeline %s\n", pipelineName)
+	log.Printf("Created destroy CodePipeline %s\n", pipelineName)
 	err = p.disableStageTransition(pipelineName, destroyName)
 	if err != nil {
 		return err
@@ -388,13 +389,13 @@ func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket
 		},
 	})
 	if err == nil {
-		common.Logger.Printf("Created CodePipeline %s\n", projectName)
+		log.Printf("Created CodePipeline %s\n", projectName)
 	}
 	return err
 }
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model.Step, _ string) (*string, error) {
-	common.Logger.Printf("Starting pipeline %s\n", pipelineName)
+	log.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
 		ClientRequestToken: aws.String(uuid.New().String()),
@@ -464,7 +465,7 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 		Pipeline: pipeline,
 	})
 	if err == nil {
-		common.Logger.Printf("Updated CodePipeline %s\n", *pipeline.Name)
+		log.Printf("Updated CodePipeline %s\n", *pipeline.Name)
 	}
 	return err
 }
@@ -512,14 +513,14 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
-	common.Logger.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, pollingDelay)
+	log.Printf("Waiting for pipeline %s to complete, polling delay %d s\n", pipelineName, pollingDelay)
 	ctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
 	var pipeChanges *model.PipelineChanges
 	var approved *bool
 	for ctx.Err() == nil {
 		if pipeChanges != nil && pipeChanges.NoChanges {
-			common.Logger.Printf("Stopping pipeline %s\n", pipelineName)
+			log.Printf("Stopping pipeline %s\n", pipelineName)
 			err := p.stopPipelineExecution(pipelineName, *executionId, "No changes detected")
 			if err != nil {
 				common.PrintWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error()))
@@ -616,7 +617,7 @@ func (p *Pipeline) processStateStages(pipelineName string, actions []types.Actio
 				return pipeChanges, approved, err
 			}
 		} else {
-			common.Logger.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+			log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 		}
 	}
 	return pipeChanges, approved, nil
@@ -677,7 +678,7 @@ func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 func (p *Pipeline) approveStage(pipelineName string) (*bool, error) {
 	token := p.getApprovalToken(pipelineName)
 	if token == nil {
-		common.Logger.Printf("No approval token found yet for %s, please wait or approve manually\n", pipelineName)
+		log.Printf("No approval token found yet for %s, please wait or approve manually\n", pipelineName)
 		return aws.Bool(false), nil
 	}
 	_, err := p.codePipeline.PutApprovalResult(p.ctx, &codepipeline.PutApprovalResultInput{
@@ -693,7 +694,7 @@ func (p *Pipeline) approveStage(pipelineName string) (*bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	common.Logger.Printf("Approved stage %s for %s\n", approveStageName, pipelineName)
+	log.Printf("Approved stage %s for %s\n", approveStageName, pipelineName)
 	return aws.Bool(true), nil
 }
 
@@ -786,7 +787,7 @@ func getEnvironmentVariablesList(command model.ActionCommand, stepName string, s
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"KUBERNETES_CLUSTER_NAME\",\"value\":\"%s\"}", step.KubernetesClusterName))
 		}
 		if step.ArgocdNamespace == "" {
-			envVars = append(envVars, fmt.Sprint("{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"argocd\"}"))
+			envVars = append(envVars, "{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"argocd\"}")
 		} else {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"%s\"}", step.ArgocdNamespace))
 		}

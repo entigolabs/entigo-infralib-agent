@@ -63,6 +63,7 @@ For bootstrap, run and update commands you must either provide a config file or 
 Creates the required AWS resources and a codepipeline for executing the agent. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started.
 
 OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
@@ -81,6 +82,7 @@ Processes config steps, creates and executes CodePipelines which apply Entigo In
 Run command only executes a single cycle of the pipeline. Can be used to apply config changes.
 
 OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
@@ -100,6 +102,7 @@ Processes config steps, creates and executes CodePipelines which apply Entigo In
 Update command updates all modules to the latest or specified versions. Returns if there are no updates available.
 
 OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
@@ -118,6 +121,7 @@ Processes config steps, removes resources used by the agent, including buckets, 
 **Warning!** Execute destroy pipelines in reverse config order before running this command. This command will remove all pipelines and resources created by terraform will otherwise remain.
 
 OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]

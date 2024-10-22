@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"log"
 )
 
 type Deleter interface {
@@ -24,7 +25,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 	resources := provider.GetResources()
 	repo, err := resources.GetBucket().GetRepoMetadata()
 	if err != nil {
-		common.Logger.Fatalf("Failed to get repository metadata: %s", err)
+		log.Fatalf("Failed to get repository metadata: %s", err)
 	}
 	if repo == nil && flags.Config == "" {
 		return &deleter{

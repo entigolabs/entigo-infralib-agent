@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"log"
 	"strings"
 	"time"
 )
@@ -45,32 +46,32 @@ func (g *gcloudService) SetupResources() model.Resources {
 	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create storage service: %s", err)
+		log.Fatalf("Failed to create storage service: %s", err)
 	}
 	err = codeStorage.CreateBucket()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create storage bucket: %s", err)
+		log.Fatalf("Failed to create storage bucket: %s", err)
 	}
 	logging, err := NewLogging(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create logging client: %s", err)
+		log.Fatalf("Failed to create logging client: %s", err)
 	}
 	iam, err := NewIAM(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create IAM service: %s", err)
+		log.Fatalf("Failed to create IAM service: %s", err)
 	}
 	serviceAccount := g.createServiceAccount(iam)
 	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create builder: %s", err)
+		log.Fatalf("Failed to create builder: %s", err)
 	}
 	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, serviceAccount, codeStorage, builder, logging)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create pipeline: %s", err)
+		log.Fatalf("Failed to create pipeline: %s", err)
 	}
 	sm, err := NewSM(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create secret manager: %s", err)
+		log.Fatalf("Failed to create secret manager: %s", err)
 	}
 	return Resources{
 		CloudResources: model.CloudResources{
@@ -89,15 +90,15 @@ func (g *gcloudService) GetResources() model.Resources {
 	bucket := fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
 	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create storage service: %s", err)
+		log.Fatalf("Failed to create storage service: %s", err)
 	}
 	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "")
 	if err != nil {
-		common.Logger.Fatalf("Failed to create builder: %s", err)
+		log.Fatalf("Failed to create builder: %s", err)
 	}
 	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, "", codeStorage, builder, nil)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create pipeline: %s", err)
+		log.Fatalf("Failed to create pipeline: %s", err)
 	}
 	g.resources = Resources{
 		CloudResources: model.CloudResources{
@@ -129,7 +130,7 @@ func (g *gcloudService) DeleteResources(deleteBucket bool) {
 	}
 	iam, err := NewIAM(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create IAM service: %s", err)
+		log.Fatalf("Failed to create IAM service: %s", err)
 	}
 	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
 	if len(accountName) > 30 {
@@ -140,7 +141,7 @@ func (g *gcloudService) DeleteResources(deleteBucket bool) {
 		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err))
 	}
 	if !deleteBucket {
-		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
+		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
 		return
 	}
 	err = g.resources.GetBucket().Delete()
@@ -153,13 +154,13 @@ func (g *gcloudService) DeleteResources(deleteBucket bool) {
 func (g *gcloudService) enableApiServices() {
 	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create API usage service: %s", err)
+		log.Fatalf("Failed to create API usage service: %s", err)
 	}
 	err = apiUsage.EnableServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
 		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com"})
 	if err != nil {
-		common.Logger.Fatalf("Failed to enable services: %s", err)
+		log.Fatalf("Failed to enable services: %s", err)
 	}
 }
 
@@ -170,20 +171,20 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 	}
 	account, created, err := iam.GetOrCreateServiceAccount(accountName, "Entigo infralib service account")
 	if err != nil {
-		common.Logger.Fatalf("Failed to create service account: %s", err)
+		log.Fatalf("Failed to create service account: %s", err)
 	}
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
 		"roles/iam.serviceAccountAdmin"})
 	if err != nil {
-		common.Logger.Fatalf("Failed to add roles to service account: %s", err)
+		log.Fatalf("Failed to add roles to service account: %s", err)
 	}
 	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
 		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor"})
 	if err != nil {
-		common.Logger.Fatalf("Failed to add roles to project: %s", err)
+		log.Fatalf("Failed to add roles to project: %s", err)
 	}
 	if created {
-		common.Logger.Println("Waiting 60 seconds for service account permissions to be applied...")
+		log.Println("Waiting 60 seconds for service account permissions to be applied...")
 		time.Sleep(60 * time.Second)
 	}
 	nameParts := strings.Split(account.Name, "/")

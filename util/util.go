@@ -5,13 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,7 +73,7 @@ func GetFileFromUrl(fileUrl string) ([]byte, error) {
 	defer func(Body io.ReadCloser) {
 		err = Body.Close()
 		if err != nil {
-			common.Logger.Printf("Failed to close response body: %s", err)
+			log.Printf("Failed to close response body: %s", err)
 		}
 	}(resp.Body)
 	body, err := io.ReadAll(resp.Body)

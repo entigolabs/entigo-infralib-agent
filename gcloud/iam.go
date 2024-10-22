@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	iamv1 "google.golang.org/api/iam/v1"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -67,7 +67,7 @@ func (iam *IAM) GetOrCreateServiceAccount(name, displayName string) (*iamv1.Serv
 	if err != nil {
 		return nil, false, err
 	}
-	common.Logger.Printf("Created new service account: %v", account.Name)
+	log.Printf("Created new service account: %v", account.Name)
 	return account, true, nil
 }
 
@@ -132,6 +132,6 @@ func (iam *IAM) DeleteServiceAccount(name string) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted service account: %s", name)
+	log.Printf("Deleted service account: %s", name)
 	return nil
 }

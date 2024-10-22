@@ -5,10 +5,10 @@ import (
 	"context"
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"google.golang.org/api/iterator"
 	"io"
+	"log"
 	"strings"
 )
 
@@ -55,7 +55,7 @@ func (g *GStorage) CreateBucket() error {
 		VersioningEnabled:          true,
 	})
 	if err == nil {
-		common.Logger.Printf("Created GCloud Storage Bucket %s\n", g.bucket)
+		log.Printf("Created GCloud Storage Bucket %s\n", g.bucket)
 		g.bucketCreated = aws.Bool(true)
 	}
 	return err
@@ -69,7 +69,7 @@ func (g *GStorage) Delete() error {
 	if !exists {
 		return nil
 	}
-	common.Logger.Printf("Emptying bucket %s...\n", g.bucket)
+	log.Printf("Emptying bucket %s...\n", g.bucket)
 	it := g.bucketHandle.Objects(g.ctx, &storage.Query{
 		Versions: true,
 	})
@@ -88,7 +88,7 @@ func (g *GStorage) Delete() error {
 	}
 	err = g.bucketHandle.Delete(g.ctx)
 	if err == nil {
-		common.Logger.Printf("Deleted GCloud Storage Bucket %s\n", g.bucket)
+		log.Printf("Deleted GCloud Storage Bucket %s\n", g.bucket)
 	}
 	return err
 }

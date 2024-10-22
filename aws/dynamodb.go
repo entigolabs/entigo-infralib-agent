@@ -6,7 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/entigolabs/entigo-infralib-agent/common"
+	"log"
 )
 
 func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
@@ -32,7 +32,7 @@ func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 			return nil, err
 		}
 	}
-	common.Logger.Printf("Created DynamoDB table %s\n", tableName)
+	log.Printf("Created DynamoDB table %s\n", tableName)
 	return table.TableDescription, nil
 }
 
@@ -49,7 +49,7 @@ func DeleteDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 			return err
 		}
 	}
-	common.Logger.Printf("Deleted DynamoDB table %s\n", tableName)
+	log.Printf("Deleted DynamoDB table %s\n", tableName)
 	return nil
 }
 

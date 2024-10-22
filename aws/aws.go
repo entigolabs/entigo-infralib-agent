@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"log"
 	"time"
 )
 
@@ -43,7 +44,7 @@ func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS) model.
 	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
-		common.Logger.Fatalf(fmt.Sprintf("%s", err))
+		log.Fatal(err.Error())
 	}
 	return &awsService{
 		ctx:         ctx,
@@ -58,9 +59,9 @@ func GetAWSConfig(ctx context.Context, roleArn string) aws.Config {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
 	if err != nil {
-		common.Logger.Fatalf("Failed to initialize AWS session: %s", err)
+		log.Fatalf("Failed to initialize AWS session: %s", err)
 	}
-	common.Logger.Printf("AWS session initialized with region: %s\n", cfg.Region)
+	log.Printf("AWS session initialized with region: %s\n", cfg.Region)
 	if roleArn != "" {
 		return GetAssumedConfig(ctx, cfg, roleArn)
 	}
@@ -75,7 +76,7 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 		DurationSeconds: aws.Int32(3600),
 	})
 	if err != nil {
-		common.Logger.Fatalf("Failed to assume role %s: %s", roleArn, err)
+		log.Fatalf("Failed to assume role %s: %s", roleArn, err)
 	}
 	assumedConfig, err := config.LoadDefaultConfig(ctx,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -86,7 +87,7 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 		config.WithRegion(baseConfig.Region),
 	)
 	if err != nil {
-		common.Logger.Fatalf("Failed to initialize assumed AWS session: %s", err)
+		log.Fatalf("Failed to initialize assumed AWS session: %s", err)
 	}
 	return assumedConfig
 }
@@ -165,7 +166,7 @@ func (a *awsService) DeleteResources(deleteBucket bool) {
 	a.deleteCloudWatchLogs()
 	a.deleteIAMRoles()
 	if !deleteBucket {
-		common.Logger.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
+		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
 		return
 	}
 	err = a.resources.GetBucket().Delete()
@@ -183,11 +184,11 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
-		common.Logger.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
+		log.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
 	}
 	err = s3.addDummyZip()
 	if err != nil {
-		common.Logger.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
+		log.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
 	}
 	return s3, s3Arn
 }
@@ -195,7 +196,7 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
 	dynamoDBTable, err := CreateDynamoDBTable(a.ctx, a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
-		common.Logger.Fatalf("Failed to create DynamoDB table: %s", err)
+		log.Fatalf("Failed to create DynamoDB table: %s", err)
 	}
 	return dynamoDBTable
 }
@@ -205,12 +206,12 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
 	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create CloudWatch log group: %s", err)
+		log.Fatalf("Failed to create CloudWatch log group: %s", err)
 	}
 	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
 	err = cloudwatch.CreateLogStream(logGroup, logStream)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create CloudWatch log stream: %s", err)
+		log.Fatalf("Failed to create CloudWatch log stream: %s", err)
 	}
 	return logGroup, logGroupArn, logStream, cloudwatch
 }
@@ -221,7 +222,7 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTa
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
 	if buildRoleCreated || pipelineRoleCreated {
-		common.Logger.Println("Waiting for roles to be available...")
+		log.Println("Waiting for roles to be available...")
 		time.Sleep(10 * time.Second)
 	}
 
@@ -242,7 +243,7 @@ func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {
 	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn))
 	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
+		log.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
 	}
 	return *pipelineRole.Arn, true
 }
@@ -265,13 +266,13 @@ func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, 
 
 	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
+		log.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
 	}
 	buildPolicy := iam.CreatePolicy(buildRoleName,
 		CodeBuildPolicy(logGroupArn, s3Arn, dynamoDBTableArn))
 	err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
+		log.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 	}
 	return *buildRole.Arn, true
 }
