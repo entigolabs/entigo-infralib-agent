@@ -8,7 +8,7 @@ const (
 )
 
 type Flags struct {
-	LoggingLevel  string
+	LogLevel      string
 	Config        string
 	Prefix        string
 	AllowParallel bool
@@ -33,13 +33,5 @@ type DeleteFlags struct {
 }
 
 func (f *Flags) Setup(cmd Command) error {
-	if err := f.validate(cmd); err != nil {
-		return err
-	}
-	f.cmdSpecificSetup(cmd)
-	return nil
-}
-
-func (f *Flags) cmdSpecificSetup(cmd Command) {
-	// currently empty
+	return f.validate(cmd)
 }

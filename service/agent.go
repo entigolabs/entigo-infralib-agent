@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"log"
 )
 
 type Agent interface {
@@ -38,7 +39,7 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	common.Logger.Println("Agent run pipeline execution started")
+	log.Println("Agent run pipeline execution started")
 	return nil
 }
 
@@ -95,6 +96,6 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 	if err != nil {
 		return false, err
 	}
-	common.Logger.Printf("Updated Agent CodeBuild project %s image version to %s\n", project.Name, version)
+	log.Printf("Updated Agent CodeBuild project %s image version to %s\n", project.Name, version)
 	return true, nil
 }

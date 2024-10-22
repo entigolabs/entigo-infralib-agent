@@ -4,10 +4,10 @@ import (
 	"dario.cat/mergo"
 	"errors"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -100,12 +100,12 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 	return util.MapToYamlBytes(baseFile)
 }
 
-func ParseLogChanges(pipelineName, log string) (*model.PipelineChanges, error) {
-	matches := planRegex.FindStringSubmatch(log)
+func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, error) {
+	matches := planRegex.FindStringSubmatch(message)
 	if matches == nil {
 		return nil, nil
 	}
-	common.Logger.Printf("Pipeline %s: %s", pipelineName, log)
+	log.Printf("Pipeline %s: %s", pipelineName, message)
 	changed := matches[1]
 	destroyed := matches[2]
 	argoChanges := model.PipelineChanges{}

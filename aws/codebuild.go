@@ -11,6 +11,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
+	"log"
 )
 
 type BuildSpec struct {
@@ -98,7 +99,7 @@ func (b *builder) CreateProject(projectName string, bucket string, stepName stri
 	if err != nil && errors.As(err, &awsError) {
 		return b.UpdateProject(projectName, "", "", step, imageVersion, imageSource, vpcConfig)
 	}
-	common.Logger.Printf("Created CodeBuild project %s\n", projectName)
+	log.Printf("Created CodeBuild project %s\n", projectName)
 	return err
 }
 
@@ -151,7 +152,7 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 		},
 	})
 	if err == nil {
-		common.Logger.Printf("Created CodeBuild project %s\n", projectName)
+		log.Printf("Created CodeBuild project %s\n", projectName)
 	}
 	return err
 }
@@ -259,10 +260,10 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 	}
 
 	if awsVpcConfig != nil && awsVpcConfig.VpcId != nil {
-		common.Logger.Printf("updated CodeBuild project %s image to %s and vpc to %s\n", projectName, image,
+		log.Printf("updated CodeBuild project %s image to %s and vpc to %s\n", projectName, image,
 			*awsVpcConfig.VpcId)
 	} else if imageChanged {
-		common.Logger.Printf("updated CodeBuild project %s image to %s\n", projectName, image)
+		log.Printf("updated CodeBuild project %s image to %s\n", projectName, image)
 	}
 	return nil
 }
@@ -278,7 +279,7 @@ func (b *builder) DeleteProject(projectName string, _ model.Step) error {
 		}
 		return err
 	}
-	common.Logger.Printf("Deleted CodeBuild project %s\n", projectName)
+	log.Printf("Deleted CodeBuild project %s\n", projectName)
 	return nil
 }
 
@@ -329,7 +330,7 @@ func agentBuildSpec(cmd common.Command) *string {
 func buildSpecYaml(spec BuildSpec) *string {
 	buildSpec, err := yaml.Marshal(spec)
 	if err != nil {
-		common.Logger.Fatalf("Failed to marshal buildspec: %s", err)
+		log.Fatalf("Failed to marshal buildspec: %s", err)
 	}
 	specString := string(buildSpec)
 	return &specString

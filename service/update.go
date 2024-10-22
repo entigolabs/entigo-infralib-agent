@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -78,7 +79,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 func getLatestState(codeCommit model.Bucket) *model.State {
 	file, err := codeCommit.GetFile(stateFile)
 	if err != nil {
-		common.Logger.Fatalf("Failed to get state file: %v", err)
+		log.Fatalf("Failed to get state file: %v", err)
 	}
 	if file == nil {
 		return &model.State{}
@@ -86,7 +87,7 @@ func getLatestState(codeCommit model.Bucket) *model.State {
 	var state model.State
 	err = yaml.Unmarshal(file, &state)
 	if err != nil {
-		common.Logger.Fatalf("Failed to unmarshal state file: %v", err)
+		log.Fatalf("Failed to unmarshal state file: %v", err)
 	}
 	return &state
 }
@@ -97,7 +98,7 @@ func createSources(githubClient github.Github, config model.Config, state *model
 		stableVersion := getLatestRelease(githubClient, source.URL)
 		checksums, err := getChecksums(githubClient, source.URL, stableVersion.Original())
 		if err != nil {
-			common.Logger.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
+			log.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
 		}
 		sources[source.URL] = &model.Source{
 			URL:              source.URL,
@@ -122,7 +123,7 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 			}
 			moduleSource, err := getModuleSource(config, step, module, sources)
 			if err != nil {
-				common.Logger.Fatalf("Module %s in step %s is not included in any Source", module.Name, step.Name)
+				log.Fatalf("Module %s in step %s is not included in any Source", module.Name, step.Name)
 			}
 			moduleSources[module.Source] = moduleSource
 		}
@@ -134,7 +135,7 @@ func getModuleSource(config model.Config, step model.Step, module model.Module, 
 	for _, configSource := range config.Sources {
 		source := sources[configSource.URL]
 		moduleSource := module.Source
-		if source.Includes != nil && len(source.Includes) > 0 {
+		if len(source.Includes) > 0 {
 			if source.Includes.Contains(module.Source) {
 				sources[source.URL].Modules.Add(module.Source)
 				return source.URL, nil
@@ -164,16 +165,16 @@ func addSourceReleases(githubClient github.Github, config model.Config, state *m
 			var err error
 			upperVersion, err = version.NewVersion(cSource.Version)
 			if err != nil {
-				common.Logger.Fatalf("Failed to parse version %s: %s", cSource.Version, err)
+				log.Fatalf("Failed to parse version %s: %s", cSource.Version, err)
 			}
 		}
 		source.Version = upperVersion
-		if source.Modules == nil || len(source.Modules) == 0 {
-			common.Logger.Printf("No modules found for Source %s\n", cSource.URL)
+		if len(source.Modules) == 0 {
+			log.Printf("No modules found for Source %s\n", cSource.URL)
 		}
 		newestVersion, releases, err := getSourceReleases(githubClient, config, source, state)
 		if err != nil {
-			common.Logger.Fatalf("Failed to get releases: %v", err)
+			log.Fatalf("Failed to get releases: %v", err)
 		}
 		source.NewestVersion = newestVersion
 		source.Releases = releases
@@ -205,7 +206,7 @@ func (u *updater) Run() {
 	time.Sleep(1 * time.Second)
 	u.putStateFileOrDie()
 	if _, ok := <-errChan; ok || failed {
-		common.Logger.Fatalf("One or more steps failed to apply")
+		log.Fatalf("One or more steps failed to apply")
 	}
 	u.retrySteps(index, retrySteps, wg, errChan)
 }
@@ -218,14 +219,14 @@ func (u *updater) logReleases(index int) {
 			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
 		}
 	}
-	common.Logger.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
+	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
 func (u *updater) Update() {
 	u.updateAgentJob(common.UpdateCommand)
 	mostReleases := u.getMostReleases()
 	if mostReleases < 2 {
-		common.Logger.Println("No updates found")
+		log.Println("No updates found")
 		return
 	}
 	for index := 1; index < mostReleases; index++ {
@@ -252,7 +253,7 @@ func (u *updater) Update() {
 		time.Sleep(1 * time.Second)
 		u.putStateFileOrDie()
 		if _, ok := <-errChan; ok || failed {
-			common.Logger.Fatalf("One or more steps failed to apply")
+			log.Fatalf("One or more steps failed to apply")
 		}
 		u.retrySteps(index, retrySteps, wg, errChan)
 		for i, source := range u.sources {
@@ -289,7 +290,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		var parameterError *model.ParameterNotFoundError
 		if wg.HasCount() && errors.As(err, &parameterError) {
 			common.PrintWarning(err.Error())
-			common.Logger.Printf("Step %s will be retried if others succeed\n", step.Name)
+			log.Printf("Step %s will be retried if others succeed\n", step.Name)
 			return true, nil
 		}
 		return false, err
@@ -315,11 +316,11 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeCounter, errChan chan<- error) {
 	u.allowParallel = false
 	for _, step := range retrySteps {
-		common.Logger.Printf("Retrying step %s\n", step.Name)
+		log.Printf("Retrying step %s\n", step.Name)
 		_, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
 			common.PrintError(err)
-			common.Logger.Fatalf("Failed to apply step %s", step.Name)
+			log.Fatalf("Failed to apply step %s", step.Name)
 		}
 	}
 	if len(retrySteps) > 0 {
@@ -368,13 +369,13 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 func (u *updater) hasChanged(step model.Step, providers map[string]model.Set[string]) bool {
 	changed := u.getChangedProviders(providers)
 	if len(changed) > 0 {
-		common.Logger.Printf("Step %s providers have changed: %s\n", step.Name,
+		log.Printf("Step %s providers have changed: %s\n", step.Name,
 			strings.Join(changed, ", "))
 		return true
 	}
 	changed = u.getChangedModules(step)
 	if len(changed) > 0 {
-		common.Logger.Printf("Step %s modules have changed: %s\n", step.Name,
+		log.Printf("Step %s modules have changed: %s\n", step.Name,
 			strings.Join(changed, ", "))
 		return true
 	}
@@ -464,7 +465,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState *model
 }
 
 func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
-	common.Logger.Printf("applying release for step %s\n", step.Name)
+	log.Printf("applying release for step %s\n", step.Name)
 	var err error
 	if firstRun {
 		err = u.createExecuteStepPipelines(step, stepState, index)
@@ -474,7 +475,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	if err != nil {
 		return err
 	}
-	common.Logger.Printf("release applied successfully for step %s\n", step.Name)
+	log.Printf("release applied successfully for step %s\n", step.Name)
 	return u.putAppliedStateFile(stepState)
 }
 
@@ -482,7 +483,7 @@ func (u *updater) updateAgentJob(cmd common.Command) {
 	agent := NewAgent(u.resources)
 	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
 	if err != nil {
-		common.Logger.Fatalf("Failed to update agent codebuild: %s", err)
+		log.Fatalf("Failed to update agent codebuild: %s", err)
 	}
 }
 
@@ -599,14 +600,14 @@ func getSourceReleases(githubClient github.Github, config model.Config, source *
 	}
 	if oldestVersion == StableVersion || oldestVersion == source.StableVersion.Original() {
 		latestRelease := source.StableVersion
-		common.Logger.Printf("Latest release for %s is %s\n", source.URL, latestRelease.Original())
+		log.Printf("Latest release for %s is %s\n", source.URL, latestRelease.Original())
 		return latestRelease, []*version.Version{latestRelease}, nil
 	}
 	oldestRelease, err := githubClient.GetReleaseByTag(source.URL, getFormattedVersionString(oldestVersion))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get oldest release %s: %w", oldestVersion, err)
 	}
-	common.Logger.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Tag)
+	log.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Tag)
 
 	newestVersion, err := getNewestVersion(config, source)
 	if err != nil {
@@ -618,7 +619,7 @@ func getSourceReleases(githubClient github.Github, config model.Config, source *
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to get newest release %s: %w", oldestVersion, err)
 		}
-		common.Logger.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Tag)
+		log.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Tag)
 	}
 
 	releases, err := githubClient.GetReleases(source.URL, *oldestRelease, newestRelease)
@@ -631,11 +632,11 @@ func getSourceReleases(githubClient github.Github, config model.Config, source *
 func getLatestRelease(githubClient github.Github, repoURL string) *version.Version {
 	latestRelease, err := githubClient.GetLatestReleaseTag(repoURL)
 	if err != nil {
-		common.Logger.Fatalf(err.Error())
+		log.Fatal(err.Error())
 	}
 	latestSemver, err := version.NewVersion(latestRelease.Tag)
 	if err != nil {
-		common.Logger.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
+		log.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
 	}
 	return latestSemver
 }
@@ -756,7 +757,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, err
 	}
-	hasFiles := step.Files != nil && len(step.Files) > 0
+	hasFiles := len(step.Files) > 0
 	if hasFiles {
 		err = u.updateIncludedStepFiles(step)
 		if err != nil {
@@ -883,10 +884,10 @@ func (u *updater) putStateFileOrDie() {
 	if err != nil {
 		state, _ := yaml.Marshal(u.state)
 		if state != nil {
-			common.Logger.Println(string(state))
-			common.Logger.Println("Update the state file manually to avoid reapplying steps")
+			log.Println(string(state))
+			log.Println("Update the state file manually to avoid reapplying steps")
 		}
-		common.Logger.Fatalf("Failed to put state file: %v", err)
+		log.Fatalf("Failed to put state file: %v", err)
 	}
 }
 
@@ -1063,7 +1064,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 	}
 	modifiedStepYaml, err := u.replaceStringValues(step, string(stepYaml), index)
 	if err != nil {
-		common.Logger.Printf("Failed to replace tags in step %s", step.Name)
+		log.Printf("Failed to replace tags in step %s", step.Name)
 		return step, err
 	}
 	var modifiedStep model.Step
@@ -1325,7 +1326,7 @@ func (u *updater) GetChecksums(index int) {
 		}
 		checksums, err := getChecksums(u.github, url, source.Releases[index].Original())
 		if err != nil {
-			common.Logger.Fatalf("Failed to get checksums for %s: %s", url, err)
+			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
 		source.CurrentChecksums = checksums
 	}

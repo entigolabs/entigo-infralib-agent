@@ -10,13 +10,15 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/commands/update"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/urfave/cli/v2"
+	"log"
 )
 
 func action(cmd common.Command) func(c *cli.Context) error {
 	return func(c *cli.Context) error {
 		if err := flags.Setup(cmd); err != nil {
-			common.Logger.Fatal(&common.PrefixedError{Reason: err})
+			log.Fatal(&common.PrefixedError{Reason: err})
 		}
+		common.ChooseLogger(flags.LogLevel)
 		run(c.Context, cmd)
 		return nil
 	}
@@ -35,6 +37,6 @@ func run(ctx context.Context, cmd common.Command) {
 	case common.SACommand:
 		sa.Run(ctx, flags)
 	default:
-		common.Logger.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
+		log.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
 	}
 }

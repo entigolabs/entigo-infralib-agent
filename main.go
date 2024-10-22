@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"github.com/entigolabs/entigo-infralib-agent/cli"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"os"
@@ -22,6 +21,6 @@ func main() {
 
 	sig := <-terminated
 	if sig != nil {
-		common.Logger.Println(&common.Warning{Reason: errors.New("agent was terminated, exiting")})
+		common.PrintWarning("agent was terminated, exiting")
 	}
 }

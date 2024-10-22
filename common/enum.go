@@ -10,9 +10,11 @@ const (
 	SACommand        Command = "service-account"
 )
 
-type LoggingLevel int
+type LogLevel string
 
 const (
-	DevLoggingLvl LoggingLevel = iota
-	ProdLoggingLvl
+	DebugLogLevel LogLevel = "debug"
+	ProdLogLevel  LogLevel = "info"
+	WarnLogLevel  LogLevel = "warn"
+	ErrorLogLevel LogLevel = "error"
 )

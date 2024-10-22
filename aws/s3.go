@@ -10,9 +10,9 @@ import (
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"io"
+	"log"
 	"strings"
 )
 
@@ -56,7 +56,7 @@ func (s *S3) CreateBucket() (string, bool, error) {
 			return "", false, err
 		}
 	}
-	common.Logger.Printf("Created S3 Bucket %s\n", s.bucket)
+	log.Printf("Created S3 Bucket %s\n", s.bucket)
 	err = s.putBucketVersioning()
 	if err != nil {
 		return "", false, err
@@ -75,7 +75,7 @@ func (s *S3) Delete() error {
 	if err != nil {
 		return checkNotFoundError(err)
 	}
-	common.Logger.Printf("Deleted S3 Bucket %s\n", s.bucket)
+	log.Printf("Deleted S3 Bucket %s\n", s.bucket)
 	return nil
 }
 
@@ -196,7 +196,7 @@ func (s *S3) truncateBucket() error {
 		if err != nil {
 			return err
 		}
-		common.Logger.Printf("Emptying bucket %s...\n", s.bucket)
+		log.Printf("Emptying bucket %s...\n", s.bucket)
 		for _, version := range list.Versions {
 			_, err = s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
 				Bucket: aws.String(s.bucket),

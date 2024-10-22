@@ -4,26 +4,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
+	"log/slog"
 )
-
-var prodLogger = log.New(os.Stderr, "", 0)
-var Logger = prodLogger
 
 type Warning struct {
 	Reason error
 }
 
 func (w *Warning) Error() string {
-	warning := fmt.Sprintf("[warning] %s", w.Reason)
-	return fmt.Sprintf("\x1b[36;1m%s\x1b[0m", warning)
+	return fmt.Sprintf("\x1b[36;1m%s\x1b[0m", w.Reason)
 }
 
 func PrintWarning(message string) {
-	warning := Warning{
-		Reason: errors.New(message),
-	}
-	Logger.Println(warning.Error())
+	warning := Warning{Reason: errors.New(message)}
+	slog.Warn(warning.Error())
 }
 
 type PrefixedError struct {
@@ -31,23 +25,29 @@ type PrefixedError struct {
 }
 
 func (pe *PrefixedError) Error() string {
-	err := fmt.Sprintf("[error] %s", pe.Reason)
-	return fmt.Sprintf("\x1b[31;1m%s\x1b[0m", err)
+	return fmt.Sprintf("\x1b[31;1m%s\x1b[0m", pe.Reason)
 }
 
 func PrintError(err error) {
 	prefixed := PrefixedError{Reason: err}
-	Logger.Println(prefixed.Error())
+	slog.Error(prefixed.Error())
 }
 
-func ChooseLogger(loggingLvl LoggingLevel) {
+func ChooseLogger(loggingLvl string) {
 	switch loggingLvl {
-	case DevLoggingLvl:
-		Logger = log.New(os.Stderr, "gitops: ", log.LstdFlags|log.Lshortfile)
-	case ProdLoggingLvl:
-		Logger = prodLogger
+	case string(DebugLogLevel):
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
+	case string(WarnLogLevel):
+		slog.SetLogLoggerLevel(slog.LevelWarn)
+		fallthrough
+	case string(ErrorLogLevel):
+		slog.SetLogLoggerLevel(slog.LevelError)
+		fallthrough
+	case string(ProdLogLevel):
+		log.SetFlags(0)
 	default:
 		msg := fmt.Sprintf("unsupported logging level: %v", loggingLvl)
-		Logger.Fatal(&PrefixedError{errors.New(msg)})
+		log.Fatal(&PrefixedError{errors.New(msg)})
 	}
 }

@@ -38,10 +38,10 @@ var loggingFlag = cli.StringFlag{
 	Name:        "logging",
 	Aliases:     []string{"l"},
 	EnvVars:     []string{"LOGGING"},
-	DefaultText: "prod",
-	Value:       "prod",
-	Usage:       "set `logging level` (prod | dev)",
-	Destination: &flags.LoggingLevel,
+	DefaultText: "info",
+	Value:       "info",
+	Usage:       "set logging level (debug | info | warn | error)",
+	Destination: &flags.LogLevel,
 }
 
 var configFlag = cli.StringFlag{

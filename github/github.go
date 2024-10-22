@@ -3,10 +3,10 @@ package github
 import (
 	"context"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/google/go-github/v60/github"
 	"github.com/hashicorp/go-version"
+	"log"
 	"net/url"
 	"sort"
 	"strings"
@@ -39,7 +39,7 @@ func NewGithub(ctx context.Context) Github {
 func (g *githubClient) GetLatestReleaseTag(repoURL string) (*Release, error) {
 	owner, repo, err := getGithubOwnerAndRepo(repoURL)
 	if err != nil {
-		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+		log.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
 	}
 	release, _, err := g.client.Repositories.GetLatestRelease(g.ctx, owner, repo)
 	if err != nil {
@@ -57,7 +57,7 @@ func (g *githubClient) GetLatestReleaseTag(repoURL string) (*Release, error) {
 func (g *githubClient) GetReleaseByTag(repoURL string, tag string) (*Release, error) {
 	owner, repo, err := getGithubOwnerAndRepo(repoURL)
 	if err != nil {
-		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+		log.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
 	}
 	release, _, err := g.client.Repositories.GetReleaseByTag(g.ctx, owner, repo, tag)
 	if err != nil {
@@ -75,7 +75,7 @@ func (g *githubClient) GetReleaseByTag(repoURL string, tag string) (*Release, er
 func (g *githubClient) GetReleases(repoURL string, oldestRelease Release, newestRelease *Release) ([]*version.Version, error) {
 	owner, repo, err := getGithubOwnerAndRepo(repoURL)
 	if err != nil {
-		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+		log.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
 	}
 
 	oldestVersion, err := version.NewVersion(oldestRelease.Tag)
@@ -131,7 +131,7 @@ func (g *githubClient) getReleases(owner, repo string, oldestRelease Release, ol
 func (g *githubClient) GetRawFileContent(repoURL string, path string, release string) ([]byte, error) {
 	owner, repo, err := getGithubOwnerAndRepo(repoURL)
 	if err != nil {
-		common.Logger.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
+		log.Fatalf("Failed to get GitHub owner and repo from url: %s; error: %s", repoURL, err)
 	}
 	fileUrl := fmt.Sprintf("%s/%s/%s/%s/%s", rawGithubUrl, owner, repo, release, path)
 	fileContent, err := g.cache.GetFile(fileUrl)

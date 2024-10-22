@@ -12,7 +12,7 @@ func NewSet[T comparable]() Set[T] {
 }
 
 func ToSet[T comparable](items []T) Set[T] {
-	if items == nil || len(items) == 0 {
+	if len(items) == 0 {
 		return NewSet[T]()
 	}
 	set := NewSet[T]()
@@ -53,5 +53,5 @@ func (s Set[T]) String() string {
 	for i, item := range items {
 		strItems[i] = fmt.Sprintf("%v", item)
 	}
-	return fmt.Sprintf("%s", strings.Join(strItems, ", "))
+	return strings.Join(strItems, ", ")
 }

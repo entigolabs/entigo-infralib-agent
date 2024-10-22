@@ -1,8 +1,9 @@
 package github
 
 import (
-	"github.com/entigolabs/entigo-infralib-agent/common"
+	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"log/slog"
 	"sync"
 )
 
@@ -22,11 +23,11 @@ func (fc *FileCache) GetFile(url string) ([]byte, error) {
 	defer fc.mu.Unlock()
 
 	if data, found := fc.cache[url]; found {
-		common.Logger.Printf("Using cached file content %s\n", url)
+		slog.Debug(fmt.Sprintf("Using cached file content %s\n", url))
 		return data, nil
 	}
 
-	common.Logger.Printf("Getting raw file content %s\n", url)
+	slog.Debug(fmt.Sprintf("Getting raw file content %s", url))
 	data, err := util.GetFileFromUrl(url)
 	if err != nil {
 		return nil, err
