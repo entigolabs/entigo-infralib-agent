@@ -61,9 +61,8 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 		var awsError *types.EntityAlreadyExistsException
 		if errors.As(err, &awsError) {
 			return nil
-		} else {
-			log.Fatalf("Failed to create role %s: %s", roleName, err)
 		}
+		log.Fatalf("Failed to create role %s: %s", roleName, err)
 	}
 	log.Printf("Created IAM role: %s\n", roleName)
 	return result.Role
@@ -72,6 +71,10 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *typ
 func (i *identity) GetRole(roleName string) *types.Role {
 	role, err := i.iamClient.GetRole(i.ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
 		log.Fatalf("Failed to get role %s: %s", roleName, err)
 	}
 	return role.Role
@@ -205,7 +208,7 @@ func (i *identity) GetUser(username string) *types.User {
 		if errors.As(err, &awsError) {
 			return nil
 		}
-		common.Logger.Fatalf("Failed to get user %s: %s", username, err)
+		log.Fatalf("Failed to get user %s: %s", username, err)
 	}
 	return user.User
 }
@@ -217,9 +220,9 @@ func (i *identity) CreateUser(username string) *types.User {
 		if errors.As(err, &awsError) {
 			return nil
 		}
-		common.Logger.Fatalf("Failed to create user %s: %v", username, err)
+		log.Fatalf("Failed to create user %s: %v", username, err)
 	}
-	common.Logger.Printf("Created IAM user: %s\n", username)
+	log.Printf("Created IAM user: %s\n", username)
 	return user.User
 }
 
@@ -229,16 +232,16 @@ func (i *identity) AttachUserPolicy(policyArn string, userName string) {
 		UserName:  aws.String(userName),
 	})
 	if err != nil {
-		common.Logger.Fatalf("Failed to attach policy %s to user %s: %s", policyArn, userName, err)
+		log.Fatalf("Failed to attach policy %s to user %s: %s", policyArn, userName, err)
 	}
 }
 
 func (i *identity) CreateAccessKey(userName string) *types.AccessKey {
 	accessKey, err := i.iamClient.CreateAccessKey(i.ctx, &iam.CreateAccessKeyInput{UserName: aws.String(userName)})
 	if err != nil {
-		common.Logger.Fatalf("Failed to create access key for user %s: %s", userName, err)
+		log.Fatalf("Failed to create access key for user %s: %s", userName, err)
 	}
-	common.Logger.Printf("Created access key for user: %s\n", userName)
+	log.Printf("Created access key for user: %s\n", userName)
 	return accessKey.AccessKey
 }
 
@@ -295,10 +298,11 @@ func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 				"codebuild:BatchGetBuilds",
 				"codebuild:StopBuild",
 			},
-		}}
+		},
+	}
 }
 
-func ServiceAccountPolicy(s3Arn string) []PolicyStatement {
+func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{"arn:aws:s3:::*"},
@@ -308,11 +312,40 @@ func ServiceAccountPolicy(s3Arn string) []PolicyStatement {
 			Effect:   "Allow",
 			Resource: []string{"*"},
 			Action: []string{
-				"codebuild:StartBuild",
-				"codebuild:BatchGetBuilds",
-				"codebuild:StopBuild",
+				"codebuild:CreateProject",
+				"codebuild:BatchGetProjects",
+				"codebuild:UpdateProject",
+				"codepipeline:CreatePipeline",
+				"codepipeline:StartPipelineExecution",
+				"codepipeline:UpdatePipeline",
+				"codepipeline:GetPipelineExecution",
+				"codepipeline:ListActionExecutions",
+				"codepipeline:ListPipelineExecutions",
+				"codepipeline:PutApprovalResult",
+				"codepipeline:DisableStageTransition",
+				"codepipeline:StopPipelineExecution",
+				"codepipeline:GetPipeline",
+				"codepipeline:GetPipelineState",
+				"dynamodb:DescribeTable",
+				"logs:DescribeLogGroups",
+				"logs:DescribeLogStreams",
+				"logs:GetLogEvents",
+				"iam:GetRole",
+				"sts:GetCallerIdentity",
+				"ssm:GetParameter",
 			},
-		}}
+		},
+		{
+			Effect: "Allow",
+			Resource: []string{
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, buildRoleName),
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, pipelineRoleName),
+			},
+			Action: []string{
+				"iam:PassRole",
+			},
+		},
+	}
 }
 
 func CodePipelineS3Policy(s3Arn string) PolicyStatement {

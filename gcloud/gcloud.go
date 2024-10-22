@@ -198,42 +198,42 @@ func (g *gcloudService) getBucketName() string {
 func (g *gcloudService) CreateServiceAccount() {
 	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
 	if len(username) > 30 {
-		common.Logger.Fatalf("Service account name %s is too long, must be fewer than 30 characters", username)
+		log.Fatalf("Service account name %s is too long, must be fewer than 30 characters", username)
 	}
 	iam, err := NewIAM(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create IAM service: %s", err)
+		log.Fatalf("Failed to create IAM service: %s", err)
 	}
 	secrets, err := NewSM(g.ctx, g.projectId)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create secret manager: %s", err)
+		log.Fatalf("Failed to create secret manager: %s", err)
 	}
 	account, created, err := iam.GetOrCreateServiceAccount(username, "Entigo infralib CI/CD service account")
 	if err != nil {
-		common.Logger.Fatalf("Failed to create service account: %s", err)
+		log.Fatalf("Failed to create service account: %s", err)
 	}
 	if !created {
-		common.Logger.Printf("Service account %s already exists\n", account.Name)
+		log.Printf("Service account %s already exists\n", account.Name)
 		return
 	}
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
 	if err != nil {
-		common.Logger.Fatalf("Failed to add roles to service account: %s", err)
+		log.Fatalf("Failed to add roles to service account: %s", err)
 	}
 	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
 	if err != nil {
-		common.Logger.Fatalf("Failed to add roles to project: %s", err)
+		log.Fatalf("Failed to add roles to project: %s", err)
 	}
 	time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
 	key, err := iam.CreateServiceAccountKey(account.Name)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create service account key: %v", err)
+		log.Fatalf("Failed to create service account key: %v", err)
 	}
 
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	err = secrets.PutParameter(keyParam, key.PrivateKeyData)
 	if err != nil {
-		common.Logger.Fatalf("Failed to create secret %s: %v", keyParam, err)
+		log.Fatalf("Failed to create secret %s: %v", keyParam, err)
 	}
-	common.Logger.Printf("Service account secret %s stored in SM", keyParam)
+	log.Printf("Service account secret %s stored in SM", keyParam)
 }

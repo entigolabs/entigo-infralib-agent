@@ -186,6 +186,14 @@ func (a *awsService) getBucketName() string {
 
 func (a *awsService) createBucket(bucket string) (*S3, string) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
+	exists, err := s3.BucketExists()
+	if err != nil {
+		log.Fatalf("Failed to check if S3 Bucket %s exists: %s", bucket, err)
+	}
+	if exists {
+		log.Printf("S3 Bucket %s already exists\n", bucket)
+		return s3, fmt.Sprintf(bucketArnFormat, bucket)
+	}
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
 		log.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
@@ -198,7 +206,15 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 }
 
 func (a *awsService) createDynamoDBTable() *types.TableDescription {
-	dynamoDBTable, err := CreateDynamoDBTable(a.ctx, a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
+	tableName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
+	dynamoDBTable, err := GetDynamoDBTable(a.ctx, a.awsConfig, tableName)
+	if err != nil {
+		log.Fatalf("Failed to get DynamoDB table: %s", err)
+	}
+	if dynamoDBTable != nil {
+		return dynamoDBTable
+	}
+	dynamoDBTable, err = CreateDynamoDBTable(a.ctx, a.awsConfig, tableName)
 	if err != nil {
 		log.Fatalf("Failed to create DynamoDB table: %s", err)
 	}
@@ -208,11 +224,24 @@ func (a *awsService) createDynamoDBTable() *types.TableDescription {
 func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
 	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
-	logGroupArn, err := cloudwatch.CreateLogGroup(logGroup)
+	logGroupArn, err := cloudwatch.GetLogGroup(logGroup)
 	if err != nil {
-		log.Fatalf("Failed to create CloudWatch log group: %s", err)
+		log.Fatalf("Failed to get CloudWatch log group: %s", err)
+	}
+	if logGroupArn == "" {
+		logGroupArn, err = cloudwatch.CreateLogGroup(logGroup)
+		if err != nil {
+			log.Fatalf("Failed to create CloudWatch log group: %s", err)
+		}
 	}
 	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
+	exists, err := cloudwatch.LogStreamExists(logGroup, logStream)
+	if err != nil {
+		log.Fatalf("Failed to get CloudWatch log stream exists: %s", err)
+	}
+	if exists {
+		return logGroup, logGroupArn, logStream, cloudwatch
+	}
 	err = cloudwatch.CreateLogStream(logGroup, logStream)
 	if err != nil {
 		log.Fatalf("Failed to create CloudWatch log stream: %s", err)
@@ -235,15 +264,15 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTa
 
 func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {
 	pipelineRoleName := a.getPipelineRoleName()
-	pipelineRole := iam.CreateRole(pipelineRoleName, []PolicyStatement{{
+	pipelineRole := iam.GetRole(pipelineRoleName)
+	if pipelineRole != nil {
+		return *pipelineRole.Arn, false
+	}
+	pipelineRole = iam.CreateRole(pipelineRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
 	}})
-	if pipelineRole == nil {
-		pipelineRole = iam.GetRole(pipelineRoleName)
-		return *pipelineRole.Arn, false
-	}
 	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn))
 	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 	if err != nil {
@@ -258,15 +287,15 @@ func (a *awsService) getPipelineRoleName() string {
 
 func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
 	buildRoleName := a.getBuildRoleName()
-	buildRole := iam.CreateRole(buildRoleName, []PolicyStatement{{
+	buildRole := iam.GetRole(buildRoleName)
+	if buildRole != nil {
+		return *buildRole.Arn, false
+	}
+	buildRole = iam.CreateRole(buildRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
 	}})
-	if buildRole == nil {
-		buildRole = iam.GetRole(buildRoleName)
-		return *buildRole.Arn, false
-	}
 
 	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
 	if err != nil {
@@ -343,27 +372,27 @@ func (a *awsService) CreateServiceAccount() {
 
 	user := iam.GetUser(username)
 	if user != nil {
-		common.Logger.Printf("Service account %s already exists\n", username)
+		log.Printf("Service account %s already exists\n", username)
 		return
 	}
 
 	user = iam.CreateUser(username)
-	policy := iam.CreatePolicy(username, ServiceAccountPolicy(bucketArn))
+	policy := iam.CreatePolicy(username, ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName()))
 	iam.AttachUserPolicy(*policy.Arn, *user.UserName)
 	accessKey := iam.CreateAccessKey(*user.UserName)
 
 	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
 	err := ssmService.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
 	if err != nil {
-		common.Logger.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
-		common.Logger.Fatalf("Failed to store access key id: %s", err)
+		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
+		log.Fatalf("Failed to store access key id: %s", err)
 	}
 	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
 	err = ssmService.PutParameter(secretAccessKeyParam, *accessKey.SecretAccessKey)
 	if err != nil {
-		common.Logger.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
-		common.Logger.Fatalf("Failed to store secret access key: %s", err)
+		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
+		log.Fatalf("Failed to store secret access key: %s", err)
 	}
 
-	common.Logger.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
+	log.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
 }
