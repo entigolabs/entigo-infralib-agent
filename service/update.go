@@ -190,17 +190,17 @@ func (u *updater) Run() {
 	errChan := make(chan error, 1)
 	failed := false
 	retrySteps := make([]model.Step, 0)
-	//for _, step := range u.config.Steps {
-	//	retry, err := u.processStep(index, step, wg, errChan)
-	//	if err != nil {
-	//		common.PrintError(err)
-	//		failed = true
-	//		break
-	//	}
-	//	if retry {
-	//		retrySteps = append(retrySteps, step)
-	//	}
-	//}
+	for _, step := range u.config.Steps {
+		retry, err := u.processStep(index, step, wg, errChan)
+		if err != nil {
+			common.PrintError(err)
+			failed = true
+			break
+		}
+		if retry {
+			retrySteps = append(retrySteps, step)
+		}
+	}
 	wg.Wait()
 	close(errChan)
 	time.Sleep(1 * time.Second)
