@@ -10,8 +10,6 @@ const (
 type Flags struct {
 	LoggingLevel  string
 	Config        string
-	BaseConfig    string
-	Branch        string
 	Prefix        string
 	AllowParallel bool
 	GCloud        GCloud

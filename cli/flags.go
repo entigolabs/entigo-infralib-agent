@@ -54,16 +54,6 @@ var configFlag = cli.StringFlag{
 	Required:    false,
 }
 
-var baseConfigFlag = cli.StringFlag{
-	Name:        "base-config",
-	Aliases:     []string{"bc"},
-	EnvVars:     []string{"BASE_CONFIG"},
-	Value:       "",
-	Usage:       "set base config file",
-	Destination: &flags.BaseConfig,
-	Required:    true,
-}
-
 var awsPrefixFlag = cli.StringFlag{
 	Name:        "prefix",
 	Aliases:     []string{"p", "ap", "aws-prefix"},

@@ -15,7 +15,6 @@ func TestRunAWS(t *testing.T) {
 	awsPrefix := os.Getenv(common.AwsPrefixEnv)
 	flags := &common.Flags{
 		Config: "test/profile-aws.yaml",
-		Branch: "main",
 		Prefix: awsPrefix,
 	}
 	Run(context.Background(), flags)

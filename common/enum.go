@@ -7,6 +7,7 @@ const (
 	BootstrapCommand Command = "bootstrap"
 	DeleteCommand    Command = "delete"
 	UpdateCommand    Command = "update"
+	SACommand        Command = "service-account"
 )
 
 type LoggingLevel int

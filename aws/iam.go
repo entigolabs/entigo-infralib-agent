@@ -20,6 +20,10 @@ type IAM interface {
 	CreateRole(roleName string, statement []PolicyStatement) *types.Role
 	DeleteRole(roleName string) error
 	GetRole(roleName string) *types.Role
+	GetUser(username string) *types.User
+	CreateUser(userName string) *types.User
+	AttachUserPolicy(policyArn string, userName string)
+	CreateAccessKey(userName string) *types.AccessKey
 }
 
 type PolicyDocument struct {
@@ -194,6 +198,50 @@ func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.
 	}
 }
 
+func (i *identity) GetUser(username string) *types.User {
+	user, err := i.iamClient.GetUser(i.ctx, &iam.GetUserInput{UserName: aws.String(username)})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		common.Logger.Fatalf("Failed to get user %s: %s", username, err)
+	}
+	return user.User
+}
+
+func (i *identity) CreateUser(username string) *types.User {
+	user, err := i.iamClient.CreateUser(i.ctx, &iam.CreateUserInput{UserName: aws.String(username)})
+	if err != nil {
+		var awsError *types.EntityAlreadyExistsException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		common.Logger.Fatalf("Failed to create user %s: %v", username, err)
+	}
+	common.Logger.Printf("Created IAM user: %s\n", username)
+	return user.User
+}
+
+func (i *identity) AttachUserPolicy(policyArn string, userName string) {
+	_, err := i.iamClient.AttachUserPolicy(i.ctx, &iam.AttachUserPolicyInput{
+		PolicyArn: aws.String(policyArn),
+		UserName:  aws.String(userName),
+	})
+	if err != nil {
+		common.Logger.Fatalf("Failed to attach policy %s to user %s: %s", policyArn, userName, err)
+	}
+}
+
+func (i *identity) CreateAccessKey(userName string) *types.AccessKey {
+	accessKey, err := i.iamClient.CreateAccessKey(i.ctx, &iam.CreateAccessKeyInput{UserName: aws.String(userName)})
+	if err != nil {
+		common.Logger.Fatalf("Failed to create access key for user %s: %s", userName, err)
+	}
+	common.Logger.Printf("Created access key for user: %s\n", userName)
+	return accessKey.AccessKey
+}
+
 func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
@@ -234,6 +282,23 @@ func CodeBuildS3Policy(s3Arn string) PolicyStatement {
 }
 
 func CodePipelinePolicy(s3Arn string) []PolicyStatement {
+	return []PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{"arn:aws:s3:::*"},
+		Action:   []string{"s3:ListBucket"},
+	}, CodePipelineS3Policy(s3Arn),
+		{
+			Effect:   "Allow",
+			Resource: []string{"*"},
+			Action: []string{
+				"codebuild:StartBuild",
+				"codebuild:BatchGetBuilds",
+				"codebuild:StopBuild",
+			},
+		}}
+}
+
+func ServiceAccountPolicy(s3Arn string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{"arn:aws:s3:::*"},

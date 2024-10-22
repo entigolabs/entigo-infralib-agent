@@ -92,7 +92,7 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 }
 
 func (a *awsService) SetupResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+	bucket := a.getBucketName()
 	s3, s3Arn := a.createBucket(bucket)
 	dynamoDBTable := a.createDynamoDBTable()
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
@@ -120,7 +120,7 @@ func (a *awsService) SetupResources() model.Resources {
 }
 
 func (a *awsService) GetResources() model.Resources {
-	bucket := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
+	bucket := a.getBucketName()
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
@@ -177,6 +177,10 @@ func (a *awsService) DeleteResources(deleteBucket bool) {
 func getAccountId(awsConfig aws.Config) (string, error) {
 	stsService := NewSTS(awsConfig)
 	return stsService.GetAccountID()
+}
+
+func (a *awsService) getBucketName() string {
+	return fmt.Sprintf("%s-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
 }
 
 func (a *awsService) createBucket(bucket string) (*S3, string) {
@@ -327,4 +331,38 @@ func (a *awsService) deleteIAMRoles() {
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", pipelineRole, err))
 	}
+}
+
+func (a *awsService) CreateServiceAccount() {
+	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
+	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
+	ssmService := NewSSM(a.ctx, a.awsConfig)
+	bucket := a.getBucketName()
+	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
+
+	user := iam.GetUser(username)
+	if user != nil {
+		common.Logger.Printf("Service account %s already exists\n", username)
+		return
+	}
+
+	user = iam.CreateUser(username)
+	policy := iam.CreatePolicy(username, ServiceAccountPolicy(bucketArn))
+	iam.AttachUserPolicy(*policy.Arn, *user.UserName)
+	accessKey := iam.CreateAccessKey(*user.UserName)
+
+	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
+	err := ssmService.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
+	if err != nil {
+		common.Logger.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
+		common.Logger.Fatalf("Failed to store access key id: %s", err)
+	}
+	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
+	err = ssmService.PutParameter(secretAccessKeyParam, *accessKey.SecretAccessKey)
+	if err != nil {
+		common.Logger.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
+		common.Logger.Fatalf("Failed to store secret access key: %s", err)
+	}
+
+	common.Logger.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
 }
