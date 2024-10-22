@@ -179,8 +179,9 @@ func (s *S3) BucketExists() (bool, error) {
 
 func checkNotFoundError(err error) error {
 	var noSuchBucket *types.NoSuchBucket
+	var notFound *types.NotFound
 	var apiErr smithy.APIError
-	if errors.As(err, &noSuchBucket) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
+	if errors.As(err, &noSuchBucket) || errors.As(err, &notFound) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket") {
 		return nil
 	}
 	return err
