@@ -34,7 +34,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 			resources: resources,
 		}
 	}
-	config := getConfig(flags.Config, resources.GetBucket())
+	config := getConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	ValidateConfig(config, nil)
 	return &deleter{
 		config:       config,
@@ -44,11 +44,14 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 	}
 }
 
-func getConfig(configFile string, codeCommit model.Bucket) model.Config {
+func getConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+	var config model.Config
 	if configFile != "" {
-		return GetLocalConfig(configFile)
+		config = GetLocalConfig(configFile)
+	} else {
+		config = GetRemoteConfig(bucket)
 	}
-	return GetRemoteConfig(codeCommit)
+	return replaceConfigValues(prefix, config)
 }
 
 func (d *deleter) Delete() {

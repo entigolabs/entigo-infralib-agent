@@ -56,7 +56,7 @@ type updater struct {
 func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	provider := GetCloudProvider(ctx, flags)
 	resources := provider.SetupResources()
-	config := GetConfig(flags.Config, resources.GetBucket())
+	config := GetConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessSteps(&config, resources.GetProviderType())
@@ -1164,6 +1164,10 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			content = strings.Replace(content, replaceTag, parameter, 1)
 		case string(model.ReplaceTypeConfig):
 			configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
+			if configKey == "prefix" {
+				content = strings.Replace(content, replaceTag, u.resources.GetCloudPrefix(), 1)
+				break
+			}
 			configValue, err := util.GetValueFromStruct(configKey, u.config)
 			if err != nil {
 				return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
@@ -1238,6 +1242,9 @@ func (u *updater) getTypedSSMParameter(step model.Step, replaceKey string) (stri
 	stepName, moduleName, err := u.findStepModuleByType(parts[1])
 	if err != nil {
 		return "", fmt.Errorf("failed to find step and module for toutput key %s: %s", replaceKey, err)
+	}
+	if step.Type == model.StepTypeTerraform && step.Name == stepName {
+		return fmt.Sprintf("module.%s.%s", moduleName, parts[2]), nil
 	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[2])
 	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.resources.GetCloudPrefix(), stepName, moduleName, match[1])

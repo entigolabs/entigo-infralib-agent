@@ -11,7 +11,7 @@ import (
 func Bootstrap(ctx context.Context, flags *common.Flags) {
 	provider := service.GetCloudProvider(ctx, flags)
 	resources := provider.SetupResources()
-	config := service.GetConfig(flags.Config, resources.GetBucket())
+	config := service.GetConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if config.AgentVersion == "" {
 		config.AgentVersion = model.LatestImageVersion
 	}

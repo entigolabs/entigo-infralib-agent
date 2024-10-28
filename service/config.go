@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -42,7 +43,7 @@ func GetProviderPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(configFile string, bucket model.Bucket) model.Config {
+func GetConfig(prefix, configFile string, bucket model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
 		config = GetLocalConfig(configFile)
@@ -53,7 +54,68 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 	} else {
 		config = GetRemoteConfig(bucket)
 	}
+	return replaceConfigValues(prefix, config)
+}
+
+func replaceConfigValues(prefix string, config model.Config) model.Config {
+	configYaml, err := yaml.Marshal(config)
+	if err != nil {
+		log.Fatal(&common.PrefixedError{Reason: err})
+	}
+	modifiedConfigYaml, err := replaceConfigTags(prefix, config, string(configYaml))
+	if err != nil {
+		log.Fatalf("Failed to replace tags in config")
+	}
+	err = yaml.Unmarshal([]byte(modifiedConfigYaml), &config)
+	if err != nil {
+		log.Fatalf("Failed to unmarshal modified config: %s", err)
+	}
+	for i := range config.Steps {
+		step := &config.Steps[i]
+		for j := range step.Files {
+			file := &step.Files[j]
+			if !strings.HasSuffix(file.Name, ".tf") && !strings.HasSuffix(file.Name, ".yaml") &&
+				!strings.HasSuffix(file.Name, ".hcl") {
+				continue
+			}
+			newContent, err := replaceConfigTags(prefix, config, string(file.Content))
+			if err != nil {
+				log.Fatalf("Failed to replace tags in file %s: %s", file.Name, err)
+			}
+			file.Content = []byte(newContent)
+		}
+	}
 	return config
+}
+
+func replaceConfigTags(prefix string, config model.Config, content string) (string, error) {
+	re := regexp.MustCompile(replaceRegex)
+	matches := re.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return content, nil
+	}
+	for _, match := range matches {
+		if len(match) != 2 {
+			return "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+		}
+		replaceTag := match[0]
+		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
+		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
+		if replaceType != string(model.ReplaceTypeConfig) {
+			continue
+		}
+		configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
+		if configKey == "prefix" {
+			content = strings.Replace(content, replaceTag, prefix, 1)
+			continue
+		}
+		configValue, err := util.GetValueFromStruct(configKey, config)
+		if err != nil {
+			return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
+		}
+		content = strings.Replace(content, replaceTag, configValue, 1)
+	}
+	return content, nil
 }
 
 func GetLocalConfig(configFile string) model.Config {
@@ -327,13 +389,13 @@ func ProcessSteps(config *model.Config, providerType model.ProviderType) {
 }
 
 func ValidateConfig(config model.Config, state *model.State) {
-	stepNames := model.NewSet[string]()
 	if len(config.Sources) == 0 {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("at least one source must be provided")})
 	}
 	for index, source := range config.Sources {
 		validateSource(index, source)
 	}
+	stepNames := model.NewSet[string]()
 	for _, step := range config.Steps {
 		validateStep(step)
 		if stepNames.Contains(step.Name) {
@@ -376,37 +438,17 @@ func validateStep(step model.Step) {
 
 func validateConfigModules(step model.Step, state *model.State) {
 	stepState := GetStepState(state, step.Name)
+	moduleNames := model.NewSet[string]()
 	for _, module := range step.Modules {
 		validateModule(module, step.Name)
+		if moduleNames.Contains(module.Name) {
+			log.Fatalf("module name %s is not unique in step %s", module.Name, step.Name)
+		}
+		moduleNames.Add(module.Name)
 		if stepState == nil {
 			continue
 		}
-		stateModule := GetModuleState(stepState, module.Name)
-		moduleVersionString := module.Version
-		if util.IsClientModule(module) {
-			if moduleVersionString == "" {
-				log.Fatalf("module version is not set for client module %s in step %s", module.Name, step.Name)
-			}
-			continue
-		}
-		if moduleVersionString == "" || moduleVersionString == StableVersion {
-			continue
-		}
-		moduleVersion, err := version.NewVersion(moduleVersionString)
-		if err != nil {
-			log.Fatalf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
-		}
-		if stateModule == nil || stateModule.Version == "" {
-			continue
-		}
-		stateModuleVersion, err := version.NewVersion(stateModule.Version)
-		if err != nil {
-			log.Fatalf("failed to parse state module version %s for module %s: %s", stateModule.Version, module.Name, err)
-		}
-		if moduleVersion.LessThan(stateModuleVersion) {
-			log.Fatalf("config module %s version %s is less than state version %s", module.Name,
-				moduleVersionString, stateModule.Version)
-		}
+		validateModuleVersioning(step, stepState, module)
 	}
 }
 
@@ -416,6 +458,35 @@ func validateModule(module model.Module, stepName string) {
 	}
 	if module.Source == "" {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module Source is not set for module %s in step %s", module.Name, stepName)})
+	}
+}
+
+func validateModuleVersioning(step model.Step, stepState *model.StateStep, module model.Module) {
+	stateModule := GetModuleState(stepState, module.Name)
+	moduleVersionString := module.Version
+	if util.IsClientModule(module) {
+		if moduleVersionString == "" {
+			log.Fatalf("module version is not set for client module %s in step %s", module.Name, step.Name)
+		}
+		return
+	}
+	if moduleVersionString == "" || moduleVersionString == StableVersion {
+		return
+	}
+	moduleVersion, err := version.NewVersion(moduleVersionString)
+	if err != nil {
+		log.Fatalf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
+	}
+	if stateModule == nil || stateModule.Version == "" {
+		return
+	}
+	stateModuleVersion, err := version.NewVersion(stateModule.Version)
+	if err != nil {
+		log.Fatalf("failed to parse state module version %s for module %s: %s", stateModule.Version, module.Name, err)
+	}
+	if moduleVersion.LessThan(stateModuleVersion) {
+		log.Fatalf("config module %s version %s is less than state version %s", module.Name,
+			moduleVersionString, stateModule.Version)
 	}
 }
 
