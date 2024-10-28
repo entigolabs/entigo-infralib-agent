@@ -25,15 +25,19 @@ const (
 var ReservedFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
 
 func GetProviderPrefix(flags *common.Flags) string {
-	if flags.Prefix != "" {
-		return flags.Prefix
+	prefix := flags.Prefix
+	if prefix == "" {
+		if flags.Config == "" {
+			log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("prefix or config must be provided")})
+		}
+		prefix = getLocalConfigFile(flags.Config).Prefix
 	}
-	if flags.Config == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("prefix or config must be provided")})
-	}
-	prefix := GetLocalConfig(flags.Config).Prefix
 	if prefix == "" {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
+	}
+	if len(prefix) > 10 {
+		common.PrintWarning("prefix longer than 10 characters, trimming to fit")
+		prefix = prefix[:10]
 	}
 	return prefix
 }
@@ -53,6 +57,13 @@ func GetConfig(configFile string, bucket model.Bucket) model.Config {
 }
 
 func GetLocalConfig(configFile string) model.Config {
+	config := getLocalConfigFile(configFile)
+	basePath := filepath.Dir(configFile) + "/"
+	AddStepsFilesFromFolder(&config, basePath)
+	return config
+}
+
+func getLocalConfigFile(configFile string) model.Config {
 	fileBytes, err := os.ReadFile(configFile)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
@@ -62,8 +73,6 @@ func GetLocalConfig(configFile string) model.Config {
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
 	}
-	basePath := filepath.Dir(configFile) + "/"
-	AddStepsFilesFromFolder(&config, basePath)
 	return config
 }
 
@@ -317,18 +326,10 @@ func ProcessSteps(config *model.Config, providerType model.ProviderType) {
 	}
 }
 
-func ValidateConfig(config *model.Config, state *model.State) {
+func ValidateConfig(config model.Config, state *model.State) {
 	stepNames := model.NewSet[string]()
-	if config.Prefix == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
-	}
-	if len(config.Prefix) > 10 {
-		common.PrintWarning("config prefix longer than 10 characters, trimming to fit")
-		config.Prefix = config.Prefix[:10]
-	}
 	if len(config.Sources) == 0 {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("at least one source must be provided")})
-
 	}
 	for index, source := range config.Sources {
 		validateSource(index, source)
@@ -439,15 +440,6 @@ func GetModuleState(stepState *model.StateStep, moduleName string) *model.StateM
 	return nil
 }
 
-func updateState(config model.Config, state *model.State, bucket model.Bucket) {
-	if len(state.Steps) == 0 {
-		createState(config, state)
-		return
-	}
-	removeUnusedSteps(config, state, bucket)
-	addNewSteps(config, state)
-}
-
 func createState(config model.Config, state *model.State) {
 	steps := make([]*model.StateStep, 0)
 	for _, step := range config.Steps {
@@ -493,7 +485,7 @@ func addNewSteps(config model.Config, state *model.State) {
 	}
 }
 
-func removeUnusedSteps(config model.Config, state *model.State, bucket model.Bucket) {
+func removeUnusedSteps(prefix string, config model.Config, state *model.State, bucket model.Bucket) {
 	for i := len(state.Steps) - 1; i >= 0; i-- {
 		stepState := state.Steps[i]
 		stepFound := false
@@ -506,7 +498,7 @@ func removeUnusedSteps(config model.Config, state *model.State, bucket model.Buc
 		}
 		if !stepFound {
 			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
-			removeUnusedFiles(bucket, fmt.Sprintf("steps/%s-%s", config.Prefix, stepState.Name))
+			removeUnusedFiles(bucket, fmt.Sprintf("steps/%s-%s", prefix, stepState.Name))
 			removeUnusedFiles(bucket, fmt.Sprintf("config/%s", stepState.Name))
 		}
 	}

@@ -16,7 +16,7 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 	return append(flags,
 		&loggingFlag,
 		&configFlag,
-		&awsPrefixFlag,
+		&prefixFlag,
 		&projectIdFlag,
 		&locationFlag,
 		&zoneFlag,
@@ -54,10 +54,10 @@ var configFlag = cli.StringFlag{
 	Required:    false,
 }
 
-var awsPrefixFlag = cli.StringFlag{
+var prefixFlag = cli.StringFlag{
 	Name:        "prefix",
 	Aliases:     []string{"p", "ap", "aws-prefix"},
-	EnvVars:     []string{common.AwsPrefixEnv},
+	EnvVars:     []string{common.AwsPrefixEnv, common.PrefixEnv},
 	DefaultText: "",
 	Value:       "",
 	Usage:       "prefix used when creating cloud resources",

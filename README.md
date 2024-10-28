@@ -66,7 +66,7 @@ Creates the required AWS resources and a codepipeline for executing the agent. I
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -85,7 +85,7 @@ Run command only executes a single cycle of the pipeline. Can be used to apply c
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -105,7 +105,7 @@ Update command updates all modules to the latest or specified versions. Returns 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
-* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -124,7 +124,7 @@ Processes config steps, removes resources used by the agent, including buckets, 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * config - config file path and name, only needed when overriding an existing config [$CONFIG]
-* prefix - prefix used when creating cloud resources (default: **config prefix**) [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -143,7 +143,7 @@ Creates a service account and a key for the account. The key is stored in the AW
 This account can be used for running the agent in a CI/CD pipeline.
 
 OPTIONS:
-* prefix - prefix used when creating cloud resources [$AWS_PREFIX]
+* prefix - prefix used when creating cloud resources [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -204,7 +204,7 @@ Complex values need to be as multiline strings with | symbol.
 
 Source version is overwritten by module version. Default version is **stable** which means latest release of the source repository.
 
-* prefix - prefix used for AWS/GCloud resources, CodeCommit folders/files and terraform resources, limit 10 characters
+* prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var.
 * sources - list of source repositories for Entigo Infralib modules
   * url - url of the source repository
   * version - highest version of Entigo Infralib modules to use

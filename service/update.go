@@ -58,7 +58,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	resources := provider.SetupResources()
 	config := GetConfig(flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
-	ValidateConfig(&config, state)
+	ValidateConfig(config, state)
 	ProcessSteps(&config, resources.GetProviderType())
 	githubClient := github.NewGithub(ctx)
 	sources, moduleSources := createSources(githubClient, config, state)
@@ -185,7 +185,7 @@ func (u *updater) Run() {
 	u.updateAgentJob(common.RunCommand)
 	index := 0
 	u.logReleases(index)
-	updateState(u.config, u.state, u.resources.GetBucket())
+	u.updateState()
 	wg := new(model.SafeCounter)
 	errChan := make(chan error, 1)
 	failed := false
@@ -231,7 +231,7 @@ func (u *updater) Update() {
 	}
 	for index := 1; index < mostReleases; index++ {
 		u.logReleases(index)
-		updateState(u.config, u.state, u.resources.GetBucket())
+		u.updateState()
 		u.GetChecksums(index)
 		wg := new(model.SafeCounter)
 		errChan := make(chan error, 1)
@@ -270,6 +270,15 @@ func (u *updater) getMostReleases() int {
 		}
 	}
 	return mostReleases
+}
+
+func (u *updater) updateState() {
+	if len(u.state.Steps) == 0 {
+		createState(u.config, u.state)
+		return
+	}
+	removeUnusedSteps(u.resources.GetCloudPrefix(), u.config, u.state, u.resources.GetBucket())
+	addNewSteps(u.config, u.state)
 }
 
 func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- error) (bool, error) {
@@ -524,7 +533,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 		return err
 	}
 
-	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
+	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 
 	vpcConfig := getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
@@ -560,7 +569,7 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 }
 
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, index int) error {
-	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
+	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	vpcConfig := getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
 	bucket := u.resources.GetBucket()
@@ -745,7 +754,7 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 }
 
 func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
-	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.config.Prefix, step.Name), u.resources.GetBucket())
+	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name), u.resources.GetBucket())
 	if err != nil {
 		return false, nil, err
 	}
@@ -778,7 +787,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	err = u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/provider.tf", u.config.Prefix, step.Name), provider)
+	err = u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name), provider)
 	return true, providers, err
 }
 
@@ -937,11 +946,11 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 				cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.SourceURL, module.Source,
 					moduleVersion.Version)))
 		}
-		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.config.Prefix, step.Name, module.Name)))
+		moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", u.resources.GetCloudPrefix(), step.Name, module.Name)))
 		terraform.AddInputs(module.Inputs, moduleBody)
 	}
 	if changed {
-		err := u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/main.tf", u.config.Prefix, step.Name), file.Bytes())
+		err := u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/main.tf", u.resources.GetCloudPrefix(), step.Name), file.Bytes())
 		if err != nil {
 			return false, err
 		}
@@ -956,7 +965,7 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	if err != nil {
 		return fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/%s.yaml", u.config.Prefix, step.Name, module.Name),
+	return u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/%s.yaml", u.resources.GetCloudPrefix(), step.Name, module.Name),
 		appBytes)
 }
 
@@ -1037,7 +1046,7 @@ func (u *updater) getModuleSource(moduleSource string) *model.Source {
 }
 
 func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
-	folder := fmt.Sprintf("steps/%s-%s", u.config.Prefix, step.Name)
+	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	files, err := u.resources.GetBucket().ListFolderFiles(folder)
 	if err != nil {
 		return err
@@ -1207,7 +1216,7 @@ func (u *updater) getSSMParameter(step model.Step, replaceKey string) (string, e
 			replaceKey, step.Name, len(parts))
 	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[3])
-	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.config.Prefix, parts[1], parts[2], match[1])
+	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.resources.GetCloudPrefix(), parts[1], parts[2], match[1])
 	return u.getSSMParameterValue(match, replaceKey, parameterName)
 }
 
@@ -1231,7 +1240,7 @@ func (u *updater) getTypedSSMParameter(step model.Step, replaceKey string) (stri
 		return "", fmt.Errorf("failed to find step and module for toutput key %s: %s", replaceKey, err)
 	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[2])
-	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.config.Prefix, stepName, moduleName, match[1])
+	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.resources.GetCloudPrefix(), stepName, moduleName, match[1])
 	return u.getSSMParameterValue(match, replaceKey, parameterName)
 }
 
@@ -1287,7 +1296,7 @@ func (u *updater) findStepModuleByType(moduleType string) (string, string, error
 }
 
 func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
-	stepName := fmt.Sprintf("%s-%s", u.config.Prefix, step.Name)
+	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step, bucket)
 	if err != nil {
 		return fmt.Errorf("failed to update pipeline %s: %w", projectName, err)
@@ -1359,7 +1368,7 @@ func getChecksums(githubClient github.Github, sourceURL string, release string) 
 
 func (u *updater) updateIncludedStepFiles(step model.Step) error {
 	files := model.Set[string]{}
-	folder := fmt.Sprintf("steps/%s-%s", u.config.Prefix, step.Name)
+	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for _, file := range step.Files {
 		target := fmt.Sprintf("%s/%s", folder, file.Name)
 		err := u.resources.GetBucket().PutFile(target, file.Content)

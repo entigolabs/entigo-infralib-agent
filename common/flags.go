@@ -2,6 +2,7 @@ package common
 
 const (
 	AwsPrefixEnv       = "AWS_PREFIX"
+	PrefixEnv          = "PREFIX"
 	GCloudProjectIdEnv = "PROJECT_ID"
 	GCloudLocationEnv  = "LOCATION"
 	GCloudZoneEnv      = "ZONE"
@@ -33,9 +34,5 @@ type DeleteFlags struct {
 }
 
 func (f *Flags) Setup(cmd Command) error {
-	if len(f.Prefix) > 10 {
-		PrintWarning("prefix longer than 10 characters, trimming to fit")
-		f.Prefix = f.Prefix[:10]
-	}
 	return f.validate(cmd)
 }
