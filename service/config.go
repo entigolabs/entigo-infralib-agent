@@ -46,46 +46,26 @@ func GetProviderPrefix(flags *common.Flags) string {
 func GetConfig(prefix, configFile string, bucket model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
-		config = GetLocalConfig(configFile)
-		PutConfig(bucket, config)
-		basePath := filepath.Dir(configFile) + "/"
-		AddModuleInputFiles(&config, basePath, os.ReadFile)
-		PutAdditionalFiles(bucket, config.Steps)
+		config = GetLocalConfig(prefix, configFile, bucket)
 	} else {
-		config = GetRemoteConfig(bucket)
+		config = GetRemoteConfig(prefix, bucket)
 	}
-	return replaceConfigValues(prefix, config)
+	return config
 }
 
-func replaceConfigValues(prefix string, config model.Config) model.Config {
+func replaceConfigValues(prefix string, config *model.Config) {
 	configYaml, err := yaml.Marshal(config)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
 	}
-	modifiedConfigYaml, err := replaceConfigTags(prefix, config, string(configYaml))
+	modifiedConfigYaml, err := replaceConfigTags(prefix, *config, string(configYaml))
 	if err != nil {
 		log.Fatalf("Failed to replace tags in config")
 	}
-	err = yaml.Unmarshal([]byte(modifiedConfigYaml), &config)
+	err = yaml.Unmarshal([]byte(modifiedConfigYaml), config)
 	if err != nil {
 		log.Fatalf("Failed to unmarshal modified config: %s", err)
 	}
-	for i := range config.Steps {
-		step := &config.Steps[i]
-		for j := range step.Files {
-			file := &step.Files[j]
-			if !strings.HasSuffix(file.Name, ".tf") && !strings.HasSuffix(file.Name, ".yaml") &&
-				!strings.HasSuffix(file.Name, ".hcl") {
-				continue
-			}
-			newContent, err := replaceConfigTags(prefix, config, string(file.Content))
-			if err != nil {
-				log.Fatalf("Failed to replace tags in file %s: %s", file.Name, err)
-			}
-			file.Content = []byte(newContent)
-		}
-	}
-	return config
 }
 
 func replaceConfigTags(prefix string, config model.Config, content string) (string, error) {
@@ -118,10 +98,14 @@ func replaceConfigTags(prefix string, config model.Config, content string) (stri
 	return content, nil
 }
 
-func GetLocalConfig(configFile string) model.Config {
+func GetLocalConfig(prefix, configFile string, bucket model.Bucket) model.Config {
 	config := getLocalConfigFile(configFile)
+	PutConfig(bucket, config)
+	replaceConfigValues(prefix, &config)
 	basePath := filepath.Dir(configFile) + "/"
 	AddStepsFilesFromFolder(&config, basePath)
+	AddModuleInputFiles(&config, basePath, os.ReadFile)
+	PutAdditionalFiles(bucket, config.Steps)
 	return config
 }
 
@@ -263,7 +247,15 @@ func putStepFiles(bucket model.Bucket, step model.Step) {
 	}
 }
 
-func GetRemoteConfig(bucket model.Bucket) model.Config {
+func GetRemoteConfig(prefix string, bucket model.Bucket) model.Config {
+	config := getRemoteConfigFile(bucket)
+	replaceConfigValues(prefix, &config)
+	AddStepsFilesFromBucket(&config, bucket)
+	AddModuleInputFiles(&config, "", bucket.GetFile)
+	return config
+}
+
+func getRemoteConfigFile(bucket model.Bucket) model.Config {
 	bytes, err := bucket.GetFile("config.yaml")
 	if err != nil {
 		log.Fatalf("Failed to get config: %s", err)
@@ -276,8 +268,6 @@ func GetRemoteConfig(bucket model.Bucket) model.Config {
 	if err != nil {
 		log.Fatalf("Failed to unmarshal config: %s", err)
 	}
-	AddStepsFilesFromBucket(&config, bucket)
-	AddModuleInputFiles(&config, "", bucket.GetFile)
 	return config
 }
 

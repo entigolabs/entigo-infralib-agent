@@ -47,11 +47,12 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 func getConfig(prefix, configFile string, bucket model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
-		config = GetLocalConfig(configFile)
+		config = getLocalConfigFile(configFile)
 	} else {
-		config = GetRemoteConfig(bucket)
+		config = getRemoteConfigFile(bucket)
 	}
-	return replaceConfigValues(prefix, config)
+	replaceConfigValues(prefix, &config)
+	return config
 }
 
 func (d *deleter) Delete() {
