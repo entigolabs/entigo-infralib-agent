@@ -118,6 +118,9 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 	moduleSources := make(map[string]string)
 	for _, step := range config.Steps {
 		for _, module := range step.Modules {
+			if util.IsClientModule(module) {
+				continue
+			}
 			if moduleSources[module.Source] != "" {
 				continue
 			}
@@ -424,6 +427,9 @@ func (u *updater) getChangedModules(step model.Step) []string {
 		return changed
 	}
 	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.PreviousChecksums == nil || moduleSource.CurrentChecksums == nil {
 			changed = append(changed, module.Name)
@@ -1346,6 +1352,9 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 		release = u.config.BaseImageVersion
 	} else {
 		for _, module := range step.Modules {
+			if util.IsClientModule(module) {
+				continue
+			}
 			source := u.getModuleSource(module.Source)
 			if !strings.Contains(source.URL, EntigoSource) {
 				continue
