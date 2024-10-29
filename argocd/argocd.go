@@ -2,25 +2,25 @@ package argocd
 
 import (
 	"dario.cat/mergo"
+	_ "embed"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/github"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
+//go:embed app.yaml
+var appYaml []byte
+
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 
 func GetApplicationFile(github github.Github, module model.Module, sourceURL, repoSSHUrl, version string, values []byte, provider model.ProviderType) ([]byte, error) {
-	baseBytes, err := getBaseApplicationFile()
-	if err != nil {
-		return nil, err
-	}
+	baseBytes := getBaseApplicationFile()
 	moduleFile, err := getModuleApplicationFile(github, version, module.Source, sourceURL)
 	if err != nil {
 		return nil, err
@@ -32,8 +32,10 @@ func GetApplicationFile(github github.Github, module model.Module, sourceURL, re
 	return replacePlaceholders(bytes, module, sourceURL, repoSSHUrl, version, values, provider), nil
 }
 
-func getBaseApplicationFile() ([]byte, error) {
-	return os.ReadFile("app.yaml")
+func getBaseApplicationFile() []byte {
+	contentCopy := make([]byte, len(appYaml))
+	copy(contentCopy, appYaml)
+	return contentCopy
 }
 
 func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, repoSSHUrl string, version string, values []byte, provider model.ProviderType) []byte {
