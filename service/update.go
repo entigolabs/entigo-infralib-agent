@@ -793,7 +793,12 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	err = u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name), provider)
+	modifiedProvider, err := u.replaceStringValues(step, string(provider), index)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to replace provider values: %s", err)
+	}
+	providerFile := fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name)
+	err = u.resources.GetBucket().PutFile(providerFile, []byte(modifiedProvider))
 	return true, providers, err
 }
 

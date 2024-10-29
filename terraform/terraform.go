@@ -14,7 +14,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"log"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -376,18 +375,6 @@ func getBytesTokens(bytes []byte) hclwrite.Tokens {
 			Bytes: bytes,
 		},
 	}
-}
-
-func ReadTerraformFile(fileName string) (*hclwrite.File, error) {
-	file, err := os.ReadFile(fileName)
-	if err != nil {
-		return nil, err
-	}
-	hclFile, diags := hclwrite.ParseConfig(file, fileName, hcl.InitialPos)
-	if diags.HasErrors() {
-		return nil, diags
-	}
-	return hclFile, nil
 }
 
 func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File, error) {
