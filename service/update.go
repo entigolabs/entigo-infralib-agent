@@ -1141,7 +1141,7 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		case string(model.ReplaceTypeGCSM):
 			fallthrough
 		case string(model.ReplaceTypeSSM):
-			parameter, err := u.getSSMParameter(step, replaceKey)
+			parameter, err := u.getModuleSSMParameter(step, replaceKey)
 			if err != nil {
 				return "", err
 			}
@@ -1181,11 +1181,11 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			}
 			content = strings.Replace(content, replaceTag, agentValue, 1)
 		case string(model.ReplaceTypeModule):
-			parameter, err := u.getTypedModuleName(step, replaceKey)
+			moduleName, err := u.getTypedModuleName(step, replaceKey)
 			if err != nil {
 				return "", err
 			}
-			content = strings.Replace(content, replaceTag, parameter, 1)
+			content = strings.Replace(content, replaceTag, moduleName, 1)
 		default:
 			return "", fmt.Errorf("unknown replace type in tag %s", match[0])
 		}
@@ -1213,15 +1213,18 @@ func (u *updater) getReplacementAgentValue(key string, index int) (string, error
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
 
-func (u *updater) getSSMParameter(step model.Step, replaceKey string) (string, error) {
+func (u *updater) getModuleSSMParameter(step model.Step, replaceKey string) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) != 4 {
 		return "", fmt.Errorf("failed to parse ssm parameter key %s for step %s, got %d split parts instead of 4",
 			replaceKey, step.Name, len(parts))
 	}
+	foundStep, module, err := u.findStepModuleByName(parts[1], parts[2])
+	if err != nil {
+		return "", fmt.Errorf("failed to find step and module for ssm parameter key %s: %s", replaceKey, err)
+	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[3])
-	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.resources.GetCloudPrefix(), parts[1], parts[2], match[1])
-	return u.getSSMParameterValue(match, replaceKey, parameterName)
+	return u.getSSMParameter(match, replaceKey, step, foundStep, module)
 }
 
 func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
@@ -1239,15 +1242,23 @@ func (u *updater) getTypedSSMParameter(step model.Step, replaceKey string) (stri
 		return "", fmt.Errorf("failed to parse toutput key %s for step %s, got %d split parts instead of 3",
 			replaceKey, step.Name, len(parts))
 	}
-	stepName, moduleName, err := u.findStepModuleByType(parts[1])
+	foundStep, module, err := u.findStepModuleByType(parts[1])
 	if err != nil {
 		return "", fmt.Errorf("failed to find step and module for toutput key %s: %s", replaceKey, err)
 	}
-	if step.Type == model.StepTypeTerraform && step.Name == stepName {
-		return fmt.Sprintf("module.%s.%s", moduleName, parts[2]), nil
-	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[2])
-	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.resources.GetCloudPrefix(), stepName, moduleName, match[1])
+	return u.getSSMParameter(match, replaceKey, step, foundStep, module)
+}
+
+func (u *updater) getSSMParameter(match []string, replaceKey string, step, foundStep model.Step, module model.Module) (string, error) {
+	if step.Type == model.StepTypeTerraform && step.Name == foundStep.Name {
+		return fmt.Sprintf("module.%s.%s", module.Name, match[1]), nil
+	}
+	parameterName := fmt.Sprintf("%s/%s-%s-%s/%s", ssmPrefix, u.resources.GetCloudPrefix(), foundStep.Name, module.Name, match[1])
+	prefix, found := module.Inputs["prefix"]
+	if found {
+		parameterName = fmt.Sprintf("%s/%s/%s", ssmPrefix, prefix, match[1])
+	}
 	return u.getSSMParameterValue(match, replaceKey, parameterName)
 }
 
@@ -1271,35 +1282,51 @@ func (u *updater) getTypedModuleName(step model.Step, replaceKey string) (string
 		return "", fmt.Errorf("failed to parse tmodule key %s for step %s, got %d split parts instead of 2",
 			replaceKey, step.Name, len(parts))
 	}
-	_, moduleName, err := u.findStepModuleByType(parts[1])
+	_, module, err := u.findStepModuleByType(parts[1])
 	if err != nil {
 		return "", fmt.Errorf("failed to find step and module for tmodule key %s: %s", replaceKey, err)
 	}
-	return moduleName, nil
+	return module.Name, nil
 }
 
-func (u *updater) findStepModuleByType(moduleType string) (string, string, error) {
-	var stepName, moduleName string
-	for _, configStep := range u.config.Steps {
-		for _, module := range configStep.Modules {
+func (u *updater) findStepModuleByName(stepName, moduleName string) (model.Step, model.Module, error) {
+	for _, step := range u.config.Steps {
+		if step.Name != stepName {
+			continue
+		}
+		for _, module := range step.Modules {
+			if module.Name == moduleName {
+				return step, module, nil
+			}
+		}
+	}
+	return model.Step{}, model.Module{}, fmt.Errorf("failed to find module %s in step %s", moduleName, stepName)
+}
+
+func (u *updater) findStepModuleByType(moduleType string) (model.Step, model.Module, error) {
+	var foundStep *model.Step
+	var foundModule model.Module
+	for _, step := range u.config.Steps {
+		for _, module := range step.Modules {
 			moduleSource := module.Source
 			if util.IsClientModule(module) {
 				moduleSource = moduleSource[strings.LastIndex(moduleSource, "//")+2:]
 			}
 			currentType := moduleSource[strings.Index(module.Source, "/")+1:]
-			if currentType == moduleType {
-				if stepName != "" {
-					return "", "", fmt.Errorf("found multiple modules with type %s", moduleType)
-				}
-				stepName = configStep.Name
-				moduleName = module.Name
+			if currentType != moduleType {
+				continue
 			}
+			if foundStep != nil {
+				return model.Step{}, model.Module{}, fmt.Errorf("found multiple modules with type %s", moduleType)
+			}
+			foundStep = &step
+			foundModule = module
 		}
 	}
-	if stepName == "" {
-		return "", "", fmt.Errorf("no module found with type %s", moduleType)
+	if foundStep == nil {
+		return model.Step{}, model.Module{}, fmt.Errorf("no module found with type %s", moduleType)
 	}
-	return stepName, moduleName, nil
+	return *foundStep, foundModule, nil
 }
 
 func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
