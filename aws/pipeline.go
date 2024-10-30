@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const pollingDelay = 30
+const pollingDelay = 10
 
 const approveStageName = "Approve"
 const approveActionName = "Approval"

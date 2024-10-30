@@ -772,15 +772,12 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, err
 	}
-	hasFiles := len(step.Files) > 0
-	if hasFiles {
-		err = u.updateIncludedStepFiles(step)
-		if err != nil {
-			return false, nil, err
-		}
+	err = u.updateIncludedStepFiles(step)
+	if err != nil {
+		return false, nil, err
 	}
 	if !changed {
-		return hasFiles, nil, nil
+		return len(step.Files) > 0, nil, nil
 	}
 	if len(moduleVersions) == 0 {
 		return false, nil, errors.New("no module versions found")
