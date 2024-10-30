@@ -31,7 +31,7 @@ type githubClient struct {
 func NewGithub(ctx context.Context, token string) Github {
 	client := github.NewClient(nil)
 	if token != "" {
-		client.WithAuthToken(token)
+		client = client.WithAuthToken(token)
 	}
 	return &githubClient{
 		ctx:    ctx,
