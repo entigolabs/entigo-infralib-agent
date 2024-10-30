@@ -1422,13 +1422,13 @@ func (u *updater) updateIncludedStepFiles(step model.Step) error {
 		}
 		files.Add(target)
 	}
-	folderFiles, err := u.resources.GetBucket().ListFolderFiles(folder)
+	folderFiles, err := u.resources.GetBucket().ListFolderFilesWithExclude(folder, model.ToSet([]string{terraformCache}))
 	if err != nil {
 		return err
 	}
 	for _, file := range folderFiles {
 		relativeFile := strings.TrimPrefix(file, folder+"/")
-		if ReservedFiles.Contains(relativeFile) || strings.HasPrefix(relativeFile, terraformCache) {
+		if ReservedFiles.Contains(relativeFile) {
 			continue
 		}
 		if !files.Contains(file) {

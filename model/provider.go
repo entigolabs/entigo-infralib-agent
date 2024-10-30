@@ -41,6 +41,7 @@ type Bucket interface {
 	DeleteFile(file string) error
 	CheckFolderExists(folder string) (bool, error)
 	ListFolderFiles(folder string) ([]string, error)
+	ListFolderFilesWithExclude(folder string, excludeFolders Set[string]) ([]string, error)
 	Delete() error
 }
 

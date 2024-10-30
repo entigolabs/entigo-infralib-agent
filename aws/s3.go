@@ -153,9 +153,36 @@ func (s *S3) ListFolderFiles(folder string) ([]string, error) {
 	if !strings.HasSuffix(folder, "/") {
 		folder += "/"
 	}
+	var files []string
+	var token *string = nil
+	for {
+		output, err := s.awsS3.ListObjectsV2(s.ctx, &awsS3.ListObjectsV2Input{
+			Bucket:            aws.String(s.bucket),
+			Prefix:            aws.String(folder),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range output.Contents {
+			files = append(files, *object.Key)
+		}
+		if output.IsTruncated == nil || !*output.IsTruncated || output.NextContinuationToken == nil {
+			break
+		}
+		token = output.NextContinuationToken
+	}
+	return files, nil
+}
+
+func (s *S3) ListFolderFilesWithExclude(folder string, excludeFolders model.Set[string]) ([]string, error) {
+	if !strings.HasSuffix(folder, "/") {
+		folder += "/"
+	}
 	output, err := s.awsS3.ListObjectsV2(s.ctx, &awsS3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(folder),
+		Bucket:    aws.String(s.bucket),
+		Prefix:    aws.String(folder),
+		Delimiter: aws.String("/"),
 	})
 	if err != nil {
 		return nil, err
@@ -163,6 +190,19 @@ func (s *S3) ListFolderFiles(folder string) ([]string, error) {
 	var files []string
 	for _, object := range output.Contents {
 		files = append(files, *object.Key)
+	}
+	if output.CommonPrefixes == nil {
+		return files, nil
+	}
+	for _, prefix := range output.CommonPrefixes {
+		if excludeFolders.Contains(strings.TrimSuffix(strings.TrimPrefix(*prefix.Prefix, folder), "/")) {
+			continue
+		}
+		subFiles, err := s.ListFolderFiles(*prefix.Prefix)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, subFiles...)
 	}
 	return files, nil
 }

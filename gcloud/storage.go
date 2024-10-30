@@ -171,6 +171,9 @@ func (g *GStorage) CheckFolderExists(folder string) (bool, error) {
 }
 
 func (g *GStorage) ListFolderFiles(folder string) ([]string, error) {
+	if !strings.HasSuffix(folder, "/") {
+		folder = folder + "/"
+	}
 	it := g.bucketHandle.Objects(g.ctx, &storage.Query{Prefix: folder})
 	var files []string
 	for {
@@ -180,10 +183,40 @@ func (g *GStorage) ListFolderFiles(folder string) ([]string, error) {
 		} else if err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(obj.Name, folder+"/") {
+		files = append(files, obj.Name)
+	}
+	return files, nil
+}
+
+func (g *GStorage) ListFolderFilesWithExclude(folder string, excludeFolders model.Set[string]) ([]string, error) {
+	if !strings.HasSuffix(folder, "/") {
+		folder = folder + "/"
+	}
+	it := g.bucketHandle.Objects(g.ctx, &storage.Query{
+		Prefix:                   folder,
+		Delimiter:                "/",
+		IncludeFoldersAsPrefixes: true,
+	})
+	var files []string
+	for {
+		obj, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		if obj.Name != "" {
+			files = append(files, obj.Name)
 			continue
 		}
-		files = append(files, obj.Name)
+		if obj.Prefix == "" || excludeFolders.Contains(strings.TrimSuffix(strings.TrimPrefix(obj.Prefix, folder), "/")) {
+			continue
+		}
+		subFiles, err := g.ListFolderFiles(obj.Prefix)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, subFiles...)
 	}
 	return files, nil
 }
