@@ -90,6 +90,7 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* github-token - optional GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 
 Example
@@ -109,6 +110,7 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
+* github-token - optional GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 
 Example

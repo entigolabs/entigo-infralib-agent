@@ -28,10 +28,14 @@ type githubClient struct {
 	cache  *FileCache
 }
 
-func NewGithub(ctx context.Context) Github {
+func NewGithub(ctx context.Context, token string) Github {
+	client := github.NewClient(nil)
+	if token != "" {
+		client.WithAuthToken(token)
+	}
 	return &githubClient{
 		ctx:    ctx,
-		client: github.NewClient(nil),
+		client: client,
 		cache:  NewFileCache(),
 	}
 }

@@ -60,7 +60,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessSteps(&config, resources.GetProviderType())
-	githubClient := github.NewGithub(ctx)
+	githubClient := github.NewGithub(ctx, flags.GithubToken)
 	sources, moduleSources := createSources(githubClient, config, state)
 	return &updater{
 		config:        config,

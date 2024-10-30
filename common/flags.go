@@ -13,6 +13,7 @@ type Flags struct {
 	Config        string
 	Prefix        string
 	AllowParallel bool
+	GithubToken   string
 	GCloud        GCloud
 	AWS           AWS
 	Delete        DeleteFlags

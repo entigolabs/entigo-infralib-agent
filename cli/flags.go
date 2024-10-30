@@ -28,8 +28,10 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	switch cmd {
 	case common.DeleteCommand:
 		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag)
+	case common.UpdateCommand:
+		baseFlags = append(baseFlags, &githubToken)
 	case common.RunCommand:
-		baseFlags = append(baseFlags, &allowParallelFlag)
+		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken)
 	}
 	return baseFlags
 }
@@ -114,6 +116,16 @@ var allowParallelFlag = cli.BoolFlag{
 	Value:       true,
 	Usage:       "allow running steps in parallel on first execution cycle",
 	Destination: &flags.AllowParallel,
+}
+
+var githubToken = cli.StringFlag{
+	Name:        "github-token",
+	Aliases:     []string{"gt"},
+	EnvVars:     []string{"GITHUB_TOKEN"},
+	Usage:       "github token used for github requests",
+	DefaultText: "",
+	Value:       "",
+	Destination: &flags.GithubToken,
 }
 
 var yesFlag = cli.BoolFlag{
