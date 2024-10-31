@@ -19,7 +19,7 @@ const (
 type CloudProvider interface {
 	SetupResources() Resources
 	GetResources() Resources
-	DeleteResources(deleteBucket bool)
+	DeleteResources(deleteBucket bool, deleteServiceAccount bool)
 	CreateServiceAccount()
 }
 
@@ -68,6 +68,7 @@ type Builder interface {
 type SSM interface {
 	GetParameter(name string) (*Parameter, error)
 	PutParameter(name string, value string) error
+	DeleteParameter(name string) error
 }
 
 type CloudResources struct {

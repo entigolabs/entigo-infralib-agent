@@ -72,3 +72,17 @@ func (s *sm) PutParameter(name string, value string) error {
 	})
 	return err
 }
+
+func (s *sm) DeleteParameter(name string) error {
+	err := s.client.DeleteSecret(s.ctx, &secretmanagerpb.DeleteSecretRequest{
+		Name: fmt.Sprintf("projects/%s/secrets/%s", s.projectId, name),
+	})
+	if err != nil {
+		var apiError *apierror.APIError
+		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+			return nil
+		}
+		return err
+	}
+	return nil
+}

@@ -100,6 +100,10 @@ func (g *gcloudService) GetResources() model.Resources {
 	if err != nil {
 		log.Fatalf("Failed to create pipeline: %s", err)
 	}
+	sm, err := NewSM(g.ctx, g.projectId)
+	if err != nil {
+		log.Fatalf("Failed to create secret manager: %s", err)
+	}
 	g.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.GCLOUD,
@@ -108,12 +112,13 @@ func (g *gcloudService) GetResources() model.Resources {
 			Pipeline:     pipeline,
 			CloudPrefix:  g.cloudPrefix,
 			BucketName:   bucket,
+			SSM:          sm,
 		},
 	}
 	return g.resources
 }
 
-func (g *gcloudService) DeleteResources(deleteBucket bool) {
+func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	agentJob := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.RunCommand)
 	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
@@ -139,6 +144,9 @@ func (g *gcloudService) DeleteResources(deleteBucket bool) {
 	err = iam.DeleteServiceAccount(accountName)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err))
+	}
+	if deleteServiceAccount {
+		g.DeleteServiceAccount(iam)
 	}
 	if !deleteBucket {
 		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
@@ -237,4 +245,17 @@ func (g *gcloudService) CreateServiceAccount() {
 		log.Fatalf("Failed to create secret %s: %v", keyParam, err)
 	}
 	log.Printf("Service account secret %s stored in SM", keyParam)
+}
+
+func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
+	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
+	err := iam.DeleteServiceAccount(username)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", username, err))
+	}
+	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
+	err = g.resources.SSM.DeleteParameter(keyParam)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete secret %s: %s", keyParam, err))
+	}
 }

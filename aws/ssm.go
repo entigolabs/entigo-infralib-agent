@@ -48,3 +48,17 @@ func (s *ssm) PutParameter(name string, value string) error {
 	})
 	return err
 }
+
+func (s *ssm) DeleteParameter(name string) error {
+	_, err := s.ssmClient.DeleteParameter(s.ctx, &awsSSM.DeleteParameterInput{
+		Name: aws.String(name),
+	})
+	if err != nil {
+		var notFoundErr *types.ParameterNotFound
+		if errors.As(err, &notFoundErr) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}

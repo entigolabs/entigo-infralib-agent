@@ -27,7 +27,7 @@ func appendBaseFlags(flags []cli.Flag) []cli.Flag {
 func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
 	switch cmd {
 	case common.DeleteCommand:
-		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag)
+		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
 		baseFlags = append(baseFlags, &githubToken)
 	case common.RunCommand:
@@ -142,4 +142,12 @@ var deleteBucketFlag = cli.BoolFlag{
 	EnvVars:     []string{"DELETE_BUCKET"},
 	Usage:       "delete the bucket used by terraform state",
 	Destination: &flags.Delete.DeleteBucket,
+}
+
+var deleteSAFlag = cli.BoolFlag{
+	Name:        "delete-service-account",
+	Aliases:     []string{"dsa"},
+	EnvVars:     []string{"DELETE_SERVICE_ACCOUNT"},
+	Usage:       "delete the service account created by service-account command",
+	Destination: &flags.Delete.DeleteServiceAccount,
 }

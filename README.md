@@ -16,6 +16,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Delete](#delete)
     * [Service Account](#service-account)
 * [Config](#config)
+  * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
   * [Including terraform files in steps](#including-terraform-files-in-steps)
 
@@ -61,7 +62,7 @@ For bootstrap, run and update commands you must either provide a config file or 
 
 ### bootstrap
 
-Creates the required AWS resources and a codepipeline for executing the agent. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started.
+Creates the required cloud resources and pipelines for executing the agent run and update commands. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started. For AWS, CodePipeline is used, for GCloud, Cloud Run Jobs are used.
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
@@ -133,6 +134,7 @@ OPTIONS:
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]
+* delete-service-account - delete the service account created by service-account command (default: **false**) [$DELETE_SERVICE_ACCOUNT]
 
 Example
 ```bash
@@ -218,7 +220,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
-  * approve - approval type for the step, only applies when terraform needs to change resources, based on semver. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically, default **always**
+  * approve - approval type for the step, possible values `minor | major | never | always`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
   * base_image_source - source of Entigo Infralib Base Image to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * vpc - vpc values to add
@@ -240,6 +242,10 @@ Source version is overwritten by module version. Default version is **stable** w
     * inputs - variables for provider tf file
     * aws - aws provider default and ignore tags to add
     * kubernetes - kubernetes provider ignore annotations and labels to add
+
+### Auto approval logic
+
+Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically. Major and minor types require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
 
 ### Overriding config values
 

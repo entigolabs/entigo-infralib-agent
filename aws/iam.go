@@ -22,8 +22,11 @@ type IAM interface {
 	GetRole(roleName string) *types.Role
 	GetUser(username string) *types.User
 	CreateUser(userName string) *types.User
+	DeleteUser(userName string) error
 	AttachUserPolicy(policyArn string, userName string)
+	DetachUserPolicy(policyArn string, userName string) error
 	CreateAccessKey(userName string) *types.AccessKey
+	DeleteAccessKeys(userName string) error
 }
 
 type PolicyDocument struct {
@@ -226,6 +229,19 @@ func (i *identity) CreateUser(username string) *types.User {
 	return user.User
 }
 
+func (i *identity) DeleteUser(userName string) error {
+	_, err := i.iamClient.DeleteUser(i.ctx, &iam.DeleteUserInput{UserName: aws.String(userName)})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	log.Printf("Deleted IAM user: %s\n", userName)
+	return nil
+}
+
 func (i *identity) AttachUserPolicy(policyArn string, userName string) {
 	_, err := i.iamClient.AttachUserPolicy(i.ctx, &iam.AttachUserPolicyInput{
 		PolicyArn: aws.String(policyArn),
@@ -236,6 +252,21 @@ func (i *identity) AttachUserPolicy(policyArn string, userName string) {
 	}
 }
 
+func (i *identity) DetachUserPolicy(policyArn string, userName string) error {
+	_, err := i.iamClient.DetachUserPolicy(i.ctx, &iam.DetachUserPolicyInput{
+		PolicyArn: aws.String(policyArn),
+		UserName:  aws.String(userName),
+	})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func (i *identity) CreateAccessKey(userName string) *types.AccessKey {
 	accessKey, err := i.iamClient.CreateAccessKey(i.ctx, &iam.CreateAccessKeyInput{UserName: aws.String(userName)})
 	if err != nil {
@@ -243,6 +274,33 @@ func (i *identity) CreateAccessKey(userName string) *types.AccessKey {
 	}
 	log.Printf("Created access key for user: %s\n", userName)
 	return accessKey.AccessKey
+}
+
+func (i *identity) DeleteAccessKeys(userName string) error {
+	listOutput, err := i.iamClient.ListAccessKeys(i.ctx, &iam.ListAccessKeysInput{
+		UserName: aws.String(userName),
+	})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return fmt.Errorf("failed to list access keys for user %s: %w", userName, err)
+	}
+	for _, accessKey := range listOutput.AccessKeyMetadata {
+		_, err = i.iamClient.DeleteAccessKey(i.ctx, &iam.DeleteAccessKeyInput{
+			AccessKeyId: accessKey.AccessKeyId,
+			UserName:    aws.String(userName),
+		})
+		if err != nil {
+			var awsError *types.NoSuchEntityException
+			if errors.As(err, &awsError) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []PolicyStatement {

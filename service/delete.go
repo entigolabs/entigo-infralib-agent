@@ -14,10 +14,11 @@ type Deleter interface {
 }
 
 type deleter struct {
-	config       model.Config
-	provider     model.CloudProvider
-	resources    model.Resources
-	deleteBucket bool
+	config               model.Config
+	provider             model.CloudProvider
+	resources            model.Resources
+	deleteBucket         bool
+	deleteServiceAccount bool
 }
 
 func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
@@ -37,10 +38,11 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 	config := getConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	ValidateConfig(config, nil)
 	return &deleter{
-		config:       config,
-		provider:     provider,
-		resources:    resources,
-		deleteBucket: flags.Delete.DeleteBucket,
+		config:               config,
+		provider:             provider,
+		resources:            resources,
+		deleteBucket:         flags.Delete.DeleteBucket,
+		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
 	}
 }
 
@@ -68,7 +70,7 @@ func (d *deleter) Delete() {
 			common.PrintWarning(fmt.Sprintf("Failed to delete project %s: %s", projectName, err))
 		}
 	}
-	d.provider.DeleteResources(d.deleteBucket)
+	d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
 }
 
 func (d *deleter) Destroy() bool {

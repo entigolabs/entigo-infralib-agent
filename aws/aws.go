@@ -130,6 +130,7 @@ func (a *awsService) GetResources() model.Resources {
 			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", nil, "", ""),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
+			SSM:          NewSSM(a.ctx, a.awsConfig),
 		},
 		IAM:       NewIAM(a.ctx, a.awsConfig, a.accountId),
 		Region:    a.awsConfig.Region,
@@ -138,7 +139,7 @@ func (a *awsService) GetResources() model.Resources {
 	return a.resources
 }
 
-func (a *awsService) DeleteResources(deleteBucket bool) {
+func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	agentProjectName := fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.RunCommand)
 	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
@@ -165,6 +166,9 @@ func (a *awsService) DeleteResources(deleteBucket bool) {
 	}
 	a.deleteCloudWatchLogs()
 	a.deleteIAMRoles()
+	if deleteServiceAccount {
+		a.DeleteServiceAccount()
+	}
 	if !deleteBucket {
 		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
 		return
@@ -395,4 +399,35 @@ func (a *awsService) CreateServiceAccount() {
 	}
 
 	log.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
+}
+
+func (a *awsService) DeleteServiceAccount() {
+	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
+	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, username)
+	err := a.resources.IAM.DetachUserPolicy(policyArn, username)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", username, err))
+	}
+	err = a.resources.IAM.DeleteAccessKeys(username)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM access keys for %s: %s", username, err))
+	}
+	err = a.resources.IAM.DeleteUser(username)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM user %s: %s", username, err))
+	}
+	err = a.resources.IAM.DeletePolicy(username, a.accountId)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", username, err))
+	}
+	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
+	err = a.resources.SSM.DeleteParameter(accessKeyIdParam)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", accessKeyIdParam, err))
+	}
+	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
+	err = a.resources.SSM.DeleteParameter(secretAccessKeyParam)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", secretAccessKeyParam, err))
+	}
 }

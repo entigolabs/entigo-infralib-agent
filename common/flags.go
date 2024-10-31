@@ -30,8 +30,9 @@ type AWS struct {
 }
 
 type DeleteFlags struct {
-	DeleteBucket     bool
-	SkipConfirmation bool
+	DeleteBucket         bool
+	DeleteServiceAccount bool
+	SkipConfirmation     bool
 }
 
 func (f *Flags) Setup(cmd Command) error {
