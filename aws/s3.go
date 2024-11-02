@@ -227,46 +227,28 @@ func checkNotFoundError(err error) error {
 	return err
 }
 
-/*
-ObjectListing objectListing = s3Client.listObjects(bucketName);
-
-	while (true) {
-	    Iterator<S3ObjectSummary> objIter = objectListing.getObjectSummaries().iterator();
-	    while (objIter.hasNext()) {
-	        s3Client.deleteObject(bucketName, objIter.next().getKey());
-	    }
-	    if (objectListing.isTruncated()) {
-	        objectListing = s3Client.listNextBatchOfObjects(objectListing);
-	    } else {
-	        break;
-	    }
-	}
-
-VersionListing versionList = s3Client.listVersions(new ListVersionsRequest().withBucketName(bucketName));
-
-	while (true) {
-	    Iterator<S3VersionSummary> versionIter = versionList.getVersionSummaries().iterator();
-	    while (versionIter.hasNext()) {
-	        S3VersionSummary vs = versionIter.next();
-	        s3Client.deleteVersion(bucketName, vs.getKey(), vs.getVersionId());
-	    }
-
-	    if (versionList.isTruncated()) {
-	        versionList = s3Client.listNextBatchOfVersions(versionList);
-	    } else {
-	        break;
-	    }
-	}
-*/
 func (s *S3) truncateBucket() error {
-	log.Printf("Emptying bucket %s...\n", s.bucket)
-	input := &awsS3.ListObjectVersionsInput{
-		Bucket: aws.String(s.bucket),
+	err := s.truncateObjectVersions()
+	if err != nil {
+		return err
 	}
+	return s.truncateObjects()
+}
+
+func (s *S3) truncateObjectVersions() error {
+	input := &awsS3.ListObjectVersionsInput{Bucket: aws.String(s.bucket)}
+	first := true
 	for {
 		list, err := s.awsS3.ListObjectVersions(s.ctx, input)
 		if err != nil {
 			return err
+		}
+		if len(list.Versions) == 0 {
+			return nil
+		}
+		if first {
+			log.Printf("Emptying bucket %s...\n", s.bucket)
+			first = false
 		}
 		var objects []types.ObjectIdentifier
 		for _, version := range list.Versions {
@@ -288,6 +270,35 @@ func (s *S3) truncateBucket() error {
 		log.Printf("Deleted %d object versions, continuing", len(objects))
 		input.KeyMarker = list.NextKeyMarker
 		input.VersionIdMarker = list.NextVersionIdMarker
+	}
+}
+
+func (s *S3) truncateObjects() error {
+	input := &awsS3.ListObjectsV2Input{Bucket: aws.String(s.bucket)}
+	for {
+		list, err := s.awsS3.ListObjectsV2(s.ctx, input)
+		if err != nil {
+			return err
+		}
+		if len(list.Contents) == 0 {
+			return nil
+		}
+		var objects []types.ObjectIdentifier
+		for _, object := range list.Contents {
+			objects = append(objects, types.ObjectIdentifier{Key: object.Key})
+		}
+		_, err = s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
+			Bucket: aws.String(s.bucket),
+			Delete: &types.Delete{Objects: objects},
+		})
+		if err != nil {
+			return err
+		}
+		if list.IsTruncated == nil || !*list.IsTruncated {
+			return nil
+		}
+		log.Printf("Deleted %d objects, continuing", len(objects))
+		input.ContinuationToken = list.NextContinuationToken
 	}
 }
 

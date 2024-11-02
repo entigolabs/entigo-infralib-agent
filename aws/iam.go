@@ -14,6 +14,7 @@ import (
 type IAM interface {
 	AttachRolePolicy(policyArn string, roleName string) error
 	DeleteRolePolicyAttachment(policyName string, roleName string) error
+	DeleteRolePolicyAttachments(roleName string) error
 	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
 	DeletePolicy(policyName string, accountId string) error
 	UpdatePolicy(policyName string, statement []PolicyStatement) string
@@ -157,6 +158,32 @@ func (i *identity) DeleteRolePolicyAttachment(policyArn string, roleName string)
 		}
 	}
 	return err
+}
+
+func (i *identity) DeleteRolePolicyAttachments(roleName string) error {
+	policies, err := i.iamClient.ListAttachedRolePolicies(i.ctx,
+		&iam.ListAttachedRolePoliciesInput{RoleName: aws.String(roleName)})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
+	}
+	for _, policy := range policies.AttachedPolicies {
+		_, err = i.iamClient.DetachRolePolicy(i.ctx, &iam.DetachRolePolicyInput{
+			PolicyArn: policy.PolicyArn,
+			RoleName:  aws.String(roleName),
+		})
+		if err != nil {
+			var awsError *types.NoSuchEntityException
+			if errors.As(err, &awsError) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (i *identity) DeletePolicy(policyName string, accountId string) error {

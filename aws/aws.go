@@ -334,14 +334,9 @@ func (a *awsService) deleteCloudWatchLogs() {
 
 func (a *awsService) deleteIAMRoles() {
 	buildRole := a.getBuildRoleName()
-	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, buildRole)
-	err := a.resources.IAM.DeleteRolePolicyAttachment(policyArn, buildRole)
+	err := a.resources.IAM.DeleteRolePolicyAttachments(buildRole)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", buildRole, err))
-	}
-	err = a.resources.IAM.DeleteRolePolicyAttachment("arn:aws:iam::aws:policy/AdministratorAccess", buildRole)
-	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy AdministratorAccess: %s", err))
+		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policies %s: %s", buildRole, err))
 	}
 	err = a.resources.IAM.DeleteRole(buildRole)
 	if err != nil {
@@ -352,8 +347,7 @@ func (a *awsService) deleteIAMRoles() {
 		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", buildRole, err))
 	}
 	pipelineRole := a.getPipelineRoleName()
-	policyArn = fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, pipelineRole)
-	err = a.resources.IAM.DeleteRolePolicyAttachment(policyArn, pipelineRole)
+	err = a.resources.IAM.DeleteRolePolicyAttachments(pipelineRole)
 	if err != nil {
 		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", pipelineRole, err))
 	}
