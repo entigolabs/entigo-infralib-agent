@@ -18,23 +18,23 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-#      - name: Run tests
-#        env:
-#          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#          AWS_REGION: eu-north-1
-#          PROJECT_ID: entigo-infralib-agent
-#          LOCATION: europe-north1
-#          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-#          ZONE: europe-north1-a
-#        run: |
-#          mkdir -p $(echo ~)/.config/gcloud
-#          echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
-#          gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
-#          gcloud config set project $PROJECT_ID
-#          gcloud auth list
-#          gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
-#          go test -timeout 20m -v ./...
+      - name: Run tests
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: eu-north-1
+          PROJECT_ID: entigo-infralib-agent
+          LOCATION: europe-north1
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ZONE: europe-north1-a
+        run: |
+          mkdir -p $(echo ~)/.config/gcloud
+          echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud config set project $PROJECT_ID
+          gcloud auth list
+          gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          go test -timeout 20m -v ./...
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -67,7 +67,7 @@ jobs:
                   const versionValue = process.env.RELEASE_VERSION;
                   let new_version;
                   if ( versionValue != `${major}.${minor}` ) {
-                    core.info('File majour and minor version differ from latest release, initializing new release! ' + versionValue + ' vs ' + major + '.' + minor);
+                    core.info('Env var major and minor version differ from latest release, initializing new release! ' + versionValue + ' vs ' + major + '.' + minor);
                     new_version = `v${versionValue}.0`
                   } else {
                     new_version = `v${major}.${minor}.${patch}`
