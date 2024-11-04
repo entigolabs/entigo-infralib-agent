@@ -1,10 +1,12 @@
 FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.23-alpine AS build
 WORKDIR /go/ei-agent
-RUN apk add build-base
+RUN apk add --no-cache build-base
 COPY go.* ./
 RUN go mod download
 COPY . ./
-ARG GITHUB_SHA=main VERSION=latest TARGETPLATFORM=linux/amd64
+ARG GITHUB_SHA=main
+ARG VERSION=latest
+ARG TARGETPLATFORM=linux/amd64
 
 RUN set +x; if [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
       GOOS=linux GOARCH=arm64 go build -ldflags "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
