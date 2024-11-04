@@ -1020,11 +1020,11 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 			return "", false, fmt.Errorf("failed to parse module version %s: %s", moduleVersion, err)
 		}
 	}
+	moduleState.AutoApprove = true
 	if index > len(moduleSource.Releases)-1 {
 		return getFormattedVersion(moduleSemver), false, nil
 	}
 	releaseTag := moduleSource.Releases[index]
-	moduleState.AutoApprove = true
 	if moduleState.AppliedVersion == nil || moduleState.Source != moduleSource.URL {
 		moduleState.Source = moduleSource.URL
 		moduleState.AppliedVersion = nil
