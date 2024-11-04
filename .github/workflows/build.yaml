@@ -70,7 +70,7 @@ jobs:
 
       - name: Build and push image
         run: |
-          docker buildx build --push --platform linux/arm64/v8,linux/amd64 --build-arg GITHUB_SHA=${GITHUB_SHA} --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }} -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} .
+          docker buildx build --push --platform linux/arm64/v8,linux/amd64 --build-arg GITHUB_SHA=${GITHUB_SHA} --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} .
           
       - name: Authenticate with GitHub CLI
         run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
