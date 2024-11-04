@@ -23,6 +23,7 @@ const (
 	providerPath   = "providers"
 	moduleTemplate = "modules/%s"
 	baseFile       = "base.tf"
+	base           = "base"
 	versionsFile   = "versions.tf"
 	awsTagsRegex   = `(\w+)\s*=\s*"([^"]+)"`
 )
@@ -65,7 +66,7 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	}
 	baseBody := file.Body()
 	providers := make(map[string]model.Set[string])
-	providers[baseSource] = model.ToSet([]string{baseFile})
+	providers[baseSource] = model.ToSet([]string{base})
 	attrProviders, err := t.addProviderAttributes(baseBody, providersBlock, providersAttributes, step, sourceVersions)
 	if err != nil {
 		return nil, nil, err

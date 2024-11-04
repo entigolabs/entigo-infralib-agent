@@ -298,9 +298,6 @@ func buildSpec() *string {
 	spec := BuildSpec{
 		Version: "0.2",
 		Phases: Phases{
-			Install: Install{
-				Commands: []string{"env"},
-			},
 			Build: Build{
 				Commands: []string{"/usr/bin/entrypoint.sh"},
 			},

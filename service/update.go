@@ -19,6 +19,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"gopkg.in/yaml.v3"
 	"log"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -405,15 +406,19 @@ func (u *updater) getChangedProviders(repoProviders map[string]model.Set[string]
 			providerKey := fmt.Sprintf("providers/%s.tf", provider)
 			previousChecksum, ok := providerSource.PreviousChecksums[providerKey]
 			if !ok {
+				slog.Debug(fmt.Sprintf("Provider %s not found in previous checksums", provider))
 				changed = append(changed, provider)
 				continue
 			}
 			currentChecksum, ok := providerSource.CurrentChecksums[providerKey]
 			if !ok {
+				slog.Debug(fmt.Sprintf("Provider %s not found in current checksums", provider))
 				changed = append(changed, provider)
 				continue
 			}
 			if previousChecksum != currentChecksum {
+				slog.Debug(fmt.Sprintf("Provider %s has changed, previous %s, current %s", provider,
+					previousChecksum, currentChecksum))
 				changed = append(changed, provider)
 			}
 		}
@@ -768,7 +773,7 @@ func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[strin
 }
 
 func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
-	changed, err := u.createTerraformMain(step, moduleVersions, index)
+	changed, err := u.createTerraformMain(step, moduleVersions)
 	if err != nil {
 		return false, nil, err
 	}
@@ -932,7 +937,7 @@ func (u *updater) updateStepState(stepState *model.StateStep) {
 	}
 }
 
-func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, error) {
+func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 	changed := false

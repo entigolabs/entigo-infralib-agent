@@ -26,6 +26,8 @@ type S3 struct {
 	repoMetadata *model.RepositoryMetadata
 }
 
+// TODO Use awsS3 Paginators
+
 func NewS3(ctx context.Context, awsConfig aws.Config, bucket string) *S3 {
 	return &S3{
 		ctx:    ctx,
@@ -154,23 +156,18 @@ func (s *S3) ListFolderFiles(folder string) ([]string, error) {
 		folder += "/"
 	}
 	var files []string
-	var token *string = nil
-	for {
-		output, err := s.awsS3.ListObjectsV2(s.ctx, &awsS3.ListObjectsV2Input{
-			Bucket:            aws.String(s.bucket),
-			Prefix:            aws.String(folder),
-			ContinuationToken: token,
-		})
+	paginator := awsS3.NewListObjectsV2Paginator(s.awsS3, &awsS3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(folder),
+	})
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(s.ctx)
 		if err != nil {
 			return nil, err
 		}
 		for _, object := range output.Contents {
 			files = append(files, *object.Key)
 		}
-		if output.IsTruncated == nil || !*output.IsTruncated || output.NextContinuationToken == nil {
-			break
-		}
-		token = output.NextContinuationToken
 	}
 	return files, nil
 }
@@ -232,18 +229,20 @@ func (s *S3) truncateBucket() error {
 	if err != nil {
 		return err
 	}
-	return s.truncateObjects()
+	return s.truncateDeleteMarkers()
 }
 
 func (s *S3) truncateObjectVersions() error {
-	input := &awsS3.ListObjectVersionsInput{Bucket: aws.String(s.bucket)}
+	paginator := awsS3.NewListObjectVersionsPaginator(s.awsS3, &awsS3.ListObjectVersionsInput{
+		Bucket: aws.String(s.bucket),
+	})
 	first := true
-	for {
-		list, err := s.awsS3.ListObjectVersions(s.ctx, input)
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(s.ctx)
 		if err != nil {
 			return err
 		}
-		if len(list.Versions) == 0 {
+		if len(output.Versions) == 0 {
 			return nil
 		}
 		if first {
@@ -251,7 +250,7 @@ func (s *S3) truncateObjectVersions() error {
 			first = false
 		}
 		var objects []types.ObjectIdentifier
-		for _, version := range list.Versions {
+		for _, version := range output.Versions {
 			objects = append(objects, types.ObjectIdentifier{
 				Key:       version.Key,
 				VersionId: version.VersionId,
@@ -264,28 +263,28 @@ func (s *S3) truncateObjectVersions() error {
 		if err != nil {
 			return err
 		}
-		if list.IsTruncated == nil || !*list.IsTruncated {
-			return nil
-		}
-		log.Printf("Deleted %d object versions, continuing", len(objects))
-		input.KeyMarker = list.NextKeyMarker
-		input.VersionIdMarker = list.NextVersionIdMarker
 	}
+	return nil
 }
 
-func (s *S3) truncateObjects() error {
-	input := &awsS3.ListObjectsV2Input{Bucket: aws.String(s.bucket)}
-	for {
-		list, err := s.awsS3.ListObjectsV2(s.ctx, input)
+func (s *S3) truncateDeleteMarkers() error {
+	paginator := awsS3.NewListObjectVersionsPaginator(s.awsS3, &awsS3.ListObjectVersionsInput{
+		Bucket: aws.String(s.bucket),
+	})
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(s.ctx)
 		if err != nil {
 			return err
 		}
-		if len(list.Contents) == 0 {
+		if len(output.DeleteMarkers) == 0 {
 			return nil
 		}
 		var objects []types.ObjectIdentifier
-		for _, object := range list.Contents {
-			objects = append(objects, types.ObjectIdentifier{Key: object.Key})
+		for _, marker := range output.DeleteMarkers {
+			objects = append(objects, types.ObjectIdentifier{
+				Key:       marker.Key,
+				VersionId: marker.VersionId,
+			})
 		}
 		_, err = s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
 			Bucket: aws.String(s.bucket),
@@ -294,12 +293,8 @@ func (s *S3) truncateObjects() error {
 		if err != nil {
 			return err
 		}
-		if list.IsTruncated == nil || !*list.IsTruncated {
-			return nil
-		}
-		log.Printf("Deleted %d objects, continuing", len(objects))
-		input.ContinuationToken = list.NextContinuationToken
 	}
+	return nil
 }
 
 func (s *S3) putBucketVersioning() error {
