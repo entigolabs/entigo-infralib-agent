@@ -1,32 +1,16 @@
 ## Example client configurations
 
-These are example configruations on the client side.
-
-These will work withoyt any modification in the entigo-infralib account. If you want to use your own account then change the DNS configruation accordingly.
+These are example configurations on the client side.
 
 ## Example usage 
 
-```
-export AWS_ACCESS_KEY_ID=
-export AWS_SECRET_ACCESS_KEY=
-export AWS_SESSION_TOKEN=
-export AWS_REGION="eu-north-1"
-
-#Pri With bootstrap
-docker run --pull always -it --rm -v "$(pwd)/examples/pri.yaml":"/etc/ei-agent/config.yaml" -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY -e AWS_REGION=$AWS_REGION -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN -e CONFIG=/etc/ei-agent/config.yaml entigolabs/entigo-infralib-agent ei-agent bootstrap
-#Biz Without bootstrap
-docker run --pull always -it --rm -v "$(pwd)/examples/biz.yaml":"/etc/ei-agent/config.yaml" -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY -e AWS_REGION=$AWS_REGION -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN -e CONFIG=/etc/ei-agent/config.yaml entigolabs/entigo-infralib-agent
-```
+Fill the exported values in either `minimal-aws.sh` or `minimal-google.sh`. Then replace the DNS `parent_zone_id` placeholder with the actual parent zone id in the corresponding `*.yaml` file. After that run the script.
 
 ## To remove all created resources
-Run removal pipelines in reverse order as they appear in the configuration. Remember to remove EBS, ALB, NLB resources and Route53 records before doing that.
+Run removal pipelines in reverse order as they appear in the configuration.
 
 For example:
-1) Enable all the destroy pipeline transitions
-2) Delete all PV and PVC resources from the EKS cluster
-3) Delete all ingress resources from the EKS cluster
-4) Run helm-destroy
-5) Remove all route53 domains created by external-dns
-6) Run infra-destroy
-7) Run net-destroy
-8) Remove agent resources
+1) (AWS only) Enable all the destroy pipeline transitions
+2) Run the destroy AWS CodePipelines or Google Cloud Run Jobs in reverse order
+3) (AWS only) Approve the planned changes in the AWS CodePipeline
+4) Run the agent delete command after the destroy pipelines have successfully finished, by adding `ei-agent delete` to the previously executed script. Add `--delete-bucket` flag if you want to delete the infralib bucket as well.

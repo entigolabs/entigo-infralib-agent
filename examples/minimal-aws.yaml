@@ -1,233 +1,74 @@
-prefix: agent
 sources:
   - url: https://github.com/entigolabs/entigo-infralib-release
-version: stable
-agent_version: latest
+prefix: dev
 steps:
   - name: net
     type: terraform
-    approve: minor
+    approve: major
     modules:
       - name: main
         source: aws/vpc
-        version: stable
         inputs:
-          azs: 2
+          vpc_cidr: 10.112.0.0/16
+          one_nat_gateway_per_az: false
           elasticache_subnets: |
             []
-          enable_nat_gateway: true
-          one_nat_gateway_per_az: false
-          vpc_cidr: 10.112.0.0/16
+          intra_subnets: |
+            []
       - name: dns
         source: aws/route53
-        version: stable
         inputs:
           create_private: false
           create_public: true
-          parent_zone_id: Z07983041XRLSLZUTHHDY
-          public_subdomain_name: agent
+          parent_zone_id: REPLACEME
+          public_subdomain_name: "{{ .config.prefix }}"
   - name: infra
     type: terraform
-    approve: minor
-    version: stable
+    approve: major
     vpc:
       attach: true
-      id: "{{ .ssm.net.main.vpc_id }}"
-      subnet_ids: |
-        [{{ .ssm.net.main.private_subnets }}]
-      security_group_ids: |
-        [{{ .ssm.net.main.pipeline_security_group }}]
     modules:
       - name: eks
         source: aws/eks
-        version: stable
         inputs:
+          eks_cluster_public: true
+          eks_main_min_size: 1
+          eks_main_max_size: 3
+          eks_main_volume_size: 100
+          eks_tools_desired_size: 1
+          eks_mon_max_size: 0
           cluster_enabled_log_types: |
             []
-          eks_api_access_cidrs: |
-            [{{ .ssm.net.main.private_subnet_cidrs }},{{ .ssm.net.main.public_subnet_cidrs }}]
-          eks_cluster_public: true
-          eks_db_max_size: 0
-          eks_main_max_size: 2
-          eks_main_desired_size: 2
-          eks_main_volume_size: 100
-          eks_main_instance_types: |
-            ["t3.xlarge"]
-          eks_spot_max_size: 0
-          eks_tools_desired_size: 1
-          eks_tools_max_size: 1
-          eks_tools_single_subnet: true
-          eks_tools_volume_size: 100
-          eks_tools_instance_types: |
-            ["t3.xlarge"]
-          eks_mon_max_size: 0
-          private_subnets: |
-            [{{ .ssm.net.main.private_subnets }}]
-          public_subnets: |
-            [{{ .ssm.net.main.public_subnets }}]
-          vpc_id: "{{ .ssm.net.main.vpc_id }}"
       - name: crossplane
         source: aws/crossplane
-        version: stable
-        inputs:
-          eks_oidc_provider: |
-            module.eks.oidc_provider
-          eks_oidc_provider_arn: |
-            module.eks.oidc_provider_arn
-  - name: applications
+  - name: apps
     type: argocd-apps
-    version: stable
-    approve: never
-    argocd_namespace: "argocd"
+    approve: major
     modules:
       - name: argocd
         source: argocd
-        version: stable
         inputs:
           argocd:
-            global:
-              domain: |
-                argocd.{{ ssm.net.dns.pub_domain }}
             server:
               ingress:
                 annotations:
                   alb.ingress.kubernetes.io/group.name: external
                   alb.ingress.kubernetes.io/scheme: internet-facing
-      - name: aws-alb-agent
+      - name: aws-alb-{{ .config.prefix }}
         source: aws-alb
-        version: stable
-        inputs:
-          global:
-            aws:
-              account: "{{ .ssm.infra.eks.account }}"
-              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
-          aws-load-balancer-controller:
-            clusterName: "{{ .ssm.infra.eks.cluster_name }}"
       - name: crossplane-system
         source: crossplane-core
-        version: stable
-      - name: crossplane-k8s
-        source: crossplane-k8s
-        version: stable
       - name: crossplane-aws
         source: crossplane-aws
-        version: stable
-        inputs:
-          global:
-            aws:
-              role: "{{ .ssm.infra.crossplane.iam_role }}"
-      - name: external-dns-agent
+      - name: external-dns-{{ .config.prefix }}
         source: external-dns
-        version: stable
-        inputs:
-          global:
-            aws:
-              account: "{{ .ssm.infra.eks.account }}"
-              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
-          external-dns:
-            image:
-              tag: "v0.14.0"
-            sources:
-              - service
-              - ingress
-              - istio-gateway
-              - istio-virtualservice
-            extraArgs:
-              - --metrics-address=:7979
-      - name: loki
-        source: loki
-        version: stable
-        inputs:
-          global:
-            region: "{{ .ssm.infra.eks.region }}"
-            bucketName: "{{ .config.prefix }}-entigo-loki-logs"
-            aws:
-              account: "{{ .ssm.infra.eks.account }}"
-              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
-          loki:
-            gateway:
-              ingress:
-                annotations:
-                  alb.ingress.kubernetes.io/group.name: external
-                  alb.ingress.kubernetes.io/scheme: internet-facing
-                hosts:
-                  - host: loki.{{ ssm.net.dns.pub_domain }}
-                    paths:
-                      - path: "/"
-                        pathType: "Prefix"
-            read:
-              replicas: 3
-            loki:
-              storage:
-                s3:
-                  region: "{{ .ssm.infra.eks.region }}"
-                bucketNames:
-                  chunks: "{{ .config.prefix }}-entigo-loki-logs"
-                  ruler: "{{ .config.prefix }}-entigo-loki-logs"
-                  admin: "{{ .config.prefix }}-entigo-loki-logs"
-              storage_config:
-                aws:
-                  region: "{{ .ssm.infra.eks.region }}"
-                  bucketnames: "{{ .config.prefix }}-entigo-loki-logs"
-      - name: prometheus
-        source: prometheus
-        version: stable
-        inputs:
-          prometheus:
-            server:
-              global:
-                scrape_interval: 30s
-              ingress:
-                annotations:
-                  alb.ingress.kubernetes.io/group.name: external
-                  alb.ingress.kubernetes.io/scheme: internet-facing
-                hosts:
-                  - prometheus.{{ ssm.net.dns.pub_domain }}
       - name: istio-base
         source: istio-base
-        version: stable
       - name: istio-system
         source: istio-istiod
-        version: stable
-        inputs:
-          istiod:
-            pilot:
-              traceSampling: 100
-      - name: istio-gateway
-        source: istio-gateway
-        version: stable
-        inputs:
-          global:
-            aws:
-              certificateArn: "{{ ssm.net.dns.pub_cert_arn }}"
-      - name: kiali
-        source: kiali
-        version: stable
-        inputs:
-          kiali-server:
-            auth:
-              strategy: "anonymous"
-            server:
-              web_fqdn: kiali.{{ ssm.net.dns.pub_domain }}
-            deployment:
-              ingress:
-                override_yaml:
-                  metadata:
-                    annotations:
-                      alb.ingress.kubernetes.io/group.name: external
-                      alb.ingress.kubernetes.io/scheme: internet-facing
       - name: aws-storageclass
         source: aws-storageclass
-        version: stable
       - name: metrics-server
         source: metrics-server
-        version: stable
-      - name: external-secrets-agent
+      - name: external-secrets-{{ .config.prefix }}
         source: external-secrets
-        version: stable
-        inputs:
-          global:
-            aws:
-              region: "{{ .ssm.infra.eks.region }}"
-              account: "{{ .ssm.infra.eks.account }}"
-              clusterOIDC: "{{ .ssm.infra.eks.oidc_provider }}"
