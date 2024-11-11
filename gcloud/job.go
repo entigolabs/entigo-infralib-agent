@@ -111,7 +111,8 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 						Spec: &runv1.TaskSpec{
 							TimeoutSeconds:     86400,
 							ServiceAccountName: b.serviceAccount,
-							MaxRetries:         1, // 0 retries is cut away by the yaml marshal and default is 3
+							MaxRetries:         0,
+							ForceSendFields:    []string{"MaxRetries"},
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,

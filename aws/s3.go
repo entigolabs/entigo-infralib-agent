@@ -26,8 +26,6 @@ type S3 struct {
 	repoMetadata *model.RepositoryMetadata
 }
 
-// TODO Use awsS3 Paginators
-
 func NewS3(ctx context.Context, awsConfig aws.Config, bucket string) *S3 {
 	return &S3{
 		ctx:    ctx,
