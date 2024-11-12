@@ -17,7 +17,6 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"io/fs"
 	"os"
-	k8syaml "sigs.k8s.io/yaml"
 	"strings"
 )
 
@@ -85,7 +84,7 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 
 func (b *Builder) createJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta) error {
 	job := b.GetJobManifest(projectName, command, bucket, stepName, step, image, templateMeta)
-	bytes, err := k8syaml.Marshal(job)
+	bytes, err := util.MarshalYamlWithJsonTags(job)
 	if err != nil {
 		return err
 	}

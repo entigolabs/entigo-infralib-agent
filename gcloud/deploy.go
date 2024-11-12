@@ -16,9 +16,9 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"gopkg.in/yaml.v3"
 	"log"
 	"os"
-	k8syaml "sigs.k8s.io/yaml"
 	"strings"
 	"time"
 )
@@ -26,28 +26,28 @@ import (
 const bucketFileFormat = "%s.tar.gz"
 
 type skaffold struct {
-	APIVersion string    `json:"apiVersion"`
-	Kind       string    `json:"kind"`
-	Metadata   metadata  `json:"metadata"`
-	Deploy     runDeploy `json:"deploy"`
-	Profiles   []profile `json:"profiles"`
+	APIVersion string    `yaml:"apiVersion"`
+	Kind       string    `yaml:"kind"`
+	Metadata   metadata  `yaml:"metadata"`
+	Deploy     runDeploy `yaml:"deploy"`
+	Profiles   []profile `yaml:"profiles"`
 }
 
 type metadata struct {
-	Name string `json:"name"`
+	Name string `yaml:"name"`
 }
 
 type runDeploy struct {
-	Cloudrun struct{} `json:"cloudrun"`
+	Cloudrun struct{} `yaml:"cloudrun"`
 }
 
 type profile struct {
-	Name      string    `json:"name"`
-	Manifests manifests `json:"manifests"`
+	Name      string    `yaml:"name"`
+	Manifests manifests `yaml:"manifests"`
 }
 
 type manifests struct {
-	RawYaml []string `json:"rawYaml"`
+	RawYaml []string `yaml:"rawYaml"`
 }
 
 type Pipeline struct {
@@ -242,7 +242,7 @@ func (p *Pipeline) createSkaffoldManifest(name, projectName, folder string, firs
 			{Name: string(secondCommand), Manifests: manifests{RawYaml: []string{fmt.Sprintf("%s-%s.yaml", projectName, secondCommand)}}},
 		},
 	}
-	bytes, err := k8syaml.Marshal(skaffoldManifest)
+	bytes, err := yaml.Marshal(skaffoldManifest)
 	if err != nil {
 		return err
 	}

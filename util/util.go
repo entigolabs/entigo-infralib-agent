@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/hashicorp/go-version"
@@ -204,4 +205,17 @@ func MinInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func MarshalYamlWithJsonTags(v interface{}) ([]byte, error) {
+	jsonBytes, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var jsonObj interface{}
+	err = yaml.Unmarshal(jsonBytes, &jsonObj)
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(jsonObj)
 }
