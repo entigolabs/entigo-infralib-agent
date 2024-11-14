@@ -216,6 +216,14 @@ func (g *gcloudService) CreateServiceAccount() {
 	if err != nil {
 		log.Fatalf("Failed to create secret manager: %s", err)
 	}
+	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
+	if err != nil {
+		log.Fatalf("Failed to create API usage service: %s", err)
+	}
+	err = apiUsage.EnableService("secretmanager.googleapis.com")
+	if err != nil {
+		log.Fatalf("Failed to enable services: %s", err)
+	}
 	account, created, err := iam.GetOrCreateServiceAccount(username, "Entigo infralib CI/CD service account")
 	if err != nil {
 		log.Fatalf("Failed to create service account: %s", err)

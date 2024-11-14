@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"google.golang.org/api/serviceusage/v1"
+	"strings"
 )
 
 type ApiUsage struct {
@@ -25,11 +26,13 @@ func NewApiUsage(ctx context.Context, projectId string) (*ApiUsage, error) {
 }
 
 func (a *ApiUsage) EnableServices(services []string) error {
-	for _, service := range services {
-		if err := a.EnableService(service); err != nil {
-			return err
-		}
+	_, err := a.service.Services.BatchEnable(fmt.Sprintf("projects/%s", a.projectId), &serviceusage.BatchEnableServicesRequest{
+		ServiceIds: services,
+	}).Do()
+	if err != nil {
+		return err
 	}
+	fmt.Printf("APIs enabled successfully: %s\n", strings.Join(services, ", "))
 	return nil
 }
 
