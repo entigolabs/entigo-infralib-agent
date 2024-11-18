@@ -123,6 +123,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 								Resources: &runv1.ResourceRequirements{
 									Limits: map[string]string{
 										"memory": "5Gi",
+										"cpu":    "6",
 									},
 								},
 							}},
@@ -187,6 +188,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 						Resources: &runpb.ResourceRequirements{
 							Limits: map[string]string{
 								"memory": "5Gi",
+								"cpu":    "6",
 							},
 						},
 					}},
