@@ -72,7 +72,7 @@ func (b *builder) CreateProject(projectName string, bucket string, stepName stri
 		ServiceRole:      aws.String(b.buildRoleArn),
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
-			ComputeType:              types.ComputeTypeBuildGeneral1Small,
+			ComputeType:              types.ComputeTypeBuildGeneral1Medium,
 			Image:                    aws.String(image),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
