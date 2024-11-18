@@ -129,7 +129,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 							Volumes: []*runv1.Volume{{
 								Name: "project",
 								EmptyDir: &runv1.EmptyDirVolumeSource{
-									SizeLimit: "1Gi",
+									SizeLimit: "4Gi",
 								},
 							}},
 						},
@@ -193,7 +193,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 					Volumes: []*runpb.Volume{{
 						Name: "project",
 						VolumeType: &runpb.Volume_EmptyDir{
-							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "1Gi"},
+							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "4Gi"},
 						},
 					}},
 				},
