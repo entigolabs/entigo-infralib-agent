@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	"log"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -182,7 +183,7 @@ func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[st
 	if err != nil {
 		var fileNotFoundError model.FileNotFoundError
 		if errors.As(err, &fileNotFoundError) {
-			log.Printf("Provider file not found for %s\n", providerName)
+			slog.Debug(fmt.Sprintf("Provider file not found for %s\n", providerName))
 			return []*hclwrite.Block{}, ""
 		}
 		return nil, ""
