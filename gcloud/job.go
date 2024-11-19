@@ -21,7 +21,7 @@ import (
 	"strings"
 )
 
-const tempFolder = "/tmp"
+var tempFolder = os.TempDir()
 
 type Builder struct {
 	ctx            context.Context

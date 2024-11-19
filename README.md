@@ -4,8 +4,9 @@ Entigo infralib agent prepares an AWS Account or Google Cloud Project for Entigo
 Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
 Executes pipelines which apply the specified Entigo infralib terraform modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 
-* [Compiling Source](#compiling-source)
 * [Requirements](#requirements)
+* [Compiling Source](#compiling-source)
+* [Installation](#installation)
 * [Docker](#docker)
     * [Building a local Docker image](#building-a-local-docker-image)
     * [Running the Docker image](#running-the-docker-image)
@@ -20,10 +21,6 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
   * [Overriding config values](#overriding-config-values)
   * [Including terraform files in steps](#including-terraform-files-in-steps)
 
-## Compiling Source
-
-```go build -o bin/ei-agent main.go```
-
 ## Requirements
 
 AWS Service Account with administrator access, credentials provided by AWS or environment variables.
@@ -31,6 +28,17 @@ AWS Service Account with administrator access, credentials provided by AWS or en
 or
 
 Google Cloud Service Account with owner access, credentials provided by GCP or gcloud cli tool.
+
+## Compiling Source
+
+```go build -o bin/ei-agent main.go```
+
+## Installation
+
+```go install github.com/entigolabs/entigo-infralib-agent@latest```
+
+This will build and install the binary to $(go env GOPATH)/bin directory. Make sure that the directory is in your PATH.
+When using this method, replace `ei-agent` with `entigo-infralib-agent` in the example commands.
 
 ## Docker
 
