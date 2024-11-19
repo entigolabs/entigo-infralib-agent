@@ -641,12 +641,12 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.Actio
 	if err != nil {
 		return nil, err
 	}
-	logs, err := p.cloudWatch.GetLogs(p.logGroup, fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId), 50)
+	logs, err := p.cloudWatch.GetLogs(p.logGroup, fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId), 500)
 	if err != nil {
 		return nil, err
 	}
-	for _, log := range logs {
-		changes, err := logParser(pipelineName, log)
+	for _, logRow := range logs {
+		changes, err := logParser(pipelineName, logRow)
 		if err != nil {
 			return nil, err
 		}

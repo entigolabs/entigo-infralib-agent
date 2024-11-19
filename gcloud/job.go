@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"io/fs"
+	"log"
 	"os"
 	"strings"
 )
@@ -361,7 +362,7 @@ func (b *Builder) updateJob(projectName string, stepName string, step model.Step
 }
 
 func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
-	fmt.Printf("Executing job %s\n", projectName)
+	log.Printf("Executing job %s\n", projectName)
 	job, err := b.getJob(projectName)
 	if err != nil {
 		return "", err
@@ -488,7 +489,7 @@ func (b *Builder) deleteJob(name string) error {
 	}
 	_, err = jobOp.Wait(b.ctx)
 	if err == nil {
-		fmt.Printf("Deleted job %s\n", name)
+		log.Printf("Deleted job %s\n", name)
 	}
 	return err
 }

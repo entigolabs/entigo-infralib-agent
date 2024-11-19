@@ -32,6 +32,7 @@ var planRegex = regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) t
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[string]*version.Version) ([]byte, map[string]model.Set[string], error)
+	AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion) error
 }
 
 type terraform struct {
@@ -51,7 +52,7 @@ func NewTerraform(providerType model.ProviderType, configSources []model.ConfigS
 }
 
 func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[string]*version.Version) ([]byte, map[string]model.Set[string], error) {
-	file, baseSource, err := t.findTerraformFile(providerPath, baseFile, sourceVersions)
+	file, baseSource, err := t.findProviderFile(providerPath, baseFile, sourceVersions)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -114,7 +115,7 @@ func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[s
 	return providersAttributes, nil
 }
 
-func (t *terraform) findTerraformFile(filePath string, fileName string, sourceVersions map[string]*version.Version) (*hclwrite.File, string, error) {
+func (t *terraform) findProviderFile(filePath string, fileName string, sourceVersions map[string]*version.Version) (*hclwrite.File, string, error) {
 	providerName := fmt.Sprintf("providers/%s", fileName)
 	sourceURL := ""
 	release := ""
@@ -133,23 +134,27 @@ func (t *terraform) findTerraformFile(filePath string, fileName string, sourceVe
 	if sourceURL == "" {
 		return nil, "", model.NewFileNotFoundError(fileName)
 	}
-	return t.getTerraformFile(sourceURL, filePath, fileName, release)
-}
-
-func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release string) (*hclwrite.File, string, error) {
-	rawFile, err := t.github.GetRawFileContent(sourceURL, fmt.Sprintf("%s/%s", filePath, fileName), release)
-	if err != nil {
-		return nil, "", err
-	}
-	file, err := UnmarshalTerraformFile(fileName, rawFile)
+	file, err := t.getTerraformFile(sourceURL, filePath, fileName, release)
 	if err != nil {
 		return nil, "", err
 	}
 	return file, sourceURL, nil
 }
 
+func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release string) (*hclwrite.File, error) {
+	rawFile, err := t.github.GetRawFileContent(sourceURL, fmt.Sprintf("%s/%s", filePath, fileName), release)
+	if err != nil {
+		return nil, err
+	}
+	file, err := UnmarshalTerraformFile(fileName, rawFile)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
 func (t *terraform) getProviderAttributes(module model.Module, version, sourceURL string) (map[string]*hclwrite.Attribute, error) {
-	file, _, err := t.getTerraformFile(sourceURL, fmt.Sprintf(moduleTemplate, module.Source), versionsFile, version)
+	file, err := t.getTerraformFile(sourceURL, fmt.Sprintf(moduleTemplate, module.Source), versionsFile, version)
 	if err != nil {
 		return nil, err
 	}
@@ -173,11 +178,11 @@ func getRequiredProvidersBlock(file *hclwrite.File) (*hclwrite.Block, error) {
 }
 
 func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[string]*version.Version) ([]*hclwrite.Block, string) {
-	providerFile, providerSource, err := t.findTerraformFile(providerPath, fmt.Sprintf("%s.tf", providerName), sourceVersions)
+	providerFile, providerSource, err := t.findProviderFile(providerPath, fmt.Sprintf("%s.tf", providerName), sourceVersions)
 	if err != nil {
 		var fileNotFoundError model.FileNotFoundError
 		if errors.As(err, &fileNotFoundError) {
-			fmt.Printf("Provider file not found for %s\n", providerName)
+			log.Printf("Provider file not found for %s\n", providerName)
 			return []*hclwrite.Block{}, ""
 		}
 		return nil, ""
@@ -343,7 +348,23 @@ func addProviderInputs(providerInputs map[string]interface{}, providerBlock *hcl
 	}
 }
 
-func AddInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
+func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion) error {
+	newModule := body.AppendNewBlock("module", []string{module.Name})
+	moduleBody := newModule.Body()
+	if util.IsClientModule(module) {
+		moduleBody.SetAttributeValue("source",
+			cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion.Version)))
+	} else {
+		moduleBody.SetAttributeValue("source",
+			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.SourceURL, module.Source,
+				moduleVersion.Version)))
+	}
+	moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", prefix, step.Name, module.Name)))
+	addInputs(module.Inputs, moduleBody)
+	return t.addOutputs(body, step.Type, module, moduleVersion.SourceURL, moduleVersion.Version)
+}
+
+func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 	if inputs == nil {
 		return
 	}
@@ -365,6 +386,28 @@ func AddInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 	}
 }
 
+func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, module model.Module, sourceURL, release string) error {
+	moduleSource := module.Source
+	if stepType == model.StepTypeArgoCD {
+		moduleSource = fmt.Sprintf("k8s/%s", module.Source)
+	}
+	filePath := fmt.Sprintf("modules/%s", moduleSource)
+	file, err := t.getTerraformFile(sourceURL, filePath, "outputs.tf", release)
+	if err != nil {
+		var fileError model.FileNotFoundError
+		if errors.As(err, &fileError) {
+			return nil
+		}
+		return err
+	}
+	for _, block := range file.Body().Blocks() {
+		outputBody := body.AppendNewBlock("output", []string{fmt.Sprintf("%s__%s", module.Name, block.Labels()[0])})
+		value := fmt.Sprintf("module.%s.%s", module.Name, block.Labels()[0])
+		outputBody.Body().SetAttributeRaw("value", getTokens(value))
+	}
+	return nil
+}
+
 func getTokens(value interface{}) hclwrite.Tokens {
 	return getBytesTokens([]byte(fmt.Sprintf("%v", value)))
 }
@@ -380,7 +423,7 @@ func getBytesTokens(bytes []byte) hclwrite.Tokens {
 
 func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File, error) {
 	hclFile, diags := hclwrite.ParseConfig(fileContent, fileName, hcl.InitialPos)
-	if diags.HasErrors() {
+	if diags != nil && diags.HasErrors() {
 		return nil, diags
 	}
 	return hclFile, nil
