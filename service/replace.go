@@ -225,7 +225,7 @@ func (u *updater) getParameter(match []string, replaceKey string, step, foundSte
 	if err != nil {
 		return "", err
 	}
-	if outputs != nil {
+	if len(outputs) > 0 {
 		key := fmt.Sprintf("%s__%s", module.Name, strings.Replace(match[1], "/", "_", -1))
 		output, found := outputs[key]
 		if found {
