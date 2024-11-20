@@ -227,7 +227,7 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Deleted delivery pipeline %s\n", projectName)
+	log.Printf("Deleted delivery pipeline %s\n", projectName)
 	return nil
 }
 
@@ -281,7 +281,7 @@ func (p *Pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Created delivery pipeline %s\n", pipelineName)
+	log.Printf("Created delivery pipeline %s\n", pipelineName)
 	return nil
 }
 
@@ -411,8 +411,8 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, execu
 		if err != nil {
 			return nil, err
 		}
-		log := entry.GetTextPayload()
-		changes, err := logParser(pipelineName, log)
+		logRow := entry.GetTextPayload()
+		changes, err := logParser(pipelineName, logRow)
 		if err != nil {
 			return nil, err
 		}
@@ -501,7 +501,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
+	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
 	err = p.waitForRollout(rollout, pipelineName, stepType, "", "", autoApprove, nil)
 	if err != nil {
 		return err
@@ -545,7 +545,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
+	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
 	err = p.waitForRollout(rollout, pipelineName, stepType, planJob, executionName, autoApprove, pipeChanges)
 	if err != nil {
 		return err

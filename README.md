@@ -4,8 +4,9 @@ Entigo infralib agent prepares an AWS Account or Google Cloud Project for Entigo
 Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
 Executes pipelines which apply the specified Entigo infralib terraform modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 
-* [Compiling Source](#compiling-source)
 * [Requirements](#requirements)
+* [Compiling Source](#compiling-source)
+* [Installation](#installation)
 * [Docker](#docker)
     * [Building a local Docker image](#building-a-local-docker-image)
     * [Running the Docker image](#running-the-docker-image)
@@ -20,10 +21,6 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
   * [Overriding config values](#overriding-config-values)
   * [Including terraform files in steps](#including-terraform-files-in-steps)
 
-## Compiling Source
-
-```go build -o bin/ei-agent main.go```
-
 ## Requirements
 
 AWS Service Account with administrator access, credentials provided by AWS or environment variables.
@@ -31,6 +28,17 @@ AWS Service Account with administrator access, credentials provided by AWS or en
 or
 
 Google Cloud Service Account with owner access, credentials provided by GCP or gcloud cli tool.
+
+## Compiling Source
+
+```go build -o bin/ei-agent main.go```
+
+## Installation
+
+```go install github.com/entigolabs/entigo-infralib-agent@latest```
+
+This will build and install the binary to $(go env GOPATH)/bin directory. Make sure that the directory is in your PATH.
+When using this method, replace `ei-agent` with `entigo-infralib-agent` in the example commands.
 
 ## Docker
 
@@ -251,9 +259,9 @@ Each step can set an approval type which lets agent decide when to auto approve 
 
 Step, module and input field values can be overwritten by using replacement tags `{{ }}`.
 
-Replacement tags can be overwritten by values that are stored in the AWS SSM Parameter Store `ssm` and Google Cloud Secret Manager `gcsm`, config itself or custom agent logic. It's also possible to use the keyword `output` instead to let agent choose the correct service for getting the value. There's also a special type based keyword `toutput` that uses an output from the specified type of step.
+Replacement tags can be overwritten by values from terraform output, config itself or custom agent logic. If the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager. For output values it's possible to use the keywords `ssm`, `gcsm` and `output`. There's also a special type based keyword `toutput` that uses the output from a module with the specified type instead of a name.
 
-For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten by the value of the SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1/key-2`.
+For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten with the value from terraform output. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1/key-2`.
 If the parameter type is StringList then it's possible to use an index to get a specific value, e.g `{{ .ssm.stepName.moduleName.key-1/key-2[0] }}` or a slice by using a range, e.g [0-1].
 
 It's possible to build a custom array by using yaml multiline string, even mixing replaced values with inputted values. For example creating a list of strings for terraform:

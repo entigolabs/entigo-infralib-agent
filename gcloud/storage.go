@@ -148,6 +148,16 @@ func (g *GStorage) GetFile(file string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
+func (g *GStorage) DeleteFiles(files []string) error {
+	for _, file := range files {
+		err := g.bucketHandle.Object(file).Delete(g.ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (g *GStorage) DeleteFile(file string) error {
 	err := g.bucketHandle.Object(file).Delete(g.ctx)
 	if err == nil {

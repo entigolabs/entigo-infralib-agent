@@ -1,26 +1,22 @@
-FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 WORKDIR /go/ei-agent
-RUN apk add --no-cache build-base
 COPY go.* ./
 RUN go mod download
-COPY . ./
+COPY . .
 ARG GITHUB_SHA=main
 ARG VERSION=latest
-ARG TARGETPLATFORM=linux/amd64
+ARG TARGETARCH=amd64
+ARG TARGETOS=linux
+RUN --mount=target=. \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg \
+    GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -ldflags \
+     "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
+      -X github.com/entigolabs/entigo-infralib-agent/common.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+      -X github.com/entigolabs/entigo-infralib-agent/common.gitCommit=${GITHUB_SHA} \
+               -extldflags -static" -o /out/ei-agent main.go
 
-RUN set +x; if [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
-      GOOS=linux GOARCH=arm64 go build -ldflags "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
-                           -X github.com/entigolabs/entigo-infralib-agent/common.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-                           -X github.com/entigolabs/entigo-infralib-agent/common.gitCommit=${GITHUB_SHA} \
-           -extldflags -static" -o bin/ei-agent main.go; \
-    elif [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
-      GOOS=linux GOARCH=amd64 go build -ldflags "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
-                           -X github.com/entigolabs/entigo-infralib-agent/common.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-                           -X github.com/entigolabs/entigo-infralib-agent/common.gitCommit=${GITHUB_SHA} \
-          -linkmode external -extldflags -static" -o bin/ei-agent main.go; \
-    fi
-
-FROM --platform=${BUILDPLATFORM:-linux/amd64} alpine:3
+FROM --platform=$BUILDPLATFORM alpine:3
 WORKDIR /etc/ei-agent
-COPY --from=build /go/ei-agent/bin/ei-agent /usr/bin/
+COPY --from=build /out/ei-agent /usr/bin/
 CMD ["ei-agent", "run"]

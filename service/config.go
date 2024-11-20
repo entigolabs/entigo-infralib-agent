@@ -11,7 +11,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -51,51 +50,6 @@ func GetConfig(prefix, configFile string, bucket model.Bucket) model.Config {
 		config = GetRemoteConfig(prefix, bucket)
 	}
 	return config
-}
-
-func replaceConfigValues(prefix string, config *model.Config) {
-	configYaml, err := yaml.Marshal(config)
-	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
-	}
-	modifiedConfigYaml, err := replaceConfigTags(prefix, *config, string(configYaml))
-	if err != nil {
-		log.Fatalf("Failed to replace tags in config")
-	}
-	err = yaml.Unmarshal([]byte(modifiedConfigYaml), config)
-	if err != nil {
-		log.Fatalf("Failed to unmarshal modified config: %s", err)
-	}
-}
-
-func replaceConfigTags(prefix string, config model.Config, content string) (string, error) {
-	re := regexp.MustCompile(replaceRegex)
-	matches := re.FindAllStringSubmatch(content, -1)
-	if len(matches) == 0 {
-		return content, nil
-	}
-	for _, match := range matches {
-		if len(match) != 2 {
-			return "", fmt.Errorf("failed to parse replace tag match %s", match[0])
-		}
-		replaceTag := match[0]
-		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
-		if replaceType != string(model.ReplaceTypeConfig) {
-			continue
-		}
-		configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
-		if configKey == "prefix" {
-			content = strings.Replace(content, replaceTag, prefix, 1)
-			continue
-		}
-		configValue, err := util.GetValueFromStruct(configKey, config)
-		if err != nil {
-			return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
-		}
-		content = strings.Replace(content, replaceTag, configValue, 1)
-	}
-	return content, nil
 }
 
 func GetLocalConfig(prefix, configFile string, bucket model.Bucket) model.Config {
@@ -559,6 +513,7 @@ func removeUnusedSteps(prefix string, config model.Config, state *model.State, b
 		}
 		if !stepFound {
 			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
+			log.Printf("Removing unused step %s files", stepState.Name)
 			removeUnusedFiles(bucket, fmt.Sprintf("steps/%s-%s", prefix, stepState.Name))
 			removeUnusedFiles(bucket, fmt.Sprintf("config/%s", stepState.Name))
 		}
@@ -589,11 +544,9 @@ func removeUnusedFiles(bucket model.Bucket, folder string) {
 		common.PrintWarning(fmt.Sprintf("Failed to list files in unused folder %s: %v", folder, err))
 		return
 	}
-	for _, file := range stepFiles {
-		err = bucket.DeleteFile(file)
-		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Failed to delete unused file %s: %v", file, err))
-		}
+	err = bucket.DeleteFiles(stepFiles)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete unused files in folder %s: %v", folder, err))
 	}
 }
 

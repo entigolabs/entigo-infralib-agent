@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"google.golang.org/api/serviceusage/v1"
+	"log"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ func (a *ApiUsage) EnableServices(services []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("APIs enabled successfully: %s\n", strings.Join(services, ", "))
+	log.Printf("APIs enabled successfully: %s\n", strings.Join(services, ", "))
 	return nil
 }
 
@@ -42,6 +43,6 @@ func (a *ApiUsage) EnableService(service string) error {
 	if err != nil {
 		return fmt.Errorf("error enabling API %s: %v", service, err)
 	}
-	fmt.Printf("API %s enabled successfully\n", service)
+	log.Printf("API %s enabled successfully\n", service)
 	return nil
 }
