@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,6 +49,7 @@ type updater struct {
 	terraform     terraform.Terraform
 	github        github.Github
 	state         *model.State
+	stateLock     sync.Mutex
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
@@ -327,6 +329,9 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 }
 
 func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeCounter, errChan chan<- error) {
+	if len(retrySteps) == 0 {
+		return
+	}
 	u.allowParallel = false
 	for _, step := range retrySteps {
 		log.Printf("Retrying step %s\n", step.Name)
@@ -336,31 +341,28 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 			log.Fatalf("Failed to apply step %s", step.Name)
 		}
 	}
-	if len(retrySteps) > 0 {
-		u.putStateFileOrDie()
-	}
+	u.putStateFileOrDie()
 }
 
 func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error) error {
 	if !executePipelines {
 		return nil
 	}
-	err := u.putStateFile()
+	err := u.putStateFileWithLock()
 	if err != nil {
 		return err
 	}
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			fmt.Printf("Skipping step %s\n", step.Name)
-			u.updateStepState(stepState)
-			return nil
+			return u.putAppliedStateFile(stepState)
 		}
 		return u.executePipeline(firstRun, step, stepState, index)
 	}
 	if !u.allowParallel {
 		return u.executePipeline(firstRun, step, stepState, index)
 	}
-	parallelExecution, err := u.appliedVersionMatchesRelease(step, stepState, index)
+	parallelExecution, err := u.appliedVersionMatchesRelease(step, *stepState, index)
 	if err != nil {
 		return err
 	}
@@ -462,7 +464,7 @@ func (u *updater) getChangedModules(step model.Step) []string {
 	return changed
 }
 
-func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState *model.StateStep, index int) (bool, error) {
+func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.StateStep, index int) (bool, error) {
 	for _, moduleState := range stepState.Modules {
 		if moduleState.Type != nil && *moduleState.Type == model.ModuleTypeCustom {
 			continue
@@ -488,9 +490,9 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	log.Printf("applying release for step %s\n", step.Name)
 	var err error
 	if firstRun {
-		err = u.createExecuteStepPipelines(step, stepState, index)
+		err = u.createExecuteStepPipelines(step, *stepState, index)
 	} else {
-		err = u.executeStepPipelines(step, stepState, index)
+		err = u.executeStepPipelines(step, *stepState, index)
 	}
 	if err != nil {
 		return err
@@ -537,7 +539,7 @@ func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]mod
 	return true, nil, nil
 }
 
-func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, index int) error {
+func (u *updater) createExecuteStepPipelines(step model.Step, stepState model.StateStep, index int) error {
 	bucket := u.resources.GetBucket()
 	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
@@ -579,7 +581,7 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	return nil
 }
 
-func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, index int) error {
+func (u *updater) executeStepPipelines(step model.Step, stepState model.StateStep, index int) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	vpcConfig := getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
@@ -604,7 +606,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateSt
 	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step.Type)
 }
 
-func getAutoApprove(state *model.StateStep) bool {
+func getAutoApprove(state model.StateStep) bool {
 	for _, module := range state.Modules {
 		if !module.AutoApprove {
 			return false
@@ -921,20 +923,22 @@ func (u *updater) putStateFile() error {
 	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
-func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
-	u.updateStepState(stepState)
-	bytes, err := yaml.Marshal(u.state)
-	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
-	}
-	return u.resources.GetBucket().PutFile(stateFile, bytes)
+func (u *updater) putStateFileWithLock() error {
+	u.stateLock.Lock()
+	defer u.stateLock.Unlock()
+
+	return u.putStateFile()
 }
 
-func (u *updater) updateStepState(stepState *model.StateStep) {
+func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
+	u.stateLock.Lock()
+	defer u.stateLock.Unlock()
+
 	stepState.AppliedAt = time.Now()
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
+	return u.putStateFile()
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
@@ -983,6 +987,9 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 }
 
 func (u *updater) getModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
+	u.stateLock.Lock()
+	defer u.stateLock.Unlock()
+
 	moduleVersions := make(map[string]model.ModuleVersion)
 	for _, module := range step.Modules {
 		moduleVersion, changed, err := u.getModuleVersion(module, stepState, index, step.Approve)

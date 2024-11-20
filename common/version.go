@@ -1,7 +1,7 @@
 package common
 
 import (
-	"fmt"
+	"log"
 )
 
 // Version information set by link flags during build. We fall back to these sane
@@ -40,10 +40,10 @@ func getVersion() Version {
 
 func PrintVersion() {
 	version := getVersion()
-	fmt.Printf("agent: %s\n", version)
-	fmt.Printf("  BuildDate: %s\n", version.BuildDate)
-	fmt.Printf("  GitCommit: %s\n", version.GitCommit)
+	log.Printf("agent: %s\n", version)
+	log.Printf("  BuildDate: %s\n", version.BuildDate)
+	log.Printf("  GitCommit: %s\n", version.GitCommit)
 	if version.GitTag != "" {
-		fmt.Printf("  GitTag: %s\n", version.GitTag)
+		log.Printf("  GitTag: %s\n", version.GitTag)
 	}
 }

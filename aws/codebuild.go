@@ -12,6 +12,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
 	"log"
+	"strings"
 )
 
 type BuildSpec struct {
@@ -259,12 +260,19 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		return fmt.Errorf("failed to update CodeBuild project %s: %w", projectName, err)
 	}
 
-	if awsVpcConfig != nil && awsVpcConfig.VpcId != nil {
-		log.Printf("updated CodeBuild project %s image to %s and vpc to %s\n", projectName, image,
-			*awsVpcConfig.VpcId)
-	} else if imageChanged {
-		log.Printf("updated CodeBuild project %s image to %s\n", projectName, image)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("updated CodeBuild project %s", projectName))
+	if imageChanged {
+		sb.WriteString(fmt.Sprintf(" image to %s", image))
 	}
+	if vpcChanged {
+		if awsVpcConfig.VpcId != nil {
+			sb.WriteString(fmt.Sprintf(" vpc to %s", *awsVpcConfig.VpcId))
+		} else {
+			sb.WriteString(" removed vpc")
+		}
+	}
+	log.Println(sb.String())
 	return nil
 }
 
