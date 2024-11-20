@@ -39,6 +39,7 @@ type Bucket interface {
 	PutFile(file string, content []byte) error
 	GetFile(file string) ([]byte, error)
 	DeleteFile(file string) error
+	DeleteFiles(files []string) error
 	CheckFolderExists(folder string) (bool, error)
 	ListFolderFiles(folder string) ([]string, error)
 	ListFolderFilesWithExclude(folder string, excludeFolders Set[string]) ([]string, error)

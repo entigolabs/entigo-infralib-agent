@@ -286,7 +286,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	if err != nil {
 		return false, err
 	}
-	moduleVersions, err := u.getModuleVersions(step, stepState, index)
+	moduleVersions, err := u.updateModuleVersions(step, stepState, index)
 	if err != nil {
 		return false, err
 	}
@@ -341,10 +341,6 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error) error {
 	if !executePipelines {
 		return nil
-	}
-	err := u.putStateFileWithLock()
-	if err != nil {
-		return err
 	}
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
@@ -917,13 +913,6 @@ func (u *updater) putStateFile() error {
 	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
-func (u *updater) putStateFileWithLock() error {
-	u.stateLock.Lock()
-	defer u.stateLock.Unlock()
-
-	return u.putStateFile()
-}
-
 func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
 	u.stateLock.Lock()
 	defer u.stateLock.Unlock()
@@ -973,7 +962,7 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 		appBytes)
 }
 
-func (u *updater) getModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
+func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
 	u.stateLock.Lock()
 	defer u.stateLock.Unlock()
 
@@ -988,6 +977,10 @@ func (u *updater) getModuleVersions(step model.Step, stepState *model.StateStep,
 			Changed:   changed,
 			SourceURL: u.moduleSources[module.Source],
 		}
+	}
+	err := u.putStateFile()
+	if err != nil {
+		return nil, err
 	}
 	return moduleVersions, nil
 }

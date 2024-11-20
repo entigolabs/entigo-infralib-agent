@@ -513,6 +513,7 @@ func removeUnusedSteps(prefix string, config model.Config, state *model.State, b
 		}
 		if !stepFound {
 			state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
+			log.Printf("Removing unused step %s files", stepState.Name)
 			removeUnusedFiles(bucket, fmt.Sprintf("steps/%s-%s", prefix, stepState.Name))
 			removeUnusedFiles(bucket, fmt.Sprintf("config/%s", stepState.Name))
 		}
@@ -543,11 +544,9 @@ func removeUnusedFiles(bucket model.Bucket, folder string) {
 		common.PrintWarning(fmt.Sprintf("Failed to list files in unused folder %s: %v", folder, err))
 		return
 	}
-	for _, file := range stepFiles {
-		err = bucket.DeleteFile(file)
-		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Failed to delete unused file %s: %v", file, err))
-		}
+	err = bucket.DeleteFiles(stepFiles)
+	if err != nil {
+		common.PrintWarning(fmt.Sprintf("Failed to delete unused files in folder %s: %v", folder, err))
 	}
 }
 

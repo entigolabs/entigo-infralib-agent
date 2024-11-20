@@ -125,6 +125,23 @@ func (s *S3) GetFile(file string) ([]byte, error) {
 	return io.ReadAll(output.Body)
 }
 
+func (s *S3) DeleteFiles(files []string) error {
+	if len(files) == 0 {
+		return nil
+	}
+	var objects []types.ObjectIdentifier
+	for _, file := range files {
+		objects = append(objects, types.ObjectIdentifier{
+			Key: aws.String(file),
+		})
+	}
+	_, err := s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
+		Bucket: aws.String(s.bucket),
+		Delete: &types.Delete{Objects: objects},
+	})
+	return checkNotFoundError(err)
+}
+
 func (s *S3) DeleteFile(file string) error {
 	_, err := s.awsS3.DeleteObject(s.ctx, &awsS3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
