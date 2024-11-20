@@ -181,6 +181,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 	if err != nil {
 		log.Fatalf("Failed to create service account: %s", err)
 	}
+	time.Sleep(1 * time.Second) // Adding roles immediately after account creation may fail with SA does not exist
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
 		"roles/iam.serviceAccountAdmin"})
 	if err != nil {
@@ -232,6 +233,7 @@ func (g *gcloudService) CreateServiceAccount() {
 		log.Printf("Service account %s already exists\n", account.Name)
 		return
 	}
+	time.Sleep(1 * time.Second) // Adding roles immediately after account creation may fail with SA does not exist
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
 	if err != nil {
 		log.Fatalf("Failed to add roles to service account: %s", err)
