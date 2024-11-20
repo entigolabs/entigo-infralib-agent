@@ -14,6 +14,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -538,6 +539,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		if execution.PipelineExecution.Status != types.PipelineExecutionStatusInProgress {
 			return getExecutionResult(execution.PipelineExecution.Status)
 		}
+		p.stopPreviousExecution(pipelineName, *executionId)
 		executionsList, err := p.codePipeline.ListActionExecutions(p.ctx, &codepipeline.ListActionExecutionsInput{
 			PipelineName: aws.String(pipelineName),
 			Filter:       &types.ActionExecutionFilter{PipelineExecutionId: executionId},
@@ -592,6 +594,31 @@ func getExecutionResult(status types.PipelineExecutionStatus) error {
 		return nil
 	}
 	return fmt.Errorf("unknown pipeline execution status %s", status)
+}
+
+func (p *Pipeline) stopPreviousExecution(pipelineName string, executionId string) {
+	state, err := p.codePipeline.GetPipelineState(p.ctx, &codepipeline.GetPipelineStateInput{
+		Name: aws.String(pipelineName),
+	})
+	if err != nil {
+		slog.Debug(fmt.Sprintf("Couldn't get pipeline state for %s: %s", pipelineName, err.Error()))
+		return
+	}
+	for _, stage := range state.StageStates {
+		if *stage.StageName != approveStageName {
+			continue
+		}
+		if stage.InboundExecution == nil || *stage.InboundExecution.PipelineExecutionId != executionId ||
+			stage.LatestExecution == nil || stage.LatestExecution.Status != types.StageExecutionStatusInProgress {
+			return
+		}
+		previousId := *stage.LatestExecution.PipelineExecutionId
+		log.Printf("Stopping previous pipeline %s\n", pipelineName)
+		err = p.stopPipelineExecution(pipelineName, previousId, "New pipeline execution started")
+		if err != nil {
+			slog.Warn(fmt.Sprintf("Couldn't stop previous pipeline %s execution %s, please stop it manually, error: %s", pipelineName, previousId, err.Error()))
+		}
+	}
 }
 
 func (p *Pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.PipelineChanges, approved *bool, autoApprove bool) (*model.PipelineChanges, *bool, error) {
