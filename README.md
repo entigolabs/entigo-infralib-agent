@@ -280,6 +280,6 @@ Agent example `{{ .agent.version.step.module }}` will be overwritten by the valu
 
 Infralib modules may use `{{ .tmodule.type }}` in their default input files to replace it with the name of the module used in the config.
 
-### Including terraform files in steps
+### Including files in steps
 
-It's possible to include terraform files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. Files will be copied into the step directory which is used by terraform as step context.
+It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and a named file for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.

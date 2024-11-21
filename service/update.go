@@ -769,7 +769,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, err
 	}
-	err = u.updateIncludedStepFiles(step)
+	err = u.updateIncludedTFStepFiles(step)
 	if err != nil {
 		return false, nil, err
 	}
@@ -844,7 +844,11 @@ func (u *updater) createArgoCDFiles(step model.Step, moduleVersions map[string]m
 		}
 		activeModules.Add(module.Name)
 	}
-	err := u.removeUnusedArgoCDApps(step, activeModules)
+	files, err := u.updateIncludedAppsStepFiles(step)
+	if err != nil {
+		return false, err
+	}
+	err = u.removeUnusedArgoCDApps(step, activeModules, files)
 	return executePipeline, err
 }
 
@@ -868,7 +872,8 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 			return false, err
 		}
 	}
-	return executePipeline, nil
+	_, err := u.updateIncludedAppsStepFiles(step)
+	return executePipeline, err
 }
 
 func getModuleInputBytes(module model.Module) ([]byte, error) {
@@ -1045,17 +1050,15 @@ func (u *updater) getModuleSource(moduleSource string) *model.Source {
 	return u.sources[sourceUrl]
 }
 
-func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string]) error {
+func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string], includedFiles model.Set[string]) error {
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	files, err := u.resources.GetBucket().ListFolderFiles(folder)
 	if err != nil {
 		return err
 	}
 	for _, file := range files {
-		if !strings.HasSuffix(file, ".yaml") {
-			continue
-		}
-		if modules.Contains(strings.TrimPrefix(strings.TrimSuffix(file, ".yaml"), folder+"/")) {
+		relativeFile := strings.TrimPrefix(file, folder+"/")
+		if modules.Contains(strings.TrimSuffix(relativeFile, ".yaml")) || includedFiles.Contains(relativeFile) {
 			continue
 		}
 		err = u.resources.GetBucket().DeleteFile(file)
@@ -1140,7 +1143,21 @@ func getChecksums(githubClient github.Github, sourceURL string, release string) 
 	return checksums, nil
 }
 
-func (u *updater) updateIncludedStepFiles(step model.Step) error {
+func (u *updater) updateIncludedAppsStepFiles(step model.Step) (model.Set[string], error) {
+	files := model.Set[string]{}
+	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
+	for _, file := range step.Files {
+		target := fmt.Sprintf("%s/%s", folder, file.Name)
+		err := u.resources.GetBucket().PutFile(target, file.Content)
+		if err != nil {
+			return nil, err
+		}
+		files.Add(target)
+	}
+	return files, nil
+}
+
+func (u *updater) updateIncludedTFStepFiles(step model.Step) error {
 	files := model.Set[string]{}
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for _, file := range step.Files {
@@ -1157,7 +1174,7 @@ func (u *updater) updateIncludedStepFiles(step model.Step) error {
 	}
 	for _, file := range folderFiles {
 		relativeFile := strings.TrimPrefix(file, folder+"/")
-		if ReservedFiles.Contains(relativeFile) {
+		if ReservedTFFiles.Contains(relativeFile) {
 			continue
 		}
 		if !files.Contains(file) {

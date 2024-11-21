@@ -22,7 +22,8 @@ const (
 	terraformCache = ".terraform"
 )
 
-var ReservedFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
+var ReservedTFFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
+var ReservedAppsFiles = model.ToSet([]string{"argocd.yaml"})
 
 func GetProviderPrefix(flags *common.Flags) string {
 	prefix := flags.Prefix
@@ -56,6 +57,7 @@ func GetLocalConfig(prefix, configFile string, bucket model.Bucket) model.Config
 	config := getLocalConfigFile(configFile)
 	PutConfig(bucket, config)
 	replaceConfigValues(prefix, &config)
+	reserveAppsFiles(config)
 	basePath := filepath.Dir(configFile) + "/"
 	AddStepsFilesFromFolder(&config, basePath)
 	AddModuleInputFiles(&config, basePath, os.ReadFile)
@@ -76,15 +78,23 @@ func getLocalConfigFile(configFile string) model.Config {
 	return config
 }
 
+func reserveAppsFiles(config model.Config) {
+	for _, step := range config.Steps {
+		if step.Type != model.StepTypeArgoCD {
+			continue
+		}
+		for _, module := range step.Modules {
+			ReservedAppsFiles.Add(fmt.Sprintf("%s.yaml", module.Name))
+		}
+	}
+}
+
 func AddStepsFilesFromFolder(config *model.Config, basePath string) {
 	if config.Steps == nil {
 		return
 	}
 	for i := range config.Steps {
 		step := &config.Steps[i]
-		if step.Type != model.StepTypeTerraform {
-			continue
-		}
 		addStepFilesFromFolder(step, basePath, fmt.Sprintf(IncludeFormat, step.Name))
 	}
 }
@@ -99,8 +109,10 @@ func addStepFilesFromFolder(step *model.Step, basePath, folder string) {
 			addStepFilesFromFolder(step, basePath, fmt.Sprintf("%s/%s", folder, entry.Name()))
 			continue
 		}
-		if ReservedFiles.Contains(entry.Name()) {
-			log.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
+		if step.Type == model.StepTypeTerraform && ReservedTFFiles.Contains(entry.Name()) {
+			log.Fatalf("Can't include files %s in step %s", ReservedTFFiles, step.Name)
+		} else if step.Type == model.StepTypeArgoCD && ReservedAppsFiles.Contains(entry.Name()) {
+			log.Fatalf("Can't include files %s in step %s", ReservedAppsFiles, step.Name)
 		}
 		filePath := fmt.Sprintf("%s/%s", folder, entry.Name())
 		fileBytes, err := os.ReadFile(basePath + filePath)
@@ -204,6 +216,7 @@ func putStepFiles(bucket model.Bucket, step model.Step) {
 func GetRemoteConfig(prefix string, bucket model.Bucket) model.Config {
 	config := getRemoteConfigFile(bucket)
 	replaceConfigValues(prefix, &config)
+	reserveAppsFiles(config)
 	AddStepsFilesFromBucket(&config, bucket)
 	AddModuleInputFiles(&config, "", bucket.GetFile)
 	return config
@@ -231,9 +244,6 @@ func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) {
 	}
 	for i := range config.Steps {
 		step := &config.Steps[i]
-		if step.Type != model.StepTypeTerraform {
-			continue
-		}
 		addStepFilesFromBucket(step, bucket)
 	}
 }
@@ -245,8 +255,10 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 		log.Fatalf("Failed to list folder files: %s", err)
 	}
 	for _, file := range files {
-		if ReservedFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
-			log.Fatalf("Can't include files %s in step %s", ReservedFiles, step.Name)
+		if step.Type == model.StepTypeTerraform && ReservedTFFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
+			log.Fatalf("Can't include files %s in step %s", ReservedTFFiles, step.Name)
+		} else if step.Type == model.StepTypeArgoCD && ReservedAppsFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
+			log.Fatalf("Can't include files %s in step %s", ReservedAppsFiles, step.Name)
 		}
 		fileBytes, err := bucket.GetFile(file)
 		if err != nil {
