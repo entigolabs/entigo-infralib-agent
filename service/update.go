@@ -1058,7 +1058,7 @@ func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[stri
 	}
 	for _, file := range files {
 		relativeFile := strings.TrimPrefix(file, folder+"/")
-		if modules.Contains(strings.TrimSuffix(relativeFile, ".yaml")) || includedFiles.Contains(relativeFile) {
+		if modules.Contains(strings.TrimSuffix(relativeFile, ".yaml")) || includedFiles.Contains(file) {
 			continue
 		}
 		err = u.resources.GetBucket().DeleteFile(file)

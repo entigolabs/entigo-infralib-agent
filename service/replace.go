@@ -54,7 +54,11 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 	}
 	for _, file := range step.Files {
 		if !strings.HasSuffix(file.Name, ".tf") && !strings.HasSuffix(file.Name, ".yaml") &&
-			!strings.HasSuffix(file.Name, ".hcl") {
+			!strings.HasSuffix(file.Name, ".yml") && !strings.HasSuffix(file.Name, ".hcl") {
+			modifiedStep.Files = append(modifiedStep.Files, model.File{
+				Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
+				Content: file.Content,
+			})
 			continue
 		}
 		newContent, err := u.replaceStringValues(step, string(file.Content), index, cache)
@@ -80,7 +84,7 @@ func validateStepFile(file string, content []byte) error {
 		if diags.HasErrors() {
 			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}
-	} else if strings.HasSuffix(file, ".yaml") {
+	} else if strings.HasSuffix(file, ".yaml") || strings.HasSuffix(file, ".yml") {
 		var yamlContent map[string]interface{}
 		err := yaml.Unmarshal(content, &yamlContent)
 		if err != nil {
