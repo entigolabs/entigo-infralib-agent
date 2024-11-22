@@ -513,7 +513,7 @@ func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]mod
 		execute, _, err := u.createTerraformFiles(step, moduleVersions, index)
 		return execute, err
 	case model.StepTypeArgoCD:
-		return u.createArgoCDFiles(step, moduleVersions)
+		return u.updateArgoCDFiles(step, moduleVersions)
 	}
 	return true, nil
 }
@@ -769,7 +769,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, err
 	}
-	err = u.updateIncludedTFStepFiles(step)
+	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache}))
 	if err != nil {
 		return false, nil, err
 	}
@@ -823,9 +823,8 @@ func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]m
 	return sourceVersions, nil
 }
 
-func (u *updater) createArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
+func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
 	executePipeline := false
-	activeModules := model.NewSet[string]()
 	for _, module := range step.Modules {
 		moduleVersion, found := moduleVersions[module.Name]
 		if !found {
@@ -838,41 +837,13 @@ func (u *updater) createArgoCDFiles(step model.Step, moduleVersions map[string]m
 		if err != nil {
 			return false, err
 		}
-		err = u.createArgoCDApp(module, step, moduleVersion.Version, inputBytes)
-		if err != nil {
-			return false, err
-		}
-		activeModules.Add(module.Name)
-	}
-	files, err := u.updateIncludedAppsStepFiles(step)
-	if err != nil {
-		return false, err
-	}
-	err = u.removeUnusedArgoCDApps(step, activeModules, files)
-	return executePipeline, err
-}
-
-func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
-	executePipeline := false
-	for _, module := range step.Modules {
-		moduleVersion, found := moduleVersions[module.Name]
-		if !found {
-			return false, fmt.Errorf("module %s version not found", module.Name)
-		}
-		if !moduleVersion.Changed {
-			continue
-		}
-		inputBytes, err := getModuleInputBytes(module)
-		if err != nil {
-			return false, err
-		}
 		executePipeline = true
 		err = u.createArgoCDApp(module, step, moduleVersion.Version, inputBytes)
 		if err != nil {
 			return false, err
 		}
 	}
-	_, err := u.updateIncludedAppsStepFiles(step)
+	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet[string]())
 	return executePipeline, err
 }
 
@@ -1157,7 +1128,7 @@ func (u *updater) updateIncludedAppsStepFiles(step model.Step) (model.Set[string
 	return files, nil
 }
 
-func (u *updater) updateIncludedTFStepFiles(step model.Step) error {
+func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string]) error {
 	files := model.Set[string]{}
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for _, file := range step.Files {
@@ -1168,13 +1139,13 @@ func (u *updater) updateIncludedTFStepFiles(step model.Step) error {
 		}
 		files.Add(target)
 	}
-	folderFiles, err := u.resources.GetBucket().ListFolderFilesWithExclude(folder, model.ToSet([]string{terraformCache}))
+	folderFiles, err := u.resources.GetBucket().ListFolderFilesWithExclude(folder, excludedFolders)
 	if err != nil {
 		return err
 	}
 	for _, file := range folderFiles {
 		relativeFile := strings.TrimPrefix(file, folder+"/")
-		if ReservedTFFiles.Contains(relativeFile) {
+		if reservedFiles.Contains(relativeFile) {
 			continue
 		}
 		if !files.Contains(file) {
