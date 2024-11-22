@@ -1021,25 +1021,6 @@ func (u *updater) getModuleSource(moduleSource string) *model.Source {
 	return u.sources[sourceUrl]
 }
 
-func (u *updater) removeUnusedArgoCDApps(step model.Step, modules model.Set[string], includedFiles model.Set[string]) error {
-	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
-	files, err := u.resources.GetBucket().ListFolderFiles(folder)
-	if err != nil {
-		return err
-	}
-	for _, file := range files {
-		relativeFile := strings.TrimPrefix(file, folder+"/")
-		if modules.Contains(strings.TrimSuffix(relativeFile, ".yaml")) || includedFiles.Contains(file) {
-			continue
-		}
-		err = u.resources.GetBucket().DeleteFile(file)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step, bucket)
