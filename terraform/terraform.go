@@ -27,6 +27,7 @@ const (
 	base           = "base"
 	versionsFile   = "versions.tf"
 	awsTagsRegex   = `(\w+)\s*=\s*"([^"]+)"`
+	outputType     = "output"
 )
 
 var planRegex = regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
@@ -402,7 +403,10 @@ func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, mod
 		return err
 	}
 	for _, block := range file.Body().Blocks() {
-		outputBody := body.AppendNewBlock("output", []string{fmt.Sprintf("%s__%s", module.Name, block.Labels()[0])})
+		if block.Type() != outputType {
+			continue
+		}
+		outputBody := body.AppendNewBlock(outputType, []string{fmt.Sprintf("%s__%s", module.Name, block.Labels()[0])})
 		value := fmt.Sprintf("module.%s.%s", module.Name, block.Labels()[0])
 		outputBody.Body().SetAttributeRaw("value", getTokens(value))
 	}
