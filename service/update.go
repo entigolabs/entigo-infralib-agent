@@ -16,7 +16,6 @@ import (
 	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +27,6 @@ const (
 
 	ssmPrefix = "/entigo-infralib"
 )
-
-var parameterIndexRegex = regexp.MustCompile(`(\w+)(\[(\d+)(-(\d+))?])?`)
 
 type Updater interface {
 	Run()
@@ -53,7 +50,7 @@ type updater struct {
 func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	provider := GetCloudProvider(ctx, flags)
 	resources := provider.SetupResources()
-	config := GetConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
+	config := GetConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessSteps(&config, resources.GetProviderType())

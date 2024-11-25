@@ -261,8 +261,8 @@ Step, module and input field values can be overwritten by using replacement tags
 
 Replacement tags can be overwritten by values from terraform output, config itself or custom agent logic. If the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager. For output values it's possible to use the keywords `ssm`, `gcsm` and `output`. There's also a special type based keyword `toutput` that uses the output from a module with the specified type instead of a name.
 
-For example, `{{ .ssm.stepName.moduleName.key-1/key-2 }}` will be overwritten with the value from terraform output. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1/key-2`.
-If the parameter type is StringList then it's possible to use an index to get a specific value, e.g `{{ .ssm.stepName.moduleName.key-1/key-2[0] }}` or a slice by using a range, e.g [0-1].
+For example, `{{ .ssm.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
+If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .ssm.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
 
 It's possible to build a custom array by using yaml multiline string, even mixing replaced values with inputted values. For example creating a list of strings for terraform:
 ```yaml
@@ -272,7 +272,7 @@ inputs:
 ```
 
 Custom SSM parameter example `{{ .ssm-custom.key }}` will be overwritten by the value of the custom SSM parameter `key`.
-For custom GCloud SM, replace the ssm with gcsm.
+For custom GCloud SM, replace the ssm with gcsm. For universal output, replace the ssm with output `output-custom`.
 
 Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
 

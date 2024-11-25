@@ -43,20 +43,20 @@ func GetProviderPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+func GetConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
 	var config model.Config
 	if configFile != "" {
-		config = GetLocalConfig(prefix, configFile, bucket)
+		config = GetLocalConfig(ssm, prefix, configFile, bucket)
 	} else {
-		config = GetRemoteConfig(prefix, bucket)
+		config = GetRemoteConfig(ssm, prefix, bucket)
 	}
 	return config
 }
 
-func GetLocalConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
 	config := getLocalConfigFile(configFile)
 	PutConfig(bucket, config)
-	replaceConfigValues(prefix, &config)
+	config = replaceConfigValues(ssm, prefix, config)
 	reserveAppsFiles(config)
 	basePath := filepath.Dir(configFile) + "/"
 	AddStepsFilesFromFolder(&config, basePath)
@@ -213,9 +213,8 @@ func putStepFiles(bucket model.Bucket, step model.Step) {
 	}
 }
 
-func GetRemoteConfig(prefix string, bucket model.Bucket) model.Config {
-	config := getRemoteConfigFile(bucket)
-	replaceConfigValues(prefix, &config)
+func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket) model.Config {
+	config := replaceConfigValues(ssm, prefix, getRemoteConfigFile(bucket))
 	reserveAppsFiles(config)
 	AddStepsFilesFromBucket(&config, bucket)
 	AddModuleInputFiles(&config, "", bucket.GetFile)

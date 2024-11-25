@@ -53,8 +53,7 @@ func getConfig(prefix, configFile string, bucket model.Bucket) model.Config {
 	} else {
 		config = getRemoteConfigFile(bucket)
 	}
-	replaceConfigValues(prefix, &config)
-	return config
+	return replaceConfigValues(nil, prefix, config)
 }
 
 func (d *deleter) Delete() {

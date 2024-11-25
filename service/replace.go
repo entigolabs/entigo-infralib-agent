@@ -32,6 +32,7 @@ const (
 )
 
 var replaceRegex = regexp.MustCompile(`{{(.*?)}}`)
+var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[(\d+)(-(\d+))?])?`)
 
 func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Step, error) {
 	stepYaml, err := yaml.Marshal(step)
@@ -100,12 +101,10 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		return content, nil
 	}
 	for _, match := range matches {
-		if len(match) != 2 {
-			return "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+		replaceTag, replaceKey, replaceType, err := parseReplaceTag(match)
+		if err != nil {
+			return "", err
 		}
-		replaceTag := match[0]
-		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		switch replaceType {
 		case string(model.ReplaceTypeOutput):
 			fallthrough
@@ -122,7 +121,7 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		case string(model.ReplaceTypeGCSMCustom):
 			fallthrough
 		case string(model.ReplaceTypeSSMCustom):
-			parameter, err := u.getSSMCustomParameter(replaceKey)
+			parameter, err := getSSMCustomParameter(u.resources.GetSSM(), replaceKey)
 			if err != nil {
 				return "", err
 			}
@@ -198,13 +197,13 @@ func (u *updater) getModuleParameter(step model.Step, replaceKey string, cache p
 	return u.getParameter(match, replaceKey, step, foundStep, module, cache)
 }
 
-func (u *updater) getSSMCustomParameter(replaceKey string) (string, error) {
+func getSSMCustomParameter(ssm model.SSM, replaceKey string) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) != 2 {
 		return "", fmt.Errorf("failed to parse ssm custom parameter key %s, got %d split parts instead of 2", replaceKey, len(parts))
 	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[1])
-	return u.getSSMParameterValue(match, replaceKey, match[1])
+	return getSSMParameterValue(ssm, match, replaceKey, match[1])
 }
 
 func (u *updater) getTypedModuleParameter(step model.Step, replaceKey string, cache paramCache) (string, error) {
@@ -242,7 +241,7 @@ func (u *updater) getParameter(match []string, replaceKey string, step, foundSte
 	if found {
 		parameterName = fmt.Sprintf("%s/%s/%s", ssmPrefix, prefix, match[1])
 	}
-	return u.getSSMParameterValue(match, replaceKey, parameterName)
+	return getSSMParameterValue(u.resources.GetSSM(), match, replaceKey, parameterName)
 }
 
 func getOutputValue(output tfOutput, replaceKey string, match []string) (string, error) {
@@ -310,8 +309,8 @@ func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[strin
 	return outputs, nil
 }
 
-func (u *updater) getSSMParameterValue(match []string, replaceKey string, parameterName string) (string, error) {
-	parameter, err := u.resources.GetSSM().GetParameter(parameterName)
+func getSSMParameterValue(ssm model.SSM, match []string, replaceKey string, parameterName string) (string, error) {
+	parameter, err := ssm.GetParameter(parameterName)
 	if err != nil {
 		return "", fmt.Errorf("ssm parameter %s %s", parameterName, err)
 	}
@@ -398,33 +397,67 @@ func (u *updater) findStepModuleByType(moduleType string) (model.Step, model.Mod
 	return *foundStep, foundModule, nil
 }
 
-func replaceConfigValues(prefix string, config *model.Config) {
+func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) model.Config {
+	steps := config.Steps
+	config.Steps = nil
+	config = replaceConfigRootValues(ssm, prefix, config)
+	steps = replaceConfigStepsValues(prefix, steps)
+	config.Steps = steps
+	return config
+}
+
+func replaceConfigRootValues(ssm model.SSM, prefix string, config model.Config) model.Config {
 	configYaml, err := yaml.Marshal(config)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
 	}
-	modifiedConfigYaml, err := replaceConfigTags(prefix, *config, string(configYaml))
-	if err != nil {
-		log.Fatalf("Failed to replace tags in config")
+	matches := replaceRegex.FindAllStringSubmatch(string(configYaml), -1)
+	if len(matches) == 0 {
+		return config
 	}
-	err = yaml.Unmarshal([]byte(modifiedConfigYaml), config)
+	modifiedConfigYaml, err := replaceConfigTags(prefix, config, string(configYaml), matches)
+	if err != nil {
+		log.Fatalf("Failed to replace tags in config root, error: %v", err)
+	}
+	if ssm != nil {
+		modifiedConfigYaml, err = replaceConfigCustomTags(ssm, modifiedConfigYaml, matches)
+		if err != nil {
+			log.Fatalf("Failed to replace custom output tags in config root, error: %v", err)
+		}
+	}
+	err = yaml.Unmarshal([]byte(modifiedConfigYaml), &config)
 	if err != nil {
 		log.Fatalf("Failed to unmarshal modified config: %s", err)
 	}
+	return config
 }
 
-func replaceConfigTags(prefix string, config model.Config, content string) (string, error) {
-	matches := replaceRegex.FindAllStringSubmatch(content, -1)
-	if len(matches) == 0 {
-		return content, nil
+func replaceConfigStepsValues(prefix string, steps []model.Step) []model.Step {
+	stepsYaml, err := yaml.Marshal(steps)
+	if err != nil {
+		log.Fatal(&common.PrefixedError{Reason: err})
 	}
+	matches := replaceRegex.FindAllStringSubmatch(string(stepsYaml), -1)
+	if len(matches) == 0 {
+		return steps
+	}
+	modifiedStepsYaml, err := replaceConfigTags(prefix, model.Config{}, string(stepsYaml), matches)
+	if err != nil {
+		log.Fatalf("Failed to replace config tags in steps")
+	}
+	err = yaml.Unmarshal([]byte(modifiedStepsYaml), &steps)
+	if err != nil {
+		log.Fatalf("Failed to unmarshal modified steps: %s", err)
+	}
+	return steps
+}
+
+func replaceConfigTags(prefix string, config model.Config, content string, matches [][]string) (string, error) {
 	for _, match := range matches {
-		if len(match) != 2 {
-			return "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+		replaceTag, replaceKey, replaceType, err := parseReplaceTag(match)
+		if err != nil {
+			return "", err
 		}
-		replaceTag := match[0]
-		replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		if replaceType != string(model.ReplaceTypeConfig) {
 			continue
 		}
@@ -440,4 +473,33 @@ func replaceConfigTags(prefix string, config model.Config, content string) (stri
 		content = strings.Replace(content, replaceTag, configValue, 1)
 	}
 	return content, nil
+}
+
+func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) (string, error) {
+	for _, match := range matches {
+		replaceTag, replaceKey, replaceType, err := parseReplaceTag(match)
+		if err != nil {
+			return "", err
+		}
+		if replaceType != string(model.ReplaceTypeSSMCustom) && replaceType != string(model.ReplaceTypeGCSMCustom) &&
+			replaceType != string(model.ReplaceTypeOutputCustom) {
+			continue
+		}
+		parameter, err := getSSMCustomParameter(ssm, replaceKey)
+		if err != nil {
+			return "", err
+		}
+		content = strings.Replace(content, replaceTag, parameter, 1)
+	}
+	return content, nil
+}
+
+func parseReplaceTag(match []string) (string, string, string, error) {
+	if len(match) != 2 {
+		return "", "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+	}
+	replaceTag := match[0]
+	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
+	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
+	return replaceTag, replaceKey, replaceType, nil
 }
