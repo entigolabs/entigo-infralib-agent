@@ -830,7 +830,16 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		if moduleVersion.Changed {
 			executePipeline = true
 		}
-		inputBytes, err := getModuleInputBytes(module)
+		inputs := module.Inputs
+		if len(inputs) == 0 {
+			inputs = make(map[string]interface{})
+		}
+		prefix := fmt.Sprintf("%s-%s-%s", u.resources.GetCloudPrefix(), step.Name, module.Name)
+		err := util.SetChildStringValue(inputs, prefix, false, "global", "prefix")
+		if err != nil {
+			return false, fmt.Errorf("failed to set prefix: %s", err)
+		}
+		inputBytes, err := getModuleInputBytes(inputs)
 		if err != nil {
 			return false, err
 		}
@@ -844,8 +853,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 	return executePipeline, err
 }
 
-func getModuleInputBytes(module model.Module) ([]byte, error) {
-	inputs := module.Inputs
+func getModuleInputBytes(inputs map[string]interface{}) ([]byte, error) {
 	if len(inputs) == 0 {
 		return []byte{}, nil
 	}

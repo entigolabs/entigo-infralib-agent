@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/hashicorp/go-version"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
@@ -35,32 +34,6 @@ func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]b
 		b.Write([]byte(suffix))
 	}
 	return bytes.TrimRight(b.Bytes(), ", "), nil
-}
-
-func MapValues[M ~map[K]V, K comparable, V any](m M) []V {
-	r := make([]V, 0, len(m))
-	for _, v := range m {
-		r = append(r, v)
-	}
-	return r
-}
-
-func GetNewestVersion(versions []string) (string, error) {
-	firstVersions, otherVersions := versions[0], versions[1:]
-	newestVersionSemver, err := version.NewVersion(firstVersions)
-	if err != nil {
-		return "", err
-	}
-	for _, ver := range otherVersions {
-		versionSemver, err := version.NewVersion(ver)
-		if err != nil {
-			return "", err
-		}
-		if versionSemver.GreaterThan(newestVersionSemver) {
-			newestVersionSemver = versionSemver
-		}
-	}
-	return newestVersionSemver.Original(), nil
 }
 
 func GetFileFromUrl(fileUrl string) ([]byte, error) {
@@ -218,4 +191,29 @@ func MarshalYamlWithJsonTags(v interface{}) ([]byte, error) {
 		return nil, err
 	}
 	return yaml.Marshal(jsonObj)
+}
+
+func SetChildStringValue(data map[string]interface{}, newValue string, overwrite bool, keys ...string) error {
+	for i, key := range keys {
+		if i == len(keys)-1 {
+			_, exists := data[key]
+			if !exists || overwrite {
+				data[key] = newValue
+			}
+			break
+		}
+		val, exists := data[key]
+		if !exists {
+			newval := make(map[string]interface{})
+			data[key] = newval
+			data = newval
+			continue
+		}
+		var ok bool
+		data, ok = val.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value of key %s is not a map[string]interface{}", key)
+		}
+	}
+	return nil
 }

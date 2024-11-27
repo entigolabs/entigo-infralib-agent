@@ -114,16 +114,18 @@ const (
 type ReplaceType string
 
 const (
-	ReplaceTypeSSM          ReplaceType = "ssm"
-	ReplaceTypeSSMCustom    ReplaceType = "ssm-custom"
-	ReplaceTypeGCSM         ReplaceType = "gcsm"
-	ReplaceTypeGCSMCustom   ReplaceType = "gcsm-custom"
-	ReplaceTypeOutput       ReplaceType = "output"
-	ReplaceTypeOutputCustom ReplaceType = "output-custom"
-	ReplaceTypeTOutput      ReplaceType = "toutput"
-	ReplaceTypeConfig       ReplaceType = "config"
-	ReplaceTypeAgent        ReplaceType = "agent"
-	ReplaceTypeModule       ReplaceType = "tmodule"
+	ReplaceTypeSSM             ReplaceType = "ssm"
+	ReplaceTypeSSMCustom       ReplaceType = "ssm-custom"
+	ReplaceTypeGCSM            ReplaceType = "gcsm"
+	ReplaceTypeGCSMCustom      ReplaceType = "gcsm-custom"
+	ReplaceTypeOutput          ReplaceType = "output"
+	ReplaceTypeOutputOptional  ReplaceType = "optout"
+	ReplaceTypeOutputCustom    ReplaceType = "output-custom"
+	ReplaceTypeTOutput         ReplaceType = "toutput"
+	ReplaceTypeTOutputOptional ReplaceType = "toptout"
+	ReplaceTypeConfig          ReplaceType = "config"
+	ReplaceTypeAgent           ReplaceType = "agent"
+	ReplaceTypeModule          ReplaceType = "tmodule"
 )
 
 type AgentReplaceType string
