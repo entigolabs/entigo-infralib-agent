@@ -177,6 +177,7 @@ sources:
     version: stable | semver
     include: []string
     exclude: []string
+    force_version: bool
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -222,6 +223,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
+  * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step

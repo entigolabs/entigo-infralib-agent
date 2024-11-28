@@ -157,6 +157,10 @@ func getModuleSource(config model.Config, step model.Step, module model.Module, 
 func addSourceReleases(githubClient github.Github, config model.Config, state *model.State, sources map[string]*model.Source) {
 	for _, cSource := range config.Sources {
 		source := sources[cSource.URL]
+		if cSource.ForceVersion {
+			source.ForcedVersion = cSource.Version
+			continue
+		}
 		upperVersion := source.StableVersion
 		if cSource.Version != "" && cSource.Version != StableVersion {
 			var err error
@@ -211,6 +215,10 @@ func (u *updater) Run() {
 func (u *updater) logReleases(index int) {
 	var sourceReleases []string
 	for url, source := range u.sources {
+		if source.ForcedVersion != "" {
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, source.ForcedVersion))
+			continue
+		}
 		if index < len(source.Releases) {
 			release := source.Releases[index]
 			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
@@ -459,12 +467,15 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 		if moduleState.AppliedVersion == nil {
 			return false, nil
 		}
+		module := getModule(moduleState.Name, step.Modules)
+		moduleSource := u.getModuleSource(module.Source)
+		if moduleSource.ForcedVersion != "" {
+			return moduleSource.ForcedVersion == *moduleState.AppliedVersion, nil
+		}
 		appliedVersion, err := version.NewVersion(*moduleState.AppliedVersion)
 		if err != nil {
 			return false, err
 		}
-		module := getModule(moduleState.Name, step.Modules)
-		moduleSource := u.getModuleSource(module.Source)
 		release := moduleSource.Releases[util.MinInt(index, len(moduleSource.Releases)-1)]
 		if !appliedVersion.Equal(release) {
 			return false, nil
@@ -793,8 +804,8 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	return true, providers, err
 }
 
-func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (map[string]*version.Version, error) {
-	sourceVersions := make(map[string]*version.Version)
+func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (map[string]string, error) {
+	sourceVersions := make(map[string]string)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
@@ -802,20 +813,29 @@ func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]m
 		source := moduleVersions[module.Name].SourceURL
 		moduleVersion, err := version.NewVersion(moduleVersions[module.Name].Version)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		if sourceVersions[source] == nil {
-			sourceVersions[source] = moduleVersion
-		} else if moduleVersion.GreaterThan(sourceVersions[source]) {
-			sourceVersions[source] = moduleVersion
+		if sourceVersions[source] == "" {
+			sourceVersions[source] = moduleVersion.Original()
+		}
+		sourceVersion, err := version.NewVersion(sourceVersions[source])
+		if err != nil {
+			continue
+		}
+		if moduleVersion.GreaterThan(sourceVersion) {
+			sourceVersions[source] = moduleVersion.Original()
 		}
 	}
 	for sourceURL, source := range u.sources {
+		if source.ForcedVersion != "" {
+			sourceVersions[sourceURL] = source.ForcedVersion
+			continue
+		}
 		_, exists := sourceVersions[sourceURL]
 		if exists {
 			continue
 		}
-		sourceVersions[sourceURL] = source.Releases[util.MinInt(index, len(source.Releases)-1)]
+		sourceVersions[sourceURL] = source.Releases[util.MinInt(index, len(source.Releases)-1)].Original()
 	}
 	return sourceVersions, nil
 }
@@ -977,6 +997,10 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		return module.Version, true, nil
 	}
 	moduleSource := u.getModuleSource(module.Source)
+	if moduleSource.ForcedVersion != "" {
+		moduleState.Version = moduleSource.ForcedVersion
+		return moduleSource.ForcedVersion, true, nil
+	}
 	var moduleSemver *version.Version
 	if moduleVersion == "" {
 		moduleSemver = moduleSource.Version
@@ -1050,7 +1074,12 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 			if !strings.Contains(source.URL, EntigoSource) {
 				continue
 			}
-			release = getFormattedVersion(source.Releases[util.MinInt(index, len(source.Releases)-1)])
+			if source.ForcedVersion != "" {
+				break
+			} else {
+				release = getFormattedVersion(source.Releases[util.MinInt(index, len(source.Releases)-1)])
+				break
+			}
 		}
 	}
 	imageSource := ""

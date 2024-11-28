@@ -365,14 +365,20 @@ func validateSource(index int, source model.ConfigSource) {
 	if source.URL == "" {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. source URL is not set", index+1)})
 	}
+	if source.Include != nil && source.Exclude != nil {
+		log.Fatalf("source %s can't have both include and exclude", source.URL)
+	}
+	if source.Version == "" && source.ForceVersion {
+		log.Fatalf("source %s force version is set but version is not", source.URL)
+	}
+	if source.ForceVersion {
+		return
+	}
 	if source.Version != "" && source.Version != StableVersion {
 		_, err := version.NewVersion(source.Version)
 		if err != nil {
 			log.Fatalf("source %s version must follow semantic versioning: %s", source.URL, err)
 		}
-	}
-	if source.Include != nil && source.Exclude != nil {
-		log.Fatalf("source %s can't have both include and exclude", source.URL)
 	}
 }
 

@@ -15,10 +15,11 @@ type Config struct {
 }
 
 type ConfigSource struct {
-	URL     string   `yaml:"url" fake:"{url}"`
-	Version string   `yaml:"version,omitempty"`
-	Include []string `yaml:"include,omitempty"`
-	Exclude []string `yaml:"exclude,omitempty"`
+	URL          string   `yaml:"url" fake:"{url}"`
+	Version      string   `yaml:"version,omitempty"`
+	ForceVersion bool     `yaml:"force_version,omitempty"`
+	Include      []string `yaml:"include,omitempty"`
+	Exclude      []string `yaml:"exclude,omitempty"`
 }
 
 type Step struct {
@@ -172,6 +173,7 @@ const (
 type Source struct {
 	URL               string
 	Version           *version.Version
+	ForcedVersion     string
 	NewestVersion     *version.Version
 	StableVersion     *version.Version
 	Releases          []*version.Version
