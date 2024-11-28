@@ -998,6 +998,10 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	}
 	moduleSource := u.getModuleSource(module.Source)
 	if moduleSource.ForcedVersion != "" {
+		if moduleState.Source != moduleSource.URL {
+			moduleState.Source = moduleSource.URL
+			moduleState.AppliedVersion = nil
+		}
 		moduleState.Version = moduleSource.ForcedVersion
 		return moduleSource.ForcedVersion, true, nil
 	}
@@ -1009,7 +1013,7 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	} else {
 		moduleSemver, err = version.NewVersion(moduleVersion)
 		if err != nil {
-			return "", false, fmt.Errorf("failed to parse module version %s: %s", moduleVersion, err)
+			moduleSemver = moduleSource.NewestVersion
 		}
 	}
 	moduleState.AutoApprove = true
