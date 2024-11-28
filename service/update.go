@@ -89,8 +89,14 @@ func getLatestState(bucket model.Bucket) *model.State {
 func createSources(githubClient github.Github, config model.Config, state *model.State) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
 	for _, source := range config.Sources {
-		stableVersion := getLatestRelease(githubClient, source.URL)
-		checksums, err := getChecksums(githubClient, source.URL, stableVersion.Original())
+		var release string
+		if source.ForceVersion {
+			release = source.Version
+		} else {
+			stableVersion := getLatestRelease(githubClient, source.URL)
+			release = stableVersion.Original()
+		}
+		checksums, err := getChecksums(githubClient, source.URL, release)
 		if err != nil {
 			log.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
 		}
