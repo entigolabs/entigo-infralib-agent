@@ -398,12 +398,18 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 			log.Printf("Skipping step %s\n", step.Name)
 			return u.putAppliedStateFile(stepState)
 		}
-		u.updateDestinationsApplyFiles(step, files)
-		return u.executePipeline(firstRun, step, stepState, index)
+		err := u.executePipeline(firstRun, step, stepState, index)
+		if err == nil {
+			u.updateDestinationsApplyFiles(step, files)
+		}
+		return err
 	}
 	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
-		u.updateDestinationsApplyFiles(step, files)
-		return u.executePipeline(firstRun, step, stepState, index)
+		err := u.executePipeline(firstRun, step, stepState, index)
+		if err == nil {
+			u.updateDestinationsApplyFiles(step, files)
+		}
+		return err
 	}
 	wg.Add(1)
 	go func() {
@@ -415,7 +421,6 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		} else {
 			u.updateDestinationsApplyFiles(step, files)
 		}
-		u.updateDestinationsApplyFiles(step, files)
 	}()
 	return nil
 }
