@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/github"
+	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -38,7 +38,8 @@ type updater struct {
 	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
-	github        github.Github
+	github        git.Github
+	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
 	moduleSources map[string]string
@@ -54,14 +55,16 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessSteps(&config, resources.GetProviderType())
-	githubClient := github.NewGithub(ctx, flags.GithubToken)
+	githubClient := git.NewGithub(ctx, flags.GithubToken)
 	sources, moduleSources := createSources(githubClient, config, state)
+	destinations := createDestinations(ctx, config.Destinations)
 	return &updater{
 		config:        config,
 		provider:      provider,
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, githubClient),
 		github:        githubClient,
+		destinations:  destinations,
 		state:         state,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -86,7 +89,7 @@ func getLatestState(bucket model.Bucket) *model.State {
 	return &state
 }
 
-func createSources(githubClient github.Github, config model.Config, state *model.State) (map[string]*model.Source, map[string]string) {
+func createSources(githubClient git.Github, config model.Config, state *model.State) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
 	for _, source := range config.Sources {
 		var release string
@@ -160,7 +163,7 @@ func getModuleSource(config model.Config, step model.Step, module model.Module, 
 	return "", fmt.Errorf("module %s source not found", module.Name)
 }
 
-func addSourceReleases(githubClient github.Github, config model.Config, state *model.State, sources map[string]*model.Source) {
+func addSourceReleases(githubClient git.Github, config model.Config, state *model.State, sources map[string]*model.Source) {
 	for _, cSource := range config.Sources {
 		source := sources[cSource.URL]
 		if cSource.ForceVersion {
@@ -186,6 +189,20 @@ func addSourceReleases(githubClient github.Github, config model.Config, state *m
 		source.NewestVersion = newestVersion
 		source.Releases = releases
 	}
+}
+
+func createDestinations(ctx context.Context, destinations []model.ConfigDestination) map[string]model.Destination {
+	dests := make(map[string]model.Destination)
+	for _, destination := range destinations {
+		if destination.Git != nil {
+			client, err := git.NewGitClient(ctx, destination.Name, *destination.Git)
+			if err != nil {
+				log.Fatalf("Destination %s failed to create git client: %v", destination.Name, err)
+			}
+			dests[destination.Name] = client
+		}
+	}
+	return dests
 }
 
 func (u *updater) Run() {
@@ -317,15 +334,16 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	}
 	var executePipelines bool
 	var providers map[string]model.Set[string]
+	var files map[string][]byte
 	if !u.firstRunDone[step.Name] {
-		executePipelines, err = u.createStepFiles(step, moduleVersions, index)
+		executePipelines, files, err = u.createStepFiles(step, moduleVersions, index)
 	} else {
-		executePipelines, providers, err = u.updateStepFiles(step, moduleVersions, index)
+		executePipelines, providers, files, err = u.updateStepFiles(step, moduleVersions, index)
 	}
 	if err != nil {
 		return false, err
 	}
-	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan)
+	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, files)
 	if err != nil {
 		return false, err
 	}
@@ -349,35 +367,55 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 	u.putStateFileOrDie()
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error) error {
+func (u *updater) updateDestinationsPlanFiles(step model.Step, files map[string][]byte) {
+	u.updateDestinationsFiles(step, git.PlanBranch, files)
+}
+
+func (u *updater) updateDestinationsApplyFiles(step model.Step, files map[string][]byte) {
+	u.updateDestinationsFiles(step, git.ApplyBranch, files)
+}
+
+func (u *updater) updateDestinationsFiles(step model.Step, branch string, files map[string][]byte) {
+	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
+	for name, destination := range u.destinations {
+		log.Printf("Step %s updating %s files for destination %s\n", step.Name, branch, name)
+		err := destination.UpdateFiles(branch, folder, files)
+		if err != nil {
+			slog.Warn(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s", step.Name, branch,
+				name, err))
+			return
+		}
+	}
+}
+
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string][]byte) error {
 	if !executePipelines {
 		return nil
 	}
+	u.updateDestinationsPlanFiles(step, files)
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			log.Printf("Skipping step %s\n", step.Name)
 			return u.putAppliedStateFile(stepState)
 		}
-		return u.executePipeline(firstRun, step, stepState, index)
+		u.updateDestinationsApplyFiles(step, files)
+		return nil //u.executePipeline(firstRun, step, stepState, index) // TODO Enable all!
 	}
-	if !u.allowParallel {
-		return u.executePipeline(firstRun, step, stepState, index)
-	}
-	parallelExecution, err := u.appliedVersionMatchesRelease(step, *stepState, index)
-	if err != nil {
-		return err
-	}
-	if !parallelExecution {
-		return u.executePipeline(firstRun, step, stepState, index)
+	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
+		u.updateDestinationsApplyFiles(step, files)
+		return nil //u.executePipeline(firstRun, step, stepState, index)
 	}
 	wg.Add(1)
 	go func() {
-		defer wg.Done()
-		err := u.executePipeline(firstRun, step, stepState, index)
-		if err != nil {
-			common.PrintError(err)
-			errChan <- err
-		}
+		//defer wg.Done()
+		//err := u.executePipeline(firstRun, step, stepState, index)
+		//if err != nil {
+		//	common.PrintError(err)
+		//	errChan <- err
+		//} else {
+		//	u.updateDestinationsApplyFiles(step, files)
+		//}
+		u.updateDestinationsApplyFiles(step, files)
 	}()
 	return nil
 }
@@ -465,33 +503,29 @@ func (u *updater) getChangedModules(step model.Step) []string {
 	return changed
 }
 
-func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.StateStep, index int) (bool, error) {
+func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.StateStep, index int) bool {
 	for _, moduleState := range stepState.Modules {
 		if moduleState.Type != nil && *moduleState.Type == model.ModuleTypeCustom {
 			continue
 		}
 		if moduleState.AppliedVersion == nil {
-			return false, nil
+			return false
 		}
 		module := getModule(moduleState.Name, step.Modules)
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.ForcedVersion != "" {
-			return moduleSource.ForcedVersion == *moduleState.AppliedVersion, nil
+			return moduleSource.ForcedVersion == *moduleState.AppliedVersion
 		}
-		appliedVersion, err := version.NewVersion(*moduleState.AppliedVersion)
-		if err != nil {
-			return false, err
-		}
-		release := moduleSource.Releases[util.MinInt(index, len(moduleSource.Releases)-1)]
-		if !appliedVersion.Equal(release) {
-			return false, nil
+		release := moduleSource.Releases[util.MinInt(index, len(moduleSource.Releases)-1)].Original()
+		if *moduleState.AppliedVersion != release {
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
-	log.Printf("applying release for step %s\n", step.Name)
+	log.Printf("Applying release for step %s\n", step.Name)
 	var err error
 	if firstRun {
 		err = u.createExecuteStepPipelines(step, *stepState, index)
@@ -521,26 +555,27 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 	return stepState, nil
 }
 
-func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, error) {
+func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string][]byte, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
-		execute, _, err := u.createTerraformFiles(step, moduleVersions, index)
-		return execute, err
+		return u.createTerraformFiles(step, moduleVersions, index)
 	case model.StepTypeArgoCD:
 		return u.updateArgoCDFiles(step, moduleVersions)
+	default:
+		return false, nil, fmt.Errorf("step type %s not supported", step.Type)
 	}
-	return true, nil
 }
 
-func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
+func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string][]byte, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, moduleVersions, index)
 	case model.StepTypeArgoCD:
-		execute, err := u.updateArgoCDFiles(step, moduleVersions)
-		return execute, nil, err
+		execute, files, err := u.updateArgoCDFiles(step, moduleVersions)
+		return execute, nil, files, err
+	default:
+		return false, nil, nil, fmt.Errorf("step type %s not supported", step.Type)
 	}
-	return true, nil, nil
 }
 
 func (u *updater) createExecuteStepPipelines(step model.Step, stepState model.StateStep, index int) error {
@@ -619,7 +654,7 @@ func getAutoApprove(state model.StateStep) bool {
 	return true
 }
 
-func getSourceReleases(githubClient github.Github, config model.Config, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
+func getSourceReleases(githubClient git.Github, config model.Config, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
 	oldestVersion, err := getOldestVersion(config, source, state)
 	if err != nil {
 		return nil, nil, err
@@ -639,7 +674,7 @@ func getSourceReleases(githubClient github.Github, config model.Config, source *
 	if err != nil {
 		return nil, nil, err
 	}
-	var newestRelease *github.Release
+	var newestRelease *git.Release
 	if newestVersion != StableVersion {
 		newestRelease, err = githubClient.GetReleaseByTag(source.URL, getFormattedVersionString(newestVersion))
 		if err != nil {
@@ -655,7 +690,7 @@ func getSourceReleases(githubClient github.Github, config model.Config, source *
 	return releases[len(releases)-1], releases, nil
 }
 
-func getLatestRelease(githubClient github.Github, repoURL string) *version.Version {
+func getLatestRelease(githubClient git.Github, repoURL string) *version.Version {
 	latestRelease, err := githubClient.GetLatestReleaseTag(repoURL)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -770,44 +805,46 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
-	err := u.createBackendConf(fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name), u.resources.GetBucket())
-	if err != nil {
-		return false, nil, err
-	}
-	return u.updateTerraformFiles(step, moduleVersions, index)
+func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string][]byte, error) {
+	execute, _, files, err := u.updateTerraformFiles(step, moduleVersions, index)
+	return execute, files, err
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], error) {
-	changed, err := u.createTerraformMain(step, moduleVersions)
+func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string][]byte, error) {
+	files := make(map[string][]byte)
+	mainPath, mainFile, err := u.createBackendConf(fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name), u.resources.GetBucket())
 	if err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
-	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache}))
+	files[mainPath] = mainFile
+	changed, mainPath, mainBytes, err := u.createTerraformMain(step, moduleVersions)
 	if err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
-	if !changed {
-		return len(step.Files) > 0, nil, nil
+	files[mainPath] = mainBytes
+	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache}), files)
+	if err != nil {
+		return false, nil, nil, err
 	}
 	if len(moduleVersions) == 0 {
-		return false, nil, errors.New("no module versions found")
+		return false, nil, nil, errors.New("no module versions found")
 	}
 	sourceVersions, err := u.getSourceVersions(step, moduleVersions, index)
 	if err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
 	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, sourceVersions)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to create terraform provider: %s", err)
+		return false, nil, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
 	modifiedProvider, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to replace provider values: %s", err)
+		return false, nil, nil, fmt.Errorf("failed to replace provider values: %s", err)
 	}
 	providerFile := fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name)
+	files[providerFile] = []byte(modifiedProvider)
 	err = u.resources.GetBucket().PutFile(providerFile, []byte(modifiedProvider))
-	return true, providers, err
+	return changed || len(step.Files) > 0, providers, files, err
 }
 
 func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (map[string]string, error) {
@@ -846,12 +883,13 @@ func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]m
 	return sourceVersions, nil
 }
 
-func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
+func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, map[string][]byte, error) {
 	executePipeline := false
+	files := make(map[string][]byte)
 	for _, module := range step.Modules {
 		moduleVersion, found := moduleVersions[module.Name]
 		if !found {
-			return false, fmt.Errorf("module %s version not found", module.Name)
+			return false, nil, fmt.Errorf("module %s version not found", module.Name)
 		}
 		if moduleVersion.Changed {
 			executePipeline = true
@@ -863,20 +901,21 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		prefix := fmt.Sprintf("%s-%s-%s", u.resources.GetCloudPrefix(), step.Name, module.Name)
 		err := util.SetChildStringValue(inputs, prefix, false, "global", "prefix")
 		if err != nil {
-			return false, fmt.Errorf("failed to set prefix: %s", err)
+			return false, nil, fmt.Errorf("failed to set prefix: %s", err)
 		}
 		inputBytes, err := getModuleInputBytes(inputs)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		executePipeline = true
-		err = u.createArgoCDApp(module, step, moduleVersion.Version, inputBytes)
+		filePath, file, err := u.createArgoCDApp(module, step, moduleVersion.Version, inputBytes)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
+		files[filePath] = file
 	}
-	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet[string]())
-	return executePipeline, err
+	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet[string](), files)
+	return executePipeline, files, err
 }
 
 func getModuleInputBytes(inputs map[string]interface{}) ([]byte, error) {
@@ -890,14 +929,15 @@ func getModuleInputBytes(inputs map[string]interface{}) ([]byte, error) {
 	return bytes, nil
 }
 
-func (u *updater) createBackendConf(path string, bucket model.Bucket) error {
+func (u *updater) createBackendConf(path string, bucket model.Bucket) (string, []byte, error) {
 	key := fmt.Sprintf("%s/terraform.tfstate", path)
 	backendConfig := u.resources.GetBackendConfigVars(key)
 	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
 	if err != nil {
-		return fmt.Errorf("failed to convert backend config values: %w", err)
+		return "", nil, fmt.Errorf("failed to convert backend config values: %w", err)
 	}
-	return bucket.PutFile(fmt.Sprintf("steps/%s/backend.conf", path), bytes)
+	filePath := fmt.Sprintf("steps/%s/backend.conf", path)
+	return filePath, bytes, bucket.PutFile(filePath, bytes)
 }
 
 func (u *updater) putStateFileOrDie() {
@@ -931,42 +971,44 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
 	return u.putStateFile()
 }
 
-func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, error) {
+func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 	changed := false
 	for _, module := range step.Modules {
 		moduleVersion, found := moduleVersions[module.Name]
 		if !found {
-			return false, fmt.Errorf("module %s version not found", module.Name)
+			return false, "", nil, fmt.Errorf("module %s version not found", module.Name)
 		}
 		if moduleVersion.Changed {
 			changed = true
 		}
 		err := u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion)
 		if err != nil {
-			return false, err
+			return false, "", nil, err
 		}
 		body.AppendNewline()
 	}
+	filePath := fmt.Sprintf("steps/%s-%s/main.tf", u.resources.GetCloudPrefix(), step.Name)
+	fileBytes := file.Bytes()
 	if changed {
-		err := u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/main.tf", u.resources.GetCloudPrefix(), step.Name), file.Bytes())
+		err := u.resources.GetBucket().PutFile(filePath, fileBytes)
 		if err != nil {
-			return false, err
+			return false, "", nil, err
 		}
 	}
-	return changed, nil
+	return changed, filePath, fileBytes, nil
 }
 
-func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) error {
+func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
 	appBytes, err := argocd.GetApplicationFile(u.github, module, moduleSource.URL, step.RepoUrl, moduleVersion, values,
 		u.resources.GetProviderType())
 	if err != nil {
-		return fmt.Errorf("failed to create application file: %w", err)
+		return "", nil, fmt.Errorf("failed to create application file: %w", err)
 	}
-	return u.resources.GetBucket().PutFile(fmt.Sprintf("steps/%s-%s/%s.yaml", u.resources.GetCloudPrefix(), step.Name, module.Name),
-		appBytes)
+	filePath := fmt.Sprintf("steps/%s-%s/%s.yaml", u.resources.GetCloudPrefix(), step.Name, module.Name)
+	return filePath, appBytes, u.resources.GetBucket().PutFile(filePath, appBytes)
 }
 
 func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
@@ -1114,7 +1156,7 @@ func (u *updater) GetChecksums(index int) {
 	}
 }
 
-func getChecksums(githubClient github.Github, sourceURL string, release string) (map[string]string, error) {
+func getChecksums(githubClient git.Github, sourceURL string, release string) (map[string]string, error) {
 	content, err := githubClient.GetRawFileContent(sourceURL, checksumsFile, release)
 	if err != nil {
 		var fileError model.FileNotFoundError
@@ -1153,7 +1195,7 @@ func (u *updater) updateIncludedAppsStepFiles(step model.Step) (model.Set[string
 	return files, nil
 }
 
-func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string]) error {
+func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string][]byte) error {
 	files := model.Set[string]{}
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for _, file := range step.Files {
@@ -1163,6 +1205,7 @@ func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, exclud
 			return err
 		}
 		files.Add(target)
+		includedFiles[target] = file.Content
 	}
 	folderFiles, err := u.resources.GetBucket().ListFolderFilesWithExclude(folder, excludedFolders)
 	if err != nil {
@@ -1256,11 +1299,9 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 func mergeInputs(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {
 	if baseInputs != nil && patchInputs == nil {
 		return baseInputs, nil
-	}
-	if baseInputs == nil && patchInputs != nil {
+	} else if baseInputs == nil && patchInputs != nil {
 		return patchInputs, nil
-	}
-	if baseInputs == nil && patchInputs == nil {
+	} else if baseInputs == nil {
 		return nil, nil
 	}
 	err := mergo.Merge(&baseInputs, patchInputs, mergo.WithOverride)

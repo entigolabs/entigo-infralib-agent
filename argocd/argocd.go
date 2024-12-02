@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/github"
+	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
@@ -19,7 +19,7 @@ var appYaml []byte
 
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 
-func GetApplicationFile(github github.Github, module model.Module, sourceURL, repoSSHUrl, version string, values []byte, provider model.ProviderType) ([]byte, error) {
+func GetApplicationFile(github git.Github, module model.Module, sourceURL, repoSSHUrl, version string, values []byte, provider model.ProviderType) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
 	moduleFile, err := getModuleApplicationFile(github, version, module.Source, sourceURL)
 	if err != nil {
@@ -75,7 +75,7 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 	return strings.Join(replaceLines, "\n")
 }
 
-func getModuleApplicationFile(git github.Github, release, moduleSource, sourceURL string) (map[string]interface{}, error) {
+func getModuleApplicationFile(git git.Github, release, moduleSource, sourceURL string) (map[string]interface{}, error) {
 	bytes, err := git.GetRawFileContent(sourceURL, fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
 		var fileError model.FileNotFoundError

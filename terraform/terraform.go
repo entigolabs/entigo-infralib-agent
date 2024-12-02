@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/github"
+	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/hcl/v2"
@@ -40,10 +40,10 @@ type terraform struct {
 	providerType  model.ProviderType
 	configSources []model.ConfigSource
 	sources       map[string]*model.Source
-	github        github.Github
+	github        git.Github
 }
 
-func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, github github.Github) Terraform {
+func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, github git.Github) Terraform {
 	return &terraform{
 		providerType:  providerType,
 		configSources: configSources,

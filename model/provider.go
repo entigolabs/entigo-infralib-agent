@@ -72,6 +72,10 @@ type SSM interface {
 	DeleteParameter(name string) error
 }
 
+type Destination interface {
+	UpdateFiles(branch, folder string, files map[string][]byte) error
+}
+
 type CloudResources struct {
 	ProviderType ProviderType
 	Bucket       Bucket

@@ -6,12 +6,13 @@ import (
 )
 
 type Config struct {
-	Prefix           string         `yaml:"prefix,omitempty" fake:"{word}"`
-	Sources          []ConfigSource `yaml:"sources,omitempty" fakesize:"1"`
-	AgentVersion     string         `yaml:"agent_version,omitempty" fake:"{version}"`
-	BaseImageSource  string         `yaml:"base_image_source,omitempty"`
-	BaseImageVersion string         `yaml:"base_image_version,omitempty"`
-	Steps            []Step         `yaml:"steps,omitempty" fakesize:"1"`
+	Prefix           string              `yaml:"prefix,omitempty" fake:"{word}"`
+	Sources          []ConfigSource      `yaml:"sources,omitempty" fakesize:"1"`
+	AgentVersion     string              `yaml:"agent_version,omitempty" fake:"{version}"`
+	BaseImageSource  string              `yaml:"base_image_source,omitempty"`
+	BaseImageVersion string              `yaml:"base_image_version,omitempty"`
+	Destinations     []ConfigDestination `yaml:"destinations,omitempty"`
+	Steps            []Step              `yaml:"steps,omitempty" fakesize:"1"`
 }
 
 type ConfigSource struct {
@@ -20,6 +21,23 @@ type ConfigSource struct {
 	ForceVersion bool     `yaml:"force_version,omitempty"`
 	Include      []string `yaml:"include,omitempty"`
 	Exclude      []string `yaml:"exclude,omitempty"`
+}
+
+type ConfigDestination struct {
+	Name string `yaml:"name,omitempty"`
+	Git  *Git   `yaml:"git,omitempty"`
+}
+
+type Git struct {
+	URL             string `yaml:"url,omitempty"`
+	Key             string `yaml:"key,omitempty"`
+	KeyPassword     string `yaml:"key_password,omitempty"`
+	InsecureHostKey bool   `yaml:"insecure_host_key,omitempty"`
+	Username        string `yaml:"username,omitempty"`
+	Password        string `yaml:"password,omitempty"`
+	AuthorName      string `yaml:"author_name,omitempty"`
+	AuthorEmail     string `yaml:"author_email,omitempty"`
+	Insecure        bool   `yaml:"insecure,omitempty"`
 }
 
 type Step struct {

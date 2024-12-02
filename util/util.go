@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -24,7 +25,13 @@ func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]b
 	if prefix != "" {
 		b.Write([]byte(prefix))
 	}
-	for key, value := range m {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := m[key]
 		_, err := fmt.Fprintf(b, "%s=\"%s\"\n", key, value)
 		if err != nil {
 			return nil, err

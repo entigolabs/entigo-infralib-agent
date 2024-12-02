@@ -178,6 +178,17 @@ sources:
     include: []string
     exclude: []string
     force_version: bool
+destinations:
+  - name:
+    git:
+      url: string
+      key: string
+      key_password: string
+      username: string
+      password: string
+      author_name: string
+      author_email: string
+      insecure: bool
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -217,13 +228,25 @@ Complex values need to be as multiline strings with | symbol.
 
 Source version is overwritten by module version. Default version is **stable** which means latest release of the source repository.
 
-* prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var.
+* prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
 * sources - list of source repositories for Entigo Infralib modules
   * url - url of the source repository
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
   * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
+* destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
+    * name - name of the destination
+    * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
+        * url - url of the git repository
+        * key - PEM encoded private key for authentication
+        * key_password - optional, password for the private key
+        * insecure_host_key - accept any host key when using private key, default **false**
+        * username - username for authentication
+        * password - password for authentication
+        * author_name - author name for commits, only required for key based authentication
+        * author_email - author email for commits, only required for key based authentication
+        * insecure - allow insecure connection, default **false**
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
@@ -247,7 +270,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * version - highest version of the module to use
     * http_username - username for external repository authentication
     * http_password - password for external repository authentication
-    * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the `./config/<stepName>` directory with a name `<moduleName>.yaml`.
+    * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the `./config/<stepName>` directory with a name `<moduleName>.yaml`
   * provider - provider values to add
     * inputs - variables for provider tf file
     * aws - aws provider default and ignore tags to add
