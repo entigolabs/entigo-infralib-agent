@@ -399,22 +399,22 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 			return u.putAppliedStateFile(stepState)
 		}
 		u.updateDestinationsApplyFiles(step, files)
-		return nil //u.executePipeline(firstRun, step, stepState, index) // TODO Enable all!
+		return u.executePipeline(firstRun, step, stepState, index)
 	}
 	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
 		u.updateDestinationsApplyFiles(step, files)
-		return nil //u.executePipeline(firstRun, step, stepState, index)
+		return u.executePipeline(firstRun, step, stepState, index)
 	}
 	wg.Add(1)
 	go func() {
-		//defer wg.Done()
-		//err := u.executePipeline(firstRun, step, stepState, index)
-		//if err != nil {
-		//	common.PrintError(err)
-		//	errChan <- err
-		//} else {
-		//	u.updateDestinationsApplyFiles(step, files)
-		//}
+		defer wg.Done()
+		err := u.executePipeline(firstRun, step, stepState, index)
+		if err != nil {
+			common.PrintError(err)
+			errChan <- err
+		} else {
+			u.updateDestinationsApplyFiles(step, files)
+		}
 		u.updateDestinationsApplyFiles(step, files)
 	}()
 	return nil
