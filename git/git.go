@@ -357,6 +357,10 @@ func (g *Client) removeUnusedFiles(path string, currentFiles model.Set[string]) 
 		if err != nil {
 			return err
 		}
+		_, err = g.worktree.Remove(fullPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	if !empty {
