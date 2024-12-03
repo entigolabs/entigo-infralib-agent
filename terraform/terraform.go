@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/github"
+	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/hcl/v2"
@@ -15,6 +15,7 @@ import (
 	"log"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -40,10 +41,10 @@ type terraform struct {
 	providerType  model.ProviderType
 	configSources []model.ConfigSource
 	sources       map[string]*model.Source
-	github        github.Github
+	github        git.Github
 }
 
-func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, github github.Github) Terraform {
+func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, github git.Github) Terraform {
 	return &terraform{
 		providerType:  providerType,
 		configSources: configSources,
@@ -197,7 +198,13 @@ func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBloc
 		providerInputs = make(map[string]interface{})
 	}
 	providers := make(map[string]string)
-	for name, attribute := range providersAttributes {
+	keys := make([]string, 0, len(providersAttributes))
+	for key := range providersAttributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		attribute := providersAttributes[name]
 		providersBlock.Body().SetAttributeRaw(name, attribute.Expr().BuildTokens(nil))
 		providerBlocks, providerSource := t.getProviderBlocks(name, sourceVersions)
 		if len(providerBlocks) != 0 {
@@ -369,7 +376,13 @@ func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 	if inputs == nil {
 		return
 	}
-	for name, value := range inputs {
+	keys := make([]string, 0, len(inputs))
+	for key := range inputs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		value := inputs[name]
 		if value == nil {
 			continue
 		}

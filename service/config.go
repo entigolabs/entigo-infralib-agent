@@ -350,6 +350,14 @@ func ValidateConfig(config model.Config, state *model.State) {
 	for index, source := range config.Sources {
 		validateSource(index, source)
 	}
+	destinations := model.NewSet[string]()
+	for index, destination := range config.Destinations {
+		validateDestination(index, destination)
+		if destinations.Contains(destination.Name) {
+			log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("destination name %s is not unique", destination.Name)})
+		}
+		destinations.Add(destination.Name)
+	}
 	stepNames := model.NewSet[string]()
 	for _, step := range config.Steps {
 		validateStep(step)
@@ -379,6 +387,29 @@ func validateSource(index int, source model.ConfigSource) {
 		if err != nil {
 			log.Fatalf("source %s version must follow semantic versioning: %s", source.URL, err)
 		}
+	}
+}
+
+func validateDestination(index int, destination model.ConfigDestination) {
+	if destination.Name == "" {
+		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. destination name is not set", index+1)})
+	}
+	if destination.Git == nil {
+		return
+	}
+	if destination.Git.URL == "" {
+		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. destination git URL is not set", index+1)})
+	}
+	if destination.Git.Key != "" {
+		if destination.Git.Username != "" || destination.Git.Password != "" {
+			log.Fatalf("%d. destination git key and username/password can't be set together", index+1)
+		}
+	}
+	if destination.Git.Username != "" && destination.Git.Password == "" {
+		log.Fatalf("%d. destination git password is required when using basic auth", index+1)
+	}
+	if destination.Git.Password != "" && destination.Git.Username == "" {
+		log.Fatalf("%d. destination git username is required when using basic auth", index+1)
 	}
 }
 
