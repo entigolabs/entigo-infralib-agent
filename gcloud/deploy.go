@@ -481,7 +481,7 @@ func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 	return err
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, stepType model.StepType) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, step model.Step) error {
 	if releaseId == nil {
 		return fmt.Errorf("release id is nil")
 	}
@@ -502,13 +502,13 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, stepType, "", "", autoApprove, nil)
+	err = p.waitForRollout(rollout, pipelineName, step.Type, "", "", autoApprove, nil)
 	if err != nil {
 		return err
 	}
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
-	if stepType == model.StepTypeArgoCD {
+	if step.Type == model.StepTypeArgoCD {
 		planCommand = model.ArgoCDPlanCommand
 		applyCommand = model.ArgoCDApplyCommand
 	} else {
@@ -520,7 +520,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	pipeChanges, err := p.getChanges(pipelineName, nil, stepType, planJob, executionName)
+	pipeChanges, err := p.getChanges(pipelineName, nil, step.Type, planJob, executionName)
 	if err != nil {
 		return err
 	}
@@ -546,7 +546,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, stepType, planJob, executionName, autoApprove, pipeChanges)
+	err = p.waitForRollout(rollout, pipelineName, step.Type, planJob, executionName, autoApprove, pipeChanges)
 	if err != nil {
 		return err
 	}

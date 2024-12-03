@@ -29,9 +29,9 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.DeleteCommand:
 		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
-		baseFlags = append(baseFlags, &githubToken)
+		baseFlags = append(baseFlags, &githubToken, &stepsFlag)
 	case common.RunCommand:
-		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken)
+		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag)
 	}
 	return baseFlags
 }
@@ -150,4 +150,12 @@ var deleteSAFlag = cli.BoolFlag{
 	EnvVars:     []string{"DELETE_SERVICE_ACCOUNT"},
 	Usage:       "delete the service account created by service-account command",
 	Destination: &flags.Delete.DeleteServiceAccount,
+}
+
+var stepsFlag = cli.StringSliceFlag{
+	Name:        "steps",
+	Aliases:     []string{"s"},
+	EnvVars:     []string{"STEPS"},
+	Usage:       "steps to run",
+	Destination: &flags.Steps,
 }

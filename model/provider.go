@@ -52,7 +52,7 @@ type Pipeline interface {
 	UpdatePipeline(pipelineName, stepName string, step Step, bucket string) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
-	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, stepType StepType) error
+	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string) error
 }

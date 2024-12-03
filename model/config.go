@@ -161,6 +161,7 @@ const (
 	ApproveMajor  Approve = "major"
 	ApproveAlways Approve = "always"
 	ApproveNever  Approve = "never"
+	ApproveForce  Approve = "force"
 )
 
 type State struct {

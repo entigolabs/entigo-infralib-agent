@@ -13,6 +13,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/urfave/cli/v2"
 	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
@@ -35,6 +36,7 @@ type Updater interface {
 
 type updater struct {
 	config        model.Config
+	steps         []model.Step
 	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
@@ -55,11 +57,13 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessSteps(&config, resources.GetProviderType())
+	steps := getRunnableSteps(config, flags.Steps)
 	githubClient := git.NewGithub(ctx, flags.GithubToken)
-	sources, moduleSources := createSources(githubClient, config, state)
+	sources, moduleSources := createSources(githubClient, steps, config.Sources, state)
 	destinations := createDestinations(ctx, config.Destinations)
 	return &updater{
 		config:        config,
+		steps:         steps,
 		provider:      provider,
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, githubClient),
@@ -89,9 +93,30 @@ func getLatestState(bucket model.Bucket) *model.State {
 	return &state
 }
 
-func createSources(githubClient git.Github, config model.Config, state *model.State) (map[string]*model.Source, map[string]string) {
+func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.Step {
+	if len(stepsFlag.Value()) == 0 {
+		return config.Steps
+	}
+	steps := model.NewSet[string]()
+	for _, step := range stepsFlag.Value() {
+		steps.Add(step)
+	}
+	runnableSteps := make([]model.Step, 0)
+	for _, step := range config.Steps {
+		if steps.Contains(step.Name) {
+			runnableSteps = append(runnableSteps, step)
+			steps.Remove(step.Name)
+		}
+	}
+	if len(steps) > 0 {
+		log.Fatalf("Runnable steps not found: %s", steps.String())
+	}
+	return runnableSteps
+}
+
+func createSources(githubClient git.Github, steps []model.Step, configSources []model.ConfigSource, state *model.State) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
-	for _, source := range config.Sources {
+	for _, source := range configSources {
 		var release string
 		if source.ForceVersion {
 			release = source.Version
@@ -112,14 +137,14 @@ func createSources(githubClient git.Github, config model.Config, state *model.St
 			CurrentChecksums: checksums,
 		}
 	}
-	moduleSources := addSourceModules(config, sources)
-	addSourceReleases(githubClient, config, state, sources)
+	moduleSources := addSourceModules(steps, configSources, sources)
+	addSourceReleases(githubClient, steps, configSources, state, sources)
 	return sources, moduleSources
 }
 
-func addSourceModules(config model.Config, sources map[string]*model.Source) map[string]string {
+func addSourceModules(steps []model.Step, configSources []model.ConfigSource, sources map[string]*model.Source) map[string]string {
 	moduleSources := make(map[string]string)
-	for _, step := range config.Steps {
+	for _, step := range steps {
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				continue
@@ -127,7 +152,7 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 			if moduleSources[module.Source] != "" {
 				continue
 			}
-			moduleSource, err := getModuleSource(config, step, module, sources)
+			moduleSource, err := getModuleSource(configSources, step, module, sources)
 			if err != nil {
 				log.Fatalf("Module %s in step %s is not included in any Source", module.Name, step.Name)
 			}
@@ -137,8 +162,8 @@ func addSourceModules(config model.Config, sources map[string]*model.Source) map
 	return moduleSources
 }
 
-func getModuleSource(config model.Config, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
-	for _, configSource := range config.Sources {
+func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
+	for _, configSource := range configSources {
 		source := sources[configSource.URL]
 		moduleSource := module.Source
 		if len(source.Includes) > 0 {
@@ -163,8 +188,8 @@ func getModuleSource(config model.Config, step model.Step, module model.Module, 
 	return "", fmt.Errorf("module %s source not found", module.Name)
 }
 
-func addSourceReleases(githubClient git.Github, config model.Config, state *model.State, sources map[string]*model.Source) {
-	for _, cSource := range config.Sources {
+func addSourceReleases(githubClient git.Github, steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) {
+	for _, cSource := range configSources {
 		source := sources[cSource.URL]
 		if cSource.ForceVersion {
 			source.ForcedVersion = cSource.Version
@@ -182,7 +207,7 @@ func addSourceReleases(githubClient git.Github, config model.Config, state *mode
 		if len(source.Modules) == 0 {
 			log.Printf("No modules found for Source %s\n", cSource.URL)
 		}
-		newestVersion, releases, err := getSourceReleases(githubClient, config, source, state)
+		newestVersion, releases, err := getSourceReleases(githubClient, steps, source, state)
 		if err != nil {
 			log.Fatalf("Failed to get releases: %v", err)
 		}
@@ -214,7 +239,7 @@ func (u *updater) Run() {
 	errChan := make(chan error, 1)
 	failed := false
 	retrySteps := make([]model.Step, 0)
-	for _, step := range u.config.Steps {
+	for _, step := range u.steps {
 		retry, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
 			common.PrintError(err)
@@ -265,7 +290,7 @@ func (u *updater) Update() {
 		errChan := make(chan error, 1)
 		failed := false
 		retrySteps := make([]model.Step, 0)
-		for _, step := range u.config.Steps {
+		for _, step := range u.steps {
 			retry, err := u.processStep(index, step, wg, errChan)
 			if err != nil {
 				common.PrintError(err)
@@ -389,7 +414,8 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 }
 
 func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string][]byte) error {
-	if !executePipelines {
+	if !executePipelines && !firstRun {
+		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
 		return nil
 	}
 	u.updateDestinationsPlanFiles(step, files)
@@ -618,7 +644,7 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step.Type)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step)
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -647,7 +673,7 @@ func (u *updater) executeStepPipelines(step model.Step, stepState model.StateSte
 		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
 	autoApprove := getAutoApprove(stepState)
-	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step.Type)
+	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step)
 }
 
 func getAutoApprove(state model.StateStep) bool {
@@ -659,8 +685,8 @@ func getAutoApprove(state model.StateStep) bool {
 	return true
 }
 
-func getSourceReleases(githubClient git.Github, config model.Config, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
-	oldestVersion, err := getOldestVersion(config, source, state)
+func getSourceReleases(githubClient git.Github, steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
+	oldestVersion, err := getOldestVersion(steps, source, state)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -675,7 +701,7 @@ func getSourceReleases(githubClient git.Github, config model.Config, source *mod
 	}
 	log.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Tag)
 
-	newestVersion, err := getNewestVersion(config, source)
+	newestVersion, err := getNewestVersion(steps, source)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -707,10 +733,10 @@ func getLatestRelease(githubClient git.Github, repoURL string) *version.Version 
 	return latestSemver
 }
 
-func getOldestVersion(config model.Config, source *model.Source, state *model.State) (string, error) {
+func getOldestVersion(steps []model.Step, source *model.Source, state *model.State) (string, error) {
 	oldestVersion := source.Version.Original()
 	var err error
-	for _, step := range config.Steps {
+	for _, step := range steps {
 		stepState := GetStepState(state, step.Name)
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) || !source.Modules.Contains(module.Source) {
@@ -767,10 +793,10 @@ func getOlderVersion(oldestVersion string, compareVersion string) (string, error
 	}
 }
 
-func getNewestVersion(config model.Config, source *model.Source) (string, error) {
+func getNewestVersion(steps []model.Step, source *model.Source) (string, error) {
 	newestVersion := ""
 	var err error
-	for _, step := range config.Steps {
+	for _, step := range steps {
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) || !source.Modules.Contains(module.Source) {
 				continue
@@ -1339,7 +1365,7 @@ func getModuleState(stepState *model.StateStep, module model.Module) (*model.Sta
 }
 
 func getModuleAutoApprove(moduleVersion *version.Version, releaseTag *version.Version, approve model.Approve) bool {
-	if approve == model.ApproveNever {
+	if approve == model.ApproveNever || approve == model.ApproveForce {
 		return true
 	}
 	if approve == "" || approve == model.ApproveAlways {

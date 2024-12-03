@@ -1,5 +1,7 @@
 package common
 
+import "github.com/urfave/cli/v2"
+
 const (
 	AwsPrefixEnv       = "AWS_PREFIX"
 	PrefixEnv          = "PREFIX"
@@ -14,6 +16,7 @@ type Flags struct {
 	Prefix        string
 	AllowParallel bool
 	GithubToken   string
+	Steps         cli.StringSlice
 	GCloud        GCloud
 	AWS           AWS
 	Delete        DeleteFlags

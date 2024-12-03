@@ -98,8 +98,9 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
-* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
-* github-token - optional GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
+* role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* github-token - **optional** GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
+* steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 
 Example
@@ -119,8 +120,9 @@ OPTIONS:
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
-* github-token - optional GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
-* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* github-token - **optional** GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
+* steps - **optional** comma separated list of steps to run [$STEPS]
 
 Example
 ```bash
@@ -195,7 +197,7 @@ base_image_version: stable | semver
 steps:
   - name: string
     type: terraform | argocd-apps
-    approve: minor | major | never | always
+    approve: minor | major | never | always | force
     base_image_source: string
     base_image_version: stable | semver
     vpc:
@@ -253,7 +255,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
-  * approve - approval type for the step, possible values `minor | major | never | always`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
+  * approve - approval type for the step, possible values `minor | major | never | always | force`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
   * base_image_source - source of Entigo Infralib Base Image to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * vpc - vpc values to add
@@ -278,7 +280,7 @@ Source version is overwritten by module version. Default version is **stable** w
 
 ### Auto approval logic
 
-Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval. Approve always means that manual approval is required, never means that agent approves automatically. Major and minor types require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
+Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval, except when using type `force`. Approve always means that manual approval is required, never means that agent approves automatically. Major and minor types require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
 
 ### Overriding config values
 

@@ -510,7 +510,7 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	return ""
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, stepType model.StepType) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, executionId *string, autoApprove bool, step model.Step) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
@@ -547,7 +547,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 			return err
 		}
 		p.stopPreviousExecution(pipelineName, *executionId, executionsList.ActionExecutionDetails)
-		pipeChanges, approved, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, stepType, pipeChanges, approved, autoApprove)
+		pipeChanges, approved, err = p.processStateStages(pipelineName, executionsList.ActionExecutionDetails, step, pipeChanges, approved, autoApprove)
 		if err != nil {
 			return err
 		}
@@ -638,7 +638,7 @@ func preApproveStage(actions []types.ActionExecutionDetail) bool {
 	return planned
 }
 
-func (p *Pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType, pipeChanges *model.PipelineChanges, approved *bool, autoApprove bool) (*model.PipelineChanges, *bool, error) {
+func (p *Pipeline) processStateStages(pipelineName string, actions []types.ActionExecutionDetail, step model.Step, pipeChanges *model.PipelineChanges, approved *bool, autoApprove bool) (*model.PipelineChanges, *bool, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName ||
 			action.Status != types.ActionExecutionStatusInProgress {
@@ -648,14 +648,14 @@ func (p *Pipeline) processStateStages(pipelineName string, actions []types.Actio
 			return pipeChanges, approved, nil
 		}
 		var err error
-		pipeChanges, err = p.getChanges(pipelineName, pipeChanges, actions, stepType)
+		pipeChanges, err = p.getChanges(pipelineName, pipeChanges, actions, step.Type)
 		if err != nil {
 			return pipeChanges, approved, err
 		}
 		if pipeChanges != nil && pipeChanges.NoChanges {
 			return pipeChanges, aws.Bool(true), nil
 		}
-		if pipeChanges != nil && pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove) {
+		if pipeChanges != nil && (step.Approve == model.ApproveForce || (pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove))) {
 			approved, err = p.approveStage(pipelineName)
 			if err != nil {
 				return pipeChanges, approved, err
