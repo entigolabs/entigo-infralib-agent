@@ -404,12 +404,6 @@ func validateDestination(index int, destination model.ConfigDestination) {
 		if destination.Git.Username != "" || destination.Git.Password != "" {
 			log.Fatalf("%d. destination git key and username/password can't be set together", index+1)
 		}
-		if destination.Git.AuthorName == "" {
-			log.Fatalf("%d. destination author name is required when using key", index+1)
-		}
-		if destination.Git.AuthorEmail == "" {
-			log.Fatalf("%d. destination author email is required when using key", index+1)
-		}
 	}
 	if destination.Git.Username != "" && destination.Git.Password == "" {
 		log.Fatalf("%d. destination git password is required when using basic auth", index+1)

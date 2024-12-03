@@ -8,6 +8,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitSSH "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -16,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 )
 
 const (
@@ -26,11 +28,14 @@ const (
 Agent will push changes to named subfolders inside the steps folder.
 Changes are pushed after the files have been generated for a step and after the step has been successfully applied.
 Changes are pushed to the plan and apply branches.`
+	authorName  = "Entigo Infralib Agent"
+	authorEmail = "no-reply@localhost"
 )
 
 type Client struct {
 	ctx      context.Context
 	auth     transport.AuthMethod
+	author   *object.Signature
 	name     string
 	worktree *git.Worktree
 	repo     *git.Repository
@@ -51,6 +56,7 @@ func NewGitClient(ctx context.Context, name string, config model.Git) (*Client, 
 	return &Client{
 		ctx:      ctx,
 		auth:     auth,
+		author:   getAuthor(config),
 		name:     name,
 		worktree: worktree,
 		repo:     repo,
@@ -73,6 +79,22 @@ func getAuth(config model.Git) (transport.AuthMethod, error) {
 		Username: config.Username,
 		Password: config.Password,
 	}, nil
+}
+
+func getAuthor(config model.Git) *object.Signature {
+	name := config.AuthorName
+	if name == "" {
+		name = authorName
+	}
+	email := config.AuthorEmail
+	if email == "" {
+		email = authorEmail
+	}
+	return &object.Signature{
+		Name:  name,
+		Email: email,
+		When:  time.Now().UTC(),
+	}
 }
 
 func getRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, repoPath string) (*git.Worktree, *git.Repository, error) {
@@ -152,7 +174,7 @@ func initRepo(auth transport.AuthMethod, gitConfig model.Git, repoPath string) (
 	if err != nil {
 		return nil, err
 	}
-	_, err = worktree.Commit("Initial commit", &git.CommitOptions{})
+	_, err = worktree.Commit("Initial commit", &git.CommitOptions{Author: getAuthor(gitConfig)})
 	if err != nil {
 		return nil, err
 	}
@@ -252,14 +274,16 @@ func (g *Client) UpdateFiles(branch, folder string, files map[string][]byte) err
 	if err != nil {
 		return err
 	}
-	changes, err := g.hasChanges()
+	changes, err := g.hasChanges(folder)
 	if err != nil {
 		return err
 	}
 	if !changes {
 		return nil
 	}
-	_, err = g.worktree.Commit(fmt.Sprintf("Infralib agent updated %s files", folder), &git.CommitOptions{})
+	_, err = g.worktree.Commit(fmt.Sprintf("Infralib agent updated %s files", folder), &git.CommitOptions{
+		Author: g.author,
+	})
 	if errors.Is(err, git.ErrEmptyCommit) {
 		return nil
 	}
@@ -369,16 +393,16 @@ func (g *Client) removeUnusedFiles(path string, currentFiles model.Set[string]) 
 	return g.worktree.Filesystem.Remove(path)
 }
 
-func (g *Client) hasChanges() (bool, error) {
+func (g *Client) hasChanges(folder string) (bool, error) {
 	status, err := g.worktree.Status()
 	if err != nil {
 		return false, err
 	}
 	hasChanges := !status.IsClean()
 	if hasChanges {
-		slog.Debug(fmt.Sprintf("Destination %s git status\n%s", g.name, status))
+		slog.Debug(fmt.Sprintf("Destination %s folder %s git status\n%s", g.name, folder, status))
 	} else {
-		slog.Debug(fmt.Sprintf("Destination %s git status is clean", g.name))
+		slog.Debug(fmt.Sprintf("Destination %s folder %s git status is clean", g.name, folder))
 	}
 	return hasChanges, nil
 }

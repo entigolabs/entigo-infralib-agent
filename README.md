@@ -244,8 +244,8 @@ Source version is overwritten by module version. Default version is **stable** w
         * insecure_host_key - accept any host key when using private key, default **false**
         * username - username for authentication
         * password - password for authentication
-        * author_name - author name for commits, only required for key based authentication
-        * author_email - author email for commits, only required for key based authentication
+        * author_name - author name for commits, default **Entigo Infralib Agent**
+        * author_email - author email for commits, default **no-reply@localhost**
         * insecure - allow insecure connection, default **false**
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
