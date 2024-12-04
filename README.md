@@ -206,7 +206,6 @@ steps:
       subnet_ids: multiline string
       security_group_ids: multiline string
     kubernetes_cluster_name: string
-    repo_url: string
     modules:
       - name: string
         source: string
@@ -265,7 +264,6 @@ Source version is overwritten by module version. Default version is **stable** w
     * security_group_ids - vpc security group ids for code build/cloud run job
   * kubernetes_cluster_name - kubernetes cluster name for argocd-apps steps
   * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
-  * repo_url - for argocd-apps steps, repo to use for cloning
   * modules - list of modules to apply
     * name - name of the module
     * source - source of the terraform module, can be an external git repository beginning with git:: or git@

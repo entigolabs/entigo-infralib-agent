@@ -1033,7 +1033,7 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	appBytes, err := argocd.GetApplicationFile(u.github, module, moduleSource.URL, step.RepoUrl, moduleVersion, values,
+	appBytes, err := argocd.GetApplicationFile(u.github, module, moduleSource.URL, moduleVersion, values,
 		u.resources.GetProviderType())
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)

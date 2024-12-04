@@ -49,7 +49,6 @@ type Step struct {
 	Vpc                   VPC      `yaml:"vpc,omitempty"`
 	KubernetesClusterName string   `yaml:"kubernetes_cluster_name,omitempty"`
 	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
-	RepoUrl               string   `yaml:"repo_url,omitempty"`
 	Provider              Provider `yaml:"provider,omitempty"`
 	Modules               []Module `yaml:"modules,omitempty" fakesize:"1"`
 	Files                 []File   `yaml:"-"`

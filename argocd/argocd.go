@@ -19,7 +19,7 @@ var appYaml []byte
 
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 
-func GetApplicationFile(github git.Github, module model.Module, sourceURL, repoSSHUrl, version string, values []byte, provider model.ProviderType) ([]byte, error) {
+func GetApplicationFile(github git.Github, module model.Module, sourceURL, version string, values []byte, provider model.ProviderType) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
 	moduleFile, err := getModuleApplicationFile(github, version, module.Source, sourceURL)
 	if err != nil {
@@ -29,7 +29,7 @@ func GetApplicationFile(github git.Github, module model.Module, sourceURL, repoS
 	if err != nil {
 		return nil, err
 	}
-	return replacePlaceholders(bytes, module, sourceURL, repoSSHUrl, version, values, provider), nil
+	return replacePlaceholders(bytes, module, sourceURL, version, values, provider), nil
 }
 
 func getBaseApplicationFile() []byte {
@@ -38,7 +38,7 @@ func getBaseApplicationFile() []byte {
 	return contentCopy
 }
 
-func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, repoSSHUrl string, version string, values []byte, provider model.ProviderType) []byte {
+func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, version string, values []byte, provider model.ProviderType) []byte {
 	file := string(bytes)
 	var cloudProvider string
 	if provider == model.GCLOUD {
@@ -50,9 +50,9 @@ func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, re
 	if !strings.HasSuffix(url, ".git") {
 		url += ".git"
 	}
-	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{codeRepoSSHUrl}}", repoSSHUrl,
-		"{{moduleVersion}}", version, "{{moduleSource}}", module.Source, "{{moduleValues}}",
-		getValuesString(file, bytes, values), "{{cloudProvider}}", cloudProvider, "{{moduleSourceURL}}", url)
+	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{moduleVersion}}", version,
+		"{{moduleSource}}", module.Source, "{{moduleValues}}", getValuesString(file, bytes, values),
+		"{{cloudProvider}}", cloudProvider, "{{moduleSourceURL}}", url)
 	return []byte(replacer.Replace(file))
 }
 
