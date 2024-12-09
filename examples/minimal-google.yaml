@@ -74,10 +74,6 @@ steps:
       - name: google-gateway
         source: google-gateway
         version: stable
-        inputs:
-          global:
-            google:
-              externalCertificateMap: "{{ .toutput.dns.pub_zone_id }}"
       - name: istio-base
         source: istio-base
         version: stable
@@ -87,7 +83,3 @@ steps:
       - name: istio-gateway
         source: istio-gateway
         version: stable
-        inputs:
-          global:
-            google:
-              hostname: "{{ .toutput.dns.pub_domain }}"
