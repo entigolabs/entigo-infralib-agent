@@ -11,16 +11,18 @@ import (
 )
 
 type gcloudService struct {
-	ctx         context.Context
-	cloudPrefix string
-	projectId   string
-	location    string
-	zone        string
-	resources   Resources
+	ctx          context.Context
+	cloudPrefix  string
+	projectId    string
+	location     string
+	zone         string
+	resources    Resources
+	pipelineType common.PipelineType
 }
 
 type Resources struct {
 	model.CloudResources
+	ProjectId string
 }
 
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
@@ -30,13 +32,14 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud) model.CloudProvider {
+func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipelineType common.PipelineType) model.CloudProvider {
 	return &gcloudService{
-		ctx:         ctx,
-		cloudPrefix: cloudPrefix,
-		projectId:   gCloud.ProjectId,
-		location:    gCloud.Location,
-		zone:        gCloud.Zone,
+		ctx:          ctx,
+		cloudPrefix:  cloudPrefix,
+		projectId:    gCloud.ProjectId,
+		location:     gCloud.Location,
+		zone:         gCloud.Zone,
+		pipelineType: pipelineType,
 	}
 }
 
@@ -52,6 +55,25 @@ func (g *gcloudService) SetupResources() model.Resources {
 	if err != nil {
 		log.Fatalf("Failed to create storage bucket: %s", err)
 	}
+	sm, err := NewSM(g.ctx, g.projectId)
+	if err != nil {
+		log.Fatalf("Failed to create secret manager: %s", err)
+	}
+	resources := Resources{
+		CloudResources: model.CloudResources{
+			ProviderType: model.GCLOUD,
+			Bucket:       codeStorage,
+			SSM:          sm,
+			BucketName:   bucket,
+			CloudPrefix:  g.cloudPrefix,
+			Region:       g.location,
+		},
+		ProjectId: g.projectId,
+	}
+	if g.pipelineType == common.PipelineTypeLocal {
+		return resources
+	}
+
 	logging, err := NewLogging(g.ctx, g.projectId)
 	if err != nil {
 		log.Fatalf("Failed to create logging client: %s", err)
@@ -69,21 +91,9 @@ func (g *gcloudService) SetupResources() model.Resources {
 	if err != nil {
 		log.Fatalf("Failed to create pipeline: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.projectId)
-	if err != nil {
-		log.Fatalf("Failed to create secret manager: %s", err)
-	}
-	return Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.GCLOUD,
-			Bucket:       codeStorage,
-			CodeBuild:    builder,
-			Pipeline:     pipeline,
-			SSM:          sm,
-			BucketName:   bucket,
-			CloudPrefix:  g.cloudPrefix,
-		},
-	}
+	resources.CloudResources.CodeBuild = builder
+	resources.CloudResources.Pipeline = pipeline
+	return resources
 }
 
 func (g *gcloudService) GetResources() model.Resources {
@@ -113,7 +123,9 @@ func (g *gcloudService) GetResources() model.Resources {
 			CloudPrefix:  g.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          sm,
+			Region:       g.location,
 		},
+		ProjectId: g.projectId,
 	}
 	return g.resources
 }

@@ -16,6 +16,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -49,7 +50,7 @@ func NewGitClient(ctx context.Context, name string, config model.Git) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	worktree, repo, err := getRepo(ctx, auth, config, os.TempDir()+name)
+	worktree, repo, err := getRepo(ctx, auth, config, filepath.Join(os.TempDir(), name))
 	if err != nil {
 		return nil, err
 	}

@@ -44,6 +44,8 @@ type updater struct {
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
+	pipelineType  common.PipelineType
+	localPipeline *LocalPipeline
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
@@ -70,6 +72,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		github:        githubClient,
 		destinations:  destinations,
 		state:         state,
+		pipelineType:  common.PipelineType(flags.Pipeline.Type),
+		localPipeline: getLocalPipeline(resources, flags),
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
@@ -230,13 +234,20 @@ func createDestinations(ctx context.Context, destinations []model.ConfigDestinat
 	return dests
 }
 
+func getLocalPipeline(resources model.Resources, flags *common.Flags) *LocalPipeline {
+	if flags.Pipeline.Type == string(common.PipelineTypeLocal) {
+		return NewLocalPipeline(resources, flags.Pipeline)
+	}
+	return nil
+}
+
 func (u *updater) Run() {
 	u.updateAgentJob(common.RunCommand)
 	index := 0
 	u.logReleases(index)
 	u.updateState()
 	wg := new(model.SafeCounter)
-	errChan := make(chan error, 1)
+	errChan := make(chan error, len(u.steps))
 	failed := false
 	retrySteps := make([]model.Step, 0)
 	for _, step := range u.steps {
@@ -287,7 +298,7 @@ func (u *updater) Update() {
 		u.updateState()
 		u.GetChecksums(index)
 		wg := new(model.SafeCounter)
-		errChan := make(chan error, 1)
+		errChan := make(chan error, len(u.steps))
 		failed := false
 		retrySteps := make([]model.Step, 0)
 		for _, step := range u.steps {
@@ -557,11 +568,14 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 
 func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
 	log.Printf("Applying release for step %s\n", step.Name)
+	autoApprove := getAutoApprove(*stepState)
 	var err error
-	if firstRun {
-		err = u.createExecuteStepPipelines(step, *stepState, index)
+	if u.pipelineType == common.PipelineTypeLocal {
+		err = u.localPipeline.executeLocalPipeline(step, autoApprove)
+	} else if firstRun {
+		err = u.createExecuteStepPipelines(step, autoApprove, index)
 	} else {
-		err = u.executeStepPipelines(step, *stepState, index)
+		err = u.executeStepPipelines(step, autoApprove, index)
 	}
 	if err != nil {
 		return err
@@ -571,6 +585,9 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 }
 
 func (u *updater) updateAgentJob(cmd common.Command) {
+	if u.pipelineType == common.PipelineTypeLocal {
+		return
+	}
 	agent := NewAgent(u.resources)
 	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
 	if err != nil {
@@ -609,7 +626,7 @@ func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]mod
 	}
 }
 
-func (u *updater) createExecuteStepPipelines(step model.Step, stepState model.StateStep, index int) error {
+func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, index int) error {
 	bucket := u.resources.GetBucket()
 	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
@@ -618,17 +635,19 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState model.St
 
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 
-	vpcConfig := getVpcConfig(step)
+	vpcConfig := u.getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
 	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource, vpcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
-	autoApprove := getAutoApprove(stepState)
-	return u.createExecuteTerraformPipelines(stepName, stepName, step, autoApprove, bucket)
+	return u.createExecutePipelines(stepName, stepName, step, autoApprove, bucket)
 }
 
-func getVpcConfig(step model.Step) *model.VpcConfig {
+func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
+	if u.pipelineType == common.PipelineTypeLocal {
+		return nil
+	}
 	if !*step.Vpc.Attach {
 		return nil
 	}
@@ -639,7 +658,7 @@ func getVpcConfig(step model.Step) *model.VpcConfig {
 	}
 }
 
-func (u *updater) createExecuteTerraformPipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket) error {
+func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket) error {
 	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, bucket)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
@@ -651,9 +670,9 @@ func (u *updater) createExecuteTerraformPipelines(projectName string, stepName s
 	return nil
 }
 
-func (u *updater) executeStepPipelines(step model.Step, stepState model.StateStep, index int) error {
+func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index int) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
-	vpcConfig := getVpcConfig(step)
+	vpcConfig := u.getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
 	bucket := u.resources.GetBucket()
 	repoMetadata, err := bucket.GetRepoMetadata()
@@ -672,7 +691,6 @@ func (u *updater) executeStepPipelines(step model.Step, stepState model.StateSte
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
-	autoApprove := getAutoApprove(stepState)
 	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step)
 }
 

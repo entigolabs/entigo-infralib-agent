@@ -17,6 +17,7 @@ type Flags struct {
 	AllowParallel bool
 	GithubToken   string
 	Steps         cli.StringSlice
+	Pipeline      Pipeline
 	GCloud        GCloud
 	AWS           AWS
 	Delete        DeleteFlags
@@ -37,6 +38,19 @@ type DeleteFlags struct {
 	DeleteServiceAccount bool
 	SkipConfirmation     bool
 }
+
+type Pipeline struct {
+	Type      string
+	LogsPath  string
+	PrintLogs bool
+}
+
+type PipelineType string
+
+const (
+	PipelineTypeLocal PipelineType = "local"
+	PipelineTypeCloud PipelineType = "cloud"
+)
 
 func (f *Flags) Setup(cmd Command) error {
 	return f.validate(cmd)

@@ -29,9 +29,10 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.DeleteCommand:
 		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
-		baseFlags = append(baseFlags, &githubToken, &stepsFlag)
+		baseFlags = append(baseFlags, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag)
 	case common.RunCommand:
-		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag)
+		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
+			&printLogsFlag)
 	}
 	return baseFlags
 }
@@ -111,7 +112,7 @@ var zoneFlag = cli.StringFlag{
 
 var allowParallelFlag = cli.BoolFlag{
 	Name:        "allow-parallel",
-	Aliases:     []string{"pl"},
+	Aliases:     []string{"apl"},
 	EnvVars:     []string{"ALLOW_PARALLEL"},
 	Value:       true,
 	Usage:       "allow running steps in parallel on first execution cycle",
@@ -158,4 +159,36 @@ var stepsFlag = cli.StringSliceFlag{
 	EnvVars:     []string{"STEPS"},
 	Usage:       "steps to run",
 	Destination: &flags.Steps,
+}
+
+var pipelineTypeFlag = cli.StringFlag{
+	Name:        "pipeline-type",
+	Aliases:     []string{"pt"},
+	EnvVars:     []string{"PIPELINE_TYPE"},
+	DefaultText: string(common.PipelineTypeCloud),
+	Value:       string(common.PipelineTypeCloud),
+	Usage:       "pipeline type (local | cloud)",
+	Destination: &flags.Pipeline.Type,
+	Required:    false,
+}
+
+var logsPathFlag = cli.StringFlag{
+	Name:        "logs-path",
+	Aliases:     []string{"lp"},
+	EnvVars:     []string{"LOGS_PATH"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for storing logs when running local pipelines",
+	Destination: &flags.Pipeline.LogsPath,
+	Required:    false,
+}
+
+var printLogsFlag = cli.BoolFlag{
+	Name:        "print-logs",
+	Aliases:     []string{"pl"},
+	EnvVars:     []string{"PRINT_LOGS"},
+	Usage:       "print terraform/helm logs to stdout when using local pipelines",
+	Value:       true,
+	Destination: &flags.Pipeline.PrintLogs,
+	Required:    false,
 }

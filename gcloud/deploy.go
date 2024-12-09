@@ -169,15 +169,7 @@ func (p *Pipeline) deleteTargets() error {
 }
 
 func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket model.Bucket) (*string, error) {
-	var planCommand model.ActionCommand
-	var applyCommand model.ActionCommand
-	if step.Type == model.StepTypeArgoCD {
-		planCommand = model.ArgoCDPlanCommand
-		applyCommand = model.ArgoCDApplyCommand
-	} else {
-		planCommand = model.PlanCommand
-		applyCommand = model.ApplyCommand
-	}
+	planCommand, applyCommand := model.GetCommands(step.Type)
 	bucketMeta, err := bucket.GetRepoMetadata()
 	if err != nil {
 		return nil, err
@@ -314,7 +306,7 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 	}
 }
 
-func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, stepType model.StepType, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges) error {
+func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
@@ -351,7 +343,7 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 					delay = util.MinInt(delay*2, 30)
 					continue
 				}
-				pipeChanges, err = p.getChanges(pipelineName, pipeChanges, stepType, jobName, executionName)
+				pipeChanges, err = p.getChanges(pipelineName, pipeChanges, step.Type, jobName, executionName)
 				if err != nil {
 					return err
 				}
@@ -361,7 +353,7 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 					})
 					return nil
 				}
-				if pipeChanges != nil && pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove) {
+				if pipeChanges != nil && (step.Approve == model.ApproveForce || (pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove))) {
 					_, err = p.client.ApproveRollout(p.ctx, &deploypb.ApproveRolloutRequest{
 						Name:     rollout.GetName(),
 						Approved: true,
@@ -429,15 +421,7 @@ func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string)
 }
 
 func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step model.Step, bucket string) error {
-	var planCommand model.ActionCommand
-	var applyCommand model.ActionCommand
-	if step.Type == model.StepTypeArgoCD {
-		planCommand = model.ArgoCDPlanCommand
-		applyCommand = model.ArgoCDApplyCommand
-	} else {
-		planCommand = model.PlanCommand
-		applyCommand = model.ApplyCommand
-	}
+	planCommand, applyCommand := model.GetCommands(step.Type)
 	folder := fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName)
 	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)
 	if err != nil {
@@ -502,19 +486,11 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, step.Type, "", "", autoApprove, nil)
+	err = p.waitForRollout(rollout, pipelineName, step, "", "", autoApprove, nil)
 	if err != nil {
 		return err
 	}
-	var planCommand model.ActionCommand
-	var applyCommand model.ActionCommand
-	if step.Type == model.StepTypeArgoCD {
-		planCommand = model.ArgoCDPlanCommand
-		applyCommand = model.ArgoCDApplyCommand
-	} else {
-		planCommand = model.PlanCommand
-		applyCommand = model.ApplyCommand
-	}
+	planCommand, applyCommand := model.GetCommands(step.Type)
 	planJob := fmt.Sprintf("%s-%s", projectName, planCommand)
 	executionName, err := p.builder.executeJob(planJob, true)
 	if err != nil {
@@ -546,7 +522,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, step.Type, planJob, executionName, autoApprove, pipeChanges)
+	err = p.waitForRollout(rollout, pipelineName, step, planJob, executionName, autoApprove, pipeChanges)
 	if err != nil {
 		return err
 	}

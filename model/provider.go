@@ -32,6 +32,7 @@ type Resources interface {
 	GetCloudPrefix() string
 	GetBucketName() string
 	GetBackendConfigVars(string) map[string]string
+	GetRegion() string
 }
 
 type Bucket interface {
@@ -84,6 +85,7 @@ type CloudResources struct {
 	SSM          SSM
 	CloudPrefix  string
 	BucketName   string
+	Region       string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -114,6 +116,10 @@ func (c CloudResources) GetBucketName() string {
 	return c.BucketName
 }
 
+func (c CloudResources) GetRegion() string {
+	return c.Region
+}
+
 type RepositoryMetadata struct {
 	Name string
 	URL  string
@@ -142,6 +148,15 @@ const (
 	ArgoCDPlanDestroyCommand  ActionCommand = "argocd-plan-destroy"
 	ArgoCDApplyDestroyCommand ActionCommand = "argocd-apply-destroy"
 )
+
+func GetCommands(stepType StepType) (ActionCommand, ActionCommand) {
+	switch stepType {
+	case StepTypeArgoCD:
+		return ArgoCDPlanCommand, ArgoCDApplyCommand
+	default:
+		return PlanCommand, ApplyCommand
+	}
+}
 
 type Parameter struct {
 	Value *string

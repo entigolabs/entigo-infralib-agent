@@ -93,15 +93,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 	if pipe != nil {
 		return p.startUpdatedPipeline(pipe, stepName, step, bucket)
 	}
-	var planCommand model.ActionCommand
-	var applyCommand model.ActionCommand
-	if step.Type == model.StepTypeArgoCD {
-		planCommand = model.ArgoCDPlanCommand
-		applyCommand = model.ArgoCDApplyCommand
-	} else {
-		planCommand = model.PlanCommand
-		applyCommand = model.ApplyCommand
-	}
+	planCommand, applyCommand := model.GetCommands(step.Type)
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),

@@ -16,18 +16,18 @@ import (
 )
 
 type awsService struct {
-	ctx         context.Context
-	awsConfig   aws.Config
-	cloudPrefix string
-	accountId   string
-	resources   Resources
+	ctx          context.Context
+	awsConfig    aws.Config
+	cloudPrefix  string
+	accountId    string
+	resources    Resources
+	pipelineType common.PipelineType
 }
 
 type Resources struct {
 	model.CloudResources
 	IAM           IAM
 	DynamoDBTable string
-	Region        string
 	AccountId     string
 }
 
@@ -40,17 +40,18 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS) model.CloudProvider {
+func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipelineType common.PipelineType) model.CloudProvider {
 	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 	return &awsService{
-		ctx:         ctx,
-		awsConfig:   awsConfig,
-		cloudPrefix: cloudPrefix,
-		accountId:   accountId,
+		ctx:          ctx,
+		awsConfig:    awsConfig,
+		cloudPrefix:  cloudPrefix,
+		accountId:    accountId,
+		pipelineType: pipelineType,
 	}
 }
 
@@ -96,27 +97,31 @@ func (a *awsService) SetupResources() model.Resources {
 	bucket := a.getBucketName()
 	s3, s3Arn := a.createBucket(bucket)
 	dynamoDBTable := a.createDynamoDBTable()
-	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
-	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
-
-	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
 			Bucket:       s3,
-			Pipeline:     codePipeline,
-			CodeBuild:    codeBuild,
 			SSM:          NewSSM(a.ctx, a.awsConfig),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
+			Region:       a.awsConfig.Region,
 		},
-		IAM:           iam,
 		DynamoDBTable: *dynamoDBTable.TableName,
-		Region:        a.awsConfig.Region,
 		AccountId:     a.accountId,
 	}
+	if a.pipelineType == common.PipelineTypeLocal {
+		return a.resources
+	}
+
+	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
+	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
+
+	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
+	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
+	a.resources.IAM = iam
+	a.resources.CodeBuild = codeBuild
+	a.resources.Pipeline = codePipeline
 	return a.resources
 }
 
@@ -131,9 +136,9 @@ func (a *awsService) GetResources() model.Resources {
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),
+			Region:       a.awsConfig.Region,
 		},
 		IAM:       NewIAM(a.ctx, a.awsConfig, a.accountId),
-		Region:    a.awsConfig.Region,
 		AccountId: a.accountId,
 	}
 	return a.resources

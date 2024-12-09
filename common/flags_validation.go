@@ -3,6 +3,9 @@ package common
 import "fmt"
 
 func (f *Flags) validate(cmd Command) error {
+	if f.Pipeline.Type != "" && f.Pipeline.Type != string(PipelineTypeLocal) && f.Pipeline.Type != string(PipelineTypeCloud) {
+		return fmt.Errorf("pipeline type must be either 'local' or 'cloud'")
+	}
 	switch cmd {
 	case RunCommand:
 		fallthrough
