@@ -323,7 +323,11 @@ func ProcessSteps(config *model.Config, providerType model.ProviderType) {
 		if step.Vpc.Attach == nil {
 			attach := step.Type == model.StepTypeArgoCD
 			if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
-				step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
+				if providerType == model.GCLOUD {
+					step.KubernetesClusterName = "{{ .toutput.gke.cluster_name }}"
+				} else {
+					step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
+				}
 			}
 			step.Vpc.Attach = &attach
 			config.Steps[i] = step

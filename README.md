@@ -103,8 +103,8 @@ OPTIONS:
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
-* logs-path - path for storing logs when running local pipelines [$LOGS_PATH]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing terraform/helm logs when running local pipelines [$LOGS_PATH]
 
 Example
 ```bash
@@ -127,8 +127,8 @@ OPTIONS:
 * github-token - **optional** GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
-* logs-path - path for storing logs when running local pipelines [$LOGS_PATH]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
 
 Example
 ```bash
