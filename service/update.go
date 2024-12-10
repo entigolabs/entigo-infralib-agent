@@ -1089,6 +1089,7 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	if err != nil {
 		return "", false, err
 	}
+	moduleState.AutoApprove = getStepAutoApprove(approve)
 	if util.IsClientModule(module) {
 		moduleState.Version = module.Version
 		return module.Version, true, nil
@@ -1113,7 +1114,6 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 			moduleSemver = moduleSource.NewestVersion
 		}
 	}
-	moduleState.AutoApprove = true
 	if index > len(moduleSource.Releases)-1 {
 		return getFormattedVersion(moduleSemver), false, nil
 	}
@@ -1144,6 +1144,34 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		moduleState.Version = getFormattedVersion(releaseTag)
 		return getFormattedVersion(releaseTag), true, nil
 	}
+}
+
+func getStepAutoApprove(approve model.Approve) bool {
+	if approve == model.ApproveNever || approve == model.ApproveForce {
+		return true
+	}
+	if approve == "" || approve == model.ApproveAlways {
+		return false
+	}
+	return true
+}
+
+func getModuleAutoApprove(moduleVersion *version.Version, releaseTag *version.Version, approve model.Approve) bool {
+	if approve == model.ApproveNever || approve == model.ApproveForce {
+		return true
+	}
+	if approve == "" || approve == model.ApproveAlways {
+		return false
+	}
+	releaseSegments := releaseTag.Segments()
+	moduleSegments := moduleVersion.Segments()
+	if approve == model.ApproveMajor {
+		return moduleSegments[0] >= releaseSegments[0]
+	}
+	if approve == model.ApproveMinor {
+		return moduleSegments[0] >= releaseSegments[0] && moduleSegments[1] >= releaseSegments[1]
+	}
+	return false
 }
 
 func (u *updater) getModuleSource(moduleSource string) *model.Source {
@@ -1380,22 +1408,4 @@ func getModuleState(stepState *model.StateStep, module model.Module) (*model.Sta
 		return nil, fmt.Errorf("failed to get state for module %s", module.Name)
 	}
 	return moduleState, nil
-}
-
-func getModuleAutoApprove(moduleVersion *version.Version, releaseTag *version.Version, approve model.Approve) bool {
-	if approve == model.ApproveNever || approve == model.ApproveForce {
-		return true
-	}
-	if approve == "" || approve == model.ApproveAlways {
-		return false
-	}
-	releaseSegments := releaseTag.Segments()
-	moduleSegments := moduleVersion.Segments()
-	if approve == model.ApproveMajor {
-		return moduleSegments[0] >= releaseSegments[0]
-	}
-	if approve == model.ApproveMinor {
-		return moduleSegments[0] >= releaseSegments[0] && moduleSegments[1] >= releaseSegments[1]
-	}
-	return false
 }
