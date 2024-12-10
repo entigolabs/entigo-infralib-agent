@@ -14,15 +14,14 @@ steps:
     approve: minor
     vpc:
       attach: true
-      id: '{{ .gcsm.net.main.vpc_name }}'
-      subnet_ids: '{{ .gcsm.net.main.private_subnets[0] }}'
     modules:
       - name: dns
         source: google/dns
         version: stable
         inputs:
-          create_private: false
-          parent_zone_id: REPLACEME
+          parent_zone_id: REPLACE_ME
+          public_subdomain_name: dev
+          private_subdomain_name: dev-int
       - name: crossplane
         source: google/crossplane
         version: stable
@@ -30,14 +29,12 @@ steps:
         source: google/gke
         version: stable
         inputs:
-          gke_main_max_size: 6
-          gke_main_min_size: 2
-          gke_mon_max_size: 4
+          gke_main_max_size: 3
+          gke_main_min_size: 1
+          gke_mon_max_size: 3
           gke_mon_min_size: 1
-          gke_tools_max_size: 6
-          gke_tools_min_size: 3
-          ip_range_pods: '{{ .gcsm.net.main.private_subnets_pods[0] }}'
-          ip_range_services: '{{ .gcsm.net.main.private_subnets_services[0] }}'
+          gke_tools_max_size: 3
+          gke_tools_min_size: 1
           master_authorized_networks: |
             [
               {
@@ -45,19 +42,23 @@ steps:
                 cidr_block   = "0.0.0.0/0"
               }
             ]
-          network: '{{ .gcsm.net.main.vpc_name }}'
-          subnetwork: '{{ .gcsm.net.main.private_subnets[0] }}'
   - name: applications
     type: argocd-apps
-    argocd_namespace: argocd
+    kubernetes_cluster_name: "{{ .toutput.gke.cluster_name }}"
     modules:
       - name: argocd
         source: argocd
         version: stable
         inputs:
+          global:
+            google:
+              gateway:
+                name: google-gateway-external
+                namespace: google-gateway
           argocd:
             global:
-              domain: argocd.{{ gcsm.infra.dns.pub_domain }}
+              domain: |
+                argocd.{{ .toutput.dns.pub_domain }}
       - name: crossplane-system
         source: crossplane-core
         version: stable
@@ -67,95 +68,18 @@ steps:
       - name: crossplane-google
         source: crossplane-google
         version: stable
-        inputs:
-          global:
-            deploymentRuntimeConfig:
-              googleServiceAccount: '{{ .gcsm.infra.crossplane.service_account_email }}'
-            google:
-              projectID: '{{ .gcsm.infra.crossplane.project_id }}'
       - name: external-dns
         source: external-dns
         version: stable
-        inputs:
-          global:
-            google:
-              projectID: '{{ .gcsm.infra.crossplane.project_id }}'
       - name: google-gateway
         source: google-gateway
         version: stable
-        inputs:
-          global:
-            createExternal: true
-            createInternal: false
-            google:
-              externalCertificateMap: '{{ gcsm.infra.dns.pub_zone_id }}'
       - name: istio-base
         source: istio-base
         version: stable
       - name: istio-system
         source: istio-istiod
         version: stable
-        inputs:
-          istiod:
-            pilot:
-              traceSampling: 100
       - name: istio-gateway
         source: istio-gateway
         version: stable
-        inputs:
-          global:
-            google:
-              hostname: '{{ gcsm.infra.dns.pub_domain }}'
-      - name: grafana
-        source: grafana
-        version: stable
-        inputs:
-          global:
-            google:
-              hostname: grafana.{{ gcsm.infra.dns.pub_domain }}
-      - name: keycloak
-        source: keycloak
-        version: stable
-        inputs:
-          global:
-            google:
-              hostname: keycloak.{{ gcsm.infra.dns.pub_domain }}
-      - name: kiali
-        source: kiali
-        version: stable
-        inputs:
-          global:
-            google:
-              hostname: kiali.{{ gcsm.infra.dns.pub_domain }}
-      - name: loki
-        source: loki
-        version: stable
-        inputs:
-          global:
-            bucketName: loki-{{ .gcsm.infra.gke.cluster_name }}
-            google:
-              hostname: loki.{{ gcsm.infra.dns.pub_domain }}
-              projectID: '{{ .gcsm.infra.crossplane.project_id }}'
-          loki:
-            loki:
-              storage:
-                bucketNames:
-                  admin: loki-{{ .gcsm.infra.gke.cluster_name }}
-                  chunks: loki-{{ .gcsm.infra.gke.cluster_name }}
-                  ruler: loki-{{ .gcsm.infra.gke.cluster_name }}
-      - name: mimir
-        source: mimir
-        version: stable
-        inputs:
-          global:
-            bucketName: mimir-{{ .gcsm.infra.gke.cluster_name }}
-            google:
-              hostname: mimir.{{ gcsm.infra.dns.pub_domain }}
-              projectID: '{{ .gcsm.infra.crossplane.project_id }}'
-      - name: prometheus
-        source: prometheus
-        version: stable
-        inputs:
-          global:
-            google:
-              hostname: prometheus.{{ gcsm.infra.dns.pub_domain }}
