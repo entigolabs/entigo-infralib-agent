@@ -1150,7 +1150,7 @@ func getStepAutoApprove(approve model.Approve) bool {
 	if approve == model.ApproveNever || approve == model.ApproveForce {
 		return true
 	}
-	if approve == "" || approve == model.ApproveAlways {
+	if approve == "" || approve == model.ApproveAlways || approve == model.ApproveReject {
 		return false
 	}
 	return true
@@ -1160,7 +1160,7 @@ func getModuleAutoApprove(moduleVersion *version.Version, releaseTag *version.Ve
 	if approve == model.ApproveNever || approve == model.ApproveForce {
 		return true
 	}
-	if approve == "" || approve == model.ApproveAlways {
+	if approve == "" || approve == model.ApproveAlways || approve == model.ApproveReject {
 		return false
 	}
 	releaseSegments := releaseTag.Segments()

@@ -203,7 +203,7 @@ base_image_version: stable | semver
 steps:
   - name: string
     type: terraform | argocd-apps
-    approve: minor | major | never | always | force
+    approve: minor | major | never | always | force | reject
     base_image_source: string
     base_image_version: stable | semver
     vpc:
@@ -260,7 +260,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
-  * approve - approval type for the step, possible values `minor | major | never | always | force`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
+  * approve - approval type for the step, possible values `minor | major | never | always | force | reject`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
   * base_image_source - source of Entigo Infralib Base Image to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * vpc - vpc values to add
@@ -285,6 +285,8 @@ Source version is overwritten by module version. Default version is **stable** w
 ### Auto approval logic
 
 Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval, except when using type `force`. Approve always means that manual approval is required, never means that agent approves automatically. Major and minor types require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
+
+It's possible to use the type `reject` to stop the pipeline instead of approving. This can be used to generate plan files without applying them. Agent marks the step as failed.
 
 ### Overriding config values
 

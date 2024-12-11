@@ -123,6 +123,9 @@ func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoAp
 	if err != nil {
 		return false, err
 	}
+	if step.Approve == model.ApproveReject {
+		return false, fmt.Errorf("stopped because step approve type is 'reject'")
+	}
 	if pipeChanges.NoChanges {
 		log.Printf("No changes detected for %s, skipping apply", pipelineName)
 		return false, nil

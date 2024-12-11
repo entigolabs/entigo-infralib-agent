@@ -347,10 +347,14 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 				if err != nil {
 					return err
 				}
-				if pipeChanges != nil && pipeChanges.NoChanges {
+				if pipeChanges != nil && (step.Approve == model.ApproveReject || pipeChanges.NoChanges) {
+					log.Printf("Stopping rollout for %s", pipelineName)
 					_, _ = p.client.CancelRollout(p.ctx, &deploypb.CancelRolloutRequest{
 						Name: rollout.GetName(),
 					})
+					if step.Approve == model.ApproveReject {
+						return fmt.Errorf("stopped because step approve type is 'reject'")
+					}
 					return nil
 				}
 				if pipeChanges != nil && (step.Approve == model.ApproveForce || (pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove))) {
