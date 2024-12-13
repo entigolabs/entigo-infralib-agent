@@ -296,6 +296,8 @@ Replacement tags can be overwritten by values from terraform output, config itse
 
 If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found.
 
+Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, ``{{`{{ .dbupdate }}`}}`` will be replaced with `{{ .dbupdate }}`. This can be used to pass helm template values through the agent.
+
 For example, `{{ .ssm.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
 If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .ssm.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
 

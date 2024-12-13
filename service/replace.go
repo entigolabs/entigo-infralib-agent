@@ -32,7 +32,7 @@ const (
 	terraformOutput = "terraform-output.json"
 )
 
-var replaceRegex = regexp.MustCompile(`{{(.*?)}}`)
+var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*.*?(?:}}\x60)*)}}`)
 var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[(\d+)(-(\d+))?])?`)
 
 func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Step, error) {
@@ -102,7 +102,13 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		return content, nil
 	}
 	for _, match := range matches {
-		replaceTag, replaceKey, replaceType, err := parseReplaceTag(match)
+		replaceTag := match[0]
+		replaceKey := match[1]
+		if hasSamePrefixSuffix(replaceKey, "`") {
+			content = strings.Replace(content, replaceTag, strings.Trim(replaceKey, "`"), 1)
+			continue
+		}
+		replaceKey, replaceType, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
@@ -113,6 +119,10 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		content = strings.Replace(content, replaceTag, replacement, 1)
 	}
 	return content, nil
+}
+
+func hasSamePrefixSuffix(s, prefixSuffix string) bool {
+	return strings.HasPrefix(s, prefixSuffix) && strings.HasSuffix(s, prefixSuffix)
 }
 
 func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, replaceType string, cache paramCache) (string, error) {
@@ -455,7 +465,12 @@ func replaceConfigStepsValues(prefix string, steps []model.Step) []model.Step {
 
 func replaceConfigTags(prefix string, config model.Config, content string, matches [][]string) (string, error) {
 	for _, match := range matches {
-		replaceTag, replaceKey, replaceType, err := parseReplaceTag(match)
+		replaceTag := match[0]
+		replaceKey := match[1]
+		if hasSamePrefixSuffix(replaceKey, "`") {
+			continue
+		}
+		replaceKey, replaceType, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
@@ -478,7 +493,12 @@ func replaceConfigTags(prefix string, config model.Config, content string, match
 
 func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) (string, error) {
 	for _, match := range matches {
-		replaceTag, replaceKey, replaceType, err := parseReplaceTag(match)
+		replaceTag := match[0]
+		replaceKey := match[1]
+		if hasSamePrefixSuffix(replaceKey, "`") {
+			continue
+		}
+		replaceKey, replaceType, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
@@ -495,12 +515,11 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 	return content, nil
 }
 
-func parseReplaceTag(match []string) (string, string, string, error) {
+func parseReplaceTag(match []string) (string, string, error) {
 	if len(match) != 2 {
-		return "", "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+		return "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
 	}
-	replaceTag := match[0]
 	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
 	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
-	return replaceTag, replaceKey, replaceType, nil
+	return replaceKey, replaceType, nil
 }

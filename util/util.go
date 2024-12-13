@@ -45,11 +45,14 @@ func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]b
 
 func GetFileFromUrl(fileUrl string) ([]byte, error) {
 	resp, err := http.Get(fileUrl)
-	if resp.StatusCode == 404 {
+	if resp != nil && resp.StatusCode == 404 {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("empty response from %s", fileUrl)
 	}
 	defer func(Body io.ReadCloser) {
 		err = Body.Close()
