@@ -11,8 +11,6 @@ import (
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 	"io"
-	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,30 +39,6 @@ func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]b
 		b.Write([]byte(suffix))
 	}
 	return bytes.TrimRight(b.Bytes(), ", "), nil
-}
-
-func GetFileFromUrl(fileUrl string) ([]byte, error) {
-	resp, err := http.Get(fileUrl)
-	if resp != nil && resp.StatusCode == 404 {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, fmt.Errorf("empty response from %s", fileUrl)
-	}
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
-		if err != nil {
-			log.Printf("Failed to close response body: %s", err)
-		}
-	}(resp.Body)
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
 }
 
 func ToList(value string) []string {

@@ -36,7 +36,7 @@ func NewGithub(ctx context.Context, token string) Github {
 	return &githubClient{
 		ctx:    ctx,
 		client: client,
-		cache:  NewFileCache(),
+		cache:  NewFileCache(ctx),
 	}
 }
 
