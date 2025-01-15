@@ -17,8 +17,9 @@ import (
 const (
 	StableVersion = "stable"
 	IncludeFormat = "config/%s/include"
+	ConfigFile    = "config.yaml"
+	EntigoSource  = "github.com/entigolabs/entigo-infralib-release"
 
-	EntigoSource   = "github.com/entigolabs/entigo-infralib-release"
 	terraformCache = ".terraform"
 )
 
@@ -43,24 +44,32 @@ func GetProviderPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+func GetFullConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+	return getConfig(ssm, prefix, configFile, bucket, true)
+}
+
+func GetBaseConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+	return getConfig(nil, prefix, configFile, bucket, false)
+}
+
+func getConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) model.Config {
 	var config model.Config
 	if configFile != "" {
-		config = GetLocalConfig(ssm, prefix, configFile, bucket)
+		config = GetLocalConfig(ssm, prefix, configFile, bucket, addInputs)
 	} else {
-		config = GetRemoteConfig(ssm, prefix, bucket)
+		config = GetRemoteConfig(ssm, prefix, bucket, addInputs)
 	}
 	return config
 }
 
-func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) model.Config {
 	config := getLocalConfigFile(configFile)
 	PutConfig(bucket, config)
 	config = replaceConfigValues(ssm, prefix, config)
 	reserveAppsFiles(config)
 	basePath := filepath.Dir(configFile) + "/"
 	AddStepsFilesFromFolder(&config, basePath)
-	AddModuleInputFiles(&config, basePath, os.ReadFile)
+	AddModuleInputFiles(&config, basePath, os.ReadFile, addInputs)
 	PutAdditionalFiles(bucket, config.Steps)
 	return config
 }
@@ -131,7 +140,7 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 	if err != nil {
 		log.Fatalf("Failed to marshal config: %s", err)
 	}
-	err = bucket.PutFile("config.yaml", bytes)
+	err = bucket.PutFile(ConfigFile, bytes)
 	if err != nil {
 		log.Fatalf("Failed to put config: %s", err)
 	}
@@ -213,16 +222,16 @@ func putStepFiles(bucket model.Bucket, step model.Step) {
 	}
 }
 
-func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket) model.Config {
+func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket, addInputs bool) model.Config {
 	config := replaceConfigValues(ssm, prefix, getRemoteConfigFile(bucket))
 	reserveAppsFiles(config)
 	AddStepsFilesFromBucket(&config, bucket)
-	AddModuleInputFiles(&config, "", bucket.GetFile)
+	AddModuleInputFiles(&config, "", bucket.GetFile, addInputs)
 	return config
 }
 
 func getRemoteConfigFile(bucket model.Bucket) model.Config {
-	bytes, err := bucket.GetFile("config.yaml")
+	bytes, err := bucket.GetFile(ConfigFile)
 	if err != nil {
 		log.Fatalf("Failed to get config: %s", err)
 	}
@@ -273,7 +282,7 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 	}
 }
 
-func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error)) {
+func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error), addInputs bool) {
 	if config.Steps == nil {
 		return
 	}
@@ -289,12 +298,12 @@ func AddModuleInputFiles(config *model.Config, basePath string, readFile func(st
 			if module.Name == "" {
 				log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", step.Name)})
 			}
-			processModuleInputs(step.Name, module, basePath, readFile)
+			processModuleInputs(step.Name, module, basePath, readFile, addInputs)
 		}
 	}
 }
 
-func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error)) {
+func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error), addInputs bool) {
 	yamlFile := fmt.Sprintf("%sconfig/%s/%s.yaml", basePath, stepName, module.Name)
 	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
@@ -311,6 +320,9 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 	}
 	module.InputsFile = strings.TrimPrefix(yamlFile, basePath)
 	module.FileContent = bytes
+	if !addInputs {
+		return
+	}
 	err = yaml.Unmarshal(bytes, &module.Inputs)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to unmarshal input file %s: %v",
@@ -318,32 +330,58 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 	}
 }
 
-func ProcessSteps(config *model.Config, providerType model.ProviderType) {
-	for i, step := range config.Steps {
-		if step.Vpc.Attach == nil {
-			attach := step.Type == model.StepTypeArgoCD
-			if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
-				if providerType == model.GCLOUD {
-					step.KubernetesClusterName = "{{ .toutput.gke.cluster_name }}"
-				} else {
-					step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
-				}
-			}
-			step.Vpc.Attach = &attach
-			config.Steps[i] = step
-		}
-		if !*step.Vpc.Attach || step.Vpc.Id != "" {
+func ProcessConfig(config *model.Config, providerType model.ProviderType) {
+	processSources(config)
+	processSteps(config, providerType)
+}
+
+func processSources(config *model.Config) {
+	for i, source := range config.Sources {
+		if !util.IsLocalSource(source.URL) {
 			continue
 		}
-		if providerType == model.AWS {
-			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
-			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
-			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
-		} else if providerType == model.GCLOUD {
-			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
-			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
-		}
+		source.ForceVersion = true
+		source.Version = "local"
+		config.Sources[i] = source
+	}
+}
+
+func processSteps(config *model.Config, providerType model.ProviderType) {
+	for i, step := range config.Steps {
+		processStepVpcAttach(&step, providerType)
+		processStepVpcIds(&step, providerType)
 		config.Steps[i] = step
+	}
+}
+
+func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
+	if step.Vpc.Attach == nil {
+		attach := step.Type == model.StepTypeArgoCD
+		if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
+			step.KubernetesClusterName = getKubernetesClusterName(providerType)
+		}
+		step.Vpc.Attach = &attach
+	}
+}
+
+func getKubernetesClusterName(providerType model.ProviderType) string {
+	if providerType == model.GCLOUD {
+		return "{{ .toutput.gke.cluster_name }}"
+	}
+	return "{{ .toutput.eks.cluster_name }}"
+}
+
+func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
+	if !*step.Vpc.Attach || step.Vpc.Id != "" {
+		return
+	}
+	if providerType == model.AWS {
+		step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+		step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+	} else if providerType == model.GCLOUD {
+		step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
+		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
 	}
 }
 

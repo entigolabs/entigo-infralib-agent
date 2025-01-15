@@ -16,6 +16,7 @@ type Flags struct {
 	Prefix        string
 	AllowParallel bool
 	GithubToken   string
+	Force         bool
 	Steps         cli.StringSlice
 	Pipeline      Pipeline
 	GCloud        GCloud

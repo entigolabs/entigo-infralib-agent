@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"log"
+	"strings"
 )
 
 type IAM interface {
@@ -28,6 +29,7 @@ type IAM interface {
 	DetachUserPolicy(policyArn string, userName string) error
 	CreateAccessKey(userName string) *types.AccessKey
 	DeleteAccessKeys(userName string) error
+	CreateServiceLinkedRole(service string)
 }
 
 type PolicyDocument struct {
@@ -328,6 +330,21 @@ func (i *identity) DeleteAccessKeys(userName string) error {
 		}
 	}
 	return nil
+}
+
+func (i *identity) CreateServiceLinkedRole(service string) {
+	_, err := i.iamClient.CreateServiceLinkedRole(i.ctx, &iam.CreateServiceLinkedRoleInput{
+		AWSServiceName: aws.String(service),
+	})
+	if err == nil {
+		log.Printf("Created service linked role for %s\n", service)
+		return
+	}
+	var awsError *types.InvalidInputException
+	if errors.As(err, &awsError) && strings.Contains(awsError.ErrorMessage(), "has been taken") {
+		return
+	}
+	log.Fatalf("Failed to create service linked role for %s: %s", service, err)
 }
 
 func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []PolicyStatement {

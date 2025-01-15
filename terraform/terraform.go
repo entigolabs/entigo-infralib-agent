@@ -14,6 +14,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"log"
 	"log/slog"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -41,15 +42,15 @@ type terraform struct {
 	providerType  model.ProviderType
 	configSources []model.ConfigSource
 	sources       map[string]*model.Source
-	github        git.Github
+	storage       git.Storage
 }
 
-func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, github git.Github) Terraform {
+func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, storage git.Storage) Terraform {
 	return &terraform{
 		providerType:  providerType,
 		configSources: configSources,
 		sources:       sources,
-		github:        github,
+		storage:       storage,
 	}
 }
 
@@ -117,12 +118,17 @@ func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[s
 	return providersAttributes, nil
 }
 
-func (t *terraform) findProviderFile(filePath string, fileName string, sourceVersions map[string]string) (*hclwrite.File, string, error) {
+func (t *terraform) findProviderFile(path string, fileName string, sourceVersions map[string]string) (*hclwrite.File, string, error) {
 	providerName := fmt.Sprintf("providers/%s", fileName)
 	sourceURL := ""
 	release := ""
 	for _, configSource := range t.configSources {
 		source := t.sources[configSource.URL]
+		if util.IsLocalSource(source.URL) && util.FileExists(filepath.Join(source.URL, path), fileName) {
+			sourceURL = source.URL
+			release = source.ForcedVersion
+			break
+		}
 		if source.CurrentChecksums[providerName] == "" {
 			continue
 		}
@@ -136,7 +142,7 @@ func (t *terraform) findProviderFile(filePath string, fileName string, sourceVer
 	if sourceURL == "" {
 		return nil, "", model.NewFileNotFoundError(fileName)
 	}
-	file, err := t.getTerraformFile(sourceURL, filePath, fileName, release)
+	file, err := t.getTerraformFile(sourceURL, path, fileName, release)
 	if err != nil {
 		return nil, "", err
 	}
@@ -144,7 +150,7 @@ func (t *terraform) findProviderFile(filePath string, fileName string, sourceVer
 }
 
 func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release string) (*hclwrite.File, error) {
-	rawFile, err := t.github.GetRawFileContent(sourceURL, fmt.Sprintf("%s/%s", filePath, fileName), release)
+	rawFile, err := t.storage.GetFile(sourceURL, fmt.Sprintf("%s/%s", filePath, fileName), release)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +368,9 @@ func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Ste
 	if util.IsClientModule(module) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion.Version)))
+	} else if util.IsLocalSource(moduleVersion.SourceURL) {
+		moduleBody.SetAttributeValue("source",
+			cty.StringVal(fmt.Sprintf("%s/modules/%s", moduleVersion.SourceURL, module.Source)))
 	} else {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.SourceURL, module.Source,

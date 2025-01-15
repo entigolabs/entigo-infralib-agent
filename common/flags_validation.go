@@ -13,9 +13,14 @@ func (f *Flags) validate(cmd Command) error {
 		fallthrough
 	case DeleteCommand:
 		fallthrough
-	case SACommand:
-		fallthrough
 	case BootstrapCommand:
+		fallthrough
+	case PullCommand:
+		if f.Config == "" && f.Prefix == "" {
+			return fmt.Errorf("config or prefix must be set")
+		}
+		fallthrough
+	case SACommand:
 		if f.GCloud.ProjectId != "" {
 			if f.GCloud.Location == "" || f.GCloud.Zone == "" {
 				return fmt.Errorf("gcloud location and zone must be set")

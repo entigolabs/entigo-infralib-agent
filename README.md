@@ -16,6 +16,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Update](#update)
     * [Delete](#delete)
     * [Service Account](#service-account)
+    * [Pull](#pull)
 * [Config](#config)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
@@ -174,6 +175,24 @@ Example
 bin/ei-agent service-account --prefix=infralib
 ```
 
+### pull
+
+Pulls agent config yaml and the config folders from the S3/GCloud bucket. Use the `force` flag to overwrite existing local files.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* config - config file path and name, only needed when overriding an existing config [$CONFIG]
+* prefix - prefix used when creating cloud resources [$PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* force - overwrite existing local files, default **false**. **Warning!** Force deletes the `/config` subfolder before writing. [$FORCE]
+
+Example
+```bash
+bin/ei-agent pull --prefix=infralib
+```
+
 ## Config
 
 Config is provided with a yaml file:
@@ -181,7 +200,7 @@ Config is provided with a yaml file:
 ```yaml
 prefix: string
 sources:
-  - url: https://github.com/entigolabs/entigo-infralib-release
+  - url: https://github.com/entigolabs/entigo-infralib-release | path
     version: stable | semver
     include: []string
     exclude: []string
@@ -237,7 +256,7 @@ Source version is overwritten by module version. Default version is **stable** w
 
 * prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
 * sources - list of source repositories for Entigo Infralib modules
-  * url - url of the source repository
+  * url - url of the source repository or path to the local directory. Path must start with `./` or `../` Path will set force_version to true and use `local` as the version. Path only works with the local pipeline execution type.
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
@@ -319,4 +338,4 @@ Infralib modules may use `{{ .tmodule.type }}` in their default input files to r
 
 ### Including files in steps
 
-It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and a named file for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.
+It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and named files for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.
