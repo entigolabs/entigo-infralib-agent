@@ -260,6 +260,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
 	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
+	iam.CreateServiceLinkedRole("autoscaling.amazonaws.com")
 	buildRoleArn, buildRoleCreated := a.createBuildRole(iam, logGroupArn, s3Arn, dynamoDBTableArn)
 	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
 
