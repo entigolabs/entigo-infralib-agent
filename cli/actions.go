@@ -26,6 +26,7 @@ func action(cmd common.Command) func(c *cli.Context) error {
 }
 
 func run(ctx context.Context, cmd common.Command) {
+	common.PrintVersion()
 	switch cmd {
 	case common.RunCommand:
 		agentRun.Run(ctx, flags)

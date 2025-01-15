@@ -7,7 +7,6 @@ import (
 )
 
 func Update(ctx context.Context, flags *common.Flags) {
-	common.PrintVersion()
 	updater := service.NewUpdater(ctx, flags)
 	updater.Update()
 }
