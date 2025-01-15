@@ -56,7 +56,7 @@ type updater struct {
 func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	provider := GetCloudProvider(ctx, flags)
 	resources := provider.SetupResources()
-	config := GetConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
+	config := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())

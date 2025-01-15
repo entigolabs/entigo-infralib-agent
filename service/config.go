@@ -44,24 +44,32 @@ func GetProviderPrefix(flags *common.Flags) string {
 	return prefix
 }
 
-func GetConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+func GetFullConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+	return getConfig(ssm, prefix, configFile, bucket, true)
+}
+
+func GetBaseConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+	return getConfig(nil, prefix, configFile, bucket, false)
+}
+
+func getConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) model.Config {
 	var config model.Config
 	if configFile != "" {
-		config = GetLocalConfig(ssm, prefix, configFile, bucket)
+		config = GetLocalConfig(ssm, prefix, configFile, bucket, addInputs)
 	} else {
-		config = GetRemoteConfig(ssm, prefix, bucket)
+		config = GetRemoteConfig(ssm, prefix, bucket, addInputs)
 	}
 	return config
 }
 
-func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) model.Config {
 	config := getLocalConfigFile(configFile)
 	PutConfig(bucket, config)
 	config = replaceConfigValues(ssm, prefix, config)
 	reserveAppsFiles(config)
 	basePath := filepath.Dir(configFile) + "/"
 	AddStepsFilesFromFolder(&config, basePath)
-	AddModuleInputFiles(&config, basePath, os.ReadFile)
+	AddModuleInputFiles(&config, basePath, os.ReadFile, addInputs)
 	PutAdditionalFiles(bucket, config.Steps)
 	return config
 }
@@ -214,11 +222,11 @@ func putStepFiles(bucket model.Bucket, step model.Step) {
 	}
 }
 
-func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket) model.Config {
+func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket, addInputs bool) model.Config {
 	config := replaceConfigValues(ssm, prefix, getRemoteConfigFile(bucket))
 	reserveAppsFiles(config)
 	AddStepsFilesFromBucket(&config, bucket)
-	AddModuleInputFiles(&config, "", bucket.GetFile)
+	AddModuleInputFiles(&config, "", bucket.GetFile, addInputs)
 	return config
 }
 
@@ -274,7 +282,7 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 	}
 }
 
-func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error)) {
+func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error), addInputs bool) {
 	if config.Steps == nil {
 		return
 	}
@@ -290,12 +298,12 @@ func AddModuleInputFiles(config *model.Config, basePath string, readFile func(st
 			if module.Name == "" {
 				log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", step.Name)})
 			}
-			processModuleInputs(step.Name, module, basePath, readFile)
+			processModuleInputs(step.Name, module, basePath, readFile, addInputs)
 		}
 	}
 }
 
-func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error)) {
+func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error), addInputs bool) {
 	yamlFile := fmt.Sprintf("%sconfig/%s/%s.yaml", basePath, stepName, module.Name)
 	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
@@ -312,6 +320,9 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 	}
 	module.InputsFile = strings.TrimPrefix(yamlFile, basePath)
 	module.FileContent = bytes
+	if !addInputs {
+		return
+	}
 	err = yaml.Unmarshal(bytes, &module.Inputs)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to unmarshal input file %s: %v",

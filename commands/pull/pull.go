@@ -18,7 +18,7 @@ import (
 func Run(ctx context.Context, flags *common.Flags) {
 	provider := service.GetCloudProvider(ctx, flags)
 	resources := provider.GetResources()
-	conf := service.GetRemoteConfig(nil, resources.GetCloudPrefix(), resources.GetBucket())
+	conf := service.GetRemoteConfig(nil, resources.GetCloudPrefix(), resources.GetBucket(), false)
 	basePath := ""
 	if flags.Config != "" {
 		basePath = filepath.Dir(flags.Config) + "/"
@@ -43,7 +43,7 @@ func Run(ctx context.Context, flags *common.Flags) {
 
 func getExistingFiles(config string, conf model.Config, basePath string) []string {
 	files := make([]string, 0)
-	if config != "" {
+	if config != "" && util.FileExists("", config) {
 		files = append(files, config)
 	} else if util.FileExists(basePath, service.ConfigFile) {
 		files = append(files, service.ConfigFile)
