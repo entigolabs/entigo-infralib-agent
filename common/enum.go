@@ -8,6 +8,7 @@ const (
 	DeleteCommand    Command = "delete"
 	UpdateCommand    Command = "update"
 	SACommand        Command = "service-account"
+	PullCommand      Command = "pull"
 )
 
 type LogLevel string

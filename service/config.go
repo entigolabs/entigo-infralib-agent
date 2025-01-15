@@ -17,8 +17,9 @@ import (
 const (
 	StableVersion = "stable"
 	IncludeFormat = "config/%s/include"
+	ConfigFile    = "config.yaml"
+	EntigoSource  = "github.com/entigolabs/entigo-infralib-release"
 
-	EntigoSource   = "github.com/entigolabs/entigo-infralib-release"
 	terraformCache = ".terraform"
 )
 
@@ -131,7 +132,7 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 	if err != nil {
 		log.Fatalf("Failed to marshal config: %s", err)
 	}
-	err = bucket.PutFile("config.yaml", bytes)
+	err = bucket.PutFile(ConfigFile, bytes)
 	if err != nil {
 		log.Fatalf("Failed to put config: %s", err)
 	}
@@ -222,7 +223,7 @@ func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket) model.Co
 }
 
 func getRemoteConfigFile(bucket model.Bucket) model.Config {
-	bytes, err := bucket.GetFile("config.yaml")
+	bytes, err := bucket.GetFile(ConfigFile)
 	if err != nil {
 		log.Fatalf("Failed to get config: %s", err)
 	}

@@ -409,6 +409,9 @@ func (u *updater) findStepModuleByType(moduleType string) (*model.Step, *model.M
 }
 
 func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) model.Config {
+	if ssm == nil {
+		return config
+	}
 	steps := config.Steps
 	config.Steps = nil
 	config = replaceConfigRootValues(ssm, prefix, config)
@@ -430,11 +433,9 @@ func replaceConfigRootValues(ssm model.SSM, prefix string, config model.Config) 
 	if err != nil {
 		log.Fatalf("Failed to replace tags in config root, error: %v", err)
 	}
-	if ssm != nil {
-		modifiedConfigYaml, err = replaceConfigCustomTags(ssm, modifiedConfigYaml, matches)
-		if err != nil {
-			log.Fatalf("Failed to replace custom output tags in config root, error: %v", err)
-		}
+	modifiedConfigYaml, err = replaceConfigCustomTags(ssm, modifiedConfigYaml, matches)
+	if err != nil {
+		log.Fatalf("Failed to replace custom output tags in config root, error: %v", err)
 	}
 	err = yaml.Unmarshal([]byte(modifiedConfigYaml), &config)
 	if err != nil {

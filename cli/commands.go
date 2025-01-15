@@ -12,6 +12,7 @@ func cliCommands() []*cli.Command {
 		&bootstrapCommand,
 		&deleteCommand,
 		&SACommand,
+		&pullCommand,
 	}
 }
 
@@ -53,4 +54,12 @@ var SACommand = cli.Command{
 	Usage:   "create a service account",
 	Action:  action(common.SACommand),
 	Flags:   cliFlags(common.SACommand),
+}
+
+var pullCommand = cli.Command{
+	Name:    string(common.PullCommand),
+	Aliases: []string{"pl"},
+	Usage:   "pull agent config yaml and included files",
+	Action:  action(common.PullCommand),
+	Flags:   cliFlags(common.PullCommand),
 }

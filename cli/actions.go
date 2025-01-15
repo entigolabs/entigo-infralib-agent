@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
 	"github.com/entigolabs/entigo-infralib-agent/commands/delete"
+	"github.com/entigolabs/entigo-infralib-agent/commands/pull"
 	agentRun "github.com/entigolabs/entigo-infralib-agent/commands/run"
 	"github.com/entigolabs/entigo-infralib-agent/commands/sa"
 	"github.com/entigolabs/entigo-infralib-agent/commands/update"
@@ -36,6 +37,8 @@ func run(ctx context.Context, cmd common.Command) {
 		delete.Delete(ctx, flags)
 	case common.SACommand:
 		sa.Run(ctx, flags)
+	case common.PullCommand:
+		pull.Run(ctx, flags)
 	default:
 		log.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
 	}

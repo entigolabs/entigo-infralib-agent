@@ -33,6 +33,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.RunCommand:
 		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
 			&printLogsFlag)
+	case common.PullCommand:
+		baseFlags = append(baseFlags, &forceFlag)
 	}
 	return baseFlags
 }
@@ -190,5 +192,15 @@ var printLogsFlag = cli.BoolFlag{
 	Usage:       "print terraform/helm logs to stdout when using local pipelines",
 	Value:       true,
 	Destination: &flags.Pipeline.PrintLogs,
+	Required:    false,
+}
+
+var forceFlag = cli.BoolFlag{
+	Name:        "force",
+	Aliases:     []string{"f"},
+	EnvVars:     []string{"FORCE"},
+	Usage:       "force",
+	Value:       false,
+	Destination: &flags.Force,
 	Required:    false,
 }
