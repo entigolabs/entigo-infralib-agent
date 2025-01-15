@@ -41,6 +41,7 @@ type updater struct {
 	resources     model.Resources
 	terraform     terraform.Terraform
 	github        git.Github
+	storage       git.Storage
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -58,9 +59,10 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	config := GetConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
-	ProcessSteps(&config, resources.GetProviderType())
+	ProcessConfig(&config, resources.GetProviderType())
 	steps := getRunnableSteps(config, flags.Steps)
 	githubClient := git.NewGithub(ctx, flags.GithubToken)
+	storage := git.NewStorage(githubClient)
 	sources, moduleSources := createSources(githubClient, steps, config.Sources, state)
 	destinations := createDestinations(ctx, config.Destinations)
 	return &updater{
@@ -68,8 +70,9 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		steps:         steps,
 		provider:      provider,
 		resources:     resources,
-		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, githubClient),
+		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, storage),
 		github:        githubClient,
+		storage:       storage,
 		destinations:  destinations,
 		state:         state,
 		pipelineType:  common.PipelineType(flags.Pipeline.Type),
@@ -122,10 +125,11 @@ func createSources(githubClient git.Github, steps []model.Step, configSources []
 	sources := make(map[string]*model.Source)
 	for _, source := range configSources {
 		var release string
+		var stableVersion *version.Version
 		if source.ForceVersion {
 			release = source.Version
 		} else {
-			stableVersion := getLatestRelease(githubClient, source.URL)
+			stableVersion = getLatestRelease(githubClient, source.URL)
 			release = stableVersion.Original()
 		}
 		checksums, err := getChecksums(githubClient, source.URL, release)
@@ -134,7 +138,7 @@ func createSources(githubClient git.Github, steps []model.Step, configSources []
 		}
 		sources[source.URL] = &model.Source{
 			URL:              source.URL,
-			StableVersion:    getLatestRelease(githubClient, source.URL),
+			StableVersion:    stableVersion,
 			Modules:          model.NewSet[string](),
 			Includes:         model.ToSet(source.Include),
 			Excludes:         model.ToSet(source.Exclude),
@@ -184,7 +188,7 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 			moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
 		}
 		moduleKey := fmt.Sprintf("modules/%s", moduleSource)
-		if source.CurrentChecksums[moduleKey] != "" {
+		if (util.IsLocalSource(configSource.URL) && util.PathExists(configSource.URL, moduleKey)) || source.CurrentChecksums[moduleKey] != "" {
 			sources[source.URL].Modules.Add(module.Source)
 			return source.URL, nil
 		}
@@ -1051,7 +1055,7 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	appBytes, err := argocd.GetApplicationFile(u.github, module, moduleSource.URL, moduleVersion, values,
+	appBytes, err := argocd.GetApplicationFile(u.storage, module, moduleSource.URL, moduleVersion, values,
 		u.resources.GetProviderType())
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)
@@ -1234,6 +1238,9 @@ func (u *updater) GetChecksums(index int) {
 }
 
 func getChecksums(githubClient git.Github, sourceURL string, release string) (map[string]string, error) {
+	if util.IsLocalSource(sourceURL) {
+		return make(map[string]string), nil
+	}
 	content, err := githubClient.GetRawFileContent(sourceURL, checksumsFile, release)
 	if err != nil {
 		var fileError model.FileNotFoundError
@@ -1357,7 +1364,7 @@ func (u *updater) getModuleInputs(stepType model.StepType, module model.Module, 
 }
 
 func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
-	defaultInputsRaw, err := u.github.GetRawFileContent(moduleSource.URL, filePath, moduleVersion)
+	defaultInputsRaw, err := u.storage.GetFile(moduleSource.URL, filePath, moduleVersion)
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {

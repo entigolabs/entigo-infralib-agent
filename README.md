@@ -181,7 +181,7 @@ Config is provided with a yaml file:
 ```yaml
 prefix: string
 sources:
-  - url: https://github.com/entigolabs/entigo-infralib-release
+  - url: https://github.com/entigolabs/entigo-infralib-release | path
     version: stable | semver
     include: []string
     exclude: []string
@@ -237,7 +237,7 @@ Source version is overwritten by module version. Default version is **stable** w
 
 * prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
 * sources - list of source repositories for Entigo Infralib modules
-  * url - url of the source repository
+  * url - url of the source repository or path to the local directory. Path must start with `./` or `../` Path will set force_version to true and use `local` as the version.
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository

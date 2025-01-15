@@ -112,6 +112,28 @@ func IsClientModule(module model.Module) bool {
 	return strings.HasPrefix(module.Source, "git::") || strings.HasPrefix(module.Source, "git@")
 }
 
+func IsLocalSource(source string) bool {
+	return !strings.HasPrefix(source, "http:") && !strings.HasPrefix(source, "https:")
+}
+
+func PathExists(source, path string) bool {
+	fullPath := filepath.Join(source, path)
+	info, err := os.Stat(fullPath)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return info.IsDir()
+}
+
+func FileExists(source, path string) bool {
+	fullPath := filepath.Join(source, path)
+	info, err := os.Stat(fullPath)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
+}
+
 func TarGzWrite(inDirPath string) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	gw := gzip.NewWriter(buf)

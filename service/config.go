@@ -318,32 +318,58 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 	}
 }
 
-func ProcessSteps(config *model.Config, providerType model.ProviderType) {
-	for i, step := range config.Steps {
-		if step.Vpc.Attach == nil {
-			attach := step.Type == model.StepTypeArgoCD
-			if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
-				if providerType == model.GCLOUD {
-					step.KubernetesClusterName = "{{ .toutput.gke.cluster_name }}"
-				} else {
-					step.KubernetesClusterName = "{{ .toutput.eks.cluster_name }}"
-				}
-			}
-			step.Vpc.Attach = &attach
-			config.Steps[i] = step
-		}
-		if !*step.Vpc.Attach || step.Vpc.Id != "" {
+func ProcessConfig(config *model.Config, providerType model.ProviderType) {
+	processSources(config)
+	processSteps(config, providerType)
+}
+
+func processSources(config *model.Config) {
+	for i, source := range config.Sources {
+		if !util.IsLocalSource(source.URL) {
 			continue
 		}
-		if providerType == model.AWS {
-			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
-			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
-			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
-		} else if providerType == model.GCLOUD {
-			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
-			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
-		}
+		source.ForceVersion = true
+		source.Version = "local"
+		config.Sources[i] = source
+	}
+}
+
+func processSteps(config *model.Config, providerType model.ProviderType) {
+	for i, step := range config.Steps {
+		processStepVpcAttach(&step, providerType)
+		processStepVpcIds(&step, providerType)
 		config.Steps[i] = step
+	}
+}
+
+func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
+	if step.Vpc.Attach == nil {
+		attach := step.Type == model.StepTypeArgoCD
+		if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
+			step.KubernetesClusterName = getKubernetesClusterName(providerType)
+		}
+		step.Vpc.Attach = &attach
+	}
+}
+
+func getKubernetesClusterName(providerType model.ProviderType) string {
+	if providerType == model.GCLOUD {
+		return "{{ .toutput.gke.cluster_name }}"
+	}
+	return "{{ .toutput.eks.cluster_name }}"
+}
+
+func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
+	if !*step.Vpc.Attach || step.Vpc.Id != "" {
+		return
+	}
+	if providerType == model.AWS {
+		step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+		step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+	} else if providerType == model.GCLOUD {
+		step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
+		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
 	}
 }
 

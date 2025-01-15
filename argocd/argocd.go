@@ -19,9 +19,9 @@ var appYaml []byte
 
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 
-func GetApplicationFile(github git.Github, module model.Module, sourceURL, version string, values []byte, provider model.ProviderType) ([]byte, error) {
+func GetApplicationFile(storage git.Storage, module model.Module, source, version string, values []byte, provider model.ProviderType) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
-	moduleFile, err := getModuleApplicationFile(github, version, module.Source, sourceURL)
+	moduleFile, err := getModuleApplicationFile(storage, version, module.Source, source)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func GetApplicationFile(github git.Github, module model.Module, sourceURL, versi
 	if err != nil {
 		return nil, err
 	}
-	return replacePlaceholders(bytes, module, sourceURL, version, values, provider), nil
+	return replacePlaceholders(bytes, module, source, version, values, provider), nil
 }
 
 func getBaseApplicationFile() []byte {
@@ -38,7 +38,7 @@ func getBaseApplicationFile() []byte {
 	return contentCopy
 }
 
-func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, version string, values []byte, provider model.ProviderType) []byte {
+func replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte, provider model.ProviderType) []byte {
 	file := string(bytes)
 	var cloudProvider string
 	if provider == model.GCLOUD {
@@ -46,7 +46,7 @@ func replacePlaceholders(bytes []byte, module model.Module, sourceURL string, ve
 	} else {
 		cloudProvider = "aws"
 	}
-	url := sourceURL
+	url := source
 	if !strings.HasSuffix(url, ".git") {
 		url += ".git"
 	}
@@ -75,8 +75,8 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 	return strings.Join(replaceLines, "\n")
 }
 
-func getModuleApplicationFile(git git.Github, release, moduleSource, sourceURL string) (map[string]interface{}, error) {
-	bytes, err := git.GetRawFileContent(sourceURL, fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
+func getModuleApplicationFile(storage git.Storage, release, moduleSource, source string) (map[string]interface{}, error) {
+	bytes, err := storage.GetFile(source, fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {
