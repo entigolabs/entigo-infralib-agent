@@ -399,7 +399,7 @@ func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 		default:
 			moduleBody.SetAttributeRaw(name, getTokens(v))
 		case string:
-			if strings.Contains(v, "\n") {
+			if strings.HasPrefix(v, "module.") || strings.Contains(v, "\n") {
 				v = strings.TrimRight(v, "\n")
 				moduleBody.SetAttributeRaw(name, getTokens(v))
 			} else {
