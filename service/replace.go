@@ -49,6 +49,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 	var modifiedStep model.Step
 	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
 	if err != nil {
+		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
 		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
 	}
 	if step.Files == nil {
@@ -84,12 +85,14 @@ func validateStepFile(file string, content []byte) error {
 	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
 		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
 		if diags.HasErrors() {
+			slog.Debug(fmt.Sprintf("broken hcl %s:\n%s", file, string(content)))
 			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}
 	} else if strings.HasSuffix(file, ".yaml") || strings.HasSuffix(file, ".yml") {
 		var yamlContent map[string]interface{}
 		err := yaml.Unmarshal(content, &yamlContent)
 		if err != nil {
+			slog.Debug(fmt.Sprintf("broken yaml %s:\n%s", file, string(content)))
 			return fmt.Errorf("failed to unmarshal yaml file %s: %v", file, err)
 		}
 	}
