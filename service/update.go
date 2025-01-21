@@ -944,9 +944,6 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		if !found {
 			return false, nil, fmt.Errorf("module %s version not found", module.Name)
 		}
-		if moduleVersion.Changed {
-			executePipeline = true
-		}
 		inputs := module.Inputs
 		if len(inputs) == 0 {
 			inputs = make(map[string]interface{})
@@ -1263,20 +1260,6 @@ func getChecksums(githubClient git.Github, sourceURL string, release string) (ma
 		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
 	}
 	return checksums, nil
-}
-
-func (u *updater) updateIncludedAppsStepFiles(step model.Step) (model.Set[string], error) {
-	files := model.Set[string]{}
-	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
-	for _, file := range step.Files {
-		target := fmt.Sprintf("%s/%s", folder, file.Name)
-		err := u.resources.GetBucket().PutFile(target, file.Content)
-		if err != nil {
-			return nil, err
-		}
-		files.Add(target)
-	}
-	return files, nil
 }
 
 func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string][]byte) error {

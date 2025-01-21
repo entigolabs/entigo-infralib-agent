@@ -192,6 +192,9 @@ func ensureBranch(auth transport.AuthMethod, repo *git.Repository, worktree *git
 		return err
 	}
 	localExists, err := localBranchExists(repo, branch)
+	if err != nil {
+		return err
+	}
 	if !remoteExists {
 		return createRemoteBranch(auth, repo, worktree, branch, insecure, localExists)
 	}

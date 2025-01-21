@@ -55,7 +55,7 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool) 
 	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	log.Printf("Starting local pipeline %s", prefix)
 	planCommand, applyCommand := model.GetCommands(step.Type)
-	output, err := l.executeLocalCommand(prefix, planCommand)
+	output, err := l.executeLocalCommand(prefix, planCommand, step)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
 	}
@@ -66,21 +66,16 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool) 
 	if !approved {
 		return nil
 	}
-	_, err = l.executeLocalCommand(prefix, applyCommand)
+	_, err = l.executeLocalCommand(prefix, applyCommand, step)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefix, err)
 	}
 	return nil
 }
 
-func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionCommand) ([]byte, error) {
+func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionCommand, step model.Step) ([]byte, error) {
 	cmd := exec.Command(executeScript)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("COMMAND=%s", command), fmt.Sprintf("TF_VAR_prefix=%s", prefix),
-		fmt.Sprintf("INFRALIB_BUCKET=%s", l.bucket), fmt.Sprintf("%s=%s", l.regionKey, l.region))
-	if l.project != "" {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project))
-	}
+	cmd.Env = l.getEnv(prefix, command, step)
 	var stdoutBuf bytes.Buffer
 	writers := []io.Writer{&stdoutBuf}
 	if l.printLogs {
@@ -99,6 +94,26 @@ func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionC
 		return nil, err
 	}
 	return stdoutBuf.Bytes(), err
+}
+
+func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step model.Step) []string {
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("COMMAND=%s", command), fmt.Sprintf("TF_VAR_prefix=%s", prefix),
+		fmt.Sprintf("INFRALIB_BUCKET=%s", l.bucket), fmt.Sprintf("%s=%s", l.regionKey, l.region))
+	if l.project != "" {
+		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project))
+	}
+	if step.Type == model.StepTypeArgoCD {
+		if step.KubernetesClusterName != "" {
+			env = append(env, fmt.Sprintf("KUBERNETES_CLUSTER_NAME=%s", step.KubernetesClusterName))
+		}
+		if step.ArgocdNamespace == "" {
+			env = append(env, "ARGOCD_NAMESPACE=argocd")
+		} else {
+			env = append(env, fmt.Sprintf("ARGOCD_NAMESPACE=%s", step.ArgocdNamespace))
+		}
+	}
+	return env
 }
 
 func (l *LocalPipeline) getLogFileWriter(prefix string, command model.ActionCommand) *os.File {
