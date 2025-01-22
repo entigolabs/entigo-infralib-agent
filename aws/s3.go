@@ -51,6 +51,10 @@ func (s *S3) CreateBucket() (string, bool, error) {
 		var existsError *types.BucketAlreadyExists
 		var ownedError *types.BucketAlreadyOwnedByYou
 		if errors.As(err, &existsError) || errors.As(err, &ownedError) {
+			err = s.checkLifecycle()
+			if err != nil {
+				return "", false, err
+			}
 			return fmt.Sprintf(bucketArnFormat, s.bucket), false, nil
 		} else {
 			return "", false, err
@@ -58,6 +62,10 @@ func (s *S3) CreateBucket() (string, bool, error) {
 	}
 	log.Printf("Created S3 Bucket %s\n", s.bucket)
 	err = s.putBucketVersioning()
+	if err != nil {
+		return "", false, err
+	}
+	err = s.putBucketLifecycle()
 	if err != nil {
 		return "", false, err
 	}
@@ -224,7 +232,7 @@ func (s *S3) BucketExists() (bool, error) {
 		Bucket: aws.String(s.bucket),
 	})
 	if err == nil {
-		return true, nil
+		return true, s.checkLifecycle()
 	}
 	return false, checkNotFoundError(err)
 }
@@ -319,6 +327,49 @@ func (s *S3) putBucketVersioning() error {
 			Status: types.BucketVersioningStatusEnabled,
 		},
 	})
+	return err
+}
+
+func (s *S3) checkLifecycle() error {
+	resp, err := s.awsS3.GetBucketLifecycleConfiguration(s.ctx, &awsS3.GetBucketLifecycleConfigurationInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err != nil {
+		var notFound *types.NotFound
+		var apiErr smithy.APIError
+		if errors.As(err, &notFound) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchLifecycleConfiguration") {
+			return s.putBucketLifecycle()
+		}
+		return err
+	}
+	for _, rule := range resp.Rules {
+		if rule.ID != nil && *rule.ID == "DeleteOlderVersions" {
+			return nil
+		}
+	}
+	return s.putBucketLifecycle()
+}
+
+func (s *S3) putBucketLifecycle() error {
+	_, err := s.awsS3.PutBucketLifecycleConfiguration(s.ctx, &awsS3.PutBucketLifecycleConfigurationInput{
+		Bucket: aws.String(s.bucket),
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{
+			Rules: []types.LifecycleRule{
+				{
+					ID:     aws.String("DeleteOlderVersions"),
+					Status: types.ExpirationStatusEnabled,
+					Filter: &types.LifecycleRuleFilter{},
+					NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{
+						NoncurrentDays:          aws.Int32(1),
+						NewerNoncurrentVersions: aws.Int32(5),
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		log.Printf("Enabled lifecycle rule DeleteOlderVersions for bucket %s\n", s.bucket)
+	}
 	return err
 }
 
