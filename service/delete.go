@@ -6,6 +6,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
+	"log/slog"
 )
 
 type Deleter interface {
@@ -62,11 +63,11 @@ func (d *deleter) Delete() {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		err := d.resources.GetPipeline().DeletePipeline(projectName)
 		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Failed to delete pipeline %s: %s", projectName, err))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete pipeline %s: %s", projectName, err)))
 		}
 		err = d.resources.GetBuilder().DeleteProject(projectName, step)
 		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Failed to delete project %s: %s", projectName, err))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete project %s: %s", projectName, err)))
 		}
 	}
 	d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
@@ -79,7 +80,7 @@ func (d *deleter) Destroy() bool {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		err := d.resources.GetPipeline().StartDestroyExecution(projectName)
 		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Failed to start destroy execution for pipeline %s: %s", projectName, err))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to start destroy execution for pipeline %s: %s", projectName, err)))
 			failed = true
 		}
 	}

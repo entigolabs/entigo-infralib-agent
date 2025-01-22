@@ -15,9 +15,9 @@ func (w *Warning) Error() string {
 	return fmt.Sprintf("\x1b[36;1m%s\x1b[0m", w.Reason)
 }
 
-func PrintWarning(message string) {
+func PrefixWarning(message string) string {
 	warning := Warning{Reason: errors.New(message)}
-	slog.Warn(warning.Error())
+	return warning.Error()
 }
 
 type PrefixedError struct {
@@ -28,9 +28,9 @@ func (pe *PrefixedError) Error() string {
 	return fmt.Sprintf("\x1b[31;1m%s\x1b[0m", pe.Reason)
 }
 
-func PrintError(err error) {
+func PrefixError(err error) string {
 	prefixed := PrefixedError{Reason: err}
-	slog.Error(prefixed.Error())
+	return prefixed.Error()
 }
 
 func ChooseLogger(loggingLvl string) {

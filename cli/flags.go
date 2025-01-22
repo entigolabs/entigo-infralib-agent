@@ -13,30 +13,41 @@ func cliFlags(cmd common.Command) []cli.Flag {
 }
 
 func appendBaseFlags(flags []cli.Flag) []cli.Flag {
-	return append(flags,
-		&loggingFlag,
+	return append(flags, &loggingFlag)
+}
+
+func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
+	switch cmd {
+	case common.DeleteCommand:
+		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &deleteBucketFlag, &deleteSAFlag)
+	case common.UpdateCommand:
+		return append(append(baseFlags, getProviderFlags()...), &githubToken, &stepsFlag, &pipelineTypeFlag,
+			&logsPathFlag, &printLogsFlag)
+	case common.RunCommand:
+		return append(append(baseFlags, getProviderFlags()...), &allowParallelFlag, &githubToken, &stepsFlag,
+			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag)
+	case common.PullCommand:
+		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
+	case common.SACommand:
+		fallthrough
+	case common.BootstrapCommand:
+		return append(baseFlags, getProviderFlags()...)
+	case common.MigratePlanCommand:
+		return append(baseFlags, &stateFileFlag, &importFileFlag)
+	default:
+		return baseFlags
+	}
+}
+
+func getProviderFlags() []cli.Flag {
+	return []cli.Flag{
 		&configFlag,
 		&prefixFlag,
 		&projectIdFlag,
 		&locationFlag,
 		&zoneFlag,
 		&awsRoleArnFlag,
-	)
-}
-
-func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
-	switch cmd {
-	case common.DeleteCommand:
-		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag, &deleteSAFlag)
-	case common.UpdateCommand:
-		baseFlags = append(baseFlags, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag)
-	case common.RunCommand:
-		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
-			&printLogsFlag)
-	case common.PullCommand:
-		baseFlags = append(baseFlags, &forceFlag)
 	}
-	return baseFlags
 }
 
 var loggingFlag = cli.StringFlag{
@@ -203,4 +214,26 @@ var forceFlag = cli.BoolFlag{
 	Value:       false,
 	Destination: &flags.Force,
 	Required:    false,
+}
+
+var stateFileFlag = cli.StringFlag{
+	Name:        "state-file",
+	Aliases:     []string{"sf"},
+	EnvVars:     []string{"STATE_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for terraform state file",
+	Destination: &flags.Migrate.StateFile,
+	Required:    true,
+}
+
+var importFileFlag = cli.StringFlag{
+	Name:        "import-file",
+	Aliases:     []string{"if"},
+	EnvVars:     []string{"IMPORT_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for import file",
+	Destination: &flags.Migrate.ImportFile,
+	Required:    true,
 }

@@ -6,13 +6,14 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 )
 
 func Delete(ctx context.Context, flags *common.Flags) {
-	common.PrintWarning(`Execute destroy pipelines in reverse config order before running this command.
-This command will remove all pipelines and resources created by terraform will otherwise remain.`)
+	slog.Warn(common.PrefixWarning(`Execute destroy pipelines in reverse config order before running this command.
+This command will remove all pipelines and resources created by terraform will otherwise remain.`))
 	if !flags.Delete.SkipConfirmation {
 		askForConfirmation()
 	}
@@ -34,7 +35,7 @@ func askForConfirmation() {
 		} else if response == "n" || response == "no" {
 			log.Fatalf("Operation cancelled.")
 		} else {
-			common.PrintWarning("Invalid input. Please enter Y or N.")
+			slog.Warn(common.PrefixWarning("Invalid input. Please enter Y or N."))
 		}
 	}
 }

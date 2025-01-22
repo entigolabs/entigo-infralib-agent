@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ func GetProviderPrefix(flags *common.Flags) string {
 		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
 	}
 	if len(prefix) > 10 {
-		common.PrintWarning("prefix longer than 10 characters, trimming to fit")
+		slog.Warn(common.PrefixWarning("prefix longer than 10 characters, trimming to fit"))
 		prefix = prefix[:10]
 	}
 	return prefix
@@ -308,7 +309,7 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
 		if err == nil && bytes != nil {
-			common.PrintWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile)))
 		}
 		return
 	}
@@ -631,12 +632,12 @@ func removeUnusedModules(step model.Step, stepState *model.StateStep, bucket mod
 func removeUnusedFiles(bucket model.Bucket, folder string) {
 	stepFiles, err := bucket.ListFolderFiles(folder)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to list files in unused folder %s: %v", folder, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list files in unused folder %s: %v", folder, err)))
 		return
 	}
 	err = bucket.DeleteFiles(stepFiles)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete unused files in folder %s: %v", folder, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete unused files in folder %s: %v", folder, err)))
 	}
 }
 

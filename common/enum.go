@@ -3,12 +3,13 @@ package common
 type Command string
 
 const (
-	RunCommand       Command = "run"
-	BootstrapCommand Command = "bootstrap"
-	DeleteCommand    Command = "delete"
-	UpdateCommand    Command = "update"
-	SACommand        Command = "service-account"
-	PullCommand      Command = "pull"
+	RunCommand         Command = "run"
+	BootstrapCommand   Command = "bootstrap"
+	DeleteCommand      Command = "delete"
+	UpdateCommand      Command = "update"
+	SACommand          Command = "service-account"
+	PullCommand        Command = "pull"
+	MigratePlanCommand Command = "migrate-plan"
 )
 
 type LogLevel string

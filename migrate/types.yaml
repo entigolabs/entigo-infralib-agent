@@ -1,0 +1,13 @@
+typeIdentifications:
+  - identification: "{name}"
+    types:
+      - aws_eks_cluster
+  - identification: "{id}"
+    types:
+      - aws_subnet
+  - identification: "{cluster_name}:{addon_name}"
+    types:
+      - aws_eks_addon
+  - identification: "{route_table_id}_{destination_cidr_block}"
+    types:
+      - aws_route

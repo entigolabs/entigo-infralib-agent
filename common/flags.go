@@ -18,6 +18,7 @@ type Flags struct {
 	GithubToken   string
 	Force         bool
 	Steps         cli.StringSlice
+	Migrate       Migrate
 	Pipeline      Pipeline
 	GCloud        GCloud
 	AWS           AWS
@@ -44,6 +45,11 @@ type Pipeline struct {
 	Type      string
 	LogsPath  string
 	PrintLogs bool
+}
+
+type Migrate struct {
+	StateFile  string
+	ImportFile string
 }
 
 type PipelineType string

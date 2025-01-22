@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"gopkg.in/yaml.v3"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -510,7 +511,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 			Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
 		})
 		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error()))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error())))
 		}
 		return nil
 	}

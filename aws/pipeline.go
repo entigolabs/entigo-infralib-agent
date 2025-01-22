@@ -520,7 +520,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 			}
 			err := p.stopPipelineExecution(pipelineName, *executionId, reason)
 			if err != nil {
-				common.PrintWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error()))
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error())))
 			}
 			if step.Approve == model.ApproveReject {
 				return fmt.Errorf("stopped because step approve type is 'reject'")
@@ -864,6 +864,6 @@ func (p *Pipeline) getApprovalToken(pipelineName string) *string {
 }
 
 func (p *Pipeline) StartDestroyExecution(_ string) error {
-	common.PrintWarning("Executing destroy pipelines not implemented for AWS")
+	slog.Warn(common.PrefixWarning("Executing destroy pipelines not implemented for AWS"))
 	return nil
 }

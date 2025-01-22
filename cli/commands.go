@@ -13,6 +13,7 @@ func cliCommands() []*cli.Command {
 		&deleteCommand,
 		&SACommand,
 		&pullCommand,
+		&migratePlanCommand,
 	}
 }
 
@@ -62,4 +63,12 @@ var pullCommand = cli.Command{
 	Usage:   "pull agent config yaml and included files",
 	Action:  action(common.PullCommand),
 	Flags:   cliFlags(common.PullCommand),
+}
+
+var migratePlanCommand = cli.Command{
+	Name:    string(common.MigratePlanCommand),
+	Aliases: []string{"mp"},
+	Usage:   "compile a migration plan for terraform",
+	Action:  action(common.MigratePlanCommand),
+	Flags:   cliFlags(common.MigratePlanCommand),
 }
