@@ -53,6 +53,13 @@ func (g *GStorage) CreateBucket() error {
 		PredefinedDefaultObjectACL: "projectPrivate",
 		PublicAccessPrevention:     storage.PublicAccessPreventionEnforced,
 		VersioningEnabled:          true,
+		SoftDeletePolicy:           &storage.SoftDeletePolicy{RetentionDuration: 0},
+		Lifecycle: storage.Lifecycle{
+			Rules: []storage.LifecycleRule{{
+				Action:    storage.LifecycleAction{Type: storage.DeleteAction},
+				Condition: storage.LifecycleCondition{NumNewerVersions: 5},
+			}},
+		},
 	})
 	if err == nil {
 		log.Printf("Created GCloud Storage Bucket %s\n", g.bucket)

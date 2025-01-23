@@ -438,6 +438,11 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 			},
 		},
 		{
+			Effect:   "Allow",
+			Action:   []string{"iam:CreateServiceLinkedRole"},
+			Resource: []string{fmt.Sprintf("arn:aws:iam::%s:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling", accountId)},
+		},
+		{
 			Effect: "Allow",
 			Resource: []string{
 				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, buildRoleName),
