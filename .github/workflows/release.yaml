@@ -73,6 +73,7 @@ jobs:
                     new_version = `v${major}.${minor}.${patch}`
                   }
                   core.setOutput('new_version',  new_version);
+                  core.setOutput('major_version',  major);
                   core.info('Latest release is not the same as main branch, need to make a new release ' + new_version);
                 } else {
                   core.info('Latest release is same as main branch, no need to make a new release');
@@ -105,8 +106,16 @@ jobs:
       - name: Build and push image
         if: ${{ steps.get_latest_release.outputs.new_release_needed == 'true' }}
         run: |
-          docker buildx build --push --platform linux/arm64/v8,linux/amd64 --build-arg GITHUB_SHA=${GITHUB_SHA} --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }} -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} -t public.ecr.aws/entigolabs/entigo-infralib-agent:latest -t entigolabs/entigo-infralib-agent:latest -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} .
-          
+          docker buildx build --push \
+            --platform linux/arm64/v8,linux/amd64 \
+            --build-arg GITHUB_SHA=${GITHUB_SHA} \
+            --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }} \
+            -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} \
+            -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.major_version }} \
+            -t public.ecr.aws/entigolabs/entigo-infralib-agent:latest \
+            -t entigolabs/entigo-infralib-agent:latest \
+            -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.major_version }} \
+            -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} .
       - name: Authenticate with GitHub CLI
         run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
         if: ${{ steps.get_latest_release.outputs.new_release_needed == 'true' }}

@@ -329,7 +329,7 @@ func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[strin
 func getSSMParameterValue(ssm model.SSM, match []string, replaceKey string, parameterName string) (string, error) {
 	parameter, err := ssm.GetParameter(parameterName)
 	if err != nil {
-		return "", fmt.Errorf("ssm parameter \"%s\" %s", parameterName, err)
+		return "", err
 	}
 	if match[2] == "" {
 		return *parameter.Value, nil
