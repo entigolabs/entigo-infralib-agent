@@ -36,15 +36,23 @@ func NewPlanner(ctx context.Context, flags common.Migrate) Planner {
 	}
 	return &planner{
 		ctx:    ctx,
-		types:  getTypes(),
+		types:  getTypes(flags.TypesFile),
 		state:  state,
 		config: getConfig(flags.ImportFile),
 	}
 }
 
-func getTypes() map[string]string {
+func getTypes(typesFile string) map[string]string {
+	rawYaml := typesYaml
+	if typesFile != "" {
+		var err error
+		rawYaml, err = os.ReadFile(typesFile)
+		if err != nil {
+			log.Fatal(&common.PrefixedError{Reason: err})
+		}
+	}
 	var types typesConfig
-	err := yaml.Unmarshal(typesYaml, &types)
+	err := yaml.Unmarshal(rawYaml, &types)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
 	}
