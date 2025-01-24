@@ -9,11 +9,14 @@ import (
 	"gopkg.in/yaml.v3"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 )
 
 //go:embed types.yaml
 var typesYaml []byte
+
+var replaceRegex = regexp.MustCompile(`\{\s*(.*?)\s*}`)
 
 type Planner interface {
 	Plan()
@@ -90,17 +93,44 @@ func (p *planner) Plan() {
 		if !found {
 			log.Fatalf("Type %s not found in typeIdentifications", item.Type)
 		}
-		// TODO Index keys
-
 		resource := p.getResource(item.Type, item.Source.Name)
+		if len(resource.Instances) == 0 {
+			log.Fatalf("No instances found for type %s", item.Type)
+		}
 		source := getReference(item.Type, item.Source, resource.Name)
-		dest := getReference(item.Type, item.Destination, "")
+		dest := getReference(item.Type, item.Destination, item.Destination.Name)
+		indexKeys := getIndexKeys(item)
 
-		importCommand := fmt.Sprintf("terraform import \"%s\" %s", dest, identification)
-		log.Println(importCommand)
-		stateRmCommand := fmt.Sprintf("terraform state rm \"%s\"", source)
-		log.Println(stateRmCommand)
+		for _, keys := range indexKeys {
+			instance, err := getResourceInstance(resource, keys.Key1)
+			if err != nil {
+				log.Fatalf("Failed to get instance for type %s: %s", item.Type, err)
+			}
+			id, err := getReplacedIdentification(identification, instance)
+			if err != nil {
+				log.Fatalf("Failed to replace identification %s for type %s: %s", identification, item.Type, err)
+			}
+
+			importCommand := fmt.Sprintf("terraform import \"%s\" %s", addIndex(dest, keys.Key2), id)
+			log.Println(importCommand)
+			stateRmCommand := fmt.Sprintf("terraform state rm \"%s\"", addIndex(source, keys.Key1))
+			log.Println(stateRmCommand)
+		}
 	}
+}
+
+func getIndexKeys(item importItem) []KeyPair {
+	if len(item.Source.IndexKeys) == 0 {
+		return []KeyPair{newKeyPair(item.Source.IndexKey, item.Destination.IndexKey)}
+	}
+	if len(item.Source.IndexKeys) != len(item.Destination.IndexKeys) {
+		log.Fatalf("Source and destination index keys must have the same length")
+	}
+	var keys []KeyPair
+	for i := 0; i < len(item.Source.IndexKeys); i++ {
+		keys = append(keys, newKeyPair(item.Source.IndexKeys[i], item.Destination.IndexKeys[i]))
+	}
+	return keys
 }
 
 func (p *planner) getResource(rsType string, name string) resourceStateV4 {
@@ -139,4 +169,98 @@ func getReference(rsType string, module module, name string) string {
 		parts = append(parts, name)
 	}
 	return strings.Join(parts, ".")
+}
+
+func getResourceInstance(resource resourceStateV4, key interface{}) (instanceObjectStateV4, error) {
+	if key == nil {
+		return resource.Instances[0], nil
+	}
+	if value, ok := key.(int); ok {
+		if len(resource.Instances) <= value {
+			return instanceObjectStateV4{}, fmt.Errorf("key index %d out of range", value)
+		}
+		return resource.Instances[value], nil
+	}
+	for _, instance := range resource.Instances {
+		equal, err := compareValues(instance.IndexKey, key)
+		if err != nil {
+			return instanceObjectStateV4{}, err
+		}
+		if equal {
+			return instance, nil
+		}
+	}
+	return instanceObjectStateV4{}, fmt.Errorf("instance with key %v not found", key)
+}
+
+func compareValues(a, b interface{}) (bool, error) {
+	switch a := a.(type) {
+	case string:
+		if b, ok := b.(string); ok {
+			return a == b, nil
+		}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b), nil
+	}
+	return false, fmt.Errorf("incompatible types: %T and %T", a, b)
+}
+
+func addIndex(reference string, indexKey interface{}) string {
+	index := getIndexKey(indexKey)
+	if index == "" {
+		return reference
+	}
+	return reference + index
+}
+
+func getIndexKey(indexKey interface{}) string {
+	if indexKey == nil {
+		return ""
+	}
+	switch v := indexKey.(type) {
+	case string:
+		return fmt.Sprintf(`[\"%s\"]`, v)
+	case int:
+		return fmt.Sprintf("[%d]", v)
+	default:
+		log.Fatalf("Unsupported index key type: %T", v)
+	}
+	return ""
+}
+
+func getReplacedIdentification(identification string, instance instanceObjectStateV4) (string, error) {
+	matches := replaceRegex.FindAllStringSubmatch(identification, -1)
+	if len(matches) == 0 {
+		return identification, nil
+	}
+	var values map[string]interface{}
+	err := json.Unmarshal(instance.AttributesRaw, &values)
+	if err != nil {
+		return "", err
+	}
+	for _, match := range matches {
+		replaceTag := match[0]
+		replaceKey := match[1]
+		replaceValue, err := getJsonValue(values, replaceKey)
+		if err != nil {
+			return "", err
+		}
+		identification = strings.ReplaceAll(identification, replaceTag, replaceValue)
+	}
+	return identification, nil
+}
+
+func getJsonValue(values map[string]interface{}, key string) (string, error) {
+	val, found := values[key]
+	if !found {
+		return "", fmt.Errorf("key %s not found", key)
+	}
+	switch v := val.(type) {
+	case string:
+		return fmt.Sprintf("%s", val), nil
+	case int:
+		return fmt.Sprintf("%d", v), nil
+	default:
+		return "", fmt.Errorf("unsupported value type for key %s: %T", key, v)
+	}
 }

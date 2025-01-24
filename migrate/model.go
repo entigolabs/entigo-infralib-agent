@@ -85,3 +85,12 @@ type module struct {
 	IndexKey  interface{}   `yaml:"index_key,omitempty"`
 	IndexKeys []interface{} `yaml:"index_keys,omitempty"`
 }
+
+type KeyPair struct {
+	Key1 interface{}
+	Key2 interface{}
+}
+
+func newKeyPair(key1, key2 interface{}) KeyPair {
+	return KeyPair{Key1: key1, Key2: key2}
+}
