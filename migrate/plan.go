@@ -144,6 +144,9 @@ func getIndexKeys(item importItem) []KeyPair {
 func (p *planner) getResource(rsType string, name string) resourceStateV4 {
 	var found *resourceStateV4
 	for _, resource := range p.state.Resources {
+		if resource.Mode != "managed" {
+			continue
+		}
 		if resource.Type != rsType {
 			continue
 		}
