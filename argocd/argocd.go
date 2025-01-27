@@ -47,7 +47,9 @@ func replacePlaceholders(bytes []byte, module model.Module, source, version stri
 		cloudProvider = "aws"
 	}
 	url := source
-	if !strings.HasSuffix(url, ".git") {
+	if util.IsLocalSource(source) {
+		url = "file:///tmp" + source
+	} else if !strings.HasSuffix(url, ".git") {
 		url += ".git"
 	}
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{moduleVersion}}", version,
