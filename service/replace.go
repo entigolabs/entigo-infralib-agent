@@ -392,7 +392,7 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 			continue
 		}
 		if module != nil {
-			return "", fmt.Errorf("found multiple step modules with type %s", parts[1])
+			return "", fmt.Errorf("found multiple step modules with type %s for tsmodule key %s", parts[1], replaceKey)
 		}
 		module = &stepModule
 	}
