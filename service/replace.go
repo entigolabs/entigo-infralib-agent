@@ -120,6 +120,9 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			return "", err
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
+		if strings.HasPrefix(replacement, "module.") {
+			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
+		}
 	}
 	return content, nil
 }
