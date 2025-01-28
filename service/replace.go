@@ -149,6 +149,8 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 		return u.getReplacementAgentValue(replaceKey[strings.Index(replaceKey, ".")+1:], index)
 	case string(model.ReplaceTypeModule):
 		return u.getTypedModuleName(step, replaceKey)
+	case string(model.ReplaceTypeStepModule):
+		return getTypedStepModuleName(step, replaceKey)
 	default:
 		return "", fmt.Errorf("unknown replace type in tag %s", replaceType)
 	}
@@ -377,6 +379,29 @@ func (u *updater) getTypedModuleName(step model.Step, replaceKey string) (string
 	return module.Name, nil
 }
 
+func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse tsmodule key %s for step %s, got %d split parts instead of 2",
+			replaceKey, step.Name, len(parts))
+	}
+	var module *model.Module
+	for _, stepModule := range step.Modules {
+		moduleType := getModuleType(stepModule)
+		if moduleType != parts[1] {
+			continue
+		}
+		if module != nil {
+			return "", fmt.Errorf("found multiple step modules with type %s", parts[1])
+		}
+		module = &stepModule
+	}
+	if module == nil {
+		return "", fmt.Errorf("failed to find step module for tsmodule key %s", replaceKey)
+	}
+	return module.Name, nil
+}
+
 func (u *updater) findStepModuleByName(stepName, moduleName string) (*model.Step, *model.Module) {
 	for _, step := range u.config.Steps {
 		if step.Name != stepName {
@@ -396,11 +421,7 @@ func (u *updater) findStepModuleByType(moduleType string) (*model.Step, *model.M
 	var foundModule *model.Module
 	for _, step := range u.config.Steps {
 		for _, module := range step.Modules {
-			moduleSource := module.Source
-			if util.IsClientModule(module) {
-				moduleSource = moduleSource[strings.LastIndex(moduleSource, "//")+2:]
-			}
-			currentType := moduleSource[strings.Index(module.Source, "/")+1:]
+			currentType := getModuleType(module)
 			if currentType != moduleType {
 				continue
 			}
@@ -412,6 +433,14 @@ func (u *updater) findStepModuleByType(moduleType string) (*model.Step, *model.M
 		}
 	}
 	return foundStep, foundModule, nil
+}
+
+func getModuleType(module model.Module) string {
+	moduleSource := module.Source
+	if util.IsClientModule(module) {
+		moduleSource = moduleSource[strings.LastIndex(moduleSource, "//")+2:]
+	}
+	return moduleSource[strings.Index(module.Source, "/")+1:]
 }
 
 func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) model.Config {

@@ -144,6 +144,7 @@ const (
 	ReplaceTypeConfig          ReplaceType = "config"
 	ReplaceTypeAgent           ReplaceType = "agent"
 	ReplaceTypeModule          ReplaceType = "tmodule"
+	ReplaceTypeStepModule      ReplaceType = "tsmodule"
 )
 
 type AgentReplaceType string
