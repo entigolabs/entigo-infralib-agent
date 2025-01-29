@@ -334,7 +334,7 @@ Config example `{{ .config.prefix }}` will be overwritten by the value of the co
 
 Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports account id using key accountId.
 
-Infralib modules may use `{{ .tmodule.type }}` in their default input files to replace it with the name of the module used in the config. Alternatively, modules may use `{{ .tsmodule.type }}` to replace it with the name of the typed module used in the active step.
+Infralib modules may use `{{ .tmodule.type }}` in their default input files to replace it with the name of the module used in the config. Alternatively, modules may use `{{ .tsmodule.type }}` to replace it with the name of the typed module used in the active step. It's also possible to use `{{ .module.name  }}` and `{{ .module.source }}` to replace them with module name and source, but those tags only exclusively apply for module inputs, including all input files.
 
 ### Including files in steps
 
