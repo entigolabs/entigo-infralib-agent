@@ -147,8 +147,12 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 		return u.getReplacementConfigValue(replaceKey[strings.Index(replaceKey, ".")+1:])
 	case string(model.ReplaceTypeAgent):
 		return u.getReplacementAgentValue(replaceKey[strings.Index(replaceKey, ".")+1:], index)
-	case string(model.ReplaceTypeModule):
+	case string(model.ReplaceTypeModuleType):
 		return u.getTypedModuleName(step, replaceKey)
+	case string(model.ReplaceTypeStepModule):
+		return getTypedStepModuleName(step, replaceKey)
+	case string(model.ReplaceTypeModule):
+		return "", nil // Ignore this replace
 	default:
 		return "", fmt.Errorf("unknown replace type in tag %s", replaceType)
 	}
@@ -377,6 +381,29 @@ func (u *updater) getTypedModuleName(step model.Step, replaceKey string) (string
 	return module.Name, nil
 }
 
+func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse tsmodule key %s for step %s, got %d split parts instead of 2",
+			replaceKey, step.Name, len(parts))
+	}
+	var module *model.Module
+	for _, stepModule := range step.Modules {
+		moduleType := getModuleType(stepModule)
+		if moduleType != parts[1] {
+			continue
+		}
+		if module != nil {
+			return "", fmt.Errorf("found multiple step modules with type %s for tsmodule key %s", parts[1], replaceKey)
+		}
+		module = &stepModule
+	}
+	if module == nil {
+		return "", fmt.Errorf("failed to find step module for tsmodule key %s", replaceKey)
+	}
+	return module.Name, nil
+}
+
 func (u *updater) findStepModuleByName(stepName, moduleName string) (*model.Step, *model.Module) {
 	for _, step := range u.config.Steps {
 		if step.Name != stepName {
@@ -396,11 +423,7 @@ func (u *updater) findStepModuleByType(moduleType string) (*model.Step, *model.M
 	var foundModule *model.Module
 	for _, step := range u.config.Steps {
 		for _, module := range step.Modules {
-			moduleSource := module.Source
-			if util.IsClientModule(module) {
-				moduleSource = moduleSource[strings.LastIndex(moduleSource, "//")+2:]
-			}
-			currentType := moduleSource[strings.Index(module.Source, "/")+1:]
+			currentType := getModuleType(module)
 			if currentType != moduleType {
 				continue
 			}
@@ -412,6 +435,14 @@ func (u *updater) findStepModuleByType(moduleType string) (*model.Step, *model.M
 		}
 	}
 	return foundStep, foundModule, nil
+}
+
+func getModuleType(module model.Module) string {
+	moduleSource := module.Source
+	if util.IsClientModule(module) {
+		moduleSource = moduleSource[strings.LastIndex(moduleSource, "//")+2:]
+	}
+	return moduleSource[strings.Index(module.Source, "/")+1:]
 }
 
 func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) model.Config {
@@ -529,4 +560,71 @@ func parseReplaceTag(match []string) (string, string, error) {
 	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
 	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 	return replaceKey, replaceType, nil
+}
+
+func replaceModuleValues(module model.Module) (map[string]interface{}, error) {
+	inputsYaml, err := yaml.Marshal(module.Inputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert module inputs %s to yaml, error: %v", module.Name, err)
+	}
+	content := string(inputsYaml)
+	matches := replaceRegex.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return module.Inputs, nil
+	}
+	content, err = replaceModuleInputsValues(module, content, matches)
+	if err != nil {
+		return nil, err
+	}
+	var inputs map[string]interface{}
+	err = yaml.Unmarshal([]byte(content), &inputs)
+	if err != nil {
+		slog.Debug(fmt.Sprintf("broken module inputs yaml %s:\n%s", module.Name, content))
+		return nil, fmt.Errorf("failed to unmarshal modified module inputs %s yaml, error: %v", module.Name, err)
+	}
+	return inputs, nil
+}
+
+func replaceModuleInputsValues(module model.Module, content string, matches [][]string) (string, error) {
+	for _, match := range matches {
+		replaceTag := match[0]
+		replaceKey := match[1]
+		if hasSamePrefixSuffix(replaceKey, "`") {
+			content = strings.Replace(content, replaceTag, strings.Trim(replaceKey, "`"), 1)
+			continue
+		}
+		replaceKey, replaceType, err := parseReplaceTag(match)
+		if err != nil {
+			return content, err
+		}
+		if replaceType != string(model.ReplaceTypeModule) {
+			continue
+		}
+		replacement, err := getReplacementModuleValue(replaceKey, module)
+		if err != nil {
+			return content, err
+		}
+		if replacement == "" {
+			continue
+		}
+		content = strings.Replace(content, replaceTag, replacement, 1)
+		if strings.HasPrefix(replacement, "module.") {
+			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
+		}
+	}
+	return content, nil
+}
+
+func getReplacementModuleValue(replaceKey string, module model.Module) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse module key %s for module %s, got %d split parts instead of 2",
+			replaceKey, module.Name, len(parts))
+	}
+	if parts[1] == "name" {
+		return module.Name, nil
+	} else if parts[1] == "source" {
+		return module.Source, nil
+	}
+	return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
 }
