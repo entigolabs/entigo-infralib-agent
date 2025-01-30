@@ -6,7 +6,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
+	"time"
 )
 
 func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName string) (*types.TableDescription, error) {
@@ -33,7 +35,31 @@ func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 		}
 	}
 	log.Printf("Created DynamoDB table %s\n", tableName)
+	err = pollUntilTableActive(ctx, dynamodbClient, tableName)
+	if err != nil {
+		return nil, err
+	}
 	return table.TableDescription, nil
+}
+
+func pollUntilTableActive(ctx context.Context, client *dynamodb.Client, name string) error {
+	wait := 2
+	for {
+		log.Printf("Waiting for DynamoDB table %s to become active\n", name)
+		select {
+		case <-time.After(time.Duration(wait) * time.Second):
+			wait = util.MinInt(wait*2, 10)
+		case <-ctx.Done():
+			return errors.New("context cancelled while waiting for DynamoDB table to become active")
+		}
+		table, err := GetExistingDynamoDBTable(ctx, client, name)
+		if err != nil {
+			return err
+		}
+		if table.TableStatus == types.TableStatusActive {
+			return nil
+		}
+	}
 }
 
 func DeleteDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName string) error {

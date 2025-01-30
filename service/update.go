@@ -1343,7 +1343,7 @@ func (u *updater) getModuleInputs(stepType model.StepType, module model.Module, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %v", err)
 	}
-	return replaceModuleValues(module)
+	return replaceModuleValues(module, inputs)
 }
 
 func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {

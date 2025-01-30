@@ -553,30 +553,23 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 	return content, nil
 }
 
-func parseReplaceTag(match []string) (string, string, error) {
-	if len(match) != 2 {
-		return "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+func replaceModuleValues(module model.Module, inputs map[string]interface{}) (map[string]interface{}, error) {
+	if inputs == nil {
+		return nil, nil
 	}
-	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
-	return replaceKey, replaceType, nil
-}
-
-func replaceModuleValues(module model.Module) (map[string]interface{}, error) {
-	inputsYaml, err := yaml.Marshal(module.Inputs)
+	inputsYaml, err := yaml.Marshal(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert module inputs %s to yaml, error: %v", module.Name, err)
 	}
 	content := string(inputsYaml)
 	matches := replaceRegex.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
-		return module.Inputs, nil
+		return inputs, nil
 	}
 	content, err = replaceModuleInputsValues(module, content, matches)
 	if err != nil {
 		return nil, err
 	}
-	var inputs map[string]interface{}
 	err = yaml.Unmarshal([]byte(content), &inputs)
 	if err != nil {
 		slog.Debug(fmt.Sprintf("broken module inputs yaml %s:\n%s", module.Name, content))
@@ -608,9 +601,6 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 			continue
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
-		if strings.HasPrefix(replacement, "module.") {
-			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
-		}
 	}
 	return content, nil
 }
@@ -627,4 +617,13 @@ func getReplacementModuleValue(replaceKey string, module model.Module) (string, 
 		return module.Source, nil
 	}
 	return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
+}
+
+func parseReplaceTag(match []string) (string, string, error) {
+	if len(match) != 2 {
+		return "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+	}
+	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
+	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
+	return replaceKey, replaceType, nil
 }
