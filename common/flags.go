@@ -50,6 +50,7 @@ type Pipeline struct {
 type Migrate struct {
 	StateFile  string
 	ImportFile string
+	PlanFile   string
 	TypesFile  string
 }
 

@@ -33,7 +33,7 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.BootstrapCommand:
 		return append(baseFlags, getProviderFlags()...)
 	case common.MigratePlanCommand:
-		return append(baseFlags, &stateFileFlag, &importFileFlag, &typesFileFlag)
+		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag, &typesFileFlag)
 	default:
 		return baseFlags
 	}
@@ -235,6 +235,17 @@ var importFileFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "path for import file",
 	Destination: &flags.Migrate.ImportFile,
+	Required:    true,
+}
+
+var planFileFlag = cli.StringFlag{
+	Name:        "plan-file",
+	Aliases:     []string{"pl"},
+	EnvVars:     []string{"PLAN_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for terraform plan file",
+	Destination: &flags.Migrate.PlanFile,
 	Required:    true,
 }
 

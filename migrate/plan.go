@@ -26,6 +26,7 @@ type planner struct {
 	ctx    context.Context
 	types  map[string]string
 	state  stateV4
+	plan   plan
 	config importConfig
 }
 
@@ -38,6 +39,7 @@ func NewPlanner(ctx context.Context, flags common.Migrate) Planner {
 		ctx:    ctx,
 		types:  getTypes(flags.TypesFile),
 		state:  state,
+		plan:   getPlan(flags.PlanFile),
 		config: getConfig(flags.ImportFile),
 	}
 }
@@ -81,6 +83,19 @@ func getState(stateFile string) stateV4 {
 	return state
 }
 
+func getPlan(planFile string) plan {
+	fileBytes, err := os.ReadFile(planFile)
+	if err != nil {
+		log.Fatal(&common.PrefixedError{Reason: err})
+	}
+	var tfPlan plan
+	err = json.Unmarshal(fileBytes, &tfPlan)
+	if err != nil {
+		log.Fatal(&common.PrefixedError{Reason: err})
+	}
+	return tfPlan
+}
+
 func getConfig(stateFile string) importConfig {
 	fileBytes, err := os.ReadFile(stateFile)
 	if err != nil {
@@ -105,9 +120,14 @@ func (p *planner) Plan() {
 		if len(resource.Instances) == 0 {
 			log.Fatalf("No instances found for type %s", item.Type)
 		}
-		source := getReference(item.Type, item.Source, resource.Name)
-		dest := getReference(item.Type, item.Destination, item.Destination.Name)
 		indexKeys := getIndexKeys(item)
+		source := getReference(item.Type, item.Source, resource.Name)
+		var index interface{}
+		name := item.Destination.Name
+		if name == "" {
+			name, index = p.getPlannedDestination(item)
+		}
+		dest := getReference(item.Type, item.Destination, name)
 
 		for _, keys := range indexKeys {
 			instance, err := getResourceInstance(resource, keys.Key1)
@@ -119,7 +139,11 @@ func (p *planner) Plan() {
 				log.Fatalf("Failed to replace identification %s for type %s: %s", identification, item.Type, err)
 			}
 
-			importCommand := fmt.Sprintf("terraform import \"%s\" %s", addIndex(dest, keys.Key2), id)
+			key := keys.Key2
+			if key == nil {
+				key = index
+			}
+			importCommand := fmt.Sprintf("terraform import \"%s\" %s", addIndex(dest, key), id)
 			log.Println(importCommand)
 			stateRmCommand := fmt.Sprintf("terraform state rm \"%s\"", addIndex(source, keys.Key1))
 			log.Println(stateRmCommand)
@@ -157,7 +181,7 @@ func (p *planner) getResource(rsType string, name string) resourceStateV4 {
 			continue
 		}
 		if found != nil {
-			log.Fatalf("Multiple resources of type %s found, name is required", rsType)
+			log.Fatalf("Multiple state resources of type %s found, name is required", rsType)
 		}
 		found = &resource
 	}
@@ -165,6 +189,44 @@ func (p *planner) getResource(rsType string, name string) resourceStateV4 {
 		log.Fatalf("Resource of type %s not found", rsType)
 	}
 	return *found
+}
+
+func (p *planner) getPlannedDestination(item importItem) (string, interface{}) {
+	resource := getPlannedResource(item, p.plan.PlannedValues.RootModule.ChildModules)
+	if resource == nil {
+		log.Fatalf("Planned resource of type %s not found", item.Type)
+	}
+	return resource.Name, resource.Index
+}
+
+func getPlannedResource(item importItem, modules []modulePlan) *resourcePlan {
+	var found *resourcePlan
+	for _, childModule := range modules {
+		for _, resource := range childModule.Resources {
+			if resource.Mode != "managed" {
+				continue
+			}
+			if resource.Type != item.Type {
+				continue
+			}
+			if !strings.HasPrefix(resource.Address, item.Destination.Module) {
+				continue
+			}
+			if found != nil {
+				log.Fatalf("Multiple plan resources of type %s found, name is required", item.Type)
+			}
+			found = &resource
+		}
+		child := getPlannedResource(item, childModule.ChildModules)
+		if child == nil {
+			continue
+		}
+		if found != nil {
+			log.Fatalf("Multiple plan resources of type %s found, name is required", item.Type)
+		}
+		found = child
+	}
+	return found
 }
 
 func getReference(rsType string, module module, name string) string {
@@ -233,6 +295,8 @@ func getIndexKey(indexKey interface{}) string {
 		return fmt.Sprintf(`[\"%s\"]`, v)
 	case int:
 		return fmt.Sprintf("[%d]", v)
+	case float64:
+		return fmt.Sprintf("[%g]", v)
 	default:
 		log.Fatalf("Unsupported index key type: %T", v)
 	}

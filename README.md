@@ -201,6 +201,7 @@ Compile a migration plan for terraform.
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
 * state-file - path to the terraform state file [$STATE_FILE]
+* plan-file - path to the terraform plan file [$PLAN_FILE]
 * import-file - path to the import file [$IMPORT_FILE]
 * types-file - **optional**, path for type identifications file [$TYPES_FILE]
 

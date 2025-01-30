@@ -35,14 +35,15 @@ type resourceStateV4 struct {
 	Type           string                  `json:"type"`
 	Name           string                  `json:"name"`
 	EachMode       string                  `json:"each,omitempty"`
-	ProviderConfig string                  `json:"provider"`
+	ProviderConfig string                  `json:"provider,omitempty"`
 	Instances      []instanceObjectStateV4 `json:"instances"`
 }
 
 type instanceObjectStateV4 struct {
-	IndexKey interface{} `json:"index_key,omitempty"`
-	Status   string      `json:"status,omitempty"`
-	Deposed  string      `json:"deposed,omitempty"`
+	IndexKey       interface{} `json:"index_key,omitempty"`
+	Status         string      `json:"status,omitempty"`
+	Deposed        string      `json:"deposed,omitempty"`
+	ProviderConfig string      `json:"provider,omitempty"`
 
 	SchemaVersion           uint64            `json:"schema_version"`
 	AttributesRaw           json.RawMessage   `json:"attributes,omitempty"`
@@ -67,6 +68,82 @@ type checkResultsObjectV4 struct {
 	ObjectAddr      string   `json:"object_addr"`
 	Status          string   `json:"status"`
 	FailureMessages []string `json:"failure_messages,omitempty"`
+}
+
+type plan struct {
+	FormatVersion    string                  `json:"format_version"`
+	TerraformVersion string                  `json:"terraform_version"`
+	Variables        map[string]variablePlan `json:"variables"`
+	PlannedValues    valuesPlan              `json:"planned_values"`
+	ResourceChanges  []resourceChangePlan    `json:"resource_changes"`
+	Configuration    configurationPlan       `json:"configuration"`
+}
+
+type variablePlan struct {
+	Value json.RawMessage `json:"value"`
+}
+
+type valuesPlan struct {
+	RootModule modulePlan `json:"root_module"`
+}
+
+type modulePlan struct {
+	Resources    []resourcePlan `json:"resources"`
+	ChildModules []modulePlan   `json:"child_modules,omitempty"`
+}
+
+type resourcePlan struct {
+	Address       string          `json:"address"`
+	Mode          string          `json:"mode"`
+	Type          string          `json:"type"`
+	Name          string          `json:"name"`
+	Index         interface{}     `json:"index,omitempty"`
+	ProviderName  string          `json:"provider_name"`
+	SchemaVersion int             `json:"schema_version"`
+	Values        json.RawMessage `json:"values"`
+}
+
+type resourceChangePlan struct {
+	Address      string      `json:"address"`
+	Mode         string      `json:"mode"`
+	Type         string      `json:"type"`
+	Name         string      `json:"name"`
+	Index        interface{} `json:"index,omitempty"`
+	ProviderName string      `json:"provider_name"`
+	Change       changePlan  `json:"change"`
+}
+
+type changePlan struct {
+	Actions         []string        `json:"actions"`
+	Before          json.RawMessage `json:"before"`
+	After           json.RawMessage `json:"after"`
+	AfterUnknown    json.RawMessage `json:"after_unknown"`
+	BeforeSensitive json.RawMessage `json:"before_sensitive,omitempty"`
+	AfterSensitive  json.RawMessage `json:"after_sensitive,omitempty"`
+}
+
+type configurationPlan struct {
+	ProviderConfigs map[string]providerConfigPlan `json:"provider_configs"`
+	RootModule      moduleConfigPlan              `json:"root_module"`
+}
+
+type providerConfigPlan struct {
+	Name  string `json:"name"`
+	Alias string `json:"alias,omitempty"`
+}
+
+type moduleConfigPlan struct {
+	Resources    []resourceConfigPlan `json:"resources"`
+	ChildModules []moduleConfigPlan   `json:"child_modules,omitempty"`
+}
+
+type resourceConfigPlan struct {
+	Address      string          `json:"address"`
+	Mode         string          `json:"mode"`
+	Type         string          `json:"type"`
+	Name         string          `json:"name"`
+	ProviderName string          `json:"provider_name"`
+	Expressions  json.RawMessage `json:"expressions"`
 }
 
 type importConfig struct {
