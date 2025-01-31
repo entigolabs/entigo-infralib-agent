@@ -267,7 +267,7 @@ func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTa
 
 	if buildRoleCreated || pipelineRoleCreated {
 		log.Println("Waiting for roles to be available...")
-		time.Sleep(10 * time.Second)
+		time.Sleep(15 * time.Second)
 	}
 
 	return iam, buildRoleArn, pipelineRoleArn

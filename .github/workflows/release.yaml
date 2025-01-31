@@ -73,7 +73,7 @@ jobs:
                     new_version = `v${major}.${minor}.${patch}`
                   }
                   core.setOutput('new_version',  new_version);
-                  core.setOutput('major_version',  major);
+                  core.setOutput('major_version',  `v${major}`);
                   core.info('Latest release is not the same as main branch, need to make a new release ' + new_version);
                 } else {
                   core.info('Latest release is same as main branch, no need to make a new release');
