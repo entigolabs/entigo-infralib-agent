@@ -154,7 +154,7 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 	case string(model.ReplaceTypeModule):
 		return "", nil // Ignore this replace
 	default:
-		return "", fmt.Errorf("unknown replace type in tag %s", replaceType)
+		return "", fmt.Errorf("unknown replace type in tag '%s'", replaceType)
 	}
 }
 
@@ -583,7 +583,6 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		replaceTag := match[0]
 		replaceKey := match[1]
 		if hasSamePrefixSuffix(replaceKey, "`") {
-			content = strings.Replace(content, replaceTag, strings.Trim(replaceKey, "`"), 1)
 			continue
 		}
 		replaceKey, replaceType, err := parseReplaceTag(match)
