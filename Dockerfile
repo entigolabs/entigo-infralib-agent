@@ -5,8 +5,9 @@ RUN go mod download
 COPY . .
 ARG GITHUB_SHA=main
 ARG VERSION=latest
-ARG TARGETARCH=amd64
-ARG TARGETOS=linux
+ARG TARGETARCH
+ARG TARGETOS
+
 RUN --mount=target=. \
     --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg \
@@ -16,7 +17,7 @@ RUN --mount=target=. \
       -X github.com/entigolabs/entigo-infralib-agent/common.gitCommit=${GITHUB_SHA} \
                -extldflags -static" -o /out/ei-agent main.go
 
-FROM --platform=$BUILDPLATFORM alpine:3
+FROM alpine:3
 WORKDIR /etc/ei-agent
 COPY --from=build /out/ei-agent /usr/bin/
 CMD ["ei-agent", "run"]
