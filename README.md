@@ -303,7 +303,7 @@ Source version is overwritten by module version. Default version is **stable** w
 
 ### Auto approval logic
 
-Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval, except when using type `force`. Approve always means that manual approval is required, never means that agent approves automatically. Major and minor types require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
+Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval, except when using type `force`. Approve `always` means that manual approval is required, `never` means that agent approves automatically. Types `major` and `minor` require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
 
 It's possible to use the type `reject` to stop the pipeline instead of approving. This can be used to generate plan files without applying them. Agent marks the step as failed.
 
