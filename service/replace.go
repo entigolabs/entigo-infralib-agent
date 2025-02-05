@@ -32,7 +32,7 @@ const (
 	terraformOutput = "terraform-output.json"
 )
 
-var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*[^$\n]*?(?:}}\x60)*)}}`)
+var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*.*?(?:}}\x60)*)}}`)
 var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[(\d+)(-(\d+))?])?`)
 
 func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Step, error) {
