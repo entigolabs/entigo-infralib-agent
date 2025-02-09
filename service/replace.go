@@ -115,6 +115,9 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		if err != nil {
 			return "", err
 		}
+		if strings.HasPrefix(replaceKey, "$") {
+
+		}
 		replacement, err := u.getReplacementValue(step, index, replaceKey, replaceType, cache)
 		if err != nil {
 			return "", err
@@ -154,7 +157,7 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 	case string(model.ReplaceTypeModule):
 		return "", nil // Ignore this replace
 	default:
-		return "", fmt.Errorf("unknown replace type in tag %s", replaceType)
+		return "", fmt.Errorf("unknown replace type in tag '%s'", replaceType)
 	}
 }
 
@@ -492,7 +495,7 @@ func replaceConfigStepsValues(prefix string, steps []model.Step) []model.Step {
 	}
 	modifiedStepsYaml, err := replaceConfigTags(prefix, model.Config{}, string(stepsYaml), matches)
 	if err != nil {
-		log.Fatalf("Failed to replace config tags in steps")
+		log.Fatalf("Failed to replace config tags in steps, error: %s", err.Error())
 	}
 	err = yaml.Unmarshal([]byte(modifiedStepsYaml), &steps)
 	if err != nil {
@@ -583,7 +586,6 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		replaceTag := match[0]
 		replaceKey := match[1]
 		if hasSamePrefixSuffix(replaceKey, "`") {
-			content = strings.Replace(content, replaceTag, strings.Trim(replaceKey, "`"), 1)
 			continue
 		}
 		replaceKey, replaceType, err := parseReplaceTag(match)
@@ -624,6 +626,10 @@ func parseReplaceTag(match []string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
 	}
 	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
+	splitIndex := strings.Index(replaceKey, ".")
+	if splitIndex == -1 || len(replaceKey) <= splitIndex {
+		return "", "", fmt.Errorf("invalid replace tag format: %s", match[0])
+	}
 	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 	return replaceKey, replaceType, nil
 }
