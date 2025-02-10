@@ -47,6 +47,7 @@ type updater struct {
 	stateLock     sync.Mutex
 	pipelineType  common.PipelineType
 	localPipeline *LocalPipeline
+	callback      Callback
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
@@ -77,6 +78,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		state:         state,
 		pipelineType:  common.PipelineType(flags.Pipeline.Type),
 		localPipeline: getLocalPipeline(resources, flags),
+		callback:      NewCallback(ctx, config.Callback),
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
@@ -356,14 +358,17 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	}
 	moduleVersions, err := u.updateModuleVersions(step, stepState, index)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	step, err = u.mergeModuleInputs(step, moduleVersions)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	step, err = u.replaceConfigStepValues(step, index)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		var parameterError *model.ParameterNotFoundError
 		if wg.HasCount() && errors.As(err, &parameterError) {
 			common.PrintWarning(err.Error())
@@ -381,10 +386,12 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		executePipelines, providers, files, err = u.updateStepFiles(step, moduleVersions, index)
 	}
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, files)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	u.firstRunDone[step.Name] = true
@@ -437,10 +444,12 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			log.Printf("Skipping step %s\n", step.Name)
+			u.postCallback(model.ApplyStatusSkipped, *stepState)
 			return u.putAppliedStateFile(stepState)
 		}
 		err := u.executePipeline(firstRun, step, stepState, index)
 		if err == nil {
+			u.postCallback(model.ApplyStatusSuccess, *stepState)
 			u.updateDestinationsApplyFiles(step, files)
 		}
 		return err
@@ -448,6 +457,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
 		err := u.executePipeline(firstRun, step, stepState, index)
 		if err == nil {
+			u.postCallback(model.ApplyStatusSuccess, *stepState)
 			u.updateDestinationsApplyFiles(step, files)
 		}
 		return err
@@ -458,8 +468,10 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		err := u.executePipeline(firstRun, step, stepState, index)
 		if err != nil {
 			common.PrintError(err)
+			u.postCallback(model.ApplyStatusFailure, *stepState)
 			errChan <- err
 		} else {
+			u.postCallback(model.ApplyStatusSuccess, *stepState)
 			u.updateDestinationsApplyFiles(step, files)
 		}
 	}()
@@ -1021,6 +1033,17 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
 	return u.putStateFile()
 }
 
+func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep) {
+	if u.callback == nil {
+		return
+	}
+	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
+	err := u.callback.PostStepState(status, stepState)
+	if err != nil {
+		slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
+	}
+}
+
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
@@ -1081,6 +1104,7 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return nil, err
 	}
+	u.postCallback(model.ApplyStatusProgress, *stepState)
 	return moduleVersions, nil
 }
 

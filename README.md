@@ -216,6 +216,9 @@ destinations:
       author_name: string
       author_email: string
       insecure: bool
+callback:
+  url: string
+  uuid: string
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -262,17 +265,20 @@ Source version is overwritten by module version. Default version is **stable** w
   * exclude - list of module sources to exclude from the source repository
   * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
-    * name - name of the destination
-    * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
-        * url - url of the git repository
-        * key - PEM encoded private key for authentication
-        * key_password - optional, password for the private key
-        * insecure_host_key - accept any host key when using private key, default **false**
-        * username - username for authentication
-        * password - password for authentication
-        * author_name - author name for commits, default **Entigo Infralib Agent**
-        * author_email - author email for commits, default **no-reply@localhost**
-        * insecure - allow insecure connection, default **false**
+  * name - name of the destination
+  * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
+    * url - url of the git repository
+    * key - PEM encoded private key for authentication
+    * key_password - optional, password for the private key
+    * insecure_host_key - accept any host key when using private key, default **false**
+    * username - username for authentication
+    * password - password for authentication
+    * author_name - author name for commits, default **Entigo Infralib Agent**
+    * author_email - author email for commits, default **no-reply@localhost**
+    * insecure - allow insecure connection, default **false**
+* callback - optionally send updates about the status of modules
+  * url - url for the callback
+  * uuid - unique identifier for the callback
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
