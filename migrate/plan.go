@@ -8,6 +8,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"gopkg.in/yaml.v3"
 	"log"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -111,61 +112,106 @@ func getConfig(stateFile string) importConfig {
 
 func (p *planner) Plan() {
 	log.Println("Planning migration")
+	var imports []string
+	var removes []string
 	for _, item := range p.config.Import {
 		identification, found := p.types[item.Type]
 		if !found {
-			log.Fatalf("Type %s not found in typeIdentifications", item.Type)
+			slog.Error(fmt.Sprintf("Type %s not found in typeIdentifications", item.Type))
+			continue
 		}
-		resource := p.getResource(item.Type, item.Source.Name)
+		resource, err := p.getResource(item.Type, item.Source.Name)
+		if err != nil {
+			slog.Error(err.Error())
+			continue
+		}
 		if len(resource.Instances) == 0 {
-			log.Fatalf("No instances found for type %s", item.Type)
+			slog.Error(fmt.Sprintf("No instances found for type %s", item.Type))
+			continue
 		}
-		indexKeys := getIndexKeys(item)
-		source := getReference(item.Type, item.Source, resource.Name)
+		indexKeys, err := getIndexKeys(item)
+		if err != nil {
+			slog.Error(err.Error())
+			continue
+		}
+		source := getReference(item.Type, item.Source, resource.Name, resource.Module)
 		var index interface{}
+		var plannedResource *resourcePlan
 		name := item.Destination.Name
-		if name == "" {
-			name, index = p.getPlannedDestination(item)
+		dstModule := item.Destination.Module
+		if name == "" || dstModule == "" {
+			plannedResource, err = getPlannedResource(item, p.plan.PlannedValues.RootModule.ChildModules)
+			if err != nil {
+				slog.Error(err.Error())
+				continue
+			}
+			if plannedResource == nil {
+				slog.Error(fmt.Sprintf("Planned resource not found for type %s", item.Type))
+				continue
+			}
+			name = plannedResource.Name
+			typeIndex := strings.Index(plannedResource.Address, item.Type)
+			if typeIndex != -1 {
+				dstModule = plannedResource.Address[0 : typeIndex-1]
+			}
+			index = plannedResource.Index
 		}
-		dest := getReference(item.Type, item.Destination, name)
+		dest := getReference(item.Type, item.Destination, name, dstModule)
 
 		for _, keys := range indexKeys {
 			instance, err := getResourceInstance(resource, keys.Key1)
 			if err != nil {
-				log.Fatalf("Failed to get instance for type %s: %s", item.Type, err)
+				slog.Error(fmt.Sprintf("Failed to get instance for type %s: %s", item.Type, err))
+				continue
 			}
 			id, err := getReplacedIdentification(identification, instance)
 			if err != nil {
-				log.Fatalf("Failed to replace identification %s for type %s: %s", identification, item.Type, err)
+				slog.Error(fmt.Sprintf("Failed to replace identification %s for type %s: %s", identification, item.Type, err))
+				continue
 			}
 
 			key := keys.Key2
 			if key == nil {
 				key = index
 			}
-			importCommand := fmt.Sprintf("terraform import \"%s\" %s", addIndex(dest, key), id)
-			log.Println(importCommand)
-			stateRmCommand := fmt.Sprintf("terraform state rm \"%s\"", addIndex(source, keys.Key1))
-			log.Println(stateRmCommand)
+			indexed, err := addIndex(dest, key)
+			if err != nil {
+				slog.Error(fmt.Sprintf("Failed to add index to reference %s: %s", dest, err))
+			}
+			importCommand := fmt.Sprintf("terraform import \"%s\" %s", indexed, id)
+			indexed, err = addIndex(source, keys.Key1)
+			if err != nil {
+				slog.Error(fmt.Sprintf("Failed to add index to reference %s: %s", source, err))
+			}
+			stateRmCommand := fmt.Sprintf("terraform state rm \"%s\"", indexed)
+			imports = append(imports, importCommand)
+			removes = append(removes, stateRmCommand)
 		}
+	}
+	for _, cmd := range imports {
+		fmt.Println(cmd)
+	}
+	fmt.Println()
+	for _, cmd := range removes {
+		fmt.Println(cmd)
 	}
 }
 
-func getIndexKeys(item importItem) []KeyPair {
+func getIndexKeys(item importItem) ([]KeyPair, error) {
 	if len(item.Source.IndexKeys) == 0 {
-		return []KeyPair{newKeyPair(item.Source.IndexKey, item.Destination.IndexKey)}
+		return []KeyPair{newKeyPair(item.Source.IndexKey, item.Destination.IndexKey)}, nil
 	}
 	if len(item.Source.IndexKeys) != len(item.Destination.IndexKeys) {
-		log.Fatalf("Source and destination index keys must have the same length")
+		return nil, fmt.Errorf("source and destination index keys must have the same length for type %s", item.Type)
 	}
 	var keys []KeyPair
 	for i := 0; i < len(item.Source.IndexKeys); i++ {
 		keys = append(keys, newKeyPair(item.Source.IndexKeys[i], item.Destination.IndexKeys[i]))
 	}
-	return keys
+	return keys, nil
 }
 
-func (p *planner) getResource(rsType string, name string) resourceStateV4 {
+func (p *planner) getResource(rsType string, name string) (resourceStateV4, error) {
 	var found *resourceStateV4
 	for _, resource := range p.state.Resources {
 		if resource.Mode != "managed" {
@@ -174,32 +220,24 @@ func (p *planner) getResource(rsType string, name string) resourceStateV4 {
 		if resource.Type != rsType {
 			continue
 		}
-		if name != "" && resource.Name == name {
-			return resource
-		}
 		if name != "" {
+			if resource.Name == name {
+				return resource, nil
+			}
 			continue
 		}
 		if found != nil {
-			log.Fatalf("Multiple state resources of type %s found, name is required", rsType)
+			return resourceStateV4{}, fmt.Errorf("multiple state resources of type %s found, name is required", rsType)
 		}
 		found = &resource
 	}
 	if found == nil {
-		log.Fatalf("Resource of type %s not found", rsType)
+		return resourceStateV4{}, fmt.Errorf("resource of type %s not found", rsType)
 	}
-	return *found
+	return *found, nil
 }
 
-func (p *planner) getPlannedDestination(item importItem) (string, interface{}) {
-	resource := getPlannedResource(item, p.plan.PlannedValues.RootModule.ChildModules)
-	if resource == nil {
-		log.Fatalf("Planned resource of type %s not found", item.Type)
-	}
-	return resource.Name, resource.Index
-}
-
-func getPlannedResource(item importItem, modules []modulePlan) *resourcePlan {
+func getPlannedResource(item importItem, modules []modulePlan) (*resourcePlan, error) {
 	var found *resourcePlan
 	for _, childModule := range modules {
 		for _, resource := range childModule.Resources {
@@ -209,36 +247,43 @@ func getPlannedResource(item importItem, modules []modulePlan) *resourcePlan {
 			if resource.Type != item.Type {
 				continue
 			}
-			if !strings.HasPrefix(resource.Address, item.Destination.Module) {
+			if item.Destination.Name != "" && resource.Name == item.Destination.Name {
+				return &resource, nil
+			}
+			if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
 				continue
 			}
 			if found != nil {
-				log.Fatalf("Multiple plan resources of type %s found, name is required", item.Type)
+				return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
 			}
 			found = &resource
 		}
-		child := getPlannedResource(item, childModule.ChildModules)
+		child, err := getPlannedResource(item, childModule.ChildModules)
+		if err != nil {
+			return nil, err
+		}
 		if child == nil {
 			continue
 		}
 		if found != nil {
-			log.Fatalf("Multiple plan resources of type %s found, name is required", item.Type)
+			return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
 		}
 		found = child
 	}
-	return found
+	return found, nil
 }
 
-func getReference(rsType string, module module, name string) string {
+func getReference(rsType string, module module, name, resourceModule string) string {
 	var parts []string
 	if module.Module != "" {
 		parts = append(parts, module.Module)
+	} else if resourceModule != "" {
+		parts = append(parts, resourceModule)
 	}
 	parts = append(parts, rsType)
 	if module.Name != "" {
 		parts = append(parts, module.Name)
-	}
-	if module.Name == "" && name != "" {
+	} else if name != "" {
 		parts = append(parts, name)
 	}
 	return strings.Join(parts, ".")
@@ -278,29 +323,31 @@ func compareValues(a, b interface{}) (bool, error) {
 	return false, fmt.Errorf("incompatible types: %T and %T", a, b)
 }
 
-func addIndex(reference string, indexKey interface{}) string {
-	index := getIndexKey(indexKey)
-	if index == "" {
-		return reference
+func addIndex(reference string, indexKey interface{}) (string, error) {
+	index, err := getIndexKey(indexKey)
+	if err != nil {
+		return "", err
 	}
-	return reference + index
+	if index == "" {
+		return reference, nil
+	}
+	return reference + index, nil
 }
 
-func getIndexKey(indexKey interface{}) string {
+func getIndexKey(indexKey interface{}) (string, error) {
 	if indexKey == nil {
-		return ""
+		return "", nil
 	}
 	switch v := indexKey.(type) {
 	case string:
-		return fmt.Sprintf(`[\"%s\"]`, v)
+		return fmt.Sprintf(`[\"%s\"]`, v), nil
 	case int:
-		return fmt.Sprintf("[%d]", v)
+		return fmt.Sprintf("[%d]", v), nil
 	case float64:
-		return fmt.Sprintf("[%g]", v)
+		return fmt.Sprintf("[%g]", v), nil
 	default:
-		log.Fatalf("Unsupported index key type: %T", v)
+		return "", fmt.Errorf("unsupported index key type: %T", v)
 	}
-	return ""
 }
 
 func getReplacedIdentification(identification string, instance instanceObjectStateV4) (string, error) {

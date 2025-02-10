@@ -18,6 +18,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Service Account](#service-account)
     * [Pull](#pull)
     * [Migrate Plan](#migrate-plan)
+    * [Migrate Validate](#migrate-validate)
 * [Config](#config)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
@@ -204,6 +205,21 @@ OPTIONS:
 * plan-file - path to the terraform plan file [$PLAN_FILE]
 * import-file - path to the import file [$IMPORT_FILE]
 * types-file - **optional**, path for type identifications file [$TYPES_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-plan --state-file=state-file.json --import-file=import-file.yaml
+```
+
+### migrate-validate
+
+Validate a terraform plan file based on the import config and infralib terraform state.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the terraform state file [$STATE_FILE]
+* plan-file - path to the terraform plan file [$PLAN_FILE]
+* import-file - path to the import file [$IMPORT_FILE]
 
 Example
 ```bash

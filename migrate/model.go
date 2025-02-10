@@ -76,6 +76,7 @@ type plan struct {
 	Variables        map[string]variablePlan `json:"variables"`
 	PlannedValues    valuesPlan              `json:"planned_values"`
 	ResourceChanges  []resourceChangePlan    `json:"resource_changes"`
+	ResourceDrifts   []resourceChangePlan    `json:"resource_drift"`
 	Configuration    configurationPlan       `json:"configuration"`
 }
 
@@ -120,6 +121,24 @@ type changePlan struct {
 	AfterUnknown    json.RawMessage `json:"after_unknown"`
 	BeforeSensitive json.RawMessage `json:"before_sensitive,omitempty"`
 	AfterSensitive  json.RawMessage `json:"after_sensitive,omitempty"`
+}
+
+type changedValuePlan struct {
+	AllowedPattern string            `json:"allowed_pattern"`
+	Arn            string            `json:"arn"`
+	DataType       string            `json:"data_type"`
+	Description    string            `json:"description"`
+	ID             string            `json:"id"`
+	InsecureValue  interface{}       `json:"insecure_value"`
+	KeyID          string            `json:"key_id"`
+	Name           string            `json:"name"`
+	Overwrite      interface{}       `json:"overwrite"`
+	Tags           map[string]string `json:"tags"`
+	TagsAll        map[string]string `json:"tags_all"`
+	Tier           string            `json:"tier"`
+	Type           string            `json:"type"`
+	Value          interface{}       `json:"value"`
+	Version        int               `json:"version"`
 }
 
 type configurationPlan struct {

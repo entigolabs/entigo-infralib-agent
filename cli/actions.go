@@ -43,6 +43,8 @@ func run(ctx context.Context, cmd common.Command) {
 		pull.Run(ctx, flags)
 	case common.MigratePlanCommand:
 		migrate.Plan(ctx, flags)
+	case common.MigrateValidateCommand:
+		migrate.Validate(ctx, flags)
 	default:
 		log.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
 	}

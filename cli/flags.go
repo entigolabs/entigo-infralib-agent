@@ -34,6 +34,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(baseFlags, getProviderFlags()...)
 	case common.MigratePlanCommand:
 		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag, &typesFileFlag)
+	case common.MigrateValidateCommand:
+		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag)
 	default:
 		return baseFlags
 	}
