@@ -1096,7 +1096,7 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return nil, err
 	}
-	u.postCallback(model.ApplyStatusProgress, *stepState)
+	u.postCallback(model.ApplyStatusStarting, *stepState)
 	return moduleVersions, nil
 }
 

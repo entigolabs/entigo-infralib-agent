@@ -21,6 +21,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
   * [Including files in steps](#including-files-in-steps)
+  * [Callback](#callback)
 
 ## Requirements
 
@@ -347,3 +348,31 @@ Infralib modules may use `{{ .tmodule.type }}` in their default input files to r
 ### Including files in steps
 
 It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and named files for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.
+
+### Callback
+
+When configuring a callback, agent will send POST requests to the specified URL about the status of step pipelines.
+
+Callback payload example:
+```json
+{
+  "status": "success",
+  "status_at": "2021-08-31T12:00:00Z",
+  "step": "net",
+  "applied_at": "2021-08-31T12:00:00Z",
+  "modules": [{
+    "name": "net",
+    "applied_version": "v1.4.2",
+    "version": "v1.4.2"
+  }]
+}
+```
+
+* status - possible values `failure | skipped | starting | success`
+* status_at - timestamp when the status was set
+* step - name of the step
+* applied_at - timestamp when the step was applied
+* modules - list of modules
+  * name - name of the module
+  * applied_version - version of the module that was successfully applied previously
+  * version - version of the module that was or will be applied

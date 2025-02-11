@@ -8,7 +8,7 @@ const (
 	ApplyStatusSuccess  ApplyStatus = "success"
 	ApplyStatusFailure  ApplyStatus = "failure"
 	ApplyStatusSkipped  ApplyStatus = "skipped"
-	ApplyStatusProgress ApplyStatus = "progress"
+	ApplyStatusStarting ApplyStatus = "starting"
 )
 
 type ModulesRequest struct {
