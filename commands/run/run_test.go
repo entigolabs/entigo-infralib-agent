@@ -45,6 +45,7 @@ func TestRunGCloud(t *testing.T) {
 			Location:  location,
 			Zone:      zone,
 		},
+		SkipBucketCreationDelay: true,
 		Delete: common.DeleteFlags{
 			DeleteBucket: true,
 		},

@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type ApplyStatus string
 
 const (
@@ -10,9 +12,11 @@ const (
 )
 
 type ModulesRequest struct {
-	Status  ApplyStatus     `json:"status"`
-	Step    string          `json:"step"`
-	Modules []ModuleRequest `json:"modules"`
+	Status    ApplyStatus     `json:"status"`
+	StatusAt  time.Time       `json:"status_at"`
+	Step      string          `json:"step"`
+	AppliedAt time.Time       `json:"applied_at"`
+	Modules   []ModuleRequest `json:"modules"`
 }
 
 type ModuleRequest struct {
@@ -31,8 +35,10 @@ func ToModulesRequest(status ApplyStatus, stepState StateStep) ModulesRequest {
 		})
 	}
 	return ModulesRequest{
-		Status:  status,
-		Step:    stepState.Name,
-		Modules: modules,
+		Status:    status,
+		StatusAt:  time.Now().UTC(),
+		Step:      stepState.Name,
+		AppliedAt: stepState.AppliedAt,
+		Modules:   modules,
 	}
 }

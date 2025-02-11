@@ -33,7 +33,7 @@ func NewCallback(ctx context.Context, config model.Callback) Callback {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		retries: 3,
+		retries: 2,
 		url:     config.URL,
 		key:     config.Key,
 	}

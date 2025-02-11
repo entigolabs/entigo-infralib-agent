@@ -391,7 +391,6 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	}
 	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, files)
 	if err != nil {
-		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	u.firstRunDone[step.Name] = true
@@ -444,35 +443,20 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			log.Printf("Skipping step %s\n", step.Name)
-			u.postCallback(model.ApplyStatusSkipped, *stepState)
-			return u.putAppliedStateFile(stepState)
+			return u.putAppliedStateFile(stepState, model.ApplyStatusSkipped)
 		}
-		err := u.executePipeline(firstRun, step, stepState, index)
-		if err == nil {
-			u.postCallback(model.ApplyStatusSuccess, *stepState)
-			u.updateDestinationsApplyFiles(step, files)
-		}
-		return err
+		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
 	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
-		err := u.executePipeline(firstRun, step, stepState, index)
-		if err == nil {
-			u.postCallback(model.ApplyStatusSuccess, *stepState)
-			u.updateDestinationsApplyFiles(step, files)
-		}
-		return err
+		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := u.executePipeline(firstRun, step, stepState, index)
+		err := u.executePipeline(firstRun, step, stepState, index, files)
 		if err != nil {
 			common.PrintError(err)
-			u.postCallback(model.ApplyStatusFailure, *stepState)
 			errChan <- err
-		} else {
-			u.postCallback(model.ApplyStatusSuccess, *stepState)
-			u.updateDestinationsApplyFiles(step, files)
 		}
 	}()
 	return nil
@@ -582,7 +566,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 	return true
 }
 
-func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
+func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int, files map[string][]byte) error {
 	log.Printf("Applying release for step %s\n", step.Name)
 	autoApprove := getAutoApprove(*stepState)
 	var err error
@@ -594,10 +578,15 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 		err = u.executeStepPipelines(step, autoApprove, index)
 	}
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return err
 	}
 	log.Printf("release applied successfully for step %s\n", step.Name)
-	return u.putAppliedStateFile(stepState)
+	err = u.putAppliedStateFile(stepState, model.ApplyStatusSuccess)
+	if err == nil {
+		u.updateDestinationsApplyFiles(step, files)
+	}
+	return err
 }
 
 func (u *updater) updateAgentJob(cmd common.Command) {
@@ -1022,14 +1011,15 @@ func (u *updater) putStateFile() error {
 	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
-func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
+func (u *updater) putAppliedStateFile(stepState *model.StateStep, status model.ApplyStatus) error {
 	u.stateLock.Lock()
 	defer u.stateLock.Unlock()
 
-	stepState.AppliedAt = time.Now()
+	stepState.AppliedAt = time.Now().UTC()
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
+	u.postCallback(status, *stepState)
 	return u.putStateFile()
 }
 
@@ -1038,10 +1028,12 @@ func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateSt
 		return
 	}
 	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
-	err := u.callback.PostStepState(status, stepState)
-	if err != nil {
-		slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
-	}
+	go func() {
+		err := u.callback.PostStepState(status, stepState)
+		if err != nil {
+			slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
+		}
+	}()
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
