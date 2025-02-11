@@ -94,6 +94,7 @@ Run command only executes a single cycle of the pipeline. Can be used to apply c
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* skip-bucket-creation-delay - skip bucket creation delay (default: **false**) [$SKIP_BUCKET_CREATION_DELAY]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
@@ -119,6 +120,7 @@ Update command updates all modules to the latest or specified versions. Returns 
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* skip-bucket-creation-delay - skip bucket creation delay (default: **false**) [$SKIP_BUCKET_CREATION_DELAY]
 * config - config file path and name, only needed for first run or when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]

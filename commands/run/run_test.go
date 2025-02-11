@@ -19,8 +19,9 @@ func TestRunAWS(t *testing.T) {
 		prefix = prefix[:10]
 	}
 	flags := &common.Flags{
-		Config: "test/profile-aws.yaml",
-		Prefix: prefix,
+		Config:                  "test/profile-aws.yaml",
+		Prefix:                  prefix,
+		SkipBucketCreationDelay: true,
 	}
 	Run(context.Background(), flags)
 }

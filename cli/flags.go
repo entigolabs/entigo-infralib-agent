@@ -29,10 +29,11 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.DeleteCommand:
 		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
-		baseFlags = append(baseFlags, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag)
+		baseFlags = append(baseFlags, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag,
+			&skipBucketDelayFlag)
 	case common.RunCommand:
 		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
-			&printLogsFlag)
+			&printLogsFlag, &skipBucketDelayFlag)
 	case common.PullCommand:
 		baseFlags = append(baseFlags, &forceFlag)
 	}
@@ -136,7 +137,19 @@ var yesFlag = cli.BoolFlag{
 	Aliases:     []string{"y"},
 	EnvVars:     []string{"YES"},
 	Usage:       "skip confirmation prompt",
+	DefaultText: "false",
+	Value:       false,
 	Destination: &flags.Delete.SkipConfirmation,
+}
+
+var skipBucketDelayFlag = cli.BoolFlag{
+	Name:        "skip-bucket-creation-delay",
+	Aliases:     []string{"sb"},
+	EnvVars:     []string{"SKIP_BUCKET_CREATION_DELAY"},
+	Usage:       "skip bucket creation delay",
+	DefaultText: "false",
+	Value:       false,
+	Destination: &flags.SkipBucketCreationDelay,
 }
 
 var deleteBucketFlag = cli.BoolFlag{

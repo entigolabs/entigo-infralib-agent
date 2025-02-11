@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"google.golang.org/api/iterator"
 	"io"
 	"log"
@@ -39,7 +40,7 @@ func NewStorage(ctx context.Context, projectId string, location string, bucket s
 	}, nil
 }
 
-func (g *GStorage) CreateBucket() error {
+func (g *GStorage) CreateBucket(skipDelay bool) error {
 	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
 	if err != nil {
 		return err
@@ -47,6 +48,7 @@ func (g *GStorage) CreateBucket() error {
 	if exists {
 		return nil
 	}
+	util.DelayBucketCreation(g.bucket, skipDelay)
 	err = g.bucketHandle.Create(g.ctx, g.projectId, &storage.BucketAttrs{
 		Location:                   g.location,
 		PredefinedACL:              "projectPrivate",

@@ -2,20 +2,24 @@ package util
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 )
 
 func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]byte, error) {
@@ -222,4 +226,24 @@ func SetChildStringValue(data map[string]interface{}, newValue string, overwrite
 		}
 	}
 	return nil
+}
+
+func DelayBucketCreation(bucket string, skipDelay bool) {
+	common.PrintWarning(fmt.Sprintf("Bucket %s doesn't exist", bucket))
+	if skipDelay {
+		return
+	}
+	done := make(chan bool)
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		_, _ = reader.ReadString('\n')
+		done <- true
+	}()
+	log.Println("Waiting for 10 seconds before creating the bucket, press Enter to skip...")
+	select {
+	case <-time.After(10 * time.Second):
+		return
+	case <-done:
+		return
+	}
 }

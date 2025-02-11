@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"time"
 )
@@ -22,6 +23,7 @@ type awsService struct {
 	accountId    string
 	resources    Resources
 	pipelineType common.PipelineType
+	skipDelay    bool
 }
 
 type Resources struct {
@@ -40,18 +42,20 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipelineType common.PipelineType) model.CloudProvider {
+func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipelineType common.PipelineType, skipBucketDelay bool) model.CloudProvider {
 	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+	log.Printf("AWS account id: %s\n", accountId)
 	return &awsService{
 		ctx:          ctx,
 		awsConfig:    awsConfig,
 		cloudPrefix:  cloudPrefix,
 		accountId:    accountId,
 		pipelineType: pipelineType,
+		skipDelay:    skipBucketDelay,
 	}
 }
 
@@ -203,6 +207,7 @@ func (a *awsService) createBucket(bucket string) (*S3, string) {
 		log.Printf("S3 Bucket %s already exists\n", bucket)
 		return s3, fmt.Sprintf(bucketArnFormat, bucket)
 	}
+	util.DelayBucketCreation(bucket, a.skipDelay) // This allows users to react if they ran the agent with wrong credentials
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
 		log.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
