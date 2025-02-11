@@ -18,6 +18,7 @@ type gcloudService struct {
 	zone         string
 	resources    Resources
 	pipelineType common.PipelineType
+	skipDelay    bool
 }
 
 type Resources struct {
@@ -32,7 +33,7 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipelineType common.PipelineType) model.CloudProvider {
+func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipelineType common.PipelineType, skipBucketDelay bool) model.CloudProvider {
 	return &gcloudService{
 		ctx:          ctx,
 		cloudPrefix:  cloudPrefix,
@@ -40,6 +41,7 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pi
 		location:     gCloud.Location,
 		zone:         gCloud.Zone,
 		pipelineType: pipelineType,
+		skipDelay:    skipBucketDelay,
 	}
 }
 
@@ -51,7 +53,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 	if err != nil {
 		log.Fatalf("Failed to create storage service: %s", err)
 	}
-	err = codeStorage.CreateBucket()
+	err = codeStorage.CreateBucket(g.skipDelay)
 	if err != nil {
 		log.Fatalf("Failed to create storage bucket: %s", err)
 	}

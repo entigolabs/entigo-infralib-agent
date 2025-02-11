@@ -11,17 +11,18 @@ const (
 )
 
 type Flags struct {
-	LogLevel      string
-	Config        string
-	Prefix        string
-	AllowParallel bool
-	GithubToken   string
-	Force         bool
-	Steps         cli.StringSlice
-	Pipeline      Pipeline
-	GCloud        GCloud
-	AWS           AWS
-	Delete        DeleteFlags
+	LogLevel                string
+	Config                  string
+	Prefix                  string
+	AllowParallel           bool
+	GithubToken             string
+	Force                   bool
+	SkipBucketCreationDelay bool
+	Steps                   cli.StringSlice
+	Pipeline                Pipeline
+	GCloud                  GCloud
+	AWS                     AWS
+	Delete                  DeleteFlags
 }
 
 type GCloud struct {
