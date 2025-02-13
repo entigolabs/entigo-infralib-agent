@@ -15,7 +15,7 @@ type CloudWatch interface {
 	CreateLogGroup(logGroupName string) (string, error)
 	LogStreamExists(logGroupName string, logStreamName string) (bool, error)
 	CreateLogStream(logGroupName string, logStreamName string) error
-	GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error)
+	GetLogs(logGroupName string, logStreamName string) ([]string, error)
 	DeleteLogGroup(logGroupName string) error
 	DeleteLogStream(logGroupName, logStreamName string) error
 }
@@ -84,7 +84,7 @@ func (c *cloudWatch) LogStreamExists(logGroupName string, logStreamName string) 
 	})
 	if err != nil {
 		var awsError *types.ResourceNotFoundException
-		if err != nil && errors.As(err, &awsError) {
+		if errors.As(err, &awsError) {
 			return false, nil
 		}
 		return false, err
@@ -105,11 +105,10 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 	return err
 }
 
-func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string, limit int32) ([]string, error) {
+func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string) ([]string, error) {
 	response, err := c.cloudwatchlogs.GetLogEvents(c.ctx, &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(logStreamName),
-		Limit:         aws.Int32(limit),
 	})
 	if err != nil {
 		return nil, err
