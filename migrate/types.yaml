@@ -1,13 +1,68 @@
 typeIdentifications:
-  - identification: "{name}"
-    types:
-      - aws_eks_cluster
   - identification: "{id}"
     types:
+      - aws_vpc
       - aws_subnet
-  - identification: "{cluster_name}:{addon_name}"
-    types:
+      - aws_route_table
+      - aws_internet_gateway
+      - aws_nat_gateway
+      - aws_security_group
+      - aws_network_acl
+      - aws_vpc_peering_connection
+      - aws_vpn_gateway
+      - aws_vpn_connection
+      - aws_customer_gateway
+      - aws_dhcp_options
+      - aws_vpc_endpoint
+      - aws_vpc_endpoint_service
+      - aws_vpc_endpoint_connection_notification
+      - aws_vpc_ipv4_cidr_block_association
+      - aws_vpc_ipv6_cidr_block_association
+      - aws_eip
+      - aws_default_network_acl
+      - aws_default_security_group
+      - aws_route53_zone
+      - aws_route53_health_check
+      - aws_route53_delegation_set
+      - aws_route53_resolver_rule_association
+      - aws_eks_cluster
       - aws_eks_addon
+      - aws_eks_node_group
+      - aws_eks_access_entry
+      - aws_eks_access_policy_association
+      - aws_instance
+      - aws_iam_role
+      - aws_iam_policy
+      - aws_launch_template
+      - aws_cloudwatch_log_group
+      - aws_iam_instance_profile
+      - aws_kms_key
+      - aws_kms_alias
+  - identification: "{arn}"
+    types:
+      - aws_iam_openid_connect_provider
   - identification: "{route_table_id}_{destination_cidr_block}"
     types:
       - aws_route
+  - identification: "{subnet_id}/{route_table_id}"
+    types:
+      - aws_route_table_association
+  - identification: "{vpc_id}"
+    types:
+      - aws_default_route_table
+  - identification: "{zone_id}_{name}_{type}"
+    types:
+      - aws_route53_record
+  - identification: "{zone_id}:{vpc_id}"
+    types:
+      - aws_route53_vpc_association_authorization
+  - identification: "{cluster_name}:{node_group_name}"
+    types:
+      - aws_eks_node_group
+  - identification: "{arn}"
+    types:
+      - aws_acm_certificate
+      - aws_iam_policy
+  - identification: "{role}:{policy_arn}"
+    types:
+      - aws_iam_role_policy_attachment

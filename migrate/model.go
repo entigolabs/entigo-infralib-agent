@@ -13,6 +13,11 @@ type typesConfig struct {
 	TypeIdentifications []typeIdentification `yaml:"typeIdentifications"`
 }
 
+// StateV4 structs from OpenTofu project
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
 type stateV4 struct {
 	Version          int                      `json:"version"`
 	TerraformVersion string                   `json:"terraform_version"`
