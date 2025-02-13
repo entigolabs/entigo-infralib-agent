@@ -115,6 +115,10 @@ func (p *planner) Plan() {
 	var imports []string
 	var removes []string
 	for _, item := range p.config.Import {
+		if item.Name != "" {
+			item.Source.Name = item.Name
+			item.Destination.Name = item.Name
+		}
 		identification, found := p.types[item.Type]
 		if !found {
 			slog.Error(fmt.Sprintf("Type %s not found in typeIdentifications", item.Type))
@@ -140,7 +144,7 @@ func (p *planner) Plan() {
 		name := item.Destination.Name
 		dstModule := item.Destination.Module
 		if name == "" || dstModule == "" {
-			plannedResource, err = getPlannedResource(item, p.plan.PlannedValues.RootModule.ChildModules)
+			plannedResource, err = getPlannedResource(item, p.plan.PlannedValues.RootModule)
 			if err != nil {
 				slog.Error(err.Error())
 				continue
@@ -151,7 +155,7 @@ func (p *planner) Plan() {
 			}
 			name = plannedResource.Name
 			typeIndex := strings.Index(plannedResource.Address, item.Type)
-			if typeIndex != -1 {
+			if typeIndex > 0 {
 				dstModule = plannedResource.Address[0 : typeIndex-1]
 			}
 			index = plannedResource.Index
@@ -237,28 +241,32 @@ func (p *planner) getResource(rsType string, name string) (resourceStateV4, erro
 	return *found, nil
 }
 
-func getPlannedResource(item importItem, modules []modulePlan) (*resourcePlan, error) {
+func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, error) {
 	var found *resourcePlan
-	for _, childModule := range modules {
-		for _, resource := range childModule.Resources {
-			if resource.Mode != "managed" {
-				continue
-			}
-			if resource.Type != item.Type {
-				continue
-			}
-			if item.Destination.Name != "" && resource.Name == item.Destination.Name {
-				return &resource, nil
-			}
-			if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
-				continue
-			}
-			if found != nil {
-				return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
-			}
-			found = &resource
+	for _, resource := range module.Resources {
+		if resource.Mode != "managed" {
+			continue
 		}
-		child, err := getPlannedResource(item, childModule.ChildModules)
+		if resource.Type != item.Type {
+			continue
+		}
+		if item.Destination.Name != "" {
+			if resource.Name == item.Destination.Name {
+				return &resource, nil
+			} else {
+				continue
+			}
+		}
+		if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
+		}
+		found = &resource
+	}
+	for _, childModule := range module.ChildModules {
+		child, err := getPlannedResource(item, childModule)
 		if err != nil {
 			return nil, err
 		}

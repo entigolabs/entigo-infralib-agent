@@ -176,6 +176,7 @@ type importConfig struct {
 
 type importItem struct {
 	Type        string `yaml:"type"`
+	Name        string `yaml:"name"`
 	Source      module `yaml:"source"`
 	Destination module `yaml:"destination"`
 }
