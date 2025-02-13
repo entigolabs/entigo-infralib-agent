@@ -11,6 +11,8 @@ func (f *Flags) validate(cmd Command) error {
 		fallthrough
 	case UpdateCommand:
 		fallthrough
+	case DestroyCommand:
+		fallthrough
 	case DeleteCommand:
 		fallthrough
 	case BootstrapCommand:

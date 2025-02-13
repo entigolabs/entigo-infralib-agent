@@ -14,6 +14,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Bootstrap](#bootstrap)
     * [Run](#run)
     * [Update](#update)
+    * [Destroy](#destroy)
     * [Delete](#delete)
     * [Service Account](#service-account)
     * [Pull](#pull)
@@ -137,6 +138,31 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent update --config=config.yaml --prefix=infralib
+```
+
+### destroy
+
+Executes the destroy pipelines in reverse config order.
+**Warning!** This will remove the resources provisioned by the step pipelines.
+Agent automatically approves the changes.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* config - config file path and name, only needed when overriding an existing config [$CONFIG]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* yes - skip confirmation prompt (default: **false**) [$YES]
+* steps - **optional** comma separated list of steps to destroy [$STEPS]
+* pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
+* print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
+
+Example
+```bash
+bin/ei-agent destroy --config=config.yaml --prefix=infralib
 ```
 
 ### delete

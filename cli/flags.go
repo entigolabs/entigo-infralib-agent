@@ -34,6 +34,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.RunCommand:
 		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
 			&printLogsFlag, &skipBucketDelayFlag)
+	case common.DestroyCommand:
+		baseFlags = append(baseFlags, &yesFlag, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag)
 	case common.PullCommand:
 		baseFlags = append(baseFlags, &forceFlag)
 	}

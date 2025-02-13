@@ -5,6 +5,7 @@ type Command string
 const (
 	RunCommand       Command = "run"
 	BootstrapCommand Command = "bootstrap"
+	DestroyCommand   Command = "destroy"
 	DeleteCommand    Command = "delete"
 	UpdateCommand    Command = "update"
 	SACommand        Command = "service-account"

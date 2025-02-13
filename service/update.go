@@ -798,7 +798,7 @@ func getOlderVersion(oldestVersion string, compareVersion string) (string, error
 	if compareVersion == "" || oldestVersion != StableVersion && compareVersion == StableVersion ||
 		oldestVersion == StableVersion && compareVersion == StableVersion {
 		return oldestVersion, nil
-	} else if oldestVersion == StableVersion && compareVersion != StableVersion {
+	} else if oldestVersion == StableVersion {
 		return compareVersion, nil
 	}
 	version1, err := version.NewVersion(oldestVersion)

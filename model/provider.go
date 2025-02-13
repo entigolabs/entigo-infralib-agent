@@ -55,7 +55,7 @@ type Pipeline interface {
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
 	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step) error
 	DeletePipeline(projectName string) error
-	StartDestroyExecution(projectName string) error
+	StartDestroyExecution(projectName string, step Step) error
 }
 
 type Builder interface {
@@ -155,6 +155,15 @@ func GetCommands(stepType StepType) (ActionCommand, ActionCommand) {
 		return ArgoCDPlanCommand, ArgoCDApplyCommand
 	default:
 		return PlanCommand, ApplyCommand
+	}
+}
+
+func GetDestroyCommands(stepType StepType) (ActionCommand, ActionCommand) {
+	switch stepType {
+	case StepTypeArgoCD:
+		return ArgoCDPlanDestroyCommand, ArgoCDApplyDestroyCommand
+	default:
+		return PlanDestroyCommand, ApplyDestroyCommand
 	}
 }
 

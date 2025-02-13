@@ -10,6 +10,7 @@ func cliCommands() []*cli.Command {
 		&runCommand,
 		&updateCommand,
 		&bootstrapCommand,
+		&destroyCommand,
 		&deleteCommand,
 		&SACommand,
 		&pullCommand,
@@ -38,6 +39,14 @@ var bootstrapCommand = cli.Command{
 	Usage:   "bootstraps agent pipeline and build job",
 	Action:  action(common.BootstrapCommand),
 	Flags:   cliFlags(common.BootstrapCommand),
+}
+
+var destroyCommand = cli.Command{
+	Name:    string(common.DestroyCommand),
+	Aliases: []string{"des"},
+	Usage:   "execute destroy pipelines",
+	Action:  action(common.DestroyCommand),
+	Flags:   cliFlags(common.DestroyCommand),
 }
 
 var deleteCommand = cli.Command{

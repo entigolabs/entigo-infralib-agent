@@ -73,6 +73,20 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool) 
 	return nil
 }
 
+func (l *LocalPipeline) startDestroyExecution(step model.Step) error {
+	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
+	planCommand, applyCommand := model.GetDestroyCommands(step.Type)
+	_, err := l.executeLocalCommand(prefix, planCommand, step)
+	if err != nil {
+		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
+	}
+	_, err = l.executeLocalCommand(prefix, applyCommand, step)
+	if err != nil {
+		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefix, err)
+	}
+	return nil
+}
+
 func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionCommand, step model.Step) ([]byte, error) {
 	cmd := exec.Command(executeScript)
 	cmd.Env = l.getEnv(prefix, command, step)
