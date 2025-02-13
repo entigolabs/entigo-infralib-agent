@@ -56,13 +56,9 @@ typeIdentifications:
   - identification: "{zone_id}:{vpc_id}"
     types:
       - aws_route53_vpc_association_authorization
-  - identification: "{cluster_name}:{node_group_name}"
-    types:
-      - aws_eks_node_group
   - identification: "{arn}"
     types:
       - aws_acm_certificate
-      - aws_iam_policy
   - identification: "{role}:{policy_arn}"
     types:
       - aws_iam_role_policy_attachment

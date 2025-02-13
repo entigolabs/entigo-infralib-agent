@@ -178,7 +178,7 @@ func (p *planner) Plan() {
 			if err != nil {
 				slog.Error(fmt.Sprintf("Failed to add index to reference %s: %s", dest, err))
 			}
-			importCommand := fmt.Sprintf("terraform import \"%s\" %s", indexed, id)
+			importCommand := fmt.Sprintf("terraform import \"%s\" \"%s\"", indexed, id)
 			indexed, err = addIndex(source, keys.Key1)
 			if err != nil {
 				slog.Error(fmt.Sprintf("Failed to add index to reference %s: %s", source, err))
@@ -382,6 +382,19 @@ func getJsonValue(values map[string]interface{}, key string) (string, error) {
 		return fmt.Sprintf("%s", val), nil
 	case int:
 		return fmt.Sprintf("%d", v), nil
+	case []interface{}:
+		var values []string
+		for _, value := range v {
+			switch val := value.(type) {
+			case string:
+				values = append(values, val)
+			case int:
+				values = append(values, fmt.Sprintf("%d", val))
+			default:
+				return "", fmt.Errorf("unsupported value type for key %s: %T", key, val)
+			}
+		}
+		return strings.Join(values, "/"), nil
 	default:
 		return "", fmt.Errorf("unsupported value type for key %s: %T", key, v)
 	}

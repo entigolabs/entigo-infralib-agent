@@ -412,10 +412,6 @@ import:
 
 * type - type of the resource to import
 * source - source is a resource from the previous state file
-  * module - optional, module name of the resource
-  * name - optional, name of the resource
-  * index_key - optional, index key of the resource instance
-  * index_keys - optional, index keys of the resource instance
 * destination - destination is a resource from the plan file
   * module - optional, module name of the resource
   * name - optional, name of the resource

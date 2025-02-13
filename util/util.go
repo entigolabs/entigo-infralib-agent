@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -229,7 +230,7 @@ func SetChildStringValue(data map[string]interface{}, newValue string, overwrite
 }
 
 func DelayBucketCreation(bucket string, skipDelay bool) {
-	common.PrintWarning(fmt.Sprintf("Bucket %s doesn't exist", bucket))
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("Bucket %s doesn't exist", bucket)))
 	if skipDelay {
 		return
 	}

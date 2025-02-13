@@ -52,6 +52,7 @@ func (v *validator) validatePlanState() {
 		resources.Add(fmt.Sprintf("%s.%s", resource.Type, resource.Name))
 	}
 	actionTypes := model.ToSet[string]([]string{"create", "delete", "replace"})
+	fmt.Println("State resources:")
 	validateChangeState(resources, actionTypes, v.plan.ResourceChanges)
 	validateChangeState(resources, actionTypes, v.plan.ResourceDrifts)
 }
@@ -74,7 +75,7 @@ func validateChangeState(resources, actionTypes model.Set[string], changes []res
 		if actionType == "" {
 			continue
 		}
-		slog.Error(fmt.Sprintf("Resource '%s' change action: %s", change.Address, actionType))
+		fmt.Printf("Resource '%s' change action: %s\n", change.Address, actionType)
 	}
 }
 
@@ -84,6 +85,7 @@ func (v *validator) validateConfigTypes() {
 		types.Add(item.Type)
 	}
 	actionTypes := model.ToSet[string]([]string{"create", "delete", "replace"})
+	fmt.Println("Import config types:")
 	validateConfigTypes(types, actionTypes, v.plan.ResourceChanges)
 	validateConfigTypes(types, actionTypes, v.plan.ResourceDrifts)
 }
@@ -106,12 +108,13 @@ func validateConfigTypes(types, actionTypes model.Set[string], changes []resourc
 		if actionType == "" {
 			continue
 		}
-		slog.Warn(fmt.Sprintf("Resource '%s' drift action: %s", change.Address, actionType))
+		fmt.Printf("Resource '%s' drift action: %s\n", change.Address, actionType)
 	}
 }
 
 func (v *validator) validateChangedValues() {
 	actionTypes := model.ToSet[string]([]string{"update", "replace"})
+	fmt.Println("Changed values:")
 	validateChangedResourceValues(actionTypes, v.plan.ResourceDrifts)
 	validateChangedResourceValues(actionTypes, v.plan.ResourceChanges)
 }
@@ -152,6 +155,6 @@ func validateValueChange(change resourceChangePlan, beforeJson, afterJson json.R
 		return
 	}
 	if before.Value != after.Value {
-		slog.Warn(fmt.Sprintf("Resource '%s' value changed: %s -> %s", change.Address, before.Value, after.Value))
+		fmt.Printf("Resource '%s' value changed: %s -> %s\n", change.Address, before.Value, after.Value)
 	}
 }
