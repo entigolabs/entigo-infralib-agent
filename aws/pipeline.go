@@ -684,7 +684,7 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.Actio
 	if err != nil {
 		return nil, err
 	}
-	logs, err := p.cloudWatch.GetLogs(p.logGroup, fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId), 500)
+	logs, err := p.cloudWatch.GetLogs(p.logGroup, fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId))
 	if err != nil {
 		return nil, err
 	}
