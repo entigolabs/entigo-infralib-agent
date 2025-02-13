@@ -17,6 +17,7 @@ type Flags struct {
 	AllowParallel bool
 	GithubToken   string
 	Force         bool
+	SkipBucketCreationDelay bool
 	Steps         cli.StringSlice
 	Migrate       Migrate
 	Pipeline      Pipeline
