@@ -1028,12 +1028,10 @@ func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateSt
 		return
 	}
 	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
-	go func() {
-		err := u.callback.PostStepState(status, stepState)
-		if err != nil {
-			slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
-		}
-	}()
+	err := u.callback.PostStepState(status, stepState)
+	if err != nil {
+		slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
+	}
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
