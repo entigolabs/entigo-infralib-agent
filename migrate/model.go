@@ -6,6 +6,7 @@ import (
 
 type typeIdentification struct {
 	Identification string   `yaml:"identification"`
+	ListSeparator  string   `yaml:"listSeparator,omitempty"`
 	Types          []string `yaml:"types"`
 }
 

@@ -433,8 +433,10 @@ Type identifications file is used to map a resource type to an identification us
 ```yaml
 typeIdentifications:
   - identification: string
+    listSeparator: string
     types: []string
 ```
 
 * identification - identification used by terraform for the import command, e.g `"{id}"`
+* listSeparator - optional, separator for identification values that are lists, default `/`
 * types - list of resource types that use the identification

@@ -115,9 +115,6 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		if err != nil {
 			return "", err
 		}
-		if strings.HasPrefix(replaceKey, "$") {
-
-		}
 		replacement, err := u.getReplacementValue(step, index, replaceKey, replaceType, cache)
 		if err != nil {
 			return "", err
