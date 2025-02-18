@@ -435,6 +435,10 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"iam:GetRole",
 				"sts:GetCallerIdentity",
 				"ssm:GetParameter",
+				"ssm:PutParameter",
+				"ssm:DeleteParameter",
+				"ssm:AddTagsToResource",
+				"tag:GetResources",
 			},
 		},
 		{

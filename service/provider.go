@@ -19,3 +19,11 @@ func GetCloudProvider(ctx context.Context, flags *common.Flags) model.CloudProvi
 	}
 	return aws.NewAWS(ctx, strings.ToLower(prefix), flags.AWS, pipelineType, flags.SkipBucketCreationDelay)
 }
+
+func GetResourceProvider(ctx context.Context, flags *common.Flags) model.ResourceProvider {
+	if flags.GCloud.ProjectId != "" {
+		log.Println("Using GCloud with project ID: ", flags.GCloud.ProjectId)
+		return gcloud.NewGCloudProvider(ctx, flags.GCloud)
+	}
+	return aws.NewAWSProvider(ctx, flags.AWS)
+}

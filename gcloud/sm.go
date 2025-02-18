@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/googleapis/gax-go/v2/apierror"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"strings"
 )
@@ -51,23 +52,47 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 	}, nil
 }
 
+func (s *sm) ParameterExists(name string) (bool, error) {
+	_, err := s.GetParameter(name)
+	if err != nil {
+		var notFoundErr *model.ParameterNotFoundError
+		if errors.As(err, &notFoundErr) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *sm) PutParameter(name string, value string) error {
-	secret, err := s.client.CreateSecret(s.ctx, &secretmanagerpb.CreateSecretRequest{
+	exists, err := s.ParameterExists(name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		err = s.createSecret(name)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = s.client.AddSecretVersion(s.ctx, &secretmanagerpb.AddSecretVersionRequest{
+		Parent: fmt.Sprintf("projects/%s/secrets/%s", s.projectId, name),
+		Payload: &secretmanagerpb.SecretPayload{
+			Data: []byte(value),
+		},
+	})
+	return err
+}
+
+func (s *sm) createSecret(name string) error {
+	_, err := s.client.CreateSecret(s.ctx, &secretmanagerpb.CreateSecretRequest{
 		Parent:   fmt.Sprintf("projects/%s", s.projectId),
 		SecretId: name,
 		Secret: &secretmanagerpb.Secret{
 			Replication: &secretmanagerpb.Replication{
 				Replication: &secretmanagerpb.Replication_Automatic_{},
 			},
-		},
-	})
-	if err != nil {
-		return err
-	}
-	_, err = s.client.AddSecretVersion(s.ctx, &secretmanagerpb.AddSecretVersionRequest{
-		Parent: secret.Name,
-		Payload: &secretmanagerpb.SecretPayload{
-			Data: []byte(value),
+			Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
 	return err
@@ -85,4 +110,24 @@ func (s *sm) DeleteParameter(name string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *sm) ListParameters() ([]string, error) {
+	var keys []string
+	secrets := s.client.ListSecrets(s.ctx, &secretmanagerpb.ListSecretsRequest{
+		Parent: fmt.Sprintf("projects/%s", s.projectId),
+		Filter: fmt.Sprintf("labels.%s:%s", model.ResourceTagKey, model.ResourceTagValue),
+	})
+	for {
+		secret, err := secrets.Next()
+		if err != nil {
+			if errors.Is(err, iterator.Done) {
+				break
+			}
+			return nil, err
+		}
+		key := secret.Name[strings.LastIndex(secret.Name, "/")+1:]
+		keys = append(keys, key)
+	}
+	return keys, nil
 }

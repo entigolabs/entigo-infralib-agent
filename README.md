@@ -18,6 +18,7 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Delete](#delete)
     * [Service Account](#service-account)
     * [Pull](#pull)
+    * [Custom Parameters](#custom-parameters)
 * [Config](#config)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
@@ -220,6 +221,28 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent pull --prefix=infralib
+```
+
+### Custom Parameters
+
+Agent has helpful commands for managing custom parameters that can be used in the config file with the `{{ .output-custom.key }}` replacement tag. These commands are:
+* `add-custom` - for adding or updating a custom parameter
+* `delete-custom` - for deleting a custom parameter
+* `get-custom` - for getting a custom parameter value
+* `list-custom` - for listing all custom parameters created by the agent
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* key - key for the custom parameter [$KEY]
+* value - value for the custom parameter [$VALUE]
+* overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]
+
+Example
+```bash
+bin/ei-agent add-custom --key=custom-key --value=custom-value
 ```
 
 ## Config

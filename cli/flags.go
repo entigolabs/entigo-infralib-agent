@@ -13,33 +13,46 @@ func cliFlags(cmd common.Command) []cli.Flag {
 }
 
 func appendBaseFlags(flags []cli.Flag) []cli.Flag {
-	return append(flags,
-		&loggingFlag,
+	return append(flags, &loggingFlag)
+}
+
+func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
+	switch cmd {
+	case common.DeleteCommand:
+		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &deleteBucketFlag, &deleteSAFlag)
+	case common.UpdateCommand:
+		return append(append(baseFlags, getProviderFlags()...), &githubToken, &stepsFlag, &pipelineTypeFlag,
+			&logsPathFlag, &printLogsFlag, &skipBucketDelayFlag)
+	case common.RunCommand:
+		return append(append(baseFlags, getProviderFlags()...), &allowParallelFlag, &githubToken, &stepsFlag,
+			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &skipBucketDelayFlag)
+	case common.PullCommand:
+		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
+	case common.SACommand:
+		fallthrough
+	case common.BootstrapCommand, common.ListCustomCommand:
+		return append(baseFlags, getProviderFlags()...)
+	case common.DestroyCommand:
+		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
+			&printLogsFlag)
+	case common.AddCustomCommand:
+		return append(append(baseFlags, getProviderFlags()...), &keyFlag, &valueFlag, &overwriteFlag)
+	case common.DeleteCustomCommand, common.GetCustomCommand:
+		return append(append(baseFlags, getProviderFlags()...), &keyFlag)
+	default:
+		return baseFlags
+	}
+}
+
+func getProviderFlags() []cli.Flag {
+	return []cli.Flag{
 		&configFlag,
 		&prefixFlag,
 		&projectIdFlag,
 		&locationFlag,
 		&zoneFlag,
 		&awsRoleArnFlag,
-	)
-}
-
-func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag {
-	switch cmd {
-	case common.DeleteCommand:
-		baseFlags = append(baseFlags, &yesFlag, &deleteBucketFlag, &deleteSAFlag)
-	case common.UpdateCommand:
-		baseFlags = append(baseFlags, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag,
-			&skipBucketDelayFlag)
-	case common.RunCommand:
-		baseFlags = append(baseFlags, &allowParallelFlag, &githubToken, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
-			&printLogsFlag, &skipBucketDelayFlag)
-	case common.DestroyCommand:
-		baseFlags = append(baseFlags, &yesFlag, &stepsFlag, &pipelineTypeFlag, &logsPathFlag, &printLogsFlag)
-	case common.PullCommand:
-		baseFlags = append(baseFlags, &forceFlag)
 	}
-	return baseFlags
 }
 
 var loggingFlag = cli.StringFlag{
@@ -217,5 +230,35 @@ var forceFlag = cli.BoolFlag{
 	Usage:       "force",
 	Value:       false,
 	Destination: &flags.Force,
+	Required:    false,
+}
+
+var keyFlag = cli.StringFlag{
+	Name:        "key",
+	Aliases:     []string{"k"},
+	EnvVars:     []string{"KEY"},
+	Usage:       "parameter key",
+	Value:       "",
+	Destination: &flags.Params.Key,
+	Required:    true,
+}
+
+var valueFlag = cli.StringFlag{
+	Name:        "value",
+	Aliases:     []string{"v"},
+	EnvVars:     []string{"VALUE"},
+	Usage:       "parameter value",
+	Value:       "",
+	Destination: &flags.Params.Value,
+	Required:    true,
+}
+
+var overwriteFlag = cli.BoolFlag{
+	Name:        "overwrite",
+	Aliases:     []string{"o"},
+	EnvVars:     []string{"OVERWRITE"},
+	Usage:       "overwrite existing parameter",
+	Value:       false,
+	Destination: &flags.Params.Overwrite,
 	Required:    false,
 }

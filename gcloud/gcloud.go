@@ -197,12 +197,12 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 	}
 	time.Sleep(2 * time.Second) // Adding roles immediately after account creation may fail with SA does not exist
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
-		"roles/iam.serviceAccountAdmin"})
+		"roles/iam.serviceAccountAdmin", "roles/secretmanager.admin"})
 	if err != nil {
 		log.Fatalf("Failed to add roles to service account: %s", err)
 	}
 	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
-		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor"})
+		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.admin"})
 	if err != nil {
 		log.Fatalf("Failed to add roles to project: %s", err)
 	}

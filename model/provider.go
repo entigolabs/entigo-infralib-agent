@@ -16,11 +16,20 @@ const (
 	GCLOUD ProviderType = "GCLOUD"
 )
 
+const (
+	ResourceTagKey   = "created-by"
+	ResourceTagValue = "entigo-infralib-agent"
+)
+
 type CloudProvider interface {
 	SetupResources() Resources
 	GetResources() Resources
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool)
 	CreateServiceAccount()
+}
+
+type ResourceProvider interface {
+	GetSSM() SSM
 }
 
 type Resources interface {
@@ -69,7 +78,9 @@ type Builder interface {
 
 type SSM interface {
 	GetParameter(name string) (*Parameter, error)
+	ParameterExists(name string) (bool, error)
 	PutParameter(name string, value string) error
+	ListParameters() ([]string, error)
 	DeleteParameter(name string) error
 }
 
