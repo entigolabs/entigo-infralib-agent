@@ -40,7 +40,7 @@ func NewCallback(ctx context.Context, config model.Callback) Callback {
 }
 
 func (c *callback) PostStepState(status model.ApplyStatus, stepState model.StateStep) error {
-	fullUrl, err := url.JoinPath(c.url, "agent", "step", stepState.Name)
+	fullUrl, err := url.JoinPath(c.url, "steps", "status")
 	if err != nil {
 		return fmt.Errorf("error joining url: %v", err)
 	}

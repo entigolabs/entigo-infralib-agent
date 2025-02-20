@@ -400,9 +400,11 @@ It's possible to include files in steps by adding the files into a `./config/<st
 
 ### Callback
 
-When configuring a callback, agent will send POST requests to the specified URL about the status of step pipelines.
+When configuring a callback, agent will send requests to the specified URL about the status of step pipelines.
 
-Callback payload example:
+#### POST `/steps/status`
+
+Payload example:
 ```json
 {
   "status": "success",
