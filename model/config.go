@@ -43,7 +43,7 @@ type Git struct {
 
 type Callback struct {
 	URL string `yaml:"url,omitempty"`
-	Key string `yaml:"uuid,omitempty"`
+	Key string `yaml:"key,omitempty"`
 }
 
 type Step struct {

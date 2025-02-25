@@ -270,7 +270,7 @@ destinations:
       insecure: bool
 callback:
   url: string
-  uuid: string
+  key: string
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -330,7 +330,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * insecure - allow insecure connection, default **false**
 * callback - optionally send updates about the status of modules
   * url - url for the callback
-  * uuid - unique identifier for the callback
+  * key - unique identifier for the callback
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
