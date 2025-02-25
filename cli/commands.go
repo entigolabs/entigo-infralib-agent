@@ -10,9 +10,14 @@ func cliCommands() []*cli.Command {
 		&runCommand,
 		&updateCommand,
 		&bootstrapCommand,
+		&destroyCommand,
 		&deleteCommand,
 		&SACommand,
 		&pullCommand,
+		&addCustomCommand,
+		&deleteCustomCommand,
+		&getCustomCommand,
+		&listCustomCommand,
 	}
 }
 
@@ -40,6 +45,14 @@ var bootstrapCommand = cli.Command{
 	Flags:   cliFlags(common.BootstrapCommand),
 }
 
+var destroyCommand = cli.Command{
+	Name:    string(common.DestroyCommand),
+	Aliases: []string{"des"},
+	Usage:   "execute destroy pipelines",
+	Action:  action(common.DestroyCommand),
+	Flags:   cliFlags(common.DestroyCommand),
+}
+
 var deleteCommand = cli.Command{
 	Name:    string(common.DeleteCommand),
 	Aliases: []string{"del"},
@@ -62,4 +75,36 @@ var pullCommand = cli.Command{
 	Usage:   "pull agent config yaml and included files",
 	Action:  action(common.PullCommand),
 	Flags:   cliFlags(common.PullCommand),
+}
+
+var addCustomCommand = cli.Command{
+	Name:    string(common.AddCustomCommand),
+	Aliases: []string{"ac"},
+	Usage:   "add custom parameter",
+	Action:  action(common.AddCustomCommand),
+	Flags:   cliFlags(common.AddCustomCommand),
+}
+
+var deleteCustomCommand = cli.Command{
+	Name:    string(common.DeleteCustomCommand),
+	Aliases: []string{"dc"},
+	Usage:   "delete custom parameter",
+	Action:  action(common.DeleteCustomCommand),
+	Flags:   cliFlags(common.DeleteCustomCommand),
+}
+
+var getCustomCommand = cli.Command{
+	Name:    string(common.GetCustomCommand),
+	Aliases: []string{"gc"},
+	Usage:   "get custom parameter",
+	Action:  action(common.GetCustomCommand),
+	Flags:   cliFlags(common.GetCustomCommand),
+}
+
+var listCustomCommand = cli.Command{
+	Name:    string(common.ListCustomCommand),
+	Aliases: []string{"lc"},
+	Usage:   "list custom parameters",
+	Action:  action(common.ListCustomCommand),
+	Flags:   cliFlags(common.ListCustomCommand),
 }

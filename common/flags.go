@@ -23,6 +23,7 @@ type Flags struct {
 	GCloud                  GCloud
 	AWS                     AWS
 	Delete                  DeleteFlags
+	Params                  Params
 }
 
 type GCloud struct {
@@ -53,6 +54,12 @@ const (
 	PipelineTypeLocal PipelineType = "local"
 	PipelineTypeCloud PipelineType = "cloud"
 )
+
+type Params struct {
+	Key       string
+	Value     string
+	Overwrite bool
+}
 
 func (f *Flags) Setup(cmd Command) error {
 	return f.validate(cmd)

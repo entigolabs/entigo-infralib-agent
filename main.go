@@ -6,11 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 func main() {
-	time.Local = time.UTC
 	terminated := make(chan os.Signal, 1)
 	signal.Notify(terminated, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 

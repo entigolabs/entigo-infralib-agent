@@ -10,15 +10,17 @@ import (
 
 type Deleter interface {
 	Delete()
-	Destroy() bool
+	Destroy()
 }
 
 type deleter struct {
 	config               model.Config
+	steps                []model.Step
 	provider             model.CloudProvider
 	resources            model.Resources
 	deleteBucket         bool
 	deleteServiceAccount bool
+	localPipeline        *LocalPipeline
 }
 
 func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
@@ -39,10 +41,12 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 	ValidateConfig(config, nil)
 	return &deleter{
 		config:               config,
+		steps:                getRunnableSteps(config, flags.Steps),
 		provider:             provider,
 		resources:            resources,
 		deleteBucket:         flags.Delete.DeleteBucket,
 		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
+		localPipeline:        getLocalPipeline(resources, flags),
 	}
 }
 
@@ -72,16 +76,21 @@ func (d *deleter) Delete() {
 	d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
 }
 
-func (d *deleter) Destroy() bool {
-	failed := false
-	for i := len(d.config.Steps) - 1; i >= 0; i-- {
-		step := d.config.Steps[i]
+func (d *deleter) Destroy() {
+	for i := len(d.steps) - 1; i >= 0; i-- {
+		step := d.steps[i]
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
-		err := d.resources.GetPipeline().StartDestroyExecution(projectName)
-		if err != nil {
-			common.PrintWarning(fmt.Sprintf("Failed to start destroy execution for pipeline %s: %s", projectName, err))
-			failed = true
+		log.Printf("Starting destroy execution pipeline for step %s\n", step.Name)
+		step.Approve = model.ApproveForce
+		var err error
+		if d.localPipeline != nil {
+			err = d.localPipeline.startDestroyExecution(step)
+		} else {
+			err = d.resources.GetPipeline().StartDestroyExecution(projectName, step)
 		}
+		if err != nil {
+			log.Fatalf("Failed to run destroy pipeline %s: %s", projectName, err)
+		}
+		log.Printf("Successfully executed destroy pipeline for step %s\n", step.Name)
 	}
-	return failed
 }

@@ -16,11 +16,20 @@ const (
 	GCLOUD ProviderType = "GCLOUD"
 )
 
+const (
+	ResourceTagKey   = "created-by"
+	ResourceTagValue = "entigo-infralib-agent"
+)
+
 type CloudProvider interface {
 	SetupResources() Resources
 	GetResources() Resources
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool)
 	CreateServiceAccount()
+}
+
+type ResourceProvider interface {
+	GetSSM() SSM
 }
 
 type Resources interface {
@@ -55,7 +64,7 @@ type Pipeline interface {
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
 	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step) error
 	DeletePipeline(projectName string) error
-	StartDestroyExecution(projectName string) error
+	StartDestroyExecution(projectName string, step Step) error
 }
 
 type Builder interface {
@@ -69,7 +78,9 @@ type Builder interface {
 
 type SSM interface {
 	GetParameter(name string) (*Parameter, error)
+	ParameterExists(name string) (bool, error)
 	PutParameter(name string, value string) error
+	ListParameters() ([]string, error)
 	DeleteParameter(name string) error
 }
 
@@ -155,6 +166,15 @@ func GetCommands(stepType StepType) (ActionCommand, ActionCommand) {
 		return ArgoCDPlanCommand, ArgoCDApplyCommand
 	default:
 		return PlanCommand, ApplyCommand
+	}
+}
+
+func GetDestroyCommands(stepType StepType) (ActionCommand, ActionCommand) {
+	switch stepType {
+	case StepTypeArgoCD:
+		return ArgoCDPlanDestroyCommand, ArgoCDApplyDestroyCommand
+	default:
+		return PlanDestroyCommand, ApplyDestroyCommand
 	}
 }
 

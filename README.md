@@ -14,13 +14,16 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Bootstrap](#bootstrap)
     * [Run](#run)
     * [Update](#update)
+    * [Destroy](#destroy)
     * [Delete](#delete)
     * [Service Account](#service-account)
     * [Pull](#pull)
+    * [Custom Parameters](#custom-parameters)
 * [Config](#config)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
   * [Including files in steps](#including-files-in-steps)
+  * [Callback](#callback)
 
 ## Requirements
 
@@ -138,6 +141,31 @@ Example
 bin/ei-agent update --config=config.yaml --prefix=infralib
 ```
 
+### destroy
+
+Executes the destroy pipelines in reverse config order.
+**Warning!** This will remove the resources provisioned by the step pipelines.
+Agent automatically approves the changes.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* config - config file path and name, only needed when overriding an existing config [$CONFIG]
+* prefix - prefix used when creating cloud resources (default: **config prefix**) [$PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* yes - skip confirmation prompt (default: **false**) [$YES]
+* steps - **optional** comma separated list of steps to destroy [$STEPS]
+* pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
+* print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
+
+Example
+```bash
+bin/ei-agent destroy --config=config.yaml --prefix=infralib
+```
+
 ### delete
 
 Processes config steps, removes resources used by the agent, including buckets, pipelines, and roles/service accounts.
@@ -195,6 +223,28 @@ Example
 bin/ei-agent pull --prefix=infralib
 ```
 
+### Custom Parameters
+
+Agent has helpful commands for managing custom parameters that can be used in the config file with the `{{ .output-custom.key }}` replacement tag. These commands are:
+* `add-custom` - for adding or updating a custom parameter
+* `delete-custom` - for deleting a custom parameter
+* `get-custom` - for getting a custom parameter value
+* `list-custom` - for listing all custom parameters created by the agent
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* key - key for the custom parameter [$KEY]
+* value - value for the custom parameter [$VALUE]
+* overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]
+
+Example
+```bash
+bin/ei-agent add-custom --key=custom-key --value=custom-value
+```
+
 ## Config
 
 Config is provided with a yaml file:
@@ -218,6 +268,9 @@ destinations:
       author_name: string
       author_email: string
       insecure: bool
+callback:
+  url: string
+  key: string
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -264,17 +317,20 @@ Source version is overwritten by module version. Default version is **stable** w
   * exclude - list of module sources to exclude from the source repository
   * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
-    * name - name of the destination
-    * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
-        * url - url of the git repository
-        * key - PEM encoded private key for authentication
-        * key_password - optional, password for the private key
-        * insecure_host_key - accept any host key when using private key, default **false**
-        * username - username for authentication
-        * password - password for authentication
-        * author_name - author name for commits, default **Entigo Infralib Agent**
-        * author_email - author email for commits, default **no-reply@localhost**
-        * insecure - allow insecure connection, default **false**
+  * name - name of the destination
+  * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
+    * url - url of the git repository
+    * key - PEM encoded private key for authentication
+    * key_password - optional, password for the private key
+    * insecure_host_key - accept any host key when using private key, default **false**
+    * username - username for authentication
+    * password - password for authentication
+    * author_name - author name for commits, default **Entigo Infralib Agent**
+    * author_email - author email for commits, default **no-reply@localhost**
+    * insecure - allow insecure connection, default **false**
+* callback - optionally send updates about the status of modules
+  * url - url for the callback
+  * key - unique identifier for the callback
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
@@ -341,3 +397,33 @@ Infralib modules may use `{{ .tmodule.type }}` in their default input files to r
 ### Including files in steps
 
 It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and named files for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.
+
+### Callback
+
+When configuring a callback, agent will send requests to the specified URL about the status of step pipelines.
+
+#### POST `/steps/status`
+
+Payload example:
+```json
+{
+  "status": "success",
+  "status_at": "2021-08-31T12:00:00Z",
+  "step": "net",
+  "applied_at": "2021-08-31T12:00:00Z",
+  "modules": [{
+    "name": "net",
+    "applied_version": "v1.4.2",
+    "version": "v1.4.2"
+  }]
+}
+```
+
+* status - possible values `failure | skipped | starting | success`
+* status_at - timestamp when the status was set
+* step - name of the step
+* applied_at - timestamp when the step was applied
+* modules - list of modules
+  * name - name of the module
+  * applied_version - version of the module that was successfully applied previously
+  * version - version of the module that was or will be applied

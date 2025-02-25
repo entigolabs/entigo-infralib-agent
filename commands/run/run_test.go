@@ -5,7 +5,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 	"github.com/entigolabs/entigo-infralib-agent/test"
-	"log"
 	"os"
 	"testing"
 )
@@ -22,8 +21,17 @@ func TestRunAWS(t *testing.T) {
 		Config:                  "test/profile-aws.yaml",
 		Prefix:                  prefix,
 		SkipBucketCreationDelay: true,
+		Delete: common.DeleteFlags{
+			DeleteBucket: true,
+		},
+		Pipeline: common.Pipeline{
+			Type: string(common.PipelineTypeCloud),
+		},
 	}
 	Run(context.Background(), flags)
+	deleter := service.NewDeleter(context.Background(), flags)
+	deleter.Destroy()
+	deleter.Delete()
 }
 
 func TestRunGCloud(t *testing.T) {
@@ -45,15 +53,16 @@ func TestRunGCloud(t *testing.T) {
 			Location:  location,
 			Zone:      zone,
 		},
+		SkipBucketCreationDelay: true,
 		Delete: common.DeleteFlags{
 			DeleteBucket: true,
+		},
+		Pipeline: common.Pipeline{
+			Type: string(common.PipelineTypeCloud),
 		},
 	}
 	Run(context.Background(), flags)
 	deleter := service.NewDeleter(context.Background(), flags)
-	failed := deleter.Destroy()
-	if failed {
-		log.Fatalf("Running destroy pipelines failed")
-	}
+	deleter.Destroy()
 	deleter.Delete()
 }

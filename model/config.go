@@ -12,6 +12,7 @@ type Config struct {
 	BaseImageSource  string              `yaml:"base_image_source,omitempty"`
 	BaseImageVersion string              `yaml:"base_image_version,omitempty"`
 	Destinations     []ConfigDestination `yaml:"destinations,omitempty"`
+	Callback         Callback            `yaml:"callback,omitempty"`
 	Steps            []Step              `yaml:"steps,omitempty" fakesize:"1"`
 }
 
@@ -38,6 +39,11 @@ type Git struct {
 	AuthorName      string `yaml:"author_name,omitempty"`
 	AuthorEmail     string `yaml:"author_email,omitempty"`
 	Insecure        bool   `yaml:"insecure,omitempty"`
+}
+
+type Callback struct {
+	URL string `yaml:"url,omitempty"`
+	Key string `yaml:"key,omitempty"`
 }
 
 type Step struct {
