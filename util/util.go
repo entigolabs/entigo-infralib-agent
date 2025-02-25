@@ -248,3 +248,21 @@ func DelayBucketCreation(bucket string, skipDelay bool) {
 		return
 	}
 }
+
+func AskForConfirmation() {
+	for {
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("Failed to read input: %v", err)
+		}
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response == "y" || response == "yes" {
+			return
+		} else if response == "n" || response == "no" {
+			log.Fatalf("Operation cancelled.")
+		} else {
+			common.PrintWarning("Invalid input. Please enter Y or N.")
+		}
+	}
+}

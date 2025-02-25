@@ -132,12 +132,14 @@ func (a *awsService) SetupResources() model.Resources {
 
 func (a *awsService) GetResources() model.Resources {
 	bucket := a.getBucketName()
+	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
+	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    NewBuilder(a.ctx, a.awsConfig, "", "", "", ""),
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", nil, "", ""),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),

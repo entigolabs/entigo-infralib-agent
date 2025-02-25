@@ -47,6 +47,7 @@ type updater struct {
 	stateLock     sync.Mutex
 	pipelineType  common.PipelineType
 	localPipeline *LocalPipeline
+	callback      Callback
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
@@ -77,6 +78,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		state:         state,
 		pipelineType:  common.PipelineType(flags.Pipeline.Type),
 		localPipeline: getLocalPipeline(resources, flags),
+		callback:      NewCallback(ctx, config.Callback),
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
@@ -356,14 +358,17 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	}
 	moduleVersions, err := u.updateModuleVersions(step, stepState, index)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	step, err = u.mergeModuleInputs(step, moduleVersions)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	step, err = u.replaceConfigStepValues(step, index)
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		var parameterError *model.ParameterNotFoundError
 		if wg.HasCount() && errors.As(err, &parameterError) {
 			slog.Warn(common.PrefixWarning(err.Error()))
@@ -381,6 +386,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		executePipelines, providers, files, err = u.updateStepFiles(step, moduleVersions, index)
 	}
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
 	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, files)
@@ -437,30 +443,20 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			log.Printf("Skipping step %s\n", step.Name)
-			return u.putAppliedStateFile(stepState)
+			return u.putAppliedStateFile(stepState, model.ApplyStatusSkipped)
 		}
-		err := u.executePipeline(firstRun, step, stepState, index)
-		if err == nil {
-			u.updateDestinationsApplyFiles(step, files)
-		}
-		return err
+		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
 	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
-		err := u.executePipeline(firstRun, step, stepState, index)
-		if err == nil {
-			u.updateDestinationsApplyFiles(step, files)
-		}
-		return err
+		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := u.executePipeline(firstRun, step, stepState, index)
+		err := u.executePipeline(firstRun, step, stepState, index, files)
 		if err != nil {
 			slog.Error(common.PrefixError(err))
 			errChan <- err
-		} else {
-			u.updateDestinationsApplyFiles(step, files)
 		}
 	}()
 	return nil
@@ -570,7 +566,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 	return true
 }
 
-func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int) error {
+func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int, files map[string][]byte) error {
 	log.Printf("Applying release for step %s\n", step.Name)
 	autoApprove := getAutoApprove(*stepState)
 	var err error
@@ -582,10 +578,15 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 		err = u.executeStepPipelines(step, autoApprove, index)
 	}
 	if err != nil {
+		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return err
 	}
 	log.Printf("release applied successfully for step %s\n", step.Name)
-	return u.putAppliedStateFile(stepState)
+	err = u.putAppliedStateFile(stepState, model.ApplyStatusSuccess)
+	if err == nil {
+		u.updateDestinationsApplyFiles(step, files)
+	}
+	return err
 }
 
 func (u *updater) updateAgentJob(cmd common.Command) {
@@ -797,7 +798,7 @@ func getOlderVersion(oldestVersion string, compareVersion string) (string, error
 	if compareVersion == "" || oldestVersion != StableVersion && compareVersion == StableVersion ||
 		oldestVersion == StableVersion && compareVersion == StableVersion {
 		return oldestVersion, nil
-	} else if oldestVersion == StableVersion && compareVersion != StableVersion {
+	} else if oldestVersion == StableVersion {
 		return compareVersion, nil
 	}
 	version1, err := version.NewVersion(oldestVersion)
@@ -1010,15 +1011,27 @@ func (u *updater) putStateFile() error {
 	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
-func (u *updater) putAppliedStateFile(stepState *model.StateStep) error {
+func (u *updater) putAppliedStateFile(stepState *model.StateStep, status model.ApplyStatus) error {
 	u.stateLock.Lock()
 	defer u.stateLock.Unlock()
 
-	stepState.AppliedAt = time.Now()
+	stepState.AppliedAt = time.Now().UTC()
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
+	u.postCallback(status, *stepState)
 	return u.putStateFile()
+}
+
+func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep) {
+	if u.callback == nil {
+		return
+	}
+	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
+	err := u.callback.PostStepState(status, stepState)
+	if err != nil {
+		slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
+	}
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
@@ -1081,6 +1094,7 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return nil, err
 	}
+	u.postCallback(model.ApplyStatusStarting, *stepState)
 	return moduleVersions, nil
 }
 

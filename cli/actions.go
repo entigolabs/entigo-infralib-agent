@@ -5,7 +5,9 @@ import (
 	"errors"
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
 	"github.com/entigolabs/entigo-infralib-agent/commands/delete"
+	"github.com/entigolabs/entigo-infralib-agent/commands/destroy"
 	"github.com/entigolabs/entigo-infralib-agent/commands/migrate"
+	"github.com/entigolabs/entigo-infralib-agent/commands/params"
 	"github.com/entigolabs/entigo-infralib-agent/commands/pull"
 	agentRun "github.com/entigolabs/entigo-infralib-agent/commands/run"
 	"github.com/entigolabs/entigo-infralib-agent/commands/sa"
@@ -37,10 +39,14 @@ func run(ctx context.Context, cmd common.Command) {
 		bootstrap.Bootstrap(ctx, flags)
 	case common.DeleteCommand:
 		delete.Delete(ctx, flags)
+	case common.DestroyCommand:
+		destroy.Destroy(ctx, flags)
 	case common.SACommand:
 		sa.Run(ctx, flags)
 	case common.PullCommand:
 		pull.Run(ctx, flags)
+	case common.AddCustomCommand, common.DeleteCustomCommand, common.GetCustomCommand, common.ListCustomCommand:
+		params.Custom(ctx, flags, cmd)
 	case common.MigratePlanCommand:
 		migrate.Plan(ctx, flags)
 	case common.MigrateValidateCommand:

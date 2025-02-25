@@ -702,7 +702,7 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.Actio
 
 func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 	for _, action := range actions {
-		if *action.ActionName != planName {
+		if *action.ActionName != planName && *action.ActionName != destroyName {
 			continue
 		}
 		if action.Output == nil || action.Output.ExecutionResult == nil || action.Output.ExecutionResult.ExternalExecutionId == nil {
@@ -863,7 +863,39 @@ func (p *Pipeline) getApprovalToken(pipelineName string) *string {
 	return nil
 }
 
-func (p *Pipeline) StartDestroyExecution(_ string) error {
-	slog.Warn(common.PrefixWarning("Executing destroy pipelines not implemented for AWS"))
+func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) error {
+	pipelineName := fmt.Sprintf("%s-destroy", projectName)
+	err := p.enableAllStageTransitions(pipelineName)
+	if err != nil {
+		return err
+	}
+	executionId, err := p.StartPipelineExecution(pipelineName, "", step, "")
+	if err != nil {
+		return err
+	}
+	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step)
+}
+
+func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {
+	state, err := p.codePipeline.GetPipelineState(p.ctx, &codepipeline.GetPipelineStateInput{
+		Name: aws.String(pipelineName),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get pipeline state: %w", err)
+	}
+	for _, stage := range state.StageStates {
+		if stage.InboundTransitionState == nil || stage.InboundTransitionState.Enabled {
+			continue
+		}
+		_, err = p.codePipeline.EnableStageTransition(p.ctx, &codepipeline.EnableStageTransitionInput{
+			PipelineName:   aws.String(pipelineName),
+			StageName:      stage.StageName,
+			TransitionType: types.StageTransitionTypeInbound,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to enable inbound transition for stage %s: %v", *stage.StageName, err)
+		}
+	}
+	log.Printf("Enabled all stage transitions for pipeline %s", pipelineName)
 	return nil
 }

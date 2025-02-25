@@ -45,7 +45,6 @@ func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 func pollUntilTableActive(ctx context.Context, client *dynamodb.Client, name string) error {
 	wait := 2
 	for {
-		log.Printf("Waiting for DynamoDB table %s to become active\n", name)
 		select {
 		case <-time.After(time.Duration(wait) * time.Second):
 			wait = util.MinInt(wait*2, 10)
@@ -59,6 +58,7 @@ func pollUntilTableActive(ctx context.Context, client *dynamodb.Client, name str
 		if table.TableStatus == types.TableStatusActive {
 			return nil
 		}
+		log.Printf("Waiting for DynamoDB table %s to become active\n", name)
 	}
 }
 

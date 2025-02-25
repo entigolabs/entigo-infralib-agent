@@ -30,8 +30,15 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
 	case common.SACommand:
 		fallthrough
-	case common.BootstrapCommand:
+	case common.BootstrapCommand, common.ListCustomCommand:
 		return append(baseFlags, getProviderFlags()...)
+	case common.DestroyCommand:
+		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
+			&printLogsFlag)
+	case common.AddCustomCommand:
+		return append(append(baseFlags, getProviderFlags()...), &keyFlag, &valueFlag, &overwriteFlag)
+	case common.DeleteCustomCommand, common.GetCustomCommand:
+		return append(append(baseFlags, getProviderFlags()...), &keyFlag)
 	case common.MigratePlanCommand:
 		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag, &typesFileFlag)
 	case common.MigrateValidateCommand:
@@ -227,6 +234,36 @@ var forceFlag = cli.BoolFlag{
 	Usage:       "force",
 	Value:       false,
 	Destination: &flags.Force,
+	Required:    false,
+}
+
+var keyFlag = cli.StringFlag{
+	Name:        "key",
+	Aliases:     []string{"k"},
+	EnvVars:     []string{"KEY"},
+	Usage:       "parameter key",
+	Value:       "",
+	Destination: &flags.Params.Key,
+	Required:    true,
+}
+
+var valueFlag = cli.StringFlag{
+	Name:        "value",
+	Aliases:     []string{"v"},
+	EnvVars:     []string{"VALUE"},
+	Usage:       "parameter value",
+	Value:       "",
+	Destination: &flags.Params.Value,
+	Required:    true,
+}
+
+var overwriteFlag = cli.BoolFlag{
+	Name:        "overwrite",
+	Aliases:     []string{"o"},
+	EnvVars:     []string{"OVERWRITE"},
+	Usage:       "overwrite existing parameter",
+	Value:       false,
+	Destination: &flags.Params.Overwrite,
 	Required:    false,
 }
 

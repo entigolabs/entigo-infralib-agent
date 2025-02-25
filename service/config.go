@@ -401,6 +401,7 @@ func ValidateConfig(config model.Config, state *model.State) {
 		}
 		destinations.Add(destination.Name)
 	}
+	validateCallback(config.Callback)
 	stepNames := model.NewSet[string]()
 	for _, step := range config.Steps {
 		validateStep(step)
@@ -453,6 +454,15 @@ func validateDestination(index int, destination model.ConfigDestination) {
 	}
 	if destination.Git.Password != "" && destination.Git.Username == "" {
 		log.Fatalf("%d. destination git username is required when using basic auth", index+1)
+	}
+}
+
+func validateCallback(callback model.Callback) {
+	if callback.URL != "" && callback.Key == "" {
+		log.Fatal("callback url is set but uuid is not")
+	}
+	if callback.URL == "" && callback.Key != "" {
+		log.Fatal("callback uuid is set but url is not")
 	}
 }
 

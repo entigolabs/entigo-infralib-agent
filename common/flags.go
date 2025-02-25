@@ -11,19 +11,20 @@ const (
 )
 
 type Flags struct {
-	LogLevel      string
-	Config        string
-	Prefix        string
-	AllowParallel bool
-	GithubToken   string
-	Force         bool
+	LogLevel                string
+	Config                  string
+	Prefix                  string
+	AllowParallel           bool
+	GithubToken             string
+	Force                   bool
 	SkipBucketCreationDelay bool
-	Steps         cli.StringSlice
-	Migrate       Migrate
-	Pipeline      Pipeline
-	GCloud        GCloud
-	AWS           AWS
-	Delete        DeleteFlags
+	Steps                   cli.StringSlice
+	Pipeline                Pipeline
+	GCloud                  GCloud
+	AWS                     AWS
+	Delete                  DeleteFlags
+	Params                  Params
+	Migrate                 Migrate
 }
 
 type GCloud struct {
@@ -61,6 +62,12 @@ const (
 	PipelineTypeLocal PipelineType = "local"
 	PipelineTypeCloud PipelineType = "cloud"
 )
+
+type Params struct {
+	Key       string
+	Value     string
+	Overwrite bool
+}
 
 func (f *Flags) Setup(cmd Command) error {
 	return f.validate(cmd)
