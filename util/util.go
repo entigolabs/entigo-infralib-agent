@@ -262,7 +262,7 @@ func AskForConfirmation() {
 		} else if response == "n" || response == "no" {
 			log.Fatalf("Operation cancelled.")
 		} else {
-			common.PrintWarning("Invalid input. Please enter Y or N.")
+			slog.Warn(common.PrefixWarning("Invalid input. Please enter Y or N."))
 		}
 	}
 }
