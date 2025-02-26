@@ -10,7 +10,7 @@ require (
 	cloud.google.com/go/storage v1.50.0
 	dario.cat/mergo v1.0.1
 	github.com/aws/aws-sdk-go-v2 v1.36.2
-	github.com/aws/aws-sdk-go-v2/config v1.29.7
+	github.com/aws/aws-sdk-go-v2/config v1.28.11 // https://github.com/aws/aws-sdk-go-v2/issues/3020
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.60
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.45.14
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.52.1
