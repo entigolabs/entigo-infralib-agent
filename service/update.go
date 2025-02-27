@@ -40,8 +40,6 @@ type updater struct {
 	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
-	github        git.Github
-	storage       git.Storage
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -62,18 +60,14 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())
 	steps := getRunnableSteps(config, flags.Steps)
-	githubClient := git.NewGithub(ctx, flags.GithubToken)
-	storage := git.NewStorage(githubClient)
-	sources, moduleSources := createSources(githubClient, steps, config.Sources, state)
+	sources, moduleSources := createSources(ctx, steps, config.Sources, state)
 	destinations := createDestinations(ctx, config.Destinations)
 	return &updater{
 		config:        config,
 		steps:         steps,
 		provider:      provider,
 		resources:     resources,
-		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, storage),
-		github:        githubClient,
-		storage:       storage,
+		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
 		destinations:  destinations,
 		state:         state,
 		pipelineType:  common.PipelineType(flags.Pipeline.Type),
@@ -123,32 +117,34 @@ func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.St
 	return runnableSteps
 }
 
-func createSources(githubClient git.Github, steps []model.Step, configSources []model.ConfigSource, state *model.State) (map[string]*model.Source, map[string]string) {
+func createSources(ctx context.Context, steps []model.Step, configSources []model.ConfigSource, state *model.State) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
 	for _, source := range configSources {
-		var release string
 		var stableVersion *version.Version
-		if source.ForceVersion {
-			release = source.Version
+		var storage model.Storage
+		if util.IsLocalSource(source.URL) {
+			storage = git.NewLocalPath(source.URL)
 		} else {
-			stableVersion = getLatestRelease(githubClient, source.URL)
-			release = stableVersion.Original()
-		}
-		checksums, err := getChecksums(githubClient, source.URL, release)
-		if err != nil {
-			log.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
+			sourceClient, err := git.NewSourceClient(ctx, source)
+			if err != nil {
+				log.Fatalf("Failed to create source %s client: %v", source.URL, err)
+			}
+			storage = sourceClient
+			if !source.ForceVersion {
+				stableVersion = getLatestRelease(sourceClient)
+			}
 		}
 		sources[source.URL] = &model.Source{
-			URL:              source.URL,
-			StableVersion:    stableVersion,
-			Modules:          model.NewSet[string](),
-			Includes:         model.ToSet(source.Include),
-			Excludes:         model.ToSet(source.Exclude),
-			CurrentChecksums: checksums,
+			URL:           source.URL,
+			StableVersion: stableVersion,
+			Modules:       model.NewSet[string](),
+			Includes:      model.ToSet(source.Include),
+			Excludes:      model.ToSet(source.Exclude),
+			Storage:       storage,
 		}
 	}
 	moduleSources := addSourceModules(steps, configSources, sources)
-	addSourceReleases(githubClient, steps, configSources, state, sources)
+	addSourceReleases(steps, configSources, state, sources)
 	return sources, moduleSources
 }
 
@@ -190,7 +186,13 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 			moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
 		}
 		moduleKey := fmt.Sprintf("modules/%s", moduleSource)
-		if (util.IsLocalSource(configSource.URL) && util.PathExists(configSource.URL, moduleKey)) || source.CurrentChecksums[moduleKey] != "" {
+		var release string
+		if source.ForcedVersion != "" {
+			release = source.ForcedVersion
+		} else if source.StableVersion != nil {
+			release = source.StableVersion.Original()
+		}
+		if source.Storage.PathExists(moduleKey, release) {
 			sources[source.URL].Modules.Add(module.Source)
 			return source.URL, nil
 		}
@@ -198,7 +200,7 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 	return "", fmt.Errorf("module %s source not found", module.Name)
 }
 
-func addSourceReleases(githubClient git.Github, steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) {
+func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) {
 	for _, cSource := range configSources {
 		source := sources[cSource.URL]
 		if cSource.ForceVersion {
@@ -217,7 +219,7 @@ func addSourceReleases(githubClient git.Github, steps []model.Step, configSource
 		if len(source.Modules) == 0 {
 			log.Printf("No modules found for Source %s\n", cSource.URL)
 		}
-		newestVersion, releases, err := getSourceReleases(githubClient, steps, source, state)
+		newestVersion, releases, err := getSourceReleases(steps, source, state)
 		if err != nil {
 			log.Fatalf("Failed to get releases: %v", err)
 		}
@@ -230,7 +232,7 @@ func createDestinations(ctx context.Context, destinations []model.ConfigDestinat
 	dests := make(map[string]model.Destination)
 	for _, destination := range destinations {
 		if destination.Git != nil {
-			client, err := git.NewGitClient(ctx, destination.Name, *destination.Git)
+			client, err := git.NewDestClient(ctx, destination.Name, *destination.Git)
 			if err != nil {
 				log.Fatalf("Destination %s failed to create git client: %v", destination.Name, err)
 			}
@@ -708,7 +710,8 @@ func getAutoApprove(state model.StateStep) bool {
 	return true
 }
 
-func getSourceReleases(githubClient git.Github, steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
+func getSourceReleases(steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
+	sourceClient := source.Storage.(*git.SourceClient)
 	oldestVersion, err := getOldestVersion(steps, source, state)
 	if err != nil {
 		return nil, nil, err
@@ -718,42 +721,38 @@ func getSourceReleases(githubClient git.Github, steps []model.Step, source *mode
 		log.Printf("Latest release for %s is %s\n", source.URL, latestRelease.Original())
 		return latestRelease, []*version.Version{latestRelease}, nil
 	}
-	oldestRelease, err := githubClient.GetReleaseByTag(source.URL, getFormattedVersionString(oldestVersion))
+	oldestRelease, err := sourceClient.GetRelease(getFormattedVersionString(oldestVersion))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get oldest release %s: %w", oldestVersion, err)
 	}
-	log.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Tag)
+	log.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Original())
 
 	newestVersion, err := getNewestVersion(steps, source)
 	if err != nil {
 		return nil, nil, err
 	}
-	var newestRelease *git.Release
+	var newestRelease *version.Version
 	if newestVersion != StableVersion {
-		newestRelease, err = githubClient.GetReleaseByTag(source.URL, getFormattedVersionString(newestVersion))
+		newestRelease, err = sourceClient.GetRelease(getFormattedVersionString(newestVersion))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to get newest release %s: %w", oldestVersion, err)
 		}
-		log.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Tag)
+		log.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Original())
 	}
 
-	releases, err := githubClient.GetReleases(source.URL, *oldestRelease, newestRelease)
+	releases, err := sourceClient.GetReleases(oldestRelease, newestRelease)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get newer releases: %w", err)
 	}
 	return releases[len(releases)-1], releases, nil
 }
 
-func getLatestRelease(githubClient git.Github, repoURL string) *version.Version {
-	latestRelease, err := githubClient.GetLatestReleaseTag(repoURL)
+func getLatestRelease(sourceClient *git.SourceClient) *version.Version {
+	latestRelease, err := sourceClient.GetLatestReleaseTag()
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	latestSemver, err := version.NewVersion(latestRelease.Tag)
-	if err != nil {
-		log.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
-	}
-	return latestSemver
+	return latestRelease
 }
 
 func getOldestVersion(steps []model.Step, source *model.Source, state *model.State) (string, error) {
@@ -1065,7 +1064,7 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	appBytes, err := argocd.GetApplicationFile(u.storage, module, moduleSource.URL, moduleVersion, values,
+	appBytes, err := argocd.GetApplicationFile(moduleSource.Storage, module, moduleSource.URL, moduleVersion, values,
 		u.resources.GetProviderType())
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)
@@ -1240,7 +1239,7 @@ func (u *updater) GetChecksums(index int) {
 		if len(source.Releases)-1 < index {
 			continue
 		}
-		checksums, err := getChecksums(u.github, url, source.Releases[index].Original())
+		checksums, err := getChecksums(*source, source.Releases[index].Original())
 		if err != nil {
 			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
@@ -1248,11 +1247,8 @@ func (u *updater) GetChecksums(index int) {
 	}
 }
 
-func getChecksums(githubClient git.Github, sourceURL string, release string) (map[string]string, error) {
-	if util.IsLocalSource(sourceURL) {
-		return make(map[string]string), nil
-	}
-	content, err := githubClient.GetRawFileContent(sourceURL, checksumsFile, release)
+func getChecksums(source model.Source, release string) (map[string]string, error) {
+	content, err := source.Storage.GetFile(checksumsFile, release)
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {
@@ -1361,7 +1357,7 @@ func (u *updater) getModuleInputs(stepType model.StepType, module model.Module, 
 }
 
 func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
-	defaultInputsRaw, err := u.storage.GetFile(moduleSource.URL, filePath, moduleVersion)
+	defaultInputsRaw, err := moduleSource.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {

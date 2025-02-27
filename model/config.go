@@ -6,22 +6,26 @@ import (
 )
 
 type Config struct {
-	Prefix           string              `yaml:"prefix,omitempty" fake:"{word}"`
-	Sources          []ConfigSource      `yaml:"sources,omitempty" fakesize:"1"`
-	AgentVersion     string              `yaml:"agent_version,omitempty" fake:"{version}"`
+	Prefix           string              `yaml:"prefix,omitempty"`
+	Sources          []ConfigSource      `yaml:"sources,omitempty"`
+	AgentVersion     string              `yaml:"agent_version,omitempty"`
 	BaseImageSource  string              `yaml:"base_image_source,omitempty"`
 	BaseImageVersion string              `yaml:"base_image_version,omitempty"`
 	Destinations     []ConfigDestination `yaml:"destinations,omitempty"`
 	Callback         Callback            `yaml:"callback,omitempty"`
-	Steps            []Step              `yaml:"steps,omitempty" fakesize:"1"`
+	Steps            []Step              `yaml:"steps,omitempty"`
 }
 
 type ConfigSource struct {
-	URL          string   `yaml:"url" fake:"{url}"`
+	URL          string   `yaml:"url"`
 	Version      string   `yaml:"version,omitempty"`
 	ForceVersion bool     `yaml:"force_version,omitempty"`
 	Include      []string `yaml:"include,omitempty"`
 	Exclude      []string `yaml:"exclude,omitempty"`
+	Username     string   `yaml:"username,omitempty"`
+	Password     string   `yaml:"password,omitempty"`
+	Insecure     bool     `yaml:"insecure,omitempty"`
+	RepoPath     string   `yaml:"repo_path,omitempty"`
 }
 
 type ConfigDestination struct {
@@ -47,16 +51,16 @@ type Callback struct {
 }
 
 type Step struct {
-	Name                  string   `yaml:"name" fake:"{word}"`
-	Type                  StepType `yaml:"type,omitempty" fake:"{stepType}"`
+	Name                  string   `yaml:"name"`
+	Type                  StepType `yaml:"type,omitempty"`
 	Approve               Approve  `yaml:"approve,omitempty"`
 	BaseImageSource       string   `yaml:"base_image_source,omitempty"`
-	BaseImageVersion      string   `yaml:"base_image_version,omitempty" fake:"{version}"`
+	BaseImageVersion      string   `yaml:"base_image_version,omitempty"`
 	Vpc                   VPC      `yaml:"vpc,omitempty"`
 	KubernetesClusterName string   `yaml:"kubernetes_cluster_name,omitempty"`
 	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
 	Provider              Provider `yaml:"provider,omitempty"`
-	Modules               []Module `yaml:"modules,omitempty" fakesize:"1"`
+	Modules               []Module `yaml:"modules,omitempty"`
 	Files                 []File   `yaml:"-"`
 }
 
@@ -123,7 +127,7 @@ type Module struct {
 	HttpUsername string                 `yaml:"http_username,omitempty"`
 	HttpPassword string                 `yaml:"http_password,omitempty"`
 	Version      string                 `yaml:"version,omitempty"`
-	Inputs       map[string]interface{} `yaml:"inputs,omitempty" fakesize:"2,5"`
+	Inputs       map[string]interface{} `yaml:"inputs,omitempty"`
 	InputsFile   string                 `yaml:"-"`
 	FileContent  []byte                 `yaml:"-"`
 }
@@ -201,6 +205,7 @@ type Source struct {
 	URL               string
 	Version           *version.Version
 	ForcedVersion     string
+	Storage           Storage
 	NewestVersion     *version.Version
 	StableVersion     *version.Version
 	Releases          []*version.Version
@@ -209,6 +214,12 @@ type Source struct {
 	CurrentChecksums  map[string]string
 	Includes          Set[string]
 	Excludes          Set[string]
+}
+
+type Storage interface {
+	GetFile(path, release string) ([]byte, error)
+	FileExists(path, release string) bool
+	PathExists(path, release string) bool
 }
 
 type ModuleVersion struct {

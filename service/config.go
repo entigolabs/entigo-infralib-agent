@@ -431,6 +431,12 @@ func validateSource(index int, source model.ConfigSource) {
 			log.Fatalf("source %s version must follow semantic versioning: %s", source.URL, err)
 		}
 	}
+	if source.Username != "" && source.Password == "" {
+		log.Fatalf("source %s username given but password is empty", source.URL)
+	}
+	if source.Password != "" && source.Username == "" {
+		log.Fatalf("source %s password given but username is empty", source.URL)
+	}
 }
 
 func validateDestination(index int, destination model.ConfigDestination) {

@@ -15,7 +15,6 @@ type Flags struct {
 	Config                  string
 	Prefix                  string
 	AllowParallel           bool
-	GithubToken             string
 	Force                   bool
 	SkipBucketCreationDelay bool
 	Steps                   cli.StringSlice

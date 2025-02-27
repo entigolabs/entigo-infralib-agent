@@ -33,7 +33,7 @@ Changes are pushed to the plan and apply branches.`
 	authorEmail = "no-reply@localhost"
 )
 
-type Client struct {
+type DestClient struct {
 	ctx      context.Context
 	auth     transport.AuthMethod
 	author   *object.Signature
@@ -44,7 +44,7 @@ type Client struct {
 	mu       sync.Mutex
 }
 
-func NewGitClient(ctx context.Context, name string, config model.Git) (*Client, error) {
+func NewDestClient(ctx context.Context, name string, config model.Git) (*DestClient, error) {
 	log.Printf("Preparing git repository %s", config.URL)
 	auth, err := getAuth(config)
 	if err != nil {
@@ -54,7 +54,7 @@ func NewGitClient(ctx context.Context, name string, config model.Git) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	return &Client{
+	return &DestClient{
 		ctx:      ctx,
 		auth:     auth,
 		author:   getAuthor(config),
@@ -263,7 +263,7 @@ func createRemoteBranch(auth transport.AuthMethod, repo *git.Repository, worktre
 	})
 }
 
-func (g *Client) UpdateFiles(branch, folder string, files map[string][]byte) error {
+func (g *DestClient) UpdateFiles(branch, folder string, files map[string][]byte) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -305,7 +305,7 @@ func (g *Client) UpdateFiles(branch, folder string, files map[string][]byte) err
 	return err
 }
 
-func (g *Client) checkoutCleanBranch(branch string) error {
+func (g *DestClient) checkoutCleanBranch(branch string) error {
 	branchName := plumbing.NewBranchReferenceName(branch)
 	err := g.worktree.Checkout(&git.CheckoutOptions{
 		Branch: branchName,
@@ -327,7 +327,7 @@ func (g *Client) checkoutCleanBranch(branch string) error {
 	return nil
 }
 
-func (g *Client) updateFiles(folder string, files map[string][]byte) error {
+func (g *DestClient) updateFiles(folder string, files map[string][]byte) error {
 	err := g.worktree.Filesystem.MkdirAll(folder, os.ModeDir)
 	if err != nil {
 		return err
@@ -361,7 +361,7 @@ func updateFile(worktree *git.Worktree, path string, content []byte) error {
 	return err
 }
 
-func (g *Client) removeUnusedFiles(path string, currentFiles model.Set[string]) error {
+func (g *DestClient) removeUnusedFiles(path string, currentFiles model.Set[string]) error {
 	infos, err := g.worktree.Filesystem.ReadDir(path)
 	if err != nil {
 		return err
@@ -397,7 +397,7 @@ func (g *Client) removeUnusedFiles(path string, currentFiles model.Set[string]) 
 	return g.worktree.Filesystem.Remove(path)
 }
 
-func (g *Client) hasChanges(folder string) (bool, error) {
+func (g *DestClient) hasChanges(folder string) (bool, error) {
 	status, err := g.worktree.Status()
 	if err != nil {
 		return false, err
