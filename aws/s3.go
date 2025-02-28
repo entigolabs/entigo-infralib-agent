@@ -28,8 +28,11 @@ type S3 struct {
 
 func NewS3(ctx context.Context, awsConfig aws.Config, bucket string) *S3 {
 	return &S3{
-		ctx:    ctx,
-		awsS3:  awsS3.NewFromConfig(awsConfig),
+		ctx: ctx,
+		awsS3: awsS3.NewFromConfig(awsConfig, func(o *awsS3.Options) {
+			// Avoids checksum warn on error responses https://github.com/aws/aws-sdk-go-v2/issues/3020
+			o.DisableLogOutputChecksumValidationSkipped = true
+		}),
 		region: awsConfig.Region,
 		bucket: bucket,
 	}
