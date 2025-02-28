@@ -1264,7 +1264,7 @@ func getChecksums(source model.Source, release string) (map[string]string, error
 		}
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) != 2 {
-			log.Printf("Invalid line: %s\n", line)
+			slog.Warn(fmt.Sprintf("Invalid checksum line: %s\n", line))
 			continue
 		}
 		checksums[strings.TrimRight(parts[0], ":")] = parts[1]

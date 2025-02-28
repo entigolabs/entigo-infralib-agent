@@ -321,7 +321,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * username - username for git authentication
   * password - password for git authentication, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-password}}"`
   * insecure - allow insecure connection, default **false**
-  * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path.
+  * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
   * name - name of the destination
   * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`

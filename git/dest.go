@@ -316,7 +316,7 @@ func (g *DestClient) checkoutCleanBranch(branch string) error {
 	}
 
 	err = g.worktree.PullContext(g.ctx, &git.PullOptions{
-		ReferenceName:   plumbing.NewBranchReferenceName(branch),
+		ReferenceName:   branchName,
 		SingleBranch:    true,
 		Auth:            g.auth,
 		InsecureSkipTLS: g.insecure,

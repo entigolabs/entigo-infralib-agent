@@ -224,7 +224,8 @@ func (s *SourceClient) checkoutClean(release string) error {
 		return nil
 	}
 	var branch plumbing.ReferenceName
-	if s.releasesSet.Contains(release) {
+	isTag := s.releasesSet.Contains(release)
+	if isTag {
 		branch = plumbing.NewTagReferenceName(release)
 	} else {
 		branch = plumbing.NewBranchReferenceName(release)
@@ -237,7 +238,7 @@ func (s *SourceClient) checkoutClean(release string) error {
 		return err
 	}
 	s.currentRelease = release
-	if s.pulled.Contains(release) {
+	if isTag || s.pulled.Contains(release) {
 		return nil
 	}
 	err = s.worktree.PullContext(s.ctx, &git.PullOptions{
