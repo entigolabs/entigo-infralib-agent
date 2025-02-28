@@ -158,6 +158,7 @@ func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model
 		return nil, err
 	}
 	err = worktree.PullContext(ctx, &git.PullOptions{
+		Force:           true,
 		Auth:            auth,
 		InsecureSkipTLS: source.Insecure,
 	})
@@ -240,6 +241,7 @@ func (s *SourceClient) checkoutClean(release string) error {
 		return nil
 	}
 	err = s.worktree.PullContext(s.ctx, &git.PullOptions{
+		Force:           true,
 		SingleBranch:    true,
 		Auth:            s.auth,
 		InsecureSkipTLS: s.insecure,
