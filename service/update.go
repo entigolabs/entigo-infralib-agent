@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"dario.cat/mergo"
 	"errors"
@@ -37,6 +38,7 @@ type Updater interface {
 type updater struct {
 	config        model.Config
 	steps         []model.Step
+	stepChecksums model.StepsChecksums
 	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
@@ -65,6 +67,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	return &updater{
 		config:        config,
 		steps:         steps,
+		stepChecksums: model.NewStepsChecksums(),
 		provider:      provider,
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
@@ -304,7 +307,7 @@ func (u *updater) Update() {
 	for index := 1; index < mostReleases; index++ {
 		u.logReleases(index)
 		u.updateState()
-		u.GetChecksums(index)
+		u.getChecksums(index)
 		wg := new(model.SafeCounter)
 		errChan := make(chan error, len(u.steps))
 		failed := false
@@ -379,6 +382,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		}
 		return false, err
 	}
+	u.updateStepChecksums(step)
 	var executePipelines bool
 	var providers map[string]model.Set[string]
 	var files map[string][]byte
@@ -467,14 +471,22 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 func (u *updater) hasChanged(step model.Step, providers map[string]model.Set[string]) bool {
 	changed := u.getChangedProviders(providers)
 	if len(changed) > 0 {
-		log.Printf("Step %s providers have changed: %s\n", step.Name,
-			strings.Join(changed, ", "))
+		log.Printf("Step %s providers have changed: %s\n", step.Name, strings.Join(changed, ", "))
 		return true
 	}
 	changed = u.getChangedModules(step)
 	if len(changed) > 0 {
-		log.Printf("Step %s modules have changed: %s\n", step.Name,
-			strings.Join(changed, ", "))
+		log.Printf("Step %s modules have changed: %s\n", step.Name, strings.Join(changed, ", "))
+		return true
+	}
+	changed = u.getChangedStepModules(step)
+	if len(changed) > 0 {
+		log.Printf("Step %s module inputs have changed: %s\n", step.Name, strings.Join(changed, ", "))
+		return true
+	}
+	changed = u.getChangedStepFiles(step)
+	if len(changed) > 0 {
+		log.Printf("Step %s files have changed: %s\n", step.Name, strings.Join(changed, ", "))
 		return true
 	}
 	return false
@@ -501,7 +513,7 @@ func (u *updater) getChangedProviders(repoProviders map[string]model.Set[string]
 				changed = append(changed, provider)
 				continue
 			}
-			if previousChecksum != currentChecksum {
+			if !bytes.Equal(previousChecksum, currentChecksum) {
 				slog.Debug(fmt.Sprintf("Provider %s has changed, previous %s, current %s", provider,
 					previousChecksum, currentChecksum))
 				changed = append(changed, provider)
@@ -540,8 +552,53 @@ func (u *updater) getChangedModules(step model.Step) []string {
 			changed = append(changed, module.Name)
 			continue
 		}
-		if previousChecksum != currentChecksum {
+		if !bytes.Equal(previousChecksum, currentChecksum) {
 			changed = append(changed, module.Name)
+		}
+	}
+	return changed
+}
+
+func (u *updater) getChangedStepModules(step model.Step) []string {
+	changed := make([]string, 0)
+	if step.Modules == nil {
+		return changed
+	}
+	previousChecksums, exists := u.stepChecksums.PreviousChecksums[step.Name]
+	if !exists {
+		for _, module := range step.Modules {
+			changed = append(changed, module.Name)
+		}
+		return changed
+	}
+	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			changed = append(changed, module.Name)
+		}
+		if !bytes.Equal(previousChecksums.ModuleChecksums[module.Name], currentChecksums.ModuleChecksums[module.Name]) {
+			changed = append(changed, module.Name)
+		}
+	}
+	return changed
+}
+
+func (u *updater) getChangedStepFiles(step model.Step) []string {
+	changed := make([]string, 0)
+	if step.Files == nil {
+		return changed
+	}
+	previousChecksums, exists := u.stepChecksums.PreviousChecksums[step.Name]
+	if !exists {
+		for _, file := range step.Files {
+			changed = append(changed, file.Name)
+		}
+		return changed
+	}
+	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
+	for _, file := range step.Files {
+		if !bytes.Equal(previousChecksums.FileChecksums[file.Name], currentChecksums.FileChecksums[file.Name]) {
+			changed = append(changed, file.Name)
 		}
 	}
 	return changed
@@ -1234,42 +1291,17 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 	return release, imageSource
 }
 
-func (u *updater) GetChecksums(index int) {
+func (u *updater) getChecksums(index int) {
 	for url, source := range u.sources {
 		if len(source.Releases)-1 < index {
 			continue
 		}
-		checksums, err := getChecksums(*source, source.Releases[index].Original())
+		checksums, err := source.Storage.CalculateChecksums(source.Releases[index].Original())
 		if err != nil {
 			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
 		source.CurrentChecksums = checksums
 	}
-}
-
-func getChecksums(source model.Source, release string) (map[string]string, error) {
-	content, err := source.Storage.GetFile(checksumsFile, release)
-	if err != nil {
-		var fileError model.FileNotFoundError
-		if errors.As(err, &fileError) {
-			return make(map[string]string), nil
-		}
-		return nil, err
-	}
-	checksums := make(map[string]string)
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 {
-			slog.Warn(fmt.Sprintf("Invalid checksum line: %s\n", line))
-			continue
-		}
-		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
-	}
-	return checksums, nil
 }
 
 func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string][]byte) error {
@@ -1371,6 +1403,26 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 		return nil, fmt.Errorf("failed to unmarshal default inputs: %v", err)
 	}
 	return defaultInputs, nil
+}
+
+func (u *updater) updateStepChecksums(step model.Step) {
+	sums, exists := u.stepChecksums.CurrentChecksums[step.Name]
+	if exists {
+		u.stepChecksums.PreviousChecksums[step.Name] = sums
+	}
+	moduleChecksums := make(map[string][]byte)
+	for _, module := range step.Modules {
+		moduleChecksums[module.Name] = module.InputsChecksum
+	}
+	fileChecksums := make(map[string][]byte)
+	for _, file := range step.Files {
+		fileChecksums[file.Name] = file.CheckSum
+	}
+	stepChecksum := model.StepChecksums{
+		ModuleChecksums: moduleChecksums,
+		FileChecksums:   fileChecksums,
+	}
+	u.stepChecksums.CurrentChecksums[step.Name] = stepChecksum
 }
 
 func mergeInputs(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {

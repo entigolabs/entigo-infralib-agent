@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -72,6 +73,7 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 	}
 	var releases []*version.Version
 	var releaseSet = model.NewSet[string]()
+	var invalidTags = model.NewSet[string]()
 	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
 		if !t.Name().IsTag() {
 			return nil
@@ -80,12 +82,13 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 		releaseSet.Add(tag)
 		tagVersion, err := version.NewVersion(tag)
 		if err != nil {
-			slog.Debug(fmt.Sprintf("Tag '%s' is not a valid semversion", tag))
+			invalidTags.Add(tag)
 			return nil
 		}
 		releases = append(releases, tagVersion)
 		return nil
 	})
+	slog.Debug(fmt.Sprintf("Tags are not a valid semversion: %s", strings.Join(invalidTags.ToSlice(), ", ")))
 	sort.Sort(version.Collection(releases))
 	return releases, releaseSet, err
 }
@@ -278,4 +281,147 @@ func (s *SourceClient) PathExists(path string, release string) bool {
 
 	file, err := s.worktree.Filesystem.Stat(path)
 	return err == nil && file.IsDir()
+}
+
+func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	err := s.checkoutClean(release)
+	if err != nil {
+		return nil, err
+	}
+
+	checksums := make(map[string][]byte)
+	err = s.generateModulesChecksums(checksums)
+	if err != nil {
+		return nil, err
+	}
+	err = s.generateProvidersChecksums(checksums)
+	if err != nil {
+		return nil, err
+	}
+	return checksums, nil
+}
+
+func (s *SourceClient) generateModulesChecksums(checksums map[string][]byte) error {
+	exists, err := s.directoryExists("modules")
+	if !exists || err != nil {
+		return err
+	}
+	parents, err := s.worktree.Filesystem.ReadDir("modules")
+	if err != nil {
+		return err
+	}
+	for _, parent := range parents {
+		if !parent.IsDir() {
+			continue
+		}
+		parentPath := filepath.Join("modules", parent.Name())
+		modules, err := s.worktree.Filesystem.ReadDir(parentPath)
+		if err != nil {
+			return err
+		}
+		for _, module := range modules {
+			if !module.IsDir() {
+				continue
+			}
+			fullPath := filepath.Join(parentPath, module.Name())
+			sum, err := s.directoryChecksum(fullPath)
+			if err != nil {
+				return err
+			}
+			checksums[fullPath] = sum
+		}
+	}
+	return err
+}
+
+func (s *SourceClient) generateProvidersChecksums(checksums map[string][]byte) error {
+	exists, err := s.directoryExists("providers")
+	if err != nil || !exists {
+		return err
+	}
+	infos, err := s.worktree.Filesystem.ReadDir("providers")
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		if info.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(info.Name(), "go.") || strings.HasPrefix(info.Name(), "README.") || strings.HasPrefix(info.Name(), "test") {
+			continue
+		}
+		fullPath := filepath.Join("providers", info.Name())
+		sum, err := fileChecksum(s.worktree, fullPath)
+		if err != nil {
+			return err
+		}
+		checksums[fullPath] = sum
+	}
+	return err
+}
+
+func (s *SourceClient) directoryExists(path string) (bool, error) {
+	stat, err := s.worktree.Filesystem.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !stat.IsDir() {
+		return false, fmt.Errorf("%s is not a directory", path)
+	}
+	return true, nil
+}
+
+func (s *SourceClient) directoryChecksum(dir string) ([]byte, error) {
+	var keys []string
+	sums := make(map[string][]byte)
+	infos, err := s.worktree.Filesystem.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range infos {
+		if info.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(info.Name(), "test") {
+			continue
+		}
+		sum, err := fileChecksum(s.worktree, filepath.Join(dir, info.Name()))
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, info.Name())
+		sums[info.Name()] = sum
+	}
+
+	h := sha256.New()
+	sort.Strings(keys)
+	for _, key := range keys {
+		_, err = h.Write(sums[key])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return h.Sum(nil), nil
+}
+
+func fileChecksum(worktree *git.Worktree, file string) ([]byte, error) {
+	f, err := worktree.Filesystem.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer func(f billy.File) {
+		_ = f.Close()
+	}(f)
+
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
 }

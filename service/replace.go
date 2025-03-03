@@ -52,39 +52,64 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
 		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
 	}
-	if step.Files == nil {
-		return modifiedStep, nil
+	err = calculateModuleChecksums(&modifiedStep)
+	if err != nil {
+		return modifiedStep, err
 	}
+	err = u.replaceConfigStepFileValues(step, &modifiedStep, index, cache)
+	return modifiedStep, err
+}
+
+func calculateModuleChecksums(step *model.Step) error {
+	for i, module := range step.Modules {
+		if len(module.Inputs) == 0 {
+			continue
+		}
+		sorted := util.SortKeys(module.Inputs)
+		inputsYaml, err := yaml.Marshal(sorted)
+		if err != nil {
+			return fmt.Errorf("failed to convert step %s module %s inputs to yaml, error: %v", step.Name,
+				module.Name, err)
+		}
+		module.InputsChecksum = util.CalculateHash(inputsYaml)
+		step.Modules[i] = module
+	}
+	return nil
+}
+
+func (u *updater) replaceConfigStepFileValues(step model.Step, modifiedStep *model.Step, index int, cache paramCache) error {
 	for _, file := range step.Files {
 		if !strings.HasSuffix(file.Name, ".tf") && !strings.HasSuffix(file.Name, ".yaml") &&
 			!strings.HasSuffix(file.Name, ".yml") && !strings.HasSuffix(file.Name, ".hcl") {
 			modifiedStep.Files = append(modifiedStep.Files, model.File{
-				Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
-				Content: file.Content,
+				Name:     strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
+				Content:  file.Content,
+				CheckSum: util.CalculateHash(file.Content),
 			})
 			continue
 		}
 		newContent, err := u.replaceStringValues(step, string(file.Content), index, cache)
 		content := []byte(newContent)
 		if err != nil {
-			return modifiedStep, fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
+			return fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
 		}
 		err = validateStepFile(file.Name, content)
 		if err != nil {
-			return modifiedStep, err
+			return err
 		}
 		modifiedStep.Files = append(modifiedStep.Files, model.File{
-			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
-			Content: content,
+			Name:     strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
+			Content:  content,
+			CheckSum: util.CalculateHash(content),
 		})
 	}
-	return modifiedStep, nil
+	return nil
 }
 
 func validateStepFile(file string, content []byte) error {
 	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
 		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
-		if diags.HasErrors() {
+		if diags != nil && diags.HasErrors() {
 			slog.Debug(fmt.Sprintf("broken hcl %s:\n%s", file, string(content)))
 			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}

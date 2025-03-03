@@ -17,8 +17,8 @@ func NewLocalPath(source string) model.Storage {
 	}
 }
 
-func (s *local) GetFile(path, _ string) ([]byte, error) {
-	fullPath := filepath.Join(s.source, path)
+func (l *local) GetFile(path, _ string) ([]byte, error) {
+	fullPath := filepath.Join(l.source, path)
 	file, err := os.ReadFile(fullPath)
 	if os.IsNotExist(err) {
 		return nil, model.NewFileNotFoundError(path)
@@ -26,15 +26,19 @@ func (s *local) GetFile(path, _ string) ([]byte, error) {
 	return file, nil
 }
 
-func (s *local) FileExists(path, _ string) bool {
-	return util.FileExists(s.source, path)
+func (l *local) FileExists(path, _ string) bool {
+	return util.FileExists(l.source, path)
 }
 
-func (s *local) PathExists(path, _ string) bool {
-	fullPath := filepath.Join(s.source, path)
+func (l *local) PathExists(path, _ string) bool {
+	fullPath := filepath.Join(l.source, path)
 	info, err := os.Stat(fullPath)
 	if os.IsNotExist(err) {
 		return false
 	}
 	return info.IsDir()
+}
+
+func (l *local) CalculateChecksums(_ string) (map[string][]byte, error) {
+	return make(map[string][]byte), nil
 }
