@@ -141,7 +141,7 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 	if !found {
 		return nil, nil, fmt.Errorf("type %s not found in typeIdentifications", item.Type)
 	}
-	resource, err := p.getResource(item.Type, item.Source.Name)
+	resource, err := p.getResource(item.Type, item.Source)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -231,7 +231,7 @@ func getIndexKeys(item importItem) ([]KeyPair, error) {
 	return keys, nil
 }
 
-func (p *planner) getResource(rsType string, name string) (resourceStateV4, error) {
+func (p *planner) getResource(rsType string, module module) (resourceStateV4, error) {
 	var found *resourceStateV4
 	for _, resource := range p.state.Resources {
 		if resource.Mode != "managed" {
@@ -240,10 +240,13 @@ func (p *planner) getResource(rsType string, name string) (resourceStateV4, erro
 		if resource.Type != rsType {
 			continue
 		}
-		if name != "" {
-			if resource.Name == name {
+		if module.Name != "" {
+			if resource.Name == module.Name {
 				return resource, nil
 			}
+			continue
+		}
+		if module.Module != "" && !strings.HasPrefix(resource.Module, module.Module) {
 			continue
 		}
 		if found != nil {

@@ -25,24 +25,24 @@ typeIdentifications:
       - aws_route53_health_check
       - aws_route53_delegation_set
       - aws_route53_resolver_rule_association
-      - aws_eks_cluster
-      - aws_eks_addon
-      - aws_eks_node_group
-      - aws_eks_access_entry
-      - aws_eks_access_policy_association
-      - aws_instance
-      - aws_iam_role
-      - aws_iam_policy
-      - aws_launch_template
-      - aws_cloudwatch_log_group
-      - aws_iam_instance_profile
-      - aws_kms_key
       - aws_kms_alias
+      - aws_kms_key
+      - aws_eks_cluster
+      - aws_iam_user
+      - aws_eks_addon
+      - aws_iam_role
+      - aws_key_pair
+      - aws_iam_access_key
+      - aws_secretsmanager_secret_version
       - aws_iam_group
-      - aws_iam_group_policy_attachment
-  - identification: "{arn}"
-    types:
-      - aws_iam_openid_connect_provider
+      - aws_efs_mount_target
+      - aws_efs_file_system
+      - aws_dlm_lifecycle_policy
+      - aws_backup_vault
+      - aws_backup_plan
+      - aws_iam_instance_profile
+      - aws_instance
+      - aws_route53_record
   - identification: "{route_table_id}_{destination_cidr_block}"
     types:
       - aws_route
@@ -52,15 +52,29 @@ typeIdentifications:
   - identification: "{vpc_id}"
     types:
       - aws_default_route_table
-  - identification: "{zone_id}_{name}_{type}"
-    types:
-      - aws_route53_record
   - identification: "{zone_id}:{vpc_id}"
     types:
       - aws_route53_vpc_association_authorization
+  - identification: "{cluster_name}:{node_group_name}"
+    types:
+      - aws_eks_node_group
   - identification: "{arn}"
     types:
       - aws_acm_certificate
-  - identification: "{role}:{policy_arn}"
+      - aws_iam_policy
+      - aws_secretsmanager_secret
+  - identification: "{role}/{policy_arn}"
     types:
       - aws_iam_role_policy_attachment
+  - identification: "{role}:{name}"
+    types:
+      - aws_iam_role_policy
+  - identification: "{group}/{policy_arn}"
+    types:
+      - aws_iam_group_policy_attachment
+  - identification: "{user}/{groups}"
+    types:
+      - aws_iam_user_group_membership
+  - identification: "{plan_id}|{id}"
+    types:
+      - aws_backup_selection
