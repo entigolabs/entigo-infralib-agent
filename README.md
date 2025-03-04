@@ -377,7 +377,7 @@ Step, module and input field values can be overwritten by using replacement tags
 
 Replacement tags can be overwritten by values from terraform output, config itself or custom agent logic. If the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager. For output values it's possible to use the keywords `ssm`, `gcsm` and `output`. There's also a special type based keyword `toutput` that uses the output from a module with the specified type instead of a name.
 
-If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found.
+If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
 
 Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, ``{{`{{ .dbupdate }}`}}`` will be replaced with `{{ .dbupdate }}`. This can be used to pass helm template values through the agent.
 

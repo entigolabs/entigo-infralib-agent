@@ -28,6 +28,11 @@ type tfOutput struct {
 	Value     interface{}
 }
 
+type keyType struct {
+	ReplaceKey  string
+	ReplaceType string
+}
+
 const (
 	terraformOutput = "terraform-output.json"
 )
@@ -136,13 +141,23 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			content = strings.Replace(content, replaceTag, strings.Trim(replaceKey, "`"), 1)
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
-		replacement, err := u.getReplacementValue(step, index, replaceKey, replaceType, cache)
-		if err != nil {
-			return "", err
+		var replacement string
+		for _, keyType := range keyTypes {
+			if strings.HasPrefix(keyType.ReplaceKey, `"`) {
+				replacement = strings.Trim(keyType.ReplaceKey, `"`)
+				break
+			}
+			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
+			if err != nil {
+				return "", err
+			}
+			if replacement != "" {
+				break
+			}
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
@@ -533,11 +548,18 @@ func replaceConfigTags(prefix string, config model.Config, content string, match
 		if hasSamePrefixSuffix(replaceKey, "`") {
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
-		if replaceType != string(model.ReplaceTypeConfig) {
+		replaceKey = ""
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeConfig) {
+				replaceKey = keyType.ReplaceKey
+				break
+			}
+		}
+		if replaceKey == "" {
 			continue
 		}
 		configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
@@ -561,12 +583,19 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 		if hasSamePrefixSuffix(replaceKey, "`") {
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
-		if replaceType != string(model.ReplaceTypeSSMCustom) && replaceType != string(model.ReplaceTypeGCSMCustom) &&
-			replaceType != string(model.ReplaceTypeOutputCustom) {
+		replaceKey = ""
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeSSMCustom) || keyType.ReplaceType == string(model.ReplaceTypeGCSMCustom) ||
+				keyType.ReplaceType == string(model.ReplaceTypeOutputCustom) {
+				replaceKey = keyType.ReplaceKey
+				break
+			}
+		}
+		if replaceKey == "" {
 			continue
 		}
 		parameter, err := getSSMCustomParameter(ssm, replaceKey)
@@ -610,11 +639,18 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		if hasSamePrefixSuffix(replaceKey, "`") {
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return content, err
 		}
-		if replaceType != string(model.ReplaceTypeModule) {
+		replaceKey = ""
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeModule) {
+				replaceKey = keyType.ReplaceKey
+				break
+			}
+		}
+		if replaceKey == "" {
 			continue
 		}
 		replacement, err := getReplacementModuleValue(replaceKey, module)
@@ -643,15 +679,24 @@ func getReplacementModuleValue(replaceKey string, module model.Module) (string, 
 	return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
 }
 
-func parseReplaceTag(match []string) (string, string, error) {
+func parseReplaceTag(match []string) ([]keyType, error) {
 	if len(match) != 2 {
-		return "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+		return nil, fmt.Errorf("failed to parse replace tag match %s", match[0])
 	}
-	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-	splitIndex := strings.Index(replaceKey, ".")
-	if splitIndex == -1 || len(replaceKey) <= splitIndex {
-		return "", "", fmt.Errorf("invalid replace tag format: %s", match[0])
+	replaceTags := strings.Split(match[1], "|")
+	var keyTypes []keyType
+	for _, tag := range replaceTags {
+		replaceKey := strings.TrimLeft(strings.Trim(tag, " "), ".")
+		if strings.HasPrefix(replaceKey, `"`) {
+			keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: ""})
+			continue
+		}
+		splitIndex := strings.Index(replaceKey, ".")
+		if splitIndex == -1 || len(replaceKey) <= splitIndex {
+			return nil, fmt.Errorf("invalid replace tag format: %s", match[0])
+		}
+		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
+		keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: replaceType})
 	}
-	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
-	return replaceKey, replaceType, nil
+	return keyTypes, nil
 }
