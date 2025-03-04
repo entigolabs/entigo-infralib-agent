@@ -116,7 +116,7 @@ type KubernetesProvider struct {
 type File struct {
 	Name     string `yaml:"-"`
 	Content  []byte `yaml:"-"`
-	CheckSum []byte `yaml:"-"`
+	Checksum []byte `yaml:"-"`
 }
 
 func (p Provider) IsEmpty() bool {

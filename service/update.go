@@ -24,9 +24,7 @@ import (
 )
 
 const (
-	stateFile     = "state.yaml"
-	checksumsFile = "checksums.sha256"
-
+	stateFile = "state.yaml"
 	ssmPrefix = "/entigo-infralib"
 )
 
@@ -382,10 +380,9 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		}
 		return false, err
 	}
-	u.updateStepChecksums(step)
 	var executePipelines bool
 	var providers map[string]model.Set[string]
-	var files map[string][]byte
+	var files map[string]model.File
 	if !u.firstRunDone[step.Name] {
 		executePipelines, files, err = u.createStepFiles(step, moduleVersions, index)
 	} else {
@@ -395,6 +392,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
+	u.updateStepChecksums(step, files)
 	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, files)
 	if err != nil {
 		return false, err
@@ -419,15 +417,15 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 	u.putStateFileOrDie()
 }
 
-func (u *updater) updateDestinationsPlanFiles(step model.Step, files map[string][]byte) {
+func (u *updater) updateDestinationsPlanFiles(step model.Step, files map[string]model.File) {
 	u.updateDestinationsFiles(step, git.PlanBranch, files)
 }
 
-func (u *updater) updateDestinationsApplyFiles(step model.Step, files map[string][]byte) {
+func (u *updater) updateDestinationsApplyFiles(step model.Step, files map[string]model.File) {
 	u.updateDestinationsFiles(step, git.ApplyBranch, files)
 }
 
-func (u *updater) updateDestinationsFiles(step model.Step, branch string, files map[string][]byte) {
+func (u *updater) updateDestinationsFiles(step model.Step, branch string, files map[string]model.File) {
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for name, destination := range u.destinations {
 		log.Printf("Step %s updating %s files for destination %s\n", step.Name, branch, name)
@@ -440,7 +438,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 	}
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string][]byte) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
 		return nil
@@ -596,9 +594,9 @@ func (u *updater) getChangedStepFiles(step model.Step) []string {
 		return changed
 	}
 	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
-	for _, file := range step.Files {
-		if !bytes.Equal(previousChecksums.FileChecksums[file.Name], currentChecksums.FileChecksums[file.Name]) {
-			changed = append(changed, file.Name)
+	for name, file := range currentChecksums.FileChecksums {
+		if !bytes.Equal(previousChecksums.FileChecksums[name], file) {
+			changed = append(changed, name)
 		}
 	}
 	return changed
@@ -625,7 +623,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 	return true
 }
 
-func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int, files map[string][]byte) error {
+func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int, files map[string]model.File) error {
 	log.Printf("Applying release for step %s\n", step.Name)
 	autoApprove := getAutoApprove(*stepState)
 	var err error
@@ -667,7 +665,7 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 	return stepState, nil
 }
 
-func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string][]byte, error) {
+func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.createTerraformFiles(step, moduleVersions, index)
@@ -678,7 +676,7 @@ func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]mod
 	}
 }
 
-func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string][]byte, error) {
+func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, moduleVersions, index)
@@ -915,23 +913,23 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string][]byte, error) {
+func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
 	execute, _, files, err := u.updateTerraformFiles(step, moduleVersions, index)
 	return execute, files, err
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string][]byte, error) {
-	files := make(map[string][]byte)
+func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
+	files := make(map[string]model.File)
 	mainPath, mainFile, err := u.createBackendConf(fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name), u.resources.GetBucket())
 	if err != nil {
 		return false, nil, nil, err
 	}
-	files[mainPath] = mainFile
+	files[mainPath] = model.File{Content: mainFile}
 	changed, mainPath, mainBytes, err := u.createTerraformMain(step, moduleVersions)
 	if err != nil {
 		return false, nil, nil, err
 	}
-	files[mainPath] = mainBytes
+	files[mainPath] = model.File{Content: mainBytes}
 	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache}), files)
 	if err != nil {
 		return false, nil, nil, err
@@ -947,12 +945,17 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	modifiedProvider, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
+	modifiedProvider, delayedKeyTypes, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("failed to replace provider values: %s", err)
 	}
+	providerChecksum := util.CalculateHash([]byte(modifiedProvider))
+	modifiedProvider, err = u.replaceDelayedStringValues(step, modifiedProvider, index, make(paramCache), delayedKeyTypes)
+	if err != nil {
+		return false, nil, nil, fmt.Errorf("failed to replace delayed provider values: %s", err)
+	}
 	providerFile := fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name)
-	files[providerFile] = []byte(modifiedProvider)
+	files[providerFile] = model.File{Content: []byte(modifiedProvider), Checksum: providerChecksum}
 	err = u.resources.GetBucket().PutFile(providerFile, []byte(modifiedProvider))
 	return changed || len(step.Files) > 0, providers, files, err
 }
@@ -993,9 +996,9 @@ func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]m
 	return sourceVersions, nil
 }
 
-func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, map[string][]byte, error) {
+func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, map[string]model.File, error) {
 	executePipeline := false
-	files := make(map[string][]byte)
+	files := make(map[string]model.File)
 	for _, module := range step.Modules {
 		moduleVersion, found := moduleVersions[module.Name]
 		if !found {
@@ -1019,7 +1022,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		if err != nil {
 			return false, nil, err
 		}
-		files[filePath] = file
+		files[filePath] = model.File{Content: file}
 	}
 	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet[string](), files)
 	return executePipeline, files, err
@@ -1304,7 +1307,7 @@ func (u *updater) getChecksums(index int) {
 	}
 }
 
-func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string][]byte) error {
+func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string]model.File) error {
 	files := model.Set[string]{}
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for _, file := range step.Files {
@@ -1314,7 +1317,7 @@ func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, exclud
 			return err
 		}
 		files.Add(target)
-		includedFiles[target] = file.Content
+		includedFiles[target] = model.File{Content: file.Content}
 	}
 	folderFiles, err := u.resources.GetBucket().ListFolderFilesWithExclude(folder, excludedFolders)
 	if err != nil {
@@ -1405,7 +1408,7 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 	return defaultInputs, nil
 }
 
-func (u *updater) updateStepChecksums(step model.Step) {
+func (u *updater) updateStepChecksums(step model.Step, files map[string]model.File) {
 	sums, exists := u.stepChecksums.CurrentChecksums[step.Name]
 	if exists {
 		u.stepChecksums.PreviousChecksums[step.Name] = sums
@@ -1416,7 +1419,13 @@ func (u *updater) updateStepChecksums(step model.Step) {
 	}
 	fileChecksums := make(map[string][]byte)
 	for _, file := range step.Files {
-		fileChecksums[file.Name] = file.CheckSum
+		fileChecksums[file.Name] = file.Checksum
+	}
+	for _, file := range files {
+		if file.Checksum == nil {
+			continue
+		}
+		fileChecksums[file.Name] = file.Checksum
 	}
 	stepChecksum := model.StepChecksums{
 		ModuleChecksums: moduleChecksums,

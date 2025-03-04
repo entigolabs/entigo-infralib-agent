@@ -85,7 +85,7 @@ type SSM interface {
 }
 
 type Destination interface {
-	UpdateFiles(branch, folder string, files map[string][]byte) error
+	UpdateFiles(branch, folder string, files map[string]File) error
 }
 
 type CloudResources struct {

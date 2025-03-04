@@ -46,7 +46,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		return step, fmt.Errorf("failed to convert step %s to yaml, error: %v", step.Name, err)
 	}
 	cache := make(paramCache)
-	modifiedStepYaml, err := u.replaceStringValues(step, string(stepYaml), index, cache)
+	modifiedStepYaml, delayedKeyTypes, err := u.replaceStringValues(step, string(stepYaml), index, cache)
 	if err != nil {
 		log.Printf("Failed to replace tags in step %s", step.Name)
 		return step, err
@@ -57,15 +57,30 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
 		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
 	}
-	err = calculateModuleChecksums(&modifiedStep)
+	moduleChecksums, err := calculateModuleChecksums(modifiedStep)
 	if err != nil {
 		return modifiedStep, err
+	}
+	modifiedStepYaml, err = u.replaceDelayedStringValues(step, modifiedStepYaml, index, cache, delayedKeyTypes)
+	if err != nil {
+		log.Printf("Failed to replace delayed tags in step %s", step.Name)
+		return step, err
+	}
+	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
+	if err != nil {
+		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
+		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
+	}
+	for i, module := range modifiedStep.Modules {
+		module.InputsChecksum = moduleChecksums[module.Name]
+		modifiedStep.Modules[i] = module
 	}
 	err = u.replaceConfigStepFileValues(step, &modifiedStep, index, cache)
 	return modifiedStep, err
 }
 
-func calculateModuleChecksums(step *model.Step) error {
+func calculateModuleChecksums(step model.Step) (map[string][]byte, error) {
+	checksums := make(map[string][]byte)
 	for i, module := range step.Modules {
 		if len(module.Inputs) == 0 {
 			continue
@@ -73,13 +88,13 @@ func calculateModuleChecksums(step *model.Step) error {
 		sorted := util.SortKeys(module.Inputs)
 		inputsYaml, err := yaml.Marshal(sorted)
 		if err != nil {
-			return fmt.Errorf("failed to convert step %s module %s inputs to yaml, error: %v", step.Name,
+			return nil, fmt.Errorf("failed to convert step %s module %s inputs to yaml, error: %v", step.Name,
 				module.Name, err)
 		}
-		module.InputsChecksum = util.CalculateHash(inputsYaml)
+		checksums[module.Name] = util.CalculateHash(inputsYaml)
 		step.Modules[i] = module
 	}
-	return nil
+	return checksums, nil
 }
 
 func (u *updater) replaceConfigStepFileValues(step model.Step, modifiedStep *model.Step, index int, cache paramCache) error {
@@ -89,15 +104,20 @@ func (u *updater) replaceConfigStepFileValues(step model.Step, modifiedStep *mod
 			modifiedStep.Files = append(modifiedStep.Files, model.File{
 				Name:     strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
 				Content:  file.Content,
-				CheckSum: util.CalculateHash(file.Content),
+				Checksum: util.CalculateHash(file.Content),
 			})
 			continue
 		}
-		newContent, err := u.replaceStringValues(step, string(file.Content), index, cache)
-		content := []byte(newContent)
+		newContent, delayedKeyTypes, err := u.replaceStringValues(step, string(file.Content), index, cache)
 		if err != nil {
 			return fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
 		}
+		checksum := util.CalculateHash([]byte(newContent))
+		newContent, err = u.replaceDelayedStringValues(step, newContent, index, cache, delayedKeyTypes)
+		if err != nil {
+			return fmt.Errorf("failed to replace delayed tags in file %s: %v", file.Name, err)
+		}
+		content := []byte(newContent)
 		err = validateStepFile(file.Name, content)
 		if err != nil {
 			return err
@@ -105,7 +125,7 @@ func (u *updater) replaceConfigStepFileValues(step model.Step, modifiedStep *mod
 		modifiedStep.Files = append(modifiedStep.Files, model.File{
 			Name:     strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
 			Content:  content,
-			CheckSum: util.CalculateHash(content),
+			Checksum: checksum,
 		})
 	}
 	return nil
@@ -129,11 +149,12 @@ func validateStepFile(file string, content []byte) error {
 	return nil
 }
 
-func (u *updater) replaceStringValues(step model.Step, content string, index int, cache paramCache) (string, error) {
+func (u *updater) replaceStringValues(step model.Step, content string, index int, cache paramCache) (string, map[string]keyType, error) {
 	matches := replaceRegex.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
-		return content, nil
+		return content, nil, nil
 	}
+	delayedKeyTypes := make(map[string]keyType) // Delay replace tags that dynamically change, e.g. module version
 	for _, match := range matches {
 		replaceTag := match[0]
 		replaceKey := match[1]
@@ -143,7 +164,7 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		}
 		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		var replacement string
 		for _, keyType := range keyTypes {
@@ -151,9 +172,13 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 				replacement = strings.Trim(keyType.ReplaceKey, `"`)
 				break
 			}
+			if keyType.ReplaceType == string(model.ReplaceTypeAgent) {
+				delayedKeyTypes[replaceTag] = keyType
+				continue
+			}
 			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			if replacement != "" {
 				break
@@ -163,6 +188,17 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		if strings.HasPrefix(replacement, "module.") {
 			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
 		}
+	}
+	return content, delayedKeyTypes, nil
+}
+
+func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes map[string]keyType) (string, error) {
+	for replaceTag, keyType := range delayedKeyTypes {
+		replacement, err := u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
+		if err != nil {
+			return "", err
+		}
+		content = strings.Replace(content, replaceTag, replacement, 1)
 	}
 	return content, nil
 }

@@ -263,7 +263,7 @@ func createRemoteBranch(auth transport.AuthMethod, repo *git.Repository, worktre
 	})
 }
 
-func (g *DestClient) UpdateFiles(branch, folder string, files map[string][]byte) error {
+func (g *DestClient) UpdateFiles(branch, folder string, files map[string]model.File) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -327,15 +327,15 @@ func (g *DestClient) checkoutCleanBranch(branch string) error {
 	return nil
 }
 
-func (g *DestClient) updateFiles(folder string, files map[string][]byte) error {
+func (g *DestClient) updateFiles(folder string, files map[string]model.File) error {
 	err := g.worktree.Filesystem.MkdirAll(folder, os.ModeDir)
 	if err != nil {
 		return err
 	}
 
 	currentFiles := model.NewSet[string]()
-	for path, content := range files {
-		err = updateFile(g.worktree, path, content)
+	for path, file := range files {
+		err = updateFile(g.worktree, path, file.Content)
 		if err != nil {
 			return err
 		}
