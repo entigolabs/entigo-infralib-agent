@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ import (
 var typesYaml []byte
 
 var replaceRegex = regexp.MustCompile(`\{\s*(.*?)\s*}`)
+var indexRegex = regexp.MustCompile(`^(.*?)\[(\d+)]$`)
 
 type Planner interface {
 	Plan()
@@ -137,6 +139,15 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 		item.Source.Name = item.Name
 		item.Destination.Name = item.Name
 	}
+	var err error
+	item.Source, err = parseNameIndex(item.Source)
+	if err != nil {
+		return nil, nil, err
+	}
+	item.Destination, err = parseNameIndex(item.Destination)
+	if err != nil {
+		return nil, nil, err
+	}
 	identification, found := p.types[item.Type]
 	if !found {
 		return nil, nil, fmt.Errorf("type %s not found in typeIdentifications", item.Type)
@@ -178,6 +189,23 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 		return nil, nil, fmt.Errorf("item type '%s' %s", item.Type, err)
 	}
 	return imports, removes, nil
+}
+
+func parseNameIndex(module module) (module, error) {
+	matches := indexRegex.FindStringSubmatch(module.Name)
+	if len(matches) == 3 {
+		if module.IndexKey != nil || len(module.IndexKeys) > 0 {
+			return module, fmt.Errorf("item name %s includes index but indexKey or indexKeys already set", module.Name)
+		}
+		module.Name = matches[1]
+		key, err := strconv.Atoi(matches[2])
+		if err != nil {
+			return module, fmt.Errorf("item %s failed to parse index key %s: %v", module.Name, matches[2], err)
+		}
+		module.IndexKey = key
+		return module, nil
+	}
+	return module, nil
 }
 
 func (p *planner) planItemKeys(indexKeys []KeyPair, resource resourceStateV4, identification typeIdentification, index interface{}, dest, source string) ([]string, []string, error) {
@@ -240,13 +268,13 @@ func (p *planner) getResource(rsType string, module module) (resourceStateV4, er
 		if resource.Type != rsType {
 			continue
 		}
+		if module.Module != "" && module.Module != resource.Module {
+			continue
+		}
 		if module.Name != "" {
 			if resource.Name == module.Name {
 				return resource, nil
 			}
-			continue
-		}
-		if module.Module != "" && !strings.HasPrefix(resource.Module, module.Module) {
 			continue
 		}
 		if found != nil {
@@ -255,7 +283,8 @@ func (p *planner) getResource(rsType string, module module) (resourceStateV4, er
 		found = &resource
 	}
 	if found == nil {
-		return resourceStateV4{}, fmt.Errorf("resource of type %s not found", rsType)
+		return resourceStateV4{}, fmt.Errorf("resource of type %s module %s name %s not found", rsType,
+			module.Module, module.Name)
 	}
 	return *found, nil
 }
@@ -269,15 +298,15 @@ func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, erro
 		if resource.Type != item.Type {
 			continue
 		}
+		if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
+			continue
+		}
 		if item.Destination.Name != "" {
 			if resource.Name == item.Destination.Name {
 				return &resource, nil
 			} else {
 				continue
 			}
-		}
-		if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
-			continue
 		}
 		if found != nil {
 			return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
