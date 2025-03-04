@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"io"
 	"log"
 	"strings"
@@ -143,11 +144,19 @@ func (s *S3) DeleteFiles(files []string) error {
 			Key: aws.String(file),
 		})
 	}
-	_, err := s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
-		Bucket: aws.String(s.bucket),
-		Delete: &types.Delete{Objects: objects},
-	})
-	return checkNotFoundError(err)
+	for len(objects) > 0 {
+		limit := util.MinInt(len(objects), 1000) // Max 1000 objects per request
+		_, err := s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
+			Bucket: aws.String(s.bucket),
+			Delete: &types.Delete{Objects: objects[:limit]},
+		})
+		err = checkNotFoundError(err)
+		if err != nil {
+			return err
+		}
+		objects = objects[limit:]
+	}
+	return nil
 }
 
 func (s *S3) DeleteFile(file string) error {
