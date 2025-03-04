@@ -28,6 +28,11 @@ type tfOutput struct {
 	Value     interface{}
 }
 
+type keyType struct {
+	ReplaceKey  string
+	ReplaceType string
+}
+
 const (
 	terraformOutput = "terraform-output.json"
 )
@@ -84,7 +89,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 func validateStepFile(file string, content []byte) error {
 	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
 		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
-		if diags.HasErrors() {
+		if diags != nil && diags.HasErrors() {
 			slog.Debug(fmt.Sprintf("broken hcl %s:\n%s", file, string(content)))
 			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}
@@ -116,12 +121,12 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			return "", err
 		}
 		var replacement string
-		for replaceKey, replaceType := range keyTypes {
-			if strings.HasPrefix(replaceKey, `"`) {
-				replacement = strings.Trim(replaceKey, `"`)
+		for _, keyType := range keyTypes {
+			if strings.HasPrefix(keyType.ReplaceKey, `"`) {
+				replacement = strings.Trim(keyType.ReplaceKey, `"`)
 				break
 			}
-			replacement, err = u.getReplacementValue(step, index, replaceKey, replaceType, cache)
+			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
 			if err != nil {
 				return "", err
 			}
@@ -523,9 +528,9 @@ func replaceConfigTags(prefix string, config model.Config, content string, match
 			return "", err
 		}
 		replaceKey = ""
-		for configKey, replaceType := range keyTypes {
-			if replaceType == string(model.ReplaceTypeConfig) {
-				replaceKey = configKey
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeConfig) {
+				replaceKey = keyType.ReplaceKey
 				break
 			}
 		}
@@ -558,10 +563,10 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 			return "", err
 		}
 		replaceKey = ""
-		for parameterKey, replaceType := range keyTypes {
-			if replaceType == string(model.ReplaceTypeSSMCustom) || replaceType == string(model.ReplaceTypeGCSMCustom) ||
-				replaceType == string(model.ReplaceTypeOutputCustom) {
-				replaceKey = parameterKey
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeSSMCustom) || keyType.ReplaceType == string(model.ReplaceTypeGCSMCustom) ||
+				keyType.ReplaceType == string(model.ReplaceTypeOutputCustom) {
+				replaceKey = keyType.ReplaceKey
 				break
 			}
 		}
@@ -614,9 +619,9 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 			return content, err
 		}
 		replaceKey = ""
-		for configKey, replaceType := range keyTypes {
-			if replaceType == string(model.ReplaceTypeModule) {
-				replaceKey = configKey
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeModule) {
+				replaceKey = keyType.ReplaceKey
 				break
 			}
 		}
@@ -649,16 +654,16 @@ func getReplacementModuleValue(replaceKey string, module model.Module) (string, 
 	return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
 }
 
-func parseReplaceTag(match []string) (map[string]string, error) {
+func parseReplaceTag(match []string) ([]keyType, error) {
 	if len(match) != 2 {
 		return nil, fmt.Errorf("failed to parse replace tag match %s", match[0])
 	}
 	replaceTags := strings.Split(match[1], "|")
-	keyTypes := make(map[string]string)
+	var keyTypes []keyType
 	for _, tag := range replaceTags {
 		replaceKey := strings.TrimLeft(strings.Trim(tag, " "), ".")
 		if strings.HasPrefix(replaceKey, `"`) {
-			keyTypes[replaceKey] = ""
+			keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: ""})
 			continue
 		}
 		splitIndex := strings.Index(replaceKey, ".")
@@ -666,7 +671,7 @@ func parseReplaceTag(match []string) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid replace tag format: %s", match[0])
 		}
 		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
-		keyTypes[replaceKey] = replaceType
+		keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: replaceType})
 	}
 	return keyTypes, nil
 }
