@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"dario.cat/mergo"
 	"errors"
@@ -23,9 +24,7 @@ import (
 )
 
 const (
-	stateFile     = "state.yaml"
-	checksumsFile = "checksums.sha256"
-
+	stateFile = "state.yaml"
 	ssmPrefix = "/entigo-infralib"
 )
 
@@ -37,11 +36,10 @@ type Updater interface {
 type updater struct {
 	config        model.Config
 	steps         []model.Step
+	stepChecksums model.StepsChecksums
 	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
-	github        git.Github
-	storage       git.Storage
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -62,18 +60,15 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())
 	steps := getRunnableSteps(config, flags.Steps)
-	githubClient := git.NewGithub(ctx, flags.GithubToken)
-	storage := git.NewStorage(githubClient)
-	sources, moduleSources := createSources(githubClient, steps, config.Sources, state)
+	sources, moduleSources := createSources(ctx, steps, config.Sources, state)
 	destinations := createDestinations(ctx, config.Destinations)
 	return &updater{
 		config:        config,
 		steps:         steps,
+		stepChecksums: model.NewStepsChecksums(),
 		provider:      provider,
 		resources:     resources,
-		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, storage),
-		github:        githubClient,
-		storage:       storage,
+		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
 		destinations:  destinations,
 		state:         state,
 		pipelineType:  common.PipelineType(flags.Pipeline.Type),
@@ -123,32 +118,34 @@ func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.St
 	return runnableSteps
 }
 
-func createSources(githubClient git.Github, steps []model.Step, configSources []model.ConfigSource, state *model.State) (map[string]*model.Source, map[string]string) {
+func createSources(ctx context.Context, steps []model.Step, configSources []model.ConfigSource, state *model.State) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
 	for _, source := range configSources {
-		var release string
 		var stableVersion *version.Version
-		if source.ForceVersion {
-			release = source.Version
+		var storage model.Storage
+		if util.IsLocalSource(source.URL) {
+			storage = git.NewLocalPath(source.URL)
 		} else {
-			stableVersion = getLatestRelease(githubClient, source.URL)
-			release = stableVersion.Original()
-		}
-		checksums, err := getChecksums(githubClient, source.URL, release)
-		if err != nil {
-			log.Fatalf("Failed to get checksums for source %s: %v", source.URL, err)
+			sourceClient, err := git.NewSourceClient(ctx, source)
+			if err != nil {
+				log.Fatalf("Failed to create source %s client: %v", source.URL, err)
+			}
+			storage = sourceClient
+			if !source.ForceVersion {
+				stableVersion = getLatestRelease(sourceClient)
+			}
 		}
 		sources[source.URL] = &model.Source{
-			URL:              source.URL,
-			StableVersion:    stableVersion,
-			Modules:          model.NewSet[string](),
-			Includes:         model.ToSet(source.Include),
-			Excludes:         model.ToSet(source.Exclude),
-			CurrentChecksums: checksums,
+			URL:           source.URL,
+			StableVersion: stableVersion,
+			Modules:       model.NewSet[string](),
+			Includes:      model.ToSet(source.Include),
+			Excludes:      model.ToSet(source.Exclude),
+			Storage:       storage,
 		}
 	}
 	moduleSources := addSourceModules(steps, configSources, sources)
-	addSourceReleases(githubClient, steps, configSources, state, sources)
+	addSourceReleases(steps, configSources, state, sources)
 	return sources, moduleSources
 }
 
@@ -190,7 +187,13 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 			moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
 		}
 		moduleKey := fmt.Sprintf("modules/%s", moduleSource)
-		if (util.IsLocalSource(configSource.URL) && util.PathExists(configSource.URL, moduleKey)) || source.CurrentChecksums[moduleKey] != "" {
+		var release string
+		if source.ForcedVersion != "" {
+			release = source.ForcedVersion
+		} else if source.StableVersion != nil {
+			release = source.StableVersion.Original()
+		}
+		if source.Storage.PathExists(moduleKey, release) {
 			sources[source.URL].Modules.Add(module.Source)
 			return source.URL, nil
 		}
@@ -198,7 +201,7 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 	return "", fmt.Errorf("module %s source not found", module.Name)
 }
 
-func addSourceReleases(githubClient git.Github, steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) {
+func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) {
 	for _, cSource := range configSources {
 		source := sources[cSource.URL]
 		if cSource.ForceVersion {
@@ -217,7 +220,7 @@ func addSourceReleases(githubClient git.Github, steps []model.Step, configSource
 		if len(source.Modules) == 0 {
 			log.Printf("No modules found for Source %s\n", cSource.URL)
 		}
-		newestVersion, releases, err := getSourceReleases(githubClient, steps, source, state)
+		newestVersion, releases, err := getSourceReleases(steps, source, state)
 		if err != nil {
 			log.Fatalf("Failed to get releases: %v", err)
 		}
@@ -230,7 +233,7 @@ func createDestinations(ctx context.Context, destinations []model.ConfigDestinat
 	dests := make(map[string]model.Destination)
 	for _, destination := range destinations {
 		if destination.Git != nil {
-			client, err := git.NewGitClient(ctx, destination.Name, *destination.Git)
+			client, err := git.NewDestClient(ctx, destination.Name, *destination.Git)
 			if err != nil {
 				log.Fatalf("Destination %s failed to create git client: %v", destination.Name, err)
 			}
@@ -302,7 +305,7 @@ func (u *updater) Update() {
 	for index := 1; index < mostReleases; index++ {
 		u.logReleases(index)
 		u.updateState()
-		u.GetChecksums(index)
+		u.getChecksums(index)
 		wg := new(model.SafeCounter)
 		errChan := make(chan error, len(u.steps))
 		failed := false
@@ -335,6 +338,9 @@ func (u *updater) Update() {
 func (u *updater) getMostReleases() int {
 	mostReleases := 0
 	for _, source := range u.sources {
+		if source.ForcedVersion != "" {
+			slog.Warn(fmt.Sprintf("Source %s has forced version %s", source.URL, source.ForcedVersion))
+		}
 		if len(source.Releases) > mostReleases {
 			mostReleases = len(source.Releases)
 		}
@@ -379,7 +385,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	}
 	var executePipelines bool
 	var providers map[string]model.Set[string]
-	var files map[string][]byte
+	var files map[string]model.File
 	if !u.firstRunDone[step.Name] {
 		executePipelines, files, err = u.createStepFiles(step, moduleVersions, index)
 	} else {
@@ -389,6 +395,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
+	u.updateStepChecksums(step, files)
 	err = u.applyRelease(!u.firstRunDone[step.Name], executePipelines, step, stepState, index, providers, wg, errChan, files)
 	if err != nil {
 		return false, err
@@ -413,15 +420,15 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 	u.putStateFileOrDie()
 }
 
-func (u *updater) updateDestinationsPlanFiles(step model.Step, files map[string][]byte) {
+func (u *updater) updateDestinationsPlanFiles(step model.Step, files map[string]model.File) {
 	u.updateDestinationsFiles(step, git.PlanBranch, files)
 }
 
-func (u *updater) updateDestinationsApplyFiles(step model.Step, files map[string][]byte) {
+func (u *updater) updateDestinationsApplyFiles(step model.Step, files map[string]model.File) {
 	u.updateDestinationsFiles(step, git.ApplyBranch, files)
 }
 
-func (u *updater) updateDestinationsFiles(step model.Step, branch string, files map[string][]byte) {
+func (u *updater) updateDestinationsFiles(step model.Step, branch string, files map[string]model.File) {
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for name, destination := range u.destinations {
 		log.Printf("Step %s updating %s files for destination %s\n", step.Name, branch, name)
@@ -434,7 +441,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 	}
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string][]byte) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
 		return nil
@@ -465,14 +472,22 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 func (u *updater) hasChanged(step model.Step, providers map[string]model.Set[string]) bool {
 	changed := u.getChangedProviders(providers)
 	if len(changed) > 0 {
-		log.Printf("Step %s providers have changed: %s\n", step.Name,
-			strings.Join(changed, ", "))
+		log.Printf("Step %s providers have changed: %s\n", step.Name, strings.Join(changed, ", "))
 		return true
 	}
 	changed = u.getChangedModules(step)
 	if len(changed) > 0 {
-		log.Printf("Step %s modules have changed: %s\n", step.Name,
-			strings.Join(changed, ", "))
+		log.Printf("Step %s modules have changed: %s\n", step.Name, strings.Join(changed, ", "))
+		return true
+	}
+	changed = u.getChangedStepModules(step)
+	if len(changed) > 0 {
+		log.Printf("Step %s module inputs have changed: %s\n", step.Name, strings.Join(changed, ", "))
+		return true
+	}
+	changed = u.getChangedStepFiles(step)
+	if len(changed) > 0 {
+		log.Printf("Step %s files have changed: %s\n", step.Name, strings.Join(changed, ", "))
 		return true
 	}
 	return false
@@ -499,7 +514,7 @@ func (u *updater) getChangedProviders(repoProviders map[string]model.Set[string]
 				changed = append(changed, provider)
 				continue
 			}
-			if previousChecksum != currentChecksum {
+			if !bytes.Equal(previousChecksum, currentChecksum) {
 				slog.Debug(fmt.Sprintf("Provider %s has changed, previous %s, current %s", provider,
 					previousChecksum, currentChecksum))
 				changed = append(changed, provider)
@@ -538,8 +553,53 @@ func (u *updater) getChangedModules(step model.Step) []string {
 			changed = append(changed, module.Name)
 			continue
 		}
-		if previousChecksum != currentChecksum {
+		if !bytes.Equal(previousChecksum, currentChecksum) {
 			changed = append(changed, module.Name)
+		}
+	}
+	return changed
+}
+
+func (u *updater) getChangedStepModules(step model.Step) []string {
+	changed := make([]string, 0)
+	if step.Modules == nil {
+		return changed
+	}
+	previousChecksums, exists := u.stepChecksums.PreviousChecksums[step.Name]
+	if !exists {
+		for _, module := range step.Modules {
+			changed = append(changed, module.Name)
+		}
+		return changed
+	}
+	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			changed = append(changed, module.Name)
+		}
+		if !bytes.Equal(previousChecksums.ModuleChecksums[module.Name], currentChecksums.ModuleChecksums[module.Name]) {
+			changed = append(changed, module.Name)
+		}
+	}
+	return changed
+}
+
+func (u *updater) getChangedStepFiles(step model.Step) []string {
+	changed := make([]string, 0)
+	if step.Files == nil {
+		return changed
+	}
+	previousChecksums, exists := u.stepChecksums.PreviousChecksums[step.Name]
+	if !exists {
+		for _, file := range step.Files {
+			changed = append(changed, file.Name)
+		}
+		return changed
+	}
+	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
+	for name, file := range currentChecksums.FileChecksums {
+		if !bytes.Equal(previousChecksums.FileChecksums[name], file) {
+			changed = append(changed, name)
 		}
 	}
 	return changed
@@ -566,7 +626,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 	return true
 }
 
-func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int, files map[string][]byte) error {
+func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *model.StateStep, index int, files map[string]model.File) error {
 	log.Printf("Applying release for step %s\n", step.Name)
 	autoApprove := getAutoApprove(*stepState)
 	var err error
@@ -608,7 +668,7 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 	return stepState, nil
 }
 
-func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string][]byte, error) {
+func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.createTerraformFiles(step, moduleVersions, index)
@@ -619,7 +679,7 @@ func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]mod
 	}
 }
 
-func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string][]byte, error) {
+func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, moduleVersions, index)
@@ -708,7 +768,8 @@ func getAutoApprove(state model.StateStep) bool {
 	return true
 }
 
-func getSourceReleases(githubClient git.Github, steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
+func getSourceReleases(steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
+	sourceClient := source.Storage.(*git.SourceClient)
 	oldestVersion, err := getOldestVersion(steps, source, state)
 	if err != nil {
 		return nil, nil, err
@@ -718,42 +779,38 @@ func getSourceReleases(githubClient git.Github, steps []model.Step, source *mode
 		log.Printf("Latest release for %s is %s\n", source.URL, latestRelease.Original())
 		return latestRelease, []*version.Version{latestRelease}, nil
 	}
-	oldestRelease, err := githubClient.GetReleaseByTag(source.URL, getFormattedVersionString(oldestVersion))
+	oldestRelease, err := sourceClient.GetRelease(getFormattedVersionString(oldestVersion))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get oldest release %s: %w", oldestVersion, err)
 	}
-	log.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Tag)
+	log.Printf("Oldest module version for %s is %s\n", source.URL, oldestRelease.Original())
 
 	newestVersion, err := getNewestVersion(steps, source)
 	if err != nil {
 		return nil, nil, err
 	}
-	var newestRelease *git.Release
+	var newestRelease *version.Version
 	if newestVersion != StableVersion {
-		newestRelease, err = githubClient.GetReleaseByTag(source.URL, getFormattedVersionString(newestVersion))
+		newestRelease, err = sourceClient.GetRelease(getFormattedVersionString(newestVersion))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to get newest release %s: %w", oldestVersion, err)
 		}
-		log.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Tag)
+		log.Printf("Newest module version for %s is %s\n", source.URL, newestRelease.Original())
 	}
 
-	releases, err := githubClient.GetReleases(source.URL, *oldestRelease, newestRelease)
+	releases, err := sourceClient.GetReleases(oldestRelease, newestRelease)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get newer releases: %w", err)
 	}
 	return releases[len(releases)-1], releases, nil
 }
 
-func getLatestRelease(githubClient git.Github, repoURL string) *version.Version {
-	latestRelease, err := githubClient.GetLatestReleaseTag(repoURL)
+func getLatestRelease(sourceClient *git.SourceClient) *version.Version {
+	latestRelease, err := sourceClient.GetLatestReleaseTag()
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	latestSemver, err := version.NewVersion(latestRelease.Tag)
-	if err != nil {
-		log.Fatalf("Failed to parse latest release version %s: %s", latestRelease.Tag, err)
-	}
-	return latestSemver
+	return latestRelease
 }
 
 func getOldestVersion(steps []model.Step, source *model.Source, state *model.State) (string, error) {
@@ -859,23 +916,23 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string][]byte, error) {
+func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
 	execute, _, files, err := u.updateTerraformFiles(step, moduleVersions, index)
 	return execute, files, err
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string][]byte, error) {
-	files := make(map[string][]byte)
+func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
+	files := make(map[string]model.File)
 	mainPath, mainFile, err := u.createBackendConf(fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name), u.resources.GetBucket())
 	if err != nil {
 		return false, nil, nil, err
 	}
-	files[mainPath] = mainFile
+	files[mainPath] = model.File{Content: mainFile}
 	changed, mainPath, mainBytes, err := u.createTerraformMain(step, moduleVersions)
 	if err != nil {
 		return false, nil, nil, err
 	}
-	files[mainPath] = mainBytes
+	files[mainPath] = model.File{Content: mainBytes}
 	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache}), files)
 	if err != nil {
 		return false, nil, nil, err
@@ -891,12 +948,17 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("failed to create terraform provider: %s", err)
 	}
-	modifiedProvider, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
+	modifiedProvider, delayedKeyTypes, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("failed to replace provider values: %s", err)
 	}
+	providerChecksum := util.CalculateHash([]byte(modifiedProvider))
+	modifiedProvider, err = u.replaceDelayedStringValues(step, modifiedProvider, index, make(paramCache), delayedKeyTypes)
+	if err != nil {
+		return false, nil, nil, fmt.Errorf("failed to replace delayed provider values: %s", err)
+	}
 	providerFile := fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name)
-	files[providerFile] = []byte(modifiedProvider)
+	files[providerFile] = model.File{Content: []byte(modifiedProvider), Checksum: providerChecksum}
 	err = u.resources.GetBucket().PutFile(providerFile, []byte(modifiedProvider))
 	return changed || len(step.Files) > 0, providers, files, err
 }
@@ -937,9 +999,9 @@ func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]m
 	return sourceVersions, nil
 }
 
-func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, map[string][]byte, error) {
+func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, map[string]model.File, error) {
 	executePipeline := false
-	files := make(map[string][]byte)
+	files := make(map[string]model.File)
 	for _, module := range step.Modules {
 		moduleVersion, found := moduleVersions[module.Name]
 		if !found {
@@ -963,7 +1025,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		if err != nil {
 			return false, nil, err
 		}
-		files[filePath] = file
+		files[filePath] = model.File{Content: file}
 	}
 	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet[string](), files)
 	return executePipeline, files, err
@@ -1065,7 +1127,7 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	appBytes, err := argocd.GetApplicationFile(u.storage, module, moduleSource.URL, moduleVersion, values,
+	appBytes, err := argocd.GetApplicationFile(moduleSource.Storage, module, moduleSource.URL, moduleVersion, values,
 		u.resources.GetProviderType())
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)
@@ -1235,12 +1297,12 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 	return release, imageSource
 }
 
-func (u *updater) GetChecksums(index int) {
+func (u *updater) getChecksums(index int) {
 	for url, source := range u.sources {
 		if len(source.Releases)-1 < index {
 			continue
 		}
-		checksums, err := getChecksums(u.github, url, source.Releases[index].Original())
+		checksums, err := source.Storage.CalculateChecksums(source.Releases[index].Original())
 		if err != nil {
 			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
@@ -1248,35 +1310,7 @@ func (u *updater) GetChecksums(index int) {
 	}
 }
 
-func getChecksums(githubClient git.Github, sourceURL string, release string) (map[string]string, error) {
-	if util.IsLocalSource(sourceURL) {
-		return make(map[string]string), nil
-	}
-	content, err := githubClient.GetRawFileContent(sourceURL, checksumsFile, release)
-	if err != nil {
-		var fileError model.FileNotFoundError
-		if errors.As(err, &fileError) {
-			return make(map[string]string), nil
-		}
-		return nil, err
-	}
-	checksums := make(map[string]string)
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 {
-			log.Printf("Invalid line: %s\n", line)
-			continue
-		}
-		checksums[strings.TrimRight(parts[0], ":")] = parts[1]
-	}
-	return checksums, nil
-}
-
-func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string][]byte) error {
+func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string]model.File) error {
 	files := model.Set[string]{}
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	for _, file := range step.Files {
@@ -1286,7 +1320,7 @@ func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, exclud
 			return err
 		}
 		files.Add(target)
-		includedFiles[target] = file.Content
+		includedFiles[target] = model.File{Content: file.Content}
 	}
 	folderFiles, err := u.resources.GetBucket().ListFolderFilesWithExclude(folder, excludedFolders)
 	if err != nil {
@@ -1361,7 +1395,7 @@ func (u *updater) getModuleInputs(stepType model.StepType, module model.Module, 
 }
 
 func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
-	defaultInputsRaw, err := u.storage.GetFile(moduleSource.URL, filePath, moduleVersion)
+	defaultInputsRaw, err := moduleSource.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {
@@ -1375,6 +1409,32 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 		return nil, fmt.Errorf("failed to unmarshal default inputs: %v", err)
 	}
 	return defaultInputs, nil
+}
+
+func (u *updater) updateStepChecksums(step model.Step, files map[string]model.File) {
+	sums, exists := u.stepChecksums.CurrentChecksums[step.Name]
+	if exists {
+		u.stepChecksums.PreviousChecksums[step.Name] = sums
+	}
+	moduleChecksums := make(map[string][]byte)
+	for _, module := range step.Modules {
+		moduleChecksums[module.Name] = module.InputsChecksum
+	}
+	fileChecksums := make(map[string][]byte)
+	for _, file := range step.Files {
+		fileChecksums[file.Name] = file.Checksum
+	}
+	for _, file := range files {
+		if file.Checksum == nil {
+			continue
+		}
+		fileChecksums[file.Name] = file.Checksum
+	}
+	stepChecksum := model.StepChecksums{
+		ModuleChecksums: moduleChecksums,
+		FileChecksums:   fileChecksums,
+	}
+	u.stepChecksums.CurrentChecksums[step.Name] = stepChecksum
 }
 
 func mergeInputs(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {

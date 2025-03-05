@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -120,15 +121,6 @@ func IsLocalSource(source string) bool {
 	return !strings.HasPrefix(source, "http:") && !strings.HasPrefix(source, "https:")
 }
 
-func PathExists(source, path string) bool {
-	fullPath := filepath.Join(source, path)
-	info, err := os.Stat(fullPath)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return info.IsDir()
-}
-
 func FileExists(source, path string) bool {
 	fullPath := filepath.Join(source, path)
 	info, err := os.Stat(fullPath)
@@ -239,7 +231,7 @@ func DelayBucketCreation(bucket string, skipDelay bool) {
 		_, _ = reader.ReadString('\n')
 		done <- true
 	}()
-	log.Println("Waiting for 10 seconds before creating the bucket, press Enter to skip...")
+	fmt.Println("Waiting for 10 seconds before creating the bucket, press Enter to skip...")
 	select {
 	case <-time.After(10 * time.Second):
 		return
@@ -264,4 +256,31 @@ func AskForConfirmation() {
 			common.PrintWarning("Invalid input. Please enter Y or N.")
 		}
 	}
+}
+
+func CalculateHash(content []byte) []byte {
+	hash := sha256.New()
+	hash.Write(content)
+	return hash.Sum(nil)
+}
+
+func SortKeys(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[interface{}]interface{}:
+		sorted := make(map[interface{}]interface{})
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key.(string))
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			sorted[key] = SortKeys(v[key])
+		}
+		return sorted
+	case []interface{}:
+		for i, item := range v {
+			v[i] = SortKeys(item)
+		}
+	}
+	return data
 }
