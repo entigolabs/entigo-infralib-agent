@@ -25,6 +25,7 @@ import (
 )
 
 var invalidChars = regexp.MustCompile(`[\\/:*?"<>|.]`)
+var repoMutex = sync.Mutex{}
 
 type SourceClient struct {
 	ctx            context.Context
@@ -110,7 +111,8 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 	if err != nil {
 		return nil, err
 	}
-	slog.Debug(fmt.Sprintf("Cloning repository to %s", repoPath))
+	repoMutex.Lock()
+	defer repoMutex.Unlock()
 	repo, err := openSourceRepo(ctx, auth, source, repoPath)
 	if err == nil {
 		return repo, nil
@@ -118,6 +120,7 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 	if !errors.Is(err, git.ErrRepositoryNotExists) {
 		return nil, err
 	}
+	slog.Debug(fmt.Sprintf("Cloning repository to %s", repoPath))
 	return git.PlainCloneContext(ctx, repoPath, false, &git.CloneOptions{
 		URL:             source.URL,
 		Auth:            auth,

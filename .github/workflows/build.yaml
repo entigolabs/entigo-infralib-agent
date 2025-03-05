@@ -33,7 +33,7 @@ jobs:
           gcloud config set project $PROJECT_ID
           gcloud auth list
           gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
-          go test -timeout 20m -v ./...
+          go test -timeout 25m -v ./...
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
