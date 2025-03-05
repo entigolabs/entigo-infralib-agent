@@ -231,7 +231,7 @@ func DelayBucketCreation(bucket string, skipDelay bool) {
 		_, _ = reader.ReadString('\n')
 		done <- true
 	}()
-	log.Println("Waiting for 10 seconds before creating the bucket, press Enter to skip...")
+	fmt.Println("Waiting for 10 seconds before creating the bucket, press Enter to skip...")
 	select {
 	case <-time.After(10 * time.Second):
 		return

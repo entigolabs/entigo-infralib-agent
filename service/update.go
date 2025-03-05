@@ -338,6 +338,9 @@ func (u *updater) Update() {
 func (u *updater) getMostReleases() int {
 	mostReleases := 0
 	for _, source := range u.sources {
+		if source.ForcedVersion != "" {
+			slog.Warn(fmt.Sprintf("Source %s has forced version %s", source.URL, source.ForcedVersion))
+		}
 		if len(source.Releases) > mostReleases {
 			mostReleases = len(source.Releases)
 		}
