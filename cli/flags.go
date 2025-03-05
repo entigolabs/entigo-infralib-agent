@@ -21,10 +21,10 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.DeleteCommand:
 		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
-		return append(append(baseFlags, getProviderFlags()...), &githubToken, &stepsFlag, &pipelineTypeFlag,
+		return append(append(baseFlags, getProviderFlags()...), &stepsFlag, &pipelineTypeFlag,
 			&logsPathFlag, &printLogsFlag, &skipBucketDelayFlag)
 	case common.RunCommand:
-		return append(append(baseFlags, getProviderFlags()...), &allowParallelFlag, &githubToken, &stepsFlag,
+		return append(append(baseFlags, getProviderFlags()...), &allowParallelFlag, &stepsFlag,
 			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &skipBucketDelayFlag)
 	case common.PullCommand:
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
@@ -139,16 +139,6 @@ var allowParallelFlag = cli.BoolFlag{
 	Value:       true,
 	Usage:       "allow running steps in parallel on first execution cycle",
 	Destination: &flags.AllowParallel,
-}
-
-var githubToken = cli.StringFlag{
-	Name:        "github-token",
-	Aliases:     []string{"gt"},
-	EnvVars:     []string{"GITHUB_TOKEN"},
-	Usage:       "github token used for github requests",
-	DefaultText: "",
-	Value:       "",
-	Destination: &flags.GithubToken,
 }
 
 var yesFlag = cli.BoolFlag{

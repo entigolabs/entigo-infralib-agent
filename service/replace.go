@@ -28,6 +28,11 @@ type tfOutput struct {
 	Value     interface{}
 }
 
+type keyType struct {
+	ReplaceKey  string
+	ReplaceType string
+}
+
 const (
 	terraformOutput = "terraform-output.json"
 )
@@ -41,7 +46,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		return step, fmt.Errorf("failed to convert step %s to yaml, error: %v", step.Name, err)
 	}
 	cache := make(paramCache)
-	modifiedStepYaml, err := u.replaceStringValues(step, string(stepYaml), index, cache)
+	modifiedStepYaml, delayedKeyTypes, err := u.replaceStringValues(step, string(stepYaml), index, cache)
 	if err != nil {
 		log.Printf("Failed to replace tags in step %s", step.Name)
 		return step, err
@@ -52,39 +57,84 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
 		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
 	}
-	if step.Files == nil {
-		return modifiedStep, nil
+	moduleChecksums, err := calculateModuleChecksums(modifiedStep)
+	if err != nil {
+		return modifiedStep, err
 	}
+	modifiedStepYaml, err = u.replaceDelayedStringValues(step, modifiedStepYaml, index, cache, delayedKeyTypes)
+	if err != nil {
+		log.Printf("Failed to replace delayed tags in step %s", step.Name)
+		return step, err
+	}
+	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
+	if err != nil {
+		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
+		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
+	}
+	for i, module := range modifiedStep.Modules {
+		module.InputsChecksum = moduleChecksums[module.Name]
+		modifiedStep.Modules[i] = module
+	}
+	err = u.replaceConfigStepFileValues(step, &modifiedStep, index, cache)
+	return modifiedStep, err
+}
+
+func calculateModuleChecksums(step model.Step) (map[string][]byte, error) {
+	checksums := make(map[string][]byte)
+	for i, module := range step.Modules {
+		if len(module.Inputs) == 0 {
+			continue
+		}
+		sorted := util.SortKeys(module.Inputs)
+		inputsYaml, err := yaml.Marshal(sorted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert step %s module %s inputs to yaml, error: %v", step.Name,
+				module.Name, err)
+		}
+		checksums[module.Name] = util.CalculateHash(inputsYaml)
+		step.Modules[i] = module
+	}
+	return checksums, nil
+}
+
+func (u *updater) replaceConfigStepFileValues(step model.Step, modifiedStep *model.Step, index int, cache paramCache) error {
 	for _, file := range step.Files {
 		if !strings.HasSuffix(file.Name, ".tf") && !strings.HasSuffix(file.Name, ".yaml") &&
 			!strings.HasSuffix(file.Name, ".yml") && !strings.HasSuffix(file.Name, ".hcl") {
 			modifiedStep.Files = append(modifiedStep.Files, model.File{
-				Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
-				Content: file.Content,
+				Name:     strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
+				Content:  file.Content,
+				Checksum: util.CalculateHash(file.Content),
 			})
 			continue
 		}
-		newContent, err := u.replaceStringValues(step, string(file.Content), index, cache)
-		content := []byte(newContent)
+		newContent, delayedKeyTypes, err := u.replaceStringValues(step, string(file.Content), index, cache)
 		if err != nil {
-			return modifiedStep, fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
+			return fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
 		}
+		checksum := util.CalculateHash([]byte(newContent))
+		newContent, err = u.replaceDelayedStringValues(step, newContent, index, cache, delayedKeyTypes)
+		if err != nil {
+			return fmt.Errorf("failed to replace delayed tags in file %s: %v", file.Name, err)
+		}
+		content := []byte(newContent)
 		err = validateStepFile(file.Name, content)
 		if err != nil {
-			return modifiedStep, err
+			return err
 		}
 		modifiedStep.Files = append(modifiedStep.Files, model.File{
-			Name:    strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
-			Content: content,
+			Name:     strings.TrimPrefix(file.Name, fmt.Sprintf(IncludeFormat, step.Name)+"/"),
+			Content:  content,
+			Checksum: checksum,
 		})
 	}
-	return modifiedStep, nil
+	return nil
 }
 
 func validateStepFile(file string, content []byte) error {
 	if strings.HasSuffix(file, ".tf") || strings.HasSuffix(file, ".hcl") {
 		_, diags := hclwrite.ParseConfig(content, file, hcl.InitialPos)
-		if diags.HasErrors() {
+		if diags != nil && diags.HasErrors() {
 			slog.Debug(fmt.Sprintf("broken hcl %s:\n%s", file, string(content)))
 			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}
@@ -99,11 +149,12 @@ func validateStepFile(file string, content []byte) error {
 	return nil
 }
 
-func (u *updater) replaceStringValues(step model.Step, content string, index int, cache paramCache) (string, error) {
+func (u *updater) replaceStringValues(step model.Step, content string, index int, cache paramCache) (string, map[string]keyType, error) {
 	matches := replaceRegex.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
-		return content, nil
+		return content, nil, nil
 	}
+	delayedKeyTypes := make(map[string]keyType) // Delay replace tags that dynamically change, e.g. module version
 	for _, match := range matches {
 		replaceTag := match[0]
 		replaceKey := match[1]
@@ -111,18 +162,43 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			content = strings.Replace(content, replaceTag, strings.Trim(replaceKey, "`"), 1)
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		replacement, err := u.getReplacementValue(step, index, replaceKey, replaceType, cache)
-		if err != nil {
-			return "", err
+		var replacement string
+		for _, keyType := range keyTypes {
+			if strings.HasPrefix(keyType.ReplaceKey, `"`) {
+				replacement = strings.Trim(keyType.ReplaceKey, `"`)
+				break
+			}
+			if keyType.ReplaceType == string(model.ReplaceTypeAgent) {
+				delayedKeyTypes[replaceTag] = keyType
+				continue
+			}
+			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
+			if err != nil {
+				return "", nil, err
+			}
+			if replacement != "" {
+				break
+			}
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
 			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
 		}
+	}
+	return content, delayedKeyTypes, nil
+}
+
+func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes map[string]keyType) (string, error) {
+	for replaceTag, keyType := range delayedKeyTypes {
+		replacement, err := u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
+		if err != nil {
+			return "", err
+		}
+		content = strings.Replace(content, replaceTag, replacement, 1)
 	}
 	return content, nil
 }
@@ -508,11 +584,18 @@ func replaceConfigTags(prefix string, config model.Config, content string, match
 		if hasSamePrefixSuffix(replaceKey, "`") {
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
-		if replaceType != string(model.ReplaceTypeConfig) {
+		replaceKey = ""
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeConfig) {
+				replaceKey = keyType.ReplaceKey
+				break
+			}
+		}
+		if replaceKey == "" {
 			continue
 		}
 		configKey := replaceKey[strings.Index(replaceKey, ".")+1:]
@@ -536,12 +619,19 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 		if hasSamePrefixSuffix(replaceKey, "`") {
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return "", err
 		}
-		if replaceType != string(model.ReplaceTypeSSMCustom) && replaceType != string(model.ReplaceTypeGCSMCustom) &&
-			replaceType != string(model.ReplaceTypeOutputCustom) {
+		replaceKey = ""
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeSSMCustom) || keyType.ReplaceType == string(model.ReplaceTypeGCSMCustom) ||
+				keyType.ReplaceType == string(model.ReplaceTypeOutputCustom) {
+				replaceKey = keyType.ReplaceKey
+				break
+			}
+		}
+		if replaceKey == "" {
 			continue
 		}
 		parameter, err := getSSMCustomParameter(ssm, replaceKey)
@@ -585,11 +675,18 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		if hasSamePrefixSuffix(replaceKey, "`") {
 			continue
 		}
-		replaceKey, replaceType, err := parseReplaceTag(match)
+		keyTypes, err := parseReplaceTag(match)
 		if err != nil {
 			return content, err
 		}
-		if replaceType != string(model.ReplaceTypeModule) {
+		replaceKey = ""
+		for _, keyType := range keyTypes {
+			if keyType.ReplaceType == string(model.ReplaceTypeModule) {
+				replaceKey = keyType.ReplaceKey
+				break
+			}
+		}
+		if replaceKey == "" {
 			continue
 		}
 		replacement, err := getReplacementModuleValue(replaceKey, module)
@@ -618,15 +715,24 @@ func getReplacementModuleValue(replaceKey string, module model.Module) (string, 
 	return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
 }
 
-func parseReplaceTag(match []string) (string, string, error) {
+func parseReplaceTag(match []string) ([]keyType, error) {
 	if len(match) != 2 {
-		return "", "", fmt.Errorf("failed to parse replace tag match %s", match[0])
+		return nil, fmt.Errorf("failed to parse replace tag match %s", match[0])
 	}
-	replaceKey := strings.TrimLeft(strings.Trim(match[1], " "), ".")
-	splitIndex := strings.Index(replaceKey, ".")
-	if splitIndex == -1 || len(replaceKey) <= splitIndex {
-		return "", "", fmt.Errorf("invalid replace tag format: %s", match[0])
+	replaceTags := strings.Split(match[1], "|")
+	var keyTypes []keyType
+	for _, tag := range replaceTags {
+		replaceKey := strings.TrimLeft(strings.Trim(tag, " "), ".")
+		if strings.HasPrefix(replaceKey, `"`) {
+			keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: ""})
+			continue
+		}
+		splitIndex := strings.Index(replaceKey, ".")
+		if splitIndex == -1 || len(replaceKey) <= splitIndex {
+			return nil, fmt.Errorf("invalid replace tag format: %s", match[0])
+		}
+		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
+		keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: replaceType})
 	}
-	replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
-	return replaceKey, replaceType, nil
+	return keyTypes, nil
 }

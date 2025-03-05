@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/hcl/v2"
@@ -42,15 +41,13 @@ type terraform struct {
 	providerType  model.ProviderType
 	configSources []model.ConfigSource
 	sources       map[string]*model.Source
-	storage       git.Storage
 }
 
-func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source, storage git.Storage) Terraform {
+func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source) Terraform {
 	return &terraform{
 		providerType:  providerType,
 		configSources: configSources,
 		sources:       sources,
-		storage:       storage,
 	}
 }
 
@@ -119,21 +116,20 @@ func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[s
 }
 
 func (t *terraform) findProviderFile(path string, fileName string, sourceVersions map[string]string) (*hclwrite.File, string, error) {
-	providerName := fmt.Sprintf("providers/%s", fileName)
 	sourceURL := ""
 	release := ""
 	for _, configSource := range t.configSources {
 		source := t.sources[configSource.URL]
-		if util.IsLocalSource(source.URL) && util.FileExists(filepath.Join(source.URL, path), fileName) {
+		if util.IsLocalSource(configSource.URL) && source.Storage.FileExists(filepath.Join(path, fileName), "") {
 			sourceURL = source.URL
 			release = source.ForcedVersion
 			break
 		}
-		if source.CurrentChecksums[providerName] == "" {
-			continue
-		}
 		sourceVersion := sourceVersions[source.URL]
 		if sourceVersion == "" {
+			continue
+		}
+		if !source.Storage.FileExists(filepath.Join(path, fileName), sourceVersion) {
 			continue
 		}
 		sourceURL = source.URL
@@ -150,7 +146,11 @@ func (t *terraform) findProviderFile(path string, fileName string, sourceVersion
 }
 
 func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release string) (*hclwrite.File, error) {
-	rawFile, err := t.storage.GetFile(sourceURL, fmt.Sprintf("%s/%s", filePath, fileName), release)
+	source := t.sources[sourceURL]
+	if source == nil {
+		return nil, fmt.Errorf("tf source %s not found", sourceURL)
+	}
+	rawFile, err := source.Storage.GetFile(fmt.Sprintf("%s/%s", filePath, fileName), release)
 	if err != nil {
 		return nil, err
 	}

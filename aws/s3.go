@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"io"
 	"log"
 	"strings"
@@ -28,8 +29,11 @@ type S3 struct {
 
 func NewS3(ctx context.Context, awsConfig aws.Config, bucket string) *S3 {
 	return &S3{
-		ctx:    ctx,
-		awsS3:  awsS3.NewFromConfig(awsConfig),
+		ctx: ctx,
+		awsS3: awsS3.NewFromConfig(awsConfig, func(o *awsS3.Options) {
+			// Avoids checksum warn on error responses https://github.com/aws/aws-sdk-go-v2/issues/3020
+			o.DisableLogOutputChecksumValidationSkipped = true
+		}),
 		region: awsConfig.Region,
 		bucket: bucket,
 	}
@@ -143,11 +147,19 @@ func (s *S3) DeleteFiles(files []string) error {
 			Key: aws.String(file),
 		})
 	}
-	_, err := s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
-		Bucket: aws.String(s.bucket),
-		Delete: &types.Delete{Objects: objects},
-	})
-	return checkNotFoundError(err)
+	for len(objects) > 0 {
+		limit := util.MinInt(len(objects), 1000) // Max 1000 objects per request
+		_, err := s.awsS3.DeleteObjects(s.ctx, &awsS3.DeleteObjectsInput{
+			Bucket: aws.String(s.bucket),
+			Delete: &types.Delete{Objects: objects[:limit]},
+		})
+		err = checkNotFoundError(err)
+		if err != nil {
+			return err
+		}
+		objects = objects[limit:]
+	}
+	return nil
 }
 
 func (s *S3) DeleteFile(file string) error {

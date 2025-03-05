@@ -109,7 +109,6 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
-* github-token - **optional** GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
@@ -135,7 +134,6 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
-* github-token - **optional** GitHub token for querying releases as unauthenticated rate limit is low [$GITHUB_TOKEN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
@@ -298,6 +296,10 @@ sources:
     include: []string
     exclude: []string
     force_version: bool
+    username: string
+    password: string
+    insecure: bool
+    repo_path: string
 destinations:
   - name:
     git:
@@ -357,6 +359,10 @@ Source version is overwritten by module version. Default version is **stable** w
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
   * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
+  * username - username for git authentication
+  * password - password for git authentication, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-password}}"`
+  * insecure - allow insecure connection, default **false**
+  * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
   * name - name of the destination
   * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
@@ -412,7 +418,7 @@ Step, module and input field values can be overwritten by using replacement tags
 
 Replacement tags can be overwritten by values from terraform output, config itself or custom agent logic. If the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager. For output values it's possible to use the keywords `ssm`, `gcsm` and `output`. There's also a special type based keyword `toutput` that uses the output from a module with the specified type instead of a name.
 
-If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found.
+If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
 
 Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, ``{{`{{ .dbupdate }}`}}`` will be replaced with `{{ .dbupdate }}`. This can be used to pass helm template values through the agent.
 
