@@ -88,7 +88,9 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 		releases = append(releases, tagVersion)
 		return nil
 	})
-	slog.Debug(fmt.Sprintf("Tags are not a valid semversion: %s", strings.Join(invalidTags.ToSlice(), ", ")))
+	if len(invalidTags) > 0 {
+		slog.Debug(fmt.Sprintf("Tags are not a valid semversion: %s", strings.Join(invalidTags.ToSlice(), ", ")))
+	}
 	sort.Sort(version.Collection(releases))
 	return releases, releaseSet, err
 }
