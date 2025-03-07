@@ -174,7 +174,8 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 			return nil, nil, err
 		}
 		if plannedResource == nil {
-			return nil, nil, fmt.Errorf("planned resource not found for type %s", item.Type)
+			return nil, nil, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in plan file",
+				item.Type, dstModule, name)
 		}
 		name = plannedResource.Name
 		typeIndex := strings.Index(plannedResource.Address, item.Type)
@@ -283,8 +284,8 @@ func (p *planner) getResource(rsType string, module module) (resourceStateV4, er
 		found = &resource
 	}
 	if found == nil {
-		return resourceStateV4{}, fmt.Errorf("resource of type %s module %s name %s not found", rsType,
-			module.Module, module.Name)
+		return resourceStateV4{}, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in state file",
+			rsType, module.Module, module.Name)
 	}
 	return *found, nil
 }
@@ -297,6 +298,9 @@ func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, erro
 		}
 		if resource.Type != item.Type {
 			continue
+		}
+		if item.Type == "aws_db_subnet_group" {
+			fmt.Println("here")
 		}
 		if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
 			continue
