@@ -138,7 +138,7 @@ func (l *LocalPipeline) getLogFileWriter(prefix string, command model.ActionComm
 	fileName = strings.ReplaceAll(fileName, "-", "_")
 	file, err := os.OpenFile(filepath.Join(l.logsPath, fileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		slog.Warn(fmt.Sprintf("Failed to open log file: %v", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to open log file: %v", err)))
 		return nil
 	}
 	return file

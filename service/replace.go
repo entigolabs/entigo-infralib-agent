@@ -361,7 +361,7 @@ func getOutputValue(output tfOutput, replaceKey string, match []string) (string,
 		}
 		return getSSMParameterValueFromList(match, values, replaceKey, match[1])
 	case map[string]interface{}:
-		slog.Warn(fmt.Sprintf("tf output %s is a map, returning as json", replaceKey))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", replaceKey)))
 		bytes, err := json.Marshal(v)
 		if err != nil {
 			return "", err

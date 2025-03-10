@@ -147,11 +147,11 @@ func validateValueChange(change resourceChangePlan, beforeJson, afterJson json.R
 	var before changedValuePlan
 	var after changedValuePlan
 	if err := json.Unmarshal(beforeJson, &before); err != nil {
-		slog.Error(fmt.Sprintf("Failed to unmarshal before value for %s: %s", change.Address, err))
+		slog.Error(common.PrefixError(fmt.Errorf("failed to unmarshal before value for %s: %s", change.Address, err)))
 		return
 	}
 	if err := json.Unmarshal(afterJson, &after); err != nil {
-		slog.Error(fmt.Sprintf("Failed to unmarshal after value for %s: %s", change.Address, err))
+		slog.Error(common.PrefixError(fmt.Errorf("failed to unmarshal after value for %s: %s", change.Address, err)))
 		return
 	}
 	if before.Value != after.Value {

@@ -339,7 +339,8 @@ func (u *updater) getMostReleases() int {
 	mostReleases := 0
 	for _, source := range u.sources {
 		if source.ForcedVersion != "" {
-			slog.Warn(fmt.Sprintf("Source %s has forced version %s", source.URL, source.ForcedVersion))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Source %s has forced version %s", source.URL,
+				source.ForcedVersion)))
 		}
 		if len(source.Releases) > mostReleases {
 			mostReleases = len(source.Releases)
@@ -434,8 +435,8 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 		log.Printf("Step %s updating %s files for destination %s\n", step.Name, branch, name)
 		err := destination.UpdateFiles(branch, folder, files)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s", step.Name, branch,
-				name, err))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s",
+				step.Name, branch, name, err)))
 			return
 		}
 	}
@@ -1092,7 +1093,8 @@ func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateSt
 	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
 	err := u.callback.PostStepState(status, stepState)
 	if err != nil {
-		slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
+		slog.Error(common.PrefixError(fmt.Errorf("error posting step %s status '%s' to callback: %v",
+			stepState.Name, status, err)))
 	}
 }
 

@@ -119,7 +119,7 @@ func (p *planner) Plan() {
 	for _, item := range p.config.Import {
 		itemImports, itemRemoves, err := p.planItem(item)
 		if err != nil {
-			slog.Error(err.Error())
+			slog.Error(common.PrefixError(err))
 			continue
 		}
 		imports = append(imports, itemImports...)
