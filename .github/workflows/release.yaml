@@ -24,9 +24,9 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: eu-north-1
           PROJECT_ID: entigo-infralib-agent
-          LOCATION: europe-north1
+          LOCATION: europe-west1
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          ZONE: europe-north1-a
+          ZONE: europe-west1-a
         run: |
           mkdir -p $(echo ~)/.config/gcloud
           echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
