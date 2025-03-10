@@ -87,36 +87,18 @@ func NewPipeline(ctx context.Context, projectId string, location string, prefix 
 
 func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projectId, location, prefix, serviceAccount string) error {
 	collection := fmt.Sprintf("projects/%s/locations/%s", projectId, location)
+	err := createTarget(ctx, client, collection, fmt.Sprintf("%s-plan", prefix), serviceAccount)
+	if err != nil {
+		return err
+	}
+	return createTarget(ctx, client, collection, fmt.Sprintf("%s-apply", prefix), serviceAccount)
+}
+
+func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collection, name, serviceAccount string) error {
 	_, err := client.CreateTarget(ctx, &deploypb.CreateTargetRequest{
 		Parent:   collection,
-		TargetId: fmt.Sprintf("%s-plan", prefix),
+		TargetId: name,
 		Target: &deploypb.Target{
-			DeploymentTarget: &deploypb.Target_Run{
-				Run: &deploypb.CloudRunLocation{
-					Location: collection,
-				},
-			},
-			ExecutionConfigs: []*deploypb.ExecutionConfig{{
-				Usages: []deploypb.ExecutionConfig_ExecutionEnvironmentUsage{
-					deploypb.ExecutionConfig_RENDER,
-					deploypb.ExecutionConfig_DEPLOY,
-				},
-				ExecutionTimeout: &durationpb.Duration{Seconds: 86400},
-				ServiceAccount:   serviceAccount,
-			}},
-		},
-	})
-	if err != nil {
-		var apiError *apierror.APIError
-		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.AlreadyExists {
-			return err
-		}
-	}
-	_, err = client.CreateTarget(ctx, &deploypb.CreateTargetRequest{
-		Parent:   collection,
-		TargetId: fmt.Sprintf("%s-apply", prefix),
-		Target: &deploypb.Target{
-			RequireApproval: true,
 			DeploymentTarget: &deploypb.Target_Run{
 				Run: &deploypb.CloudRunLocation{
 					Location: collection,

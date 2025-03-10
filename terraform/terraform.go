@@ -411,6 +411,9 @@ func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 }
 
 func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, module model.Module, sourceURL, release string) error {
+	if util.IsClientModule(module) {
+		return nil
+	}
 	moduleSource := module.Source
 	if stepType == model.StepTypeArgoCD {
 		moduleSource = fmt.Sprintf("k8s/%s", module.Source)

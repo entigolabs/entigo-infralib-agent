@@ -148,7 +148,7 @@ func TarGzWrite(inDirPath string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		header.Name = filepath.Join(filepath.Base(inDirPath), strings.TrimPrefix(file, inDirPath))
+		header.Name = filepath.Join(filepath.Base(inDirPath), fi.Name())
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}

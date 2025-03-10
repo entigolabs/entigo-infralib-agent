@@ -354,7 +354,7 @@ Source version is overwritten by module version. Default version is **stable** w
 
 * prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
 * sources - list of source repositories for Entigo Infralib modules
-  * url - url of the source repository or path to the local directory. Path must start with `./` or `../` Path will set force_version to true and use `local` as the version. Path only works with the local pipeline execution type.
+  * url - url of the source repository or path to the local directory. Path must start with `./` or `../` Path will set force_version to true and use `local` as the version. Path only works with the local pipeline execution type. Terraform and argocd implementation doesn't currently support using repos with authentication.
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
