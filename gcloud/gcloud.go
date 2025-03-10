@@ -6,6 +6,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -136,16 +137,16 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	agentJob := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.RunCommand)
 	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err)))
 	}
 	agentJob = fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.UpdateCommand)
 	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err)))
 	}
 	err = g.resources.GetPipeline().(*Pipeline).deleteTargets()
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete pipeline targets: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete pipeline targets: %s", err)))
 	}
 	iam, err := NewIAM(g.ctx, g.projectId)
 	if err != nil {
@@ -157,7 +158,7 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	}
 	err = iam.DeleteServiceAccount(accountName)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err)))
 	}
 	if deleteServiceAccount {
 		g.DeleteServiceAccount(iam)
@@ -169,7 +170,7 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	err = g.resources.GetBucket().Delete()
 	if err != nil {
 		bucket := fmt.Sprintf("%s-%s", g.cloudPrefix, g.projectId)
-		common.PrintWarning(fmt.Sprintf("Failed to delete storage bucket %s: %s", bucket, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete storage bucket %s: %s", bucket, err)))
 	}
 }
 
@@ -275,11 +276,11 @@ func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
 	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
 	err := iam.DeleteServiceAccount(username)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete service account %s: %s", username, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", username, err)))
 	}
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	err = g.resources.SSM.DeleteParameter(keyParam)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete secret %s: %s", keyParam, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete secret %s: %s", keyParam, err)))
 	}
 }

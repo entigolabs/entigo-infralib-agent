@@ -19,11 +19,16 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
     * [Service Account](#service-account)
     * [Pull](#pull)
     * [Custom Parameters](#custom-parameters)
+    * [Migrate Plan](#migrate-plan)
+    * [Migrate Validate](#migrate-validate)
 * [Config](#config)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
   * [Including files in steps](#including-files-in-steps)
   * [Callback](#callback)
+* [Migration Helper](#migration-helper)
+  * [Import File](#import-file)
+  * [Type Identifications File](#type-identifications-file)
 
 ## Requirements
 
@@ -243,6 +248,42 @@ Example
 bin/ei-agent add-custom --key=custom-key --value=custom-value
 ```
 
+### migrate-plan
+
+Generates import and rm terraform commands based on the input files. **Warning!** Always check the import and rm commands before executing them. More info in [Migration Helper](#migration-helper).
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the previous terraform state file [$STATE_FILE]
+* plan-file - path to the terraform plan file [$PLAN_FILE]
+* import-file - path to the import file [$IMPORT_FILE]
+* types-file - **optional**, path for type identifications file [$TYPES_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-plan --state-file=state-file.json --import-file=import-file.yaml
+```
+
+### migrate-validate
+
+Validate a terraform plan file based on the import config and infralib terraform state. Outputs 3 types of warnings:
+1. If plan wants to create or remove a resource that should be in the infralib state file.
+2. If plan wants to create or remove a resource that has the same type as the type in the import file.
+3. If plan wants to change a value of a resource.
+
+More info in [Migration Helper](#migration-helper).
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the new terraform state file [$STATE_FILE]
+* plan-file - path to the terraform plan file [$PLAN_FILE]
+* import-file - path to the import file [$IMPORT_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-plan --state-file=state-file.json --import-file=import-file.yaml
+```
+
 ## Config
 
 Config is provided with a yaml file:
@@ -433,3 +474,61 @@ Payload example:
   * name - name of the module
   * applied_version - version of the module that was successfully applied previously
   * version - version of the module that was or will be applied
+
+## Migration Helper
+
+Agent includes 2 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
+
+Both commands require a terraform plan and v4 state files. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine auto-approve type `reject` and `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
+
+First generate terraform import commands with the `migrate-plan` command, then after executing them, run the pipelines with the auto-approve `reject` type to generate a new plan. Use the `migrate-validate` command to validate the new plan along with the new state.
+
+### Import File
+
+Import configuration file is used to tell the migration commands which type of resources should be migrated.
+
+```yaml
+import:
+  - type: string
+    name: string
+    source:
+      module: string
+      name: string
+      index_key: int | string
+      index_keys: []int | []string
+    destination:
+      module: string
+      name: string
+      index_key: int | string
+      index_keys: []int | []string
+```
+
+* type - type of the resource to import
+* name - optional, overwrites source and destination names
+* source - source is a resource from the previous state file
+* destination - destination is a resource from the plan file
+    * module - optional, module name of the resource
+    * name - optional, name of the resource
+    * index_key - optional, index key of the resource instance
+    * index_keys - optional, index keys of the resource instance
+
+If module and name are empty then agent will try to find the resource from the state/plan file based on the type. If there are more than 1 resource with that type then a warning is printed.
+
+Index key and index keys are mutually exclusive. Index keys can be used to map instances in different order to the new state.
+
+Plan command generates import commands for the destination resources and rm commands for the source resources.
+
+### Type Identifications File
+
+Type identifications file is used to map a resource type to an identification used by terraform for the import command. Agent will replace any placeholder `{}` values with values from the resource instance attributes. Default file is located in `migrate/types.yaml`.
+
+```yaml
+typeIdentifications:
+  - identification: string
+    listSeparator: string
+    types: []string
+```
+
+* identification - identification used by terraform for the import command, e.g `"{id}"`
+* listSeparator - optional, separator for identification values that are lists, default `/`
+* types - list of resource types that use the identification

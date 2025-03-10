@@ -39,6 +39,10 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(append(baseFlags, getProviderFlags()...), &keyFlag, &valueFlag, &overwriteFlag)
 	case common.DeleteCustomCommand, common.GetCustomCommand:
 		return append(append(baseFlags, getProviderFlags()...), &keyFlag)
+	case common.MigratePlanCommand:
+		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag, &typesFileFlag)
+	case common.MigrateValidateCommand:
+		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag)
 	default:
 		return baseFlags
 	}
@@ -250,5 +254,49 @@ var overwriteFlag = cli.BoolFlag{
 	Usage:       "overwrite existing parameter",
 	Value:       false,
 	Destination: &flags.Params.Overwrite,
+	Required:    false,
+}
+
+var stateFileFlag = cli.StringFlag{
+	Name:        "state-file",
+	Aliases:     []string{"sf"},
+	EnvVars:     []string{"STATE_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for terraform state file",
+	Destination: &flags.Migrate.StateFile,
+	Required:    true,
+}
+
+var importFileFlag = cli.StringFlag{
+	Name:        "import-file",
+	Aliases:     []string{"if"},
+	EnvVars:     []string{"IMPORT_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for import file",
+	Destination: &flags.Migrate.ImportFile,
+	Required:    true,
+}
+
+var planFileFlag = cli.StringFlag{
+	Name:        "plan-file",
+	Aliases:     []string{"pl"},
+	EnvVars:     []string{"PLAN_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for terraform plan file",
+	Destination: &flags.Migrate.PlanFile,
+	Required:    true,
+}
+
+var typesFileFlag = cli.StringFlag{
+	Name:        "types-file",
+	Aliases:     []string{"tf"},
+	EnvVars:     []string{"TYPES_FILE"},
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path for type identifications file",
+	Destination: &flags.Migrate.TypesFile,
 	Required:    false,
 }

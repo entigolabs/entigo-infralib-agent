@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/entigolabs/entigo-infralib-agent/cli"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,6 @@ func main() {
 
 	sig := <-terminated
 	if sig != nil {
-		common.PrintWarning("agent was terminated, exiting")
+		slog.Warn(common.PrefixWarning("agent was terminated, exiting"))
 	}
 }

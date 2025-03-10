@@ -13,6 +13,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
+	"log/slog"
 	"time"
 )
 
@@ -154,26 +155,26 @@ func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	agentProjectName := fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.RunCommand)
 	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent run pipeline: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent run pipeline: %s", err)))
 	}
 	err = a.resources.GetBuilder().DeleteProject(agentProjectName, model.Step{})
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent run project: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent run project: %s", err)))
 	}
 
 	agentProjectName = fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.UpdateCommand)
 	err = a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent update pipeline: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent update pipeline: %s", err)))
 	}
 	err = a.resources.GetBuilder().DeleteProject(agentProjectName, model.Step{})
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete agent update project: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent update project: %s", err)))
 	}
 
 	err = DeleteDynamoDBTable(a.ctx, a.awsConfig, fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId))
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete DynamoDB table: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete DynamoDB table: %s", err)))
 	}
 	a.deleteCloudWatchLogs()
 	a.deleteIAMRoles()
@@ -186,7 +187,7 @@ func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	}
 	err = a.resources.GetBucket().Delete()
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err)))
 	}
 }
 
@@ -337,11 +338,11 @@ func (a *awsService) deleteCloudWatchLogs() {
 	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
 	err := cloudwatch.DeleteLogStream(logGroup, logStream)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete CloudWatch log stream: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete CloudWatch log stream: %s", err)))
 	}
 	err = cloudwatch.DeleteLogGroup(logGroup)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete CloudWatch log group: %s", err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete CloudWatch log group: %s", err)))
 	}
 }
 
@@ -349,28 +350,28 @@ func (a *awsService) deleteIAMRoles() {
 	buildRole := a.getBuildRoleName()
 	err := a.resources.IAM.DeleteRolePolicyAttachments(buildRole)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policies %s: %s", buildRole, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM policies %s: %s", buildRole, err)))
 	}
 	err = a.resources.IAM.DeleteRole(buildRole)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", buildRole, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", buildRole, err)))
 	}
 	err = a.resources.IAM.DeletePolicy(buildRole, a.accountId)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", buildRole, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", buildRole, err)))
 	}
 	pipelineRole := a.getPipelineRoleName()
 	err = a.resources.IAM.DeleteRolePolicyAttachments(pipelineRole)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", pipelineRole, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", pipelineRole, err)))
 	}
 	err = a.resources.IAM.DeleteRole(pipelineRole)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", pipelineRole, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", pipelineRole, err)))
 	}
 	err = a.resources.IAM.DeletePolicy(pipelineRole, a.accountId)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", pipelineRole, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", pipelineRole, err)))
 	}
 }
 
@@ -413,28 +414,28 @@ func (a *awsService) DeleteServiceAccount() {
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, username)
 	err := a.resources.IAM.DetachUserPolicy(policyArn, username)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", username, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", username, err)))
 	}
 	err = a.resources.IAM.DeleteAccessKeys(username)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM access keys for %s: %s", username, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM access keys for %s: %s", username, err)))
 	}
 	err = a.resources.IAM.DeleteUser(username)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM user %s: %s", username, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM user %s: %s", username, err)))
 	}
 	err = a.resources.IAM.DeletePolicy(username, a.accountId)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", username, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", username, err)))
 	}
 	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
 	err = a.resources.SSM.DeleteParameter(accessKeyIdParam)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", accessKeyIdParam, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", accessKeyIdParam, err)))
 	}
 	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
 	err = a.resources.SSM.DeleteParameter(secretAccessKeyParam)
 	if err != nil {
-		common.PrintWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", secretAccessKeyParam, err))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", secretAccessKeyParam, err)))
 	}
 }

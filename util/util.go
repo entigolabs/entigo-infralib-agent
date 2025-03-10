@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -221,7 +222,7 @@ func SetChildStringValue(data map[string]interface{}, newValue string, overwrite
 }
 
 func DelayBucketCreation(bucket string, skipDelay bool) {
-	common.PrintWarning(fmt.Sprintf("Bucket %s doesn't exist", bucket))
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("Bucket %s doesn't exist", bucket)))
 	if skipDelay {
 		return
 	}
@@ -253,7 +254,7 @@ func AskForConfirmation() {
 		} else if response == "n" || response == "no" {
 			log.Fatalf("Operation cancelled.")
 		} else {
-			common.PrintWarning("Invalid input. Please enter Y or N.")
+			slog.Warn(common.PrefixWarning("Invalid input. Please enter Y or N."))
 		}
 	}
 }

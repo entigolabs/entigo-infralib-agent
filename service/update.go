@@ -262,7 +262,7 @@ func (u *updater) Run() {
 	for _, step := range u.steps {
 		retry, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
-			common.PrintError(err)
+			slog.Error(common.PrefixError(err))
 			failed = true
 			break
 		}
@@ -313,7 +313,7 @@ func (u *updater) Update() {
 		for _, step := range u.steps {
 			retry, err := u.processStep(index, step, wg, errChan)
 			if err != nil {
-				common.PrintError(err)
+				slog.Error(common.PrefixError(err))
 				failed = true
 				break
 			}
@@ -339,7 +339,8 @@ func (u *updater) getMostReleases() int {
 	mostReleases := 0
 	for _, source := range u.sources {
 		if source.ForcedVersion != "" {
-			slog.Warn(fmt.Sprintf("Source %s has forced version %s", source.URL, source.ForcedVersion))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Source %s has forced version %s", source.URL,
+				source.ForcedVersion)))
 		}
 		if len(source.Releases) > mostReleases {
 			mostReleases = len(source.Releases)
@@ -377,7 +378,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		var parameterError *model.ParameterNotFoundError
 		if wg.HasCount() && errors.As(err, &parameterError) {
-			common.PrintWarning(err.Error())
+			slog.Warn(common.PrefixWarning(err.Error()))
 			log.Printf("Step %s will be retried if others succeed\n", step.Name)
 			return true, nil
 		}
@@ -413,7 +414,7 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 		log.Printf("Retrying step %s\n", step.Name)
 		_, err := u.processStep(index, step, wg, nil)
 		if err != nil {
-			common.PrintError(err)
+			slog.Error(common.PrefixError(err))
 			log.Fatalf("Failed to apply step %s", step.Name)
 		}
 	}
@@ -434,8 +435,8 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 		log.Printf("Step %s updating %s files for destination %s\n", step.Name, branch, name)
 		err := destination.UpdateFiles(branch, folder, files)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s", step.Name, branch,
-				name, err))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s",
+				step.Name, branch, name, err)))
 			return
 		}
 	}
@@ -462,7 +463,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		defer wg.Done()
 		err := u.executePipeline(firstRun, step, stepState, index, files)
 		if err != nil {
-			common.PrintError(err)
+			slog.Error(common.PrefixError(err))
 			errChan <- err
 		}
 	}()
@@ -1092,7 +1093,8 @@ func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateSt
 	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
 	err := u.callback.PostStepState(status, stepState)
 	if err != nil {
-		slog.Error(fmt.Sprintf("error posting step %s status '%s' to callback: %v", stepState.Name, status, err))
+		slog.Error(common.PrefixError(fmt.Errorf("error posting step %s status '%s' to callback: %v",
+			stepState.Name, status, err)))
 	}
 }
 

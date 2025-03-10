@@ -226,7 +226,8 @@ func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBloc
 		}
 	}
 	if len(providerInputs) > 0 {
-		common.PrintWarning(fmt.Sprintf("WARNING! Unknown provider inputs: %v for step %s", providerInputs, step.Name))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("WARNING! Unknown provider inputs: %v for step %s",
+			providerInputs, step.Name)))
 	}
 	return providers, nil
 }

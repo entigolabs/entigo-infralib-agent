@@ -520,7 +520,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 			}
 			err := p.stopPipelineExecution(pipelineName, *executionId, reason)
 			if err != nil {
-				common.PrintWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error()))
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error())))
 			}
 			if step.Approve == model.ApproveReject {
 				return fmt.Errorf("stopped because step approve type is 'reject'")
@@ -618,7 +618,8 @@ func (p *Pipeline) stopPreviousExecution(pipelineName, executionId string, actio
 		log.Printf("Stopping previous pipeline %s execution\n", pipelineName)
 		err = p.stopPipelineExecution(pipelineName, previousId, "New pipeline execution started")
 		if err != nil {
-			slog.Warn(fmt.Sprintf("Couldn't stop previous pipeline %s execution %s, please stop it manually, error: %s", pipelineName, previousId, err.Error()))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't stop previous pipeline %s execution %s, "+
+				"please stop it manually, error: %s", pipelineName, previousId, err.Error())))
 		}
 		return
 	}

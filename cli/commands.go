@@ -18,6 +18,8 @@ func cliCommands() []*cli.Command {
 		&deleteCustomCommand,
 		&getCustomCommand,
 		&listCustomCommand,
+		&migratePlanCommand,
+		&migrateValidateCommand,
 	}
 }
 
@@ -107,4 +109,20 @@ var listCustomCommand = cli.Command{
 	Usage:   "list custom parameters",
 	Action:  action(common.ListCustomCommand),
 	Flags:   cliFlags(common.ListCustomCommand),
+}
+
+var migratePlanCommand = cli.Command{
+	Name:    string(common.MigratePlanCommand),
+	Aliases: []string{"mp"},
+	Usage:   "compile a migration plan for terraform",
+	Action:  action(common.MigratePlanCommand),
+	Flags:   cliFlags(common.MigratePlanCommand),
+}
+
+var migrateValidateCommand = cli.Command{
+	Name:    string(common.MigrateValidateCommand),
+	Aliases: []string{"mv"},
+	Usage:   "validate a terraform plan file based on the import config",
+	Action:  action(common.MigrateValidateCommand),
+	Flags:   cliFlags(common.MigrateValidateCommand),
 }

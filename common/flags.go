@@ -23,6 +23,7 @@ type Flags struct {
 	AWS                     AWS
 	Delete                  DeleteFlags
 	Params                  Params
+	Migrate                 Migrate
 }
 
 type GCloud struct {
@@ -45,6 +46,13 @@ type Pipeline struct {
 	Type      string
 	LogsPath  string
 	PrintLogs bool
+}
+
+type Migrate struct {
+	StateFile  string
+	ImportFile string
+	PlanFile   string
+	TypesFile  string
 }
 
 type PipelineType string
