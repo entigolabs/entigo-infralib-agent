@@ -35,7 +35,7 @@ func addParam(ssm model.SSM, params common.Params) error {
 		return err
 	}
 	if exists && !params.Overwrite {
-		log.Printf("Parameter '%s' already exists. Overwrite the value? (Y/N):", params.Key)
+		fmt.Printf("Parameter '%s' already exists. Overwrite the value? (Y/N):", params.Key)
 		util.AskForConfirmation()
 	}
 	err = ssm.PutParameter(params.Key, params.Value)
