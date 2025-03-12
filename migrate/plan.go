@@ -210,7 +210,7 @@ func parseNameIndex(module module) (module, error) {
 		if err == nil {
 			module.IndexKey = key
 		} else {
-			module.IndexKey = matches[2]
+			module.IndexKey = strings.Trim(strings.Trim(matches[2], "\""), "'")
 		}
 		return module, nil
 	}
