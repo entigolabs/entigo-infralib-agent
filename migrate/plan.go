@@ -19,7 +19,7 @@ import (
 var typesYaml []byte
 
 var replaceRegex = regexp.MustCompile(`\{\s*(.*?)\s*}`)
-var indexRegex = regexp.MustCompile(`^(.*?)\[(\d+)]$`)
+var indexRegex = regexp.MustCompile(`^(.*?)\[(\S+)]$`)
 
 type Planner interface {
 	Plan()
@@ -139,6 +139,10 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 		item.Source.Name = item.Name
 		item.Destination.Name = item.Name
 	}
+	if item.Module != "" {
+		item.Source.Module = item.Module
+		item.Destination.Module = item.Module
+	}
 	var err error
 	item.Source, err = parseNameIndex(item.Source)
 	if err != nil {
@@ -164,32 +168,35 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 		return nil, nil, err
 	}
 	source := getReference(item.Type, item.Source, resource.Name, resource.Module)
-	var index interface{}
-	var plannedResource *resourcePlan
-	name := item.Destination.Name
-	dstModule := item.Destination.Module
-	if name == "" || dstModule == "" {
-		plannedResource, err = getPlannedResource(item, p.plan.PlannedValues.RootModule)
-		if err != nil {
-			return nil, nil, err
-		}
-		if plannedResource == nil {
-			return nil, nil, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in plan file",
-				item.Type, dstModule, name)
-		}
-		name = plannedResource.Name
-		typeIndex := strings.Index(plannedResource.Address, item.Type)
-		if typeIndex > 0 {
-			dstModule = plannedResource.Address[0 : typeIndex-1]
-		}
-		index = plannedResource.Index
-	}
+	name, dstModule, index, err := getDestination(item, p.plan.PlannedValues.RootModule)
 	dest := getReference(item.Type, item.Destination, name, dstModule)
 	imports, removes, err := p.planItemKeys(indexKeys, resource, identification, index, dest, source)
 	if err != nil {
 		return nil, nil, fmt.Errorf("item type '%s' %s", item.Type, err)
 	}
 	return imports, removes, nil
+}
+
+func getDestination(item importItem, rootModule modulePlan) (string, string, interface{}, error) {
+	name := item.Destination.Name
+	dstModule := item.Destination.Module
+	if name != "" && dstModule != "" {
+		return name, dstModule, nil, nil
+	}
+	plannedResource, err := getPlannedResource(item, rootModule)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if plannedResource == nil {
+		return "", "", nil, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in plan file",
+			item.Type, dstModule, name)
+	}
+	name = plannedResource.Name
+	typeIndex := strings.Index(plannedResource.Address, item.Type)
+	if typeIndex > 0 {
+		dstModule = plannedResource.Address[0 : typeIndex-1]
+	}
+	return name, dstModule, plannedResource.Index, nil
 }
 
 func parseNameIndex(module module) (module, error) {
@@ -200,10 +207,11 @@ func parseNameIndex(module module) (module, error) {
 		}
 		module.Name = matches[1]
 		key, err := strconv.Atoi(matches[2])
-		if err != nil {
-			return module, fmt.Errorf("item %s failed to parse index key %s: %v", module.Name, matches[2], err)
+		if err == nil {
+			module.IndexKey = key
+		} else {
+			module.IndexKey = matches[2]
 		}
-		module.IndexKey = key
 		return module, nil
 	}
 	return module, nil
