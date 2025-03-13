@@ -60,7 +60,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())
 	steps := getRunnableSteps(config, flags.Steps)
-	sources, moduleSources := createSources(ctx, steps, config.Sources, state)
+	sources, moduleSources := createSources(ctx, steps, config.Sources, state, resources.GetSSM())
 	destinations := createDestinations(ctx, config.Destinations)
 	return &updater{
 		config:        config,
@@ -118,7 +118,7 @@ func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.St
 	return runnableSteps
 }
 
-func createSources(ctx context.Context, steps []model.Step, configSources []model.ConfigSource, state *model.State) (map[string]*model.Source, map[string]string) {
+func createSources(ctx context.Context, steps []model.Step, configSources []model.ConfigSource, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
 	for _, source := range configSources {
 		var stableVersion *version.Version
@@ -135,6 +135,9 @@ func createSources(ctx context.Context, steps []model.Step, configSources []mode
 				stableVersion = getLatestRelease(sourceClient)
 			}
 		}
+		if source.Username != "" {
+			upsertSourceCredentials(source, ssm)
+		}
 		sources[source.URL] = &model.Source{
 			URL:           source.URL,
 			StableVersion: stableVersion,
@@ -142,11 +145,26 @@ func createSources(ctx context.Context, steps []model.Step, configSources []mode
 			Includes:      model.ToSet(source.Include),
 			Excludes:      model.ToSet(source.Exclude),
 			Storage:       storage,
+			Auth:          model.SourceAuth{Username: source.Username, Password: source.Password},
 		}
 	}
 	moduleSources := addSourceModules(steps, configSources, sources)
 	addSourceReleases(steps, configSources, state, sources)
 	return sources, moduleSources
+}
+
+func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) {
+	hash := util.HashCode(source.URL)
+	upsertSourceCredential(fmt.Sprintf(model.GitSourceFormat, hash), source.URL, ssm)
+	upsertSourceCredential(fmt.Sprintf(model.GitUsernameFormat, hash), source.Username, ssm)
+	upsertSourceCredential(fmt.Sprintf(model.GitPasswordFormat, hash), source.Password, ssm)
+}
+
+func upsertSourceCredential(key string, value string, ssm model.SSM) {
+	err := ssm.PutSecret(key, value)
+	if err != nil {
+		log.Fatalf("Failed to upsert secret %s: %v", key, err)
+	}
 }
 
 func addSourceModules(steps []model.Step, configSources []model.ConfigSource, sources map[string]*model.Source) map[string]string {
@@ -632,7 +650,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	autoApprove := getAutoApprove(*stepState)
 	var err error
 	if u.pipelineType == common.PipelineTypeLocal {
-		err = u.localPipeline.executeLocalPipeline(step, autoApprove)
+		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step))
 	} else if firstRun {
 		err = u.createExecuteStepPipelines(step, autoApprove, index)
 	} else {
@@ -703,11 +721,13 @@ func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, 
 
 	vpcConfig := u.getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
-	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource, vpcConfig)
+	sources := u.getStepAuthSources(step)
+	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource,
+		vpcConfig, sources)
 	if err != nil {
 		return fmt.Errorf("failed to create CodeBuild project: %w", err)
 	}
-	return u.createExecutePipelines(stepName, stepName, step, autoApprove, bucket)
+	return u.createExecutePipelines(stepName, stepName, step, autoApprove, bucket, sources)
 }
 
 func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
@@ -724,8 +744,8 @@ func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
 	}
 }
 
-func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket) error {
-	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, bucket)
+func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket, authSources map[string]model.SourceAuth) error {
+	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, bucket, authSources)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
@@ -734,6 +754,21 @@ func (u *updater) createExecutePipelines(projectName string, stepName string, st
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
 	return nil
+}
+
+func (u *updater) getStepAuthSources(step model.Step) map[string]model.SourceAuth {
+	authSources := make(map[string]model.SourceAuth)
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
+		moduleSource := u.getModuleSource(module.Source)
+		if moduleSource.Auth.Username == "" {
+			continue
+		}
+		authSources[moduleSource.URL] = moduleSource.Auth
+	}
+	return authSources
 }
 
 func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index int) error {
@@ -745,7 +780,9 @@ func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index 
 	if err != nil {
 		return err
 	}
-	err = u.resources.GetBuilder().UpdateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource, vpcConfig)
+	sources := u.getStepAuthSources(step)
+	err = u.resources.GetBuilder().UpdateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource,
+		vpcConfig, sources)
 	if err != nil {
 		return err
 	}
@@ -1260,7 +1297,8 @@ func (u *updater) getModuleSource(moduleSource string) *model.Source {
 
 func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
-	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step, bucket)
+	sources := u.getStepAuthSources(step)
+	err := u.resources.GetPipeline().UpdatePipeline(projectName, stepName, step, bucket, sources)
 	if err != nil {
 		return fmt.Errorf("failed to update pipeline %s: %w", projectName, err)
 	}

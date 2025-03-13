@@ -225,6 +225,7 @@ type Source struct {
 	Version           *version.Version
 	ForcedVersion     string
 	Storage           Storage
+	Auth              SourceAuth
 	NewestVersion     *version.Version
 	StableVersion     *version.Version
 	Releases          []*version.Version
@@ -233,6 +234,11 @@ type Source struct {
 	CurrentChecksums  map[string][]byte
 	Includes          Set[string]
 	Excludes          Set[string]
+}
+
+type SourceAuth struct {
+	Username string
+	Password string
 }
 
 type Storage interface {

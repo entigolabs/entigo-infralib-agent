@@ -13,6 +13,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
+	"hash/fnv"
 	"io"
 	"log"
 	"log/slog"
@@ -160,7 +161,7 @@ func TarGzWrite(inDirPath string) ([]byte, error) {
 		if _, err := io.Copy(tw, f); err != nil {
 			return err
 		}
-		f.Close()
+		_ = f.Close()
 		return nil
 	})
 	if err != nil {
@@ -284,4 +285,10 @@ func SortKeys(data interface{}) interface{} {
 		}
 	}
 	return data
+}
+
+func HashCode(value string) string {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(value))
+	return strings.ToLower(fmt.Sprintf("%x", hasher.Sum32()))
 }

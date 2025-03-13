@@ -65,11 +65,17 @@ func (s *sm) ParameterExists(name string) (bool, error) {
 }
 
 func (s *sm) PutParameter(name string, value string) error {
-	exists, err := s.ParameterExists(name)
+	param, err := s.GetParameter(name)
 	if err != nil {
-		return err
+		var notFoundErr *model.ParameterNotFoundError
+		if !errors.As(err, &notFoundErr) {
+			return err
+		}
 	}
-	if !exists {
+	if param != nil && *param.Value == value {
+		return nil
+	}
+	if param == nil {
 		err = s.createSecret(name)
 		if err != nil {
 			return err
@@ -130,4 +136,12 @@ func (s *sm) ListParameters() ([]string, error) {
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+func (s *sm) PutSecret(name string, value string) error {
+	return s.PutParameter(name, value)
+}
+
+func (s *sm) DeleteSecret(name string) error {
+	return s.DeleteParameter(name)
 }

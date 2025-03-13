@@ -151,7 +151,7 @@ func (p *Pipeline) deleteTargets() error {
 	return nil
 }
 
-func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket model.Bucket) (*string, error) {
+func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, bucket model.Bucket, _ map[string]model.SourceAuth) (*string, error) {
 	planCommand, applyCommand := model.GetCommands(step.Type)
 	bucketMeta, err := bucket.GetRepoMetadata()
 	if err != nil {
@@ -407,7 +407,7 @@ func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string)
 	return err
 }
 
-func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step model.Step, bucket string) error {
+func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step model.Step, bucket string, _ map[string]model.SourceAuth) error {
 	planCommand, applyCommand := model.GetCommands(step.Type)
 	folder := fmt.Sprintf("%s/%s/%s", tempFolder, bucket, stepName)
 	err := p.createSkaffoldManifest(projectName, projectName, folder, planCommand, applyCommand)

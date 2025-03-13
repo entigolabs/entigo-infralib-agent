@@ -21,6 +21,16 @@ const (
 	ResourceTagValue = "entigo-infralib-agent"
 )
 
+const (
+	GitSourceFormat   = "entigo-infralib-source-%s-source"
+	GitUsernameFormat = "entigo-infralib-source-%s-username"
+	GitPasswordFormat = "entigo-infralib-source-%s-password"
+
+	GitSourceEnvFormat   = "GIT_AUTH_SOURCE_%s"
+	GitUsernameEnvFormat = "GIT_AUTH_USERNAME_%s"
+	GitPasswordEnvFormat = "GIT_AUTH_PASSWORD_%s"
+)
+
 type CloudProvider interface {
 	SetupResources() Resources
 	GetResources() Resources
@@ -57,9 +67,9 @@ type Bucket interface {
 }
 
 type Pipeline interface {
-	CreatePipeline(projectName, stepName string, step Step, bucket Bucket) (*string, error)
+	CreatePipeline(projectName, stepName string, step Step, bucket Bucket, authSources map[string]SourceAuth) (*string, error)
 	CreateAgentPipelines(prefix, projectName, bucket string) error
-	UpdatePipeline(pipelineName, stepName string, step Step, bucket string) error
+	UpdatePipeline(pipelineName, stepName string, step Step, bucket string, authSources map[string]SourceAuth) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
 	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step) error
@@ -68,11 +78,11 @@ type Pipeline interface {
 }
 
 type Builder interface {
-	CreateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig) error
+	CreateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig, authSources map[string]SourceAuth) error
 	CreateAgentProject(projectName string, awsPrefix string, imageVersion string, cmd common.Command) error
 	GetProject(projectName string) (*Project, error)
 	UpdateAgentProject(projectName, version, cloudPrefix string) error
-	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig) error
+	UpdateProject(projectName, repoURL, stepName string, step Step, imageVersion, imageSource string, vpcConfig *VpcConfig, authSources map[string]SourceAuth) error
 	DeleteProject(projectName string, step Step) error
 }
 
@@ -82,6 +92,8 @@ type SSM interface {
 	PutParameter(name string, value string) error
 	ListParameters() ([]string, error)
 	DeleteParameter(name string) error
+	PutSecret(name string, value string) error
+	DeleteSecret(name string) error
 }
 
 type Destination interface {

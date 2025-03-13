@@ -47,19 +47,19 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 	}, nil
 }
 
-func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	if imageSource == "" {
 		imageSource = model.ProjectImageDocker
 	}
 	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
-	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig, authSources)
 	if err != nil {
 		return err
 	}
-	return b.createDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig)
+	return b.createDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig, authSources)
 }
 
-func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	templateMeta, err := getVPCMeta(vpcConfig)
 	if err != nil {
 		return err
@@ -75,7 +75,7 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 		return err
 	}
 	for _, command := range commands {
-		err = b.createJobManifest(projectName, command, bucket, stepName, step, image, templateMeta)
+		err = b.createJobManifest(projectName, command, bucket, stepName, step, image, templateMeta, authSources)
 		if err != nil {
 			return fmt.Errorf("failed to create %s job manifest: %v", model.PlanCommand, err)
 		}
@@ -83,8 +83,8 @@ func (b *Builder) createJobManifests(projectName string, bucket string, stepName
 	return nil
 }
 
-func (b *Builder) createJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta) error {
-	job := b.GetJobManifest(projectName, command, bucket, stepName, step, image, templateMeta)
+func (b *Builder) createJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta, authSources map[string]model.SourceAuth) error {
+	job := b.GetJobManifest(projectName, command, bucket, stepName, step, image, templateMeta, authSources)
 	bytes, err := util.MarshalYamlWithJsonTags(job)
 	if err != nil {
 		return err
@@ -93,7 +93,7 @@ func (b *Builder) createJobManifest(projectName string, command model.ActionComm
 		bytes, 0644)
 }
 
-func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta) runv1.Job {
+func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand, bucket string, stepName string, step model.Step, image string, templateMeta *runv1.ObjectMeta, authSources map[string]model.SourceAuth) runv1.Job {
 	return runv1.Job{
 		ApiVersion: "run.googleapis.com/v1",
 		Kind:       "Job",
@@ -116,7 +116,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 							Containers: []*runv1.Container{{
 								Name:  "infralib",
 								Image: image,
-								Env:   b.getEnvironmentVariables(projectName, stepName, step, bucket, command),
+								Env:   b.getEnvironmentVariables(projectName, stepName, step, bucket, command, authSources),
 								VolumeMounts: []*runv1.VolumeMount{{
 									Name:      "project",
 									MountPath: "/project",
@@ -142,7 +142,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 	}
 }
 
-func (b *Builder) createDestroyJobs(name string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) createDestroyJobs(name string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
@@ -152,20 +152,22 @@ func (b *Builder) createDestroyJobs(name string, bucket string, stepName string,
 		planCommand = model.PlanDestroyCommand
 		applyCommand = model.ApplyDestroyCommand
 	}
-	err := b.createJob(fmt.Sprintf("%s-plan-destroy", name), bucket, stepName, step, image, vpcConfig, planCommand)
+	err := b.createJob(fmt.Sprintf("%s-plan-destroy", name), bucket, stepName, step, image, vpcConfig,
+		planCommand, authSources)
 	if err != nil {
 		return err
 	}
-	return b.createJob(fmt.Sprintf("%s-apply-destroy", name), bucket, stepName, step, image, vpcConfig, applyCommand)
+	return b.createJob(fmt.Sprintf("%s-apply-destroy", name), bucket, stepName, step, image, vpcConfig,
+		applyCommand, authSources)
 }
 
-func (b *Builder) createJob(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, command model.ActionCommand) error {
+func (b *Builder) createJob(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, command model.ActionCommand, authSources map[string]model.SourceAuth) error {
 	job, err := b.getJob(projectName)
 	if err != nil {
 		return err
 	}
 	if job != nil {
-		return b.updateJob(projectName, stepName, step, bucket, image, vpcConfig, command)
+		return b.updateJob(projectName, stepName, step, bucket, image, vpcConfig, command, authSources)
 	}
 	_, err = b.client.CreateJob(b.ctx, &runpb.CreateJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", b.projectId, b.location),
@@ -181,7 +183,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 					Containers: []*runpb.Container{{
 						Name:  "infralib",
 						Image: image,
-						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command),
+						Env:   b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command, authSources),
 						VolumeMounts: []*runpb.VolumeMount{{
 							Name:      "project",
 							MountPath: "/project",
@@ -297,16 +299,16 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 	return err
 }
 
-func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	if imageSource == "" {
 		imageSource = model.ProjectImageDocker
 	}
 	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
-	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig)
+	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig, authSources)
 	if err != nil {
 		return err
 	}
-	return b.updateDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig)
+	return b.updateDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig, authSources)
 }
 
 func (b *Builder) DeleteProject(projectName string, step model.Step) error {
@@ -329,7 +331,7 @@ func (b *Builder) DeleteProject(projectName string, step model.Step) error {
 	return b.deleteJob(fmt.Sprintf("%s-apply-destroy", projectName))
 }
 
-func (b *Builder) updateDestroyJobs(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig) error {
+func (b *Builder) updateDestroyJobs(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	var planCommand model.ActionCommand
 	var applyCommand model.ActionCommand
 	if step.Type == model.StepTypeArgoCD {
@@ -339,14 +341,14 @@ func (b *Builder) updateDestroyJobs(projectName string, bucket string, stepName 
 		planCommand = model.PlanDestroyCommand
 		applyCommand = model.ApplyDestroyCommand
 	}
-	err := b.updateJob(fmt.Sprintf("%s-plan-destroy", projectName), stepName, step, bucket, image, vpcConfig, planCommand)
+	err := b.updateJob(fmt.Sprintf("%s-plan-destroy", projectName), stepName, step, bucket, image, vpcConfig, planCommand, authSources)
 	if err != nil {
 		return err
 	}
-	return b.updateJob(fmt.Sprintf("%s-apply-destroy", projectName), stepName, step, bucket, image, vpcConfig, applyCommand)
+	return b.updateJob(fmt.Sprintf("%s-apply-destroy", projectName), stepName, step, bucket, image, vpcConfig, applyCommand, authSources)
 }
 
-func (b *Builder) updateJob(projectName string, stepName string, step model.Step, bucket, image string, vpcConfig *model.VpcConfig, command model.ActionCommand) error {
+func (b *Builder) updateJob(projectName string, stepName string, step model.Step, bucket, image string, vpcConfig *model.VpcConfig, command model.ActionCommand, authSources map[string]model.SourceAuth) error {
 	job, err := b.getJob(projectName)
 	if err != nil {
 		return err
@@ -355,7 +357,7 @@ func (b *Builder) updateJob(projectName string, stepName string, step model.Step
 		return fmt.Errorf("job %s not found", projectName)
 	}
 	job.Template.Template.Containers[0].Image = image
-	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command)
+	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command, authSources)
 	job.Template.Template.VpcAccess = getGCloudVpcAccess(vpcConfig)
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
@@ -439,20 +441,38 @@ func getGCloudVpcAccess(vpcConfig *model.VpcConfig) *runpb.VpcAccess {
 	}
 }
 
-func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, bucket string, command model.ActionCommand) []*runv1.EnvVar {
+func (b *Builder) getEnvironmentVariables(projectName string, stepName string, step model.Step, bucket string, command model.ActionCommand, authSources map[string]model.SourceAuth) []*runv1.EnvVar {
 	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, command)
 	var envVars []*runv1.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
 	}
+	for source := range authSources {
+		hash := util.HashCode(source)
+		envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), ValueFrom: &runv1.EnvVarSource{
+			SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: fmt.Sprintf(model.GitUsernameFormat, hash)},
+		}})
+		envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf(model.GitPasswordEnvFormat, hash), ValueFrom: &runv1.EnvVarSource{
+			SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: fmt.Sprintf(model.GitPasswordFormat, hash)},
+		}})
+		envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf(model.GitSourceEnvFormat, hash), ValueFrom: &runv1.EnvVarSource{
+			SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: fmt.Sprintf(model.GitSourceFormat, hash)},
+		}})
+	}
 	return envVars
 }
 
-func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step model.Step, bucket string, command model.ActionCommand) []*runpb.EnvVar {
+func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step model.Step, bucket string, command model.ActionCommand, authSources map[string]model.SourceAuth) []*runpb.EnvVar {
 	rawEnvVars := b.getRawEnvironmentVariables(projectName, stepName, step, bucket, command)
 	var envVars []*runpb.EnvVar
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
+	}
+	for source, auth := range authSources {
+		hash := util.HashCode(source)
+		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), Values: &runpb.EnvVar_Value{Value: auth.Username}})
+		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitPasswordEnvFormat, hash), Values: &runpb.EnvVar_Value{Value: auth.Password}})
+		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitSourceEnvFormat, hash), Values: &runpb.EnvVar_Value{Value: source}})
 	}
 	return envVars
 }
