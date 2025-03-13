@@ -169,6 +169,9 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 	}
 	source := getReference(item.Type, item.Source, resource.Name, resource.Module)
 	name, dstModule, index, err := getDestination(item, p.plan.PlannedValues.RootModule)
+	if err != nil {
+		return nil, nil, err
+	}
 	dest := getReference(item.Type, item.Destination, name, dstModule)
 	imports, removes, err := p.planItemKeys(indexKeys, resource, identification, index, dest, source)
 	if err != nil {
