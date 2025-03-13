@@ -468,11 +468,14 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
 	}
-	for source, auth := range authSources {
+	for source := range authSources {
 		hash := util.HashCode(source)
-		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), Values: &runpb.EnvVar_Value{Value: auth.Username}})
-		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitPasswordEnvFormat, hash), Values: &runpb.EnvVar_Value{Value: auth.Password}})
-		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitSourceEnvFormat, hash), Values: &runpb.EnvVar_Value{Value: source}})
+		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash),
+			Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: fmt.Sprintf(model.GitUsernameFormat, hash)}}}})
+		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitPasswordEnvFormat, hash),
+			Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: fmt.Sprintf(model.GitPasswordFormat, hash)}}}})
+		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitSourceEnvFormat, hash),
+			Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: fmt.Sprintf(model.GitSourceFormat, hash)}}}})
 	}
 	return envVars
 }
