@@ -7,9 +7,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	tagTypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	smTypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	awsSSM "github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"log"
 	"strings"
 )
 
@@ -146,13 +148,31 @@ func (s *ssm) PutSecret(name string, value string) error {
 }
 
 func (s *ssm) getSecret(name string) (*string, error) {
+	described, err := s.smClient.DescribeSecret(s.ctx, &secretsmanager.DescribeSecretInput{
+		SecretId: aws.String(name),
+	})
+	if err != nil {
+		var notFoundError *smTypes.ResourceNotFoundException
+		if errors.As(err, &notFoundError) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if described.DeletedDate != nil {
+		_, err = s.smClient.RestoreSecret(s.ctx, &secretsmanager.RestoreSecretInput{
+			SecretId: aws.String(name),
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	secret, err := s.smClient.GetSecretValue(s.ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(name),
 	})
 	if err == nil {
 		return secret.SecretString, nil
 	}
-	var notFoundError *types.ResourceNotFoundException
+	var notFoundError *smTypes.ResourceNotFoundException
 	if errors.As(err, &notFoundError) {
 		return nil, nil
 	}
@@ -180,9 +200,10 @@ func (s *ssm) DeleteSecret(name string) error {
 		SecretId: aws.String(name),
 	})
 	if err == nil {
+		log.Printf("Deleted secret: %s\n", name)
 		return nil
 	}
-	var notFoundError *types.ResourceNotFoundException
+	var notFoundError *smTypes.ResourceNotFoundException
 	if errors.As(err, &notFoundError) {
 		return nil
 	}

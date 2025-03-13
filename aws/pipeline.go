@@ -908,10 +908,10 @@ func getEnvironmentVariablesList(command model.ActionCommand, stepName string, s
 		hash := util.HashCode(source)
 		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
 			hash, fmt.Sprintf(model.GitUsernameFormat, hash)))
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}}",
-			hash, fmt.Sprintf(model.GitUsernameFormat, hash)))
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}}",
-			hash, fmt.Sprintf(model.GitUsernameFormat, hash)))
+		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
+			hash, fmt.Sprintf(model.GitPasswordFormat, hash)))
+		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
+			hash, fmt.Sprintf(model.GitSourceFormat, hash)))
 	}
 	return envVars
 }

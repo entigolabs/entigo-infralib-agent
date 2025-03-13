@@ -442,6 +442,7 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"secretsmanager:DeleteSecret",
 				"secretsmanager:CreateSecret",
 				"secretsmanager:PutSecretValue",
+				"secretsmanager:DescribeSecret",
 				"tag:GetResources",
 			},
 		},
