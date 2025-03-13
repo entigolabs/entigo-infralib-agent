@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"log/slog"
 )
@@ -74,7 +75,27 @@ func (d *deleter) Delete() {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete project %s: %s", projectName, err)))
 		}
 	}
+	d.deleteSourceSecrets()
 	d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
+}
+
+func (d *deleter) deleteSourceSecrets() {
+	for _, source := range d.config.Sources {
+		if source.Username == "" {
+			continue
+		}
+		hash := util.HashCode(source.URL)
+		d.deleteSourceSecret(fmt.Sprintf(model.GitSourceFormat, hash))
+		d.deleteSourceSecret(fmt.Sprintf(model.GitUsernameFormat, hash))
+		d.deleteSourceSecret(fmt.Sprintf(model.GitPasswordFormat, hash))
+	}
+}
+
+func (d *deleter) deleteSourceSecret(secret string) {
+	err := d.resources.GetSSM().DeleteSecret(secret)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete secret %s: %s", secret, err)))
+	}
 }
 
 func (d *deleter) Destroy() {
@@ -85,7 +106,7 @@ func (d *deleter) Destroy() {
 		step.Approve = model.ApproveForce
 		var err error
 		if d.localPipeline != nil {
-			err = d.localPipeline.startDestroyExecution(step)
+			err = d.localPipeline.startDestroyExecution(step, d.getSourceAuths())
 		} else {
 			err = d.resources.GetPipeline().StartDestroyExecution(projectName, step)
 		}
@@ -94,4 +115,18 @@ func (d *deleter) Destroy() {
 		}
 		log.Printf("Successfully executed destroy pipeline for step %s\n", step.Name)
 	}
+}
+
+func (d *deleter) getSourceAuths() map[string]model.SourceAuth {
+	authSources := make(map[string]model.SourceAuth)
+	for _, source := range d.config.Sources {
+		if source.Username == "" {
+			continue
+		}
+		authSources[source.URL] = model.SourceAuth{
+			Username: source.Username,
+			Password: source.Password,
+		}
+	}
+	return authSources
 }

@@ -62,7 +62,7 @@ func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, 
 	}
 }
 
-func (b *builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+func (b *builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	if imageSource == "" {
 		imageSource = model.ProjectImage
 	}
@@ -98,7 +98,7 @@ func (b *builder) CreateProject(projectName string, bucket string, stepName stri
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
-		return b.UpdateProject(projectName, "", "", step, imageVersion, imageSource, vpcConfig)
+		return b.UpdateProject(projectName, "", "", step, imageVersion, imageSource, vpcConfig, authSources)
 	}
 	log.Printf("Created CodeBuild project %s\n", projectName)
 	return err
@@ -217,7 +217,7 @@ func (b *builder) UpdateAgentProject(projectName string, version string, awsPref
 	return err
 }
 
-func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig) error {
+func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, _ map[string]model.SourceAuth) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
 		return err

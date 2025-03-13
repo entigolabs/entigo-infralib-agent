@@ -9,6 +9,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/gcloud"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"io"
 	"log"
 	"log/slog"
@@ -51,11 +52,11 @@ func NewLocalPipeline(resources model.Resources, flags common.Pipeline) *LocalPi
 	}
 }
 
-func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool) error {
+func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth) error {
 	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	log.Printf("Starting local pipeline %s", prefix)
 	planCommand, applyCommand := model.GetCommands(step.Type)
-	output, err := l.executeLocalCommand(prefix, planCommand, step)
+	output, err := l.executeLocalCommand(prefix, planCommand, step, sourceAuths)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
 	}
@@ -66,30 +67,30 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool) 
 	if !approved {
 		return nil
 	}
-	_, err = l.executeLocalCommand(prefix, applyCommand, step)
+	_, err = l.executeLocalCommand(prefix, applyCommand, step, sourceAuths)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefix, err)
 	}
 	return nil
 }
 
-func (l *LocalPipeline) startDestroyExecution(step model.Step) error {
+func (l *LocalPipeline) startDestroyExecution(step model.Step, sourceAuths map[string]model.SourceAuth) error {
 	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	planCommand, applyCommand := model.GetDestroyCommands(step.Type)
-	_, err := l.executeLocalCommand(prefix, planCommand, step)
+	_, err := l.executeLocalCommand(prefix, planCommand, step, sourceAuths)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
 	}
-	_, err = l.executeLocalCommand(prefix, applyCommand, step)
+	_, err = l.executeLocalCommand(prefix, applyCommand, step, sourceAuths)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefix, err)
 	}
 	return nil
 }
 
-func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionCommand, step model.Step) ([]byte, error) {
+func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) ([]byte, error) {
 	cmd := exec.Command(executeScript)
-	cmd.Env = l.getEnv(prefix, command, step)
+	cmd.Env = l.getEnv(prefix, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer
 	writers := []io.Writer{&stdoutBuf}
 	if l.printLogs {
@@ -110,10 +111,16 @@ func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionC
 	return stdoutBuf.Bytes(), err
 }
 
-func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step model.Step) []string {
+func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) []string {
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("COMMAND=%s", command), fmt.Sprintf("TF_VAR_prefix=%s", prefix),
 		fmt.Sprintf("INFRALIB_BUCKET=%s", l.bucket), fmt.Sprintf("%s=%s", l.regionKey, l.region))
+	for source, auth := range sourceAuths {
+		hash := util.HashCode(source)
+		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitSourceEnvFormat, hash), source))
+		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitUsernameEnvFormat, hash), auth.Username))
+		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitPasswordEnvFormat, hash), auth.Password))
+	}
 	if l.project != "" {
 		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project))
 	}
