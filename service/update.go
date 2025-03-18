@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"dario.cat/mergo"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
@@ -28,12 +29,20 @@ const (
 	ssmPrefix = "/entigo-infralib"
 )
 
+type Mode string
+
+const (
+	ModeRun    Mode = "run"
+	ModeUpdate Mode = "update"
+)
+
 type Updater interface {
 	Run()
 	Update()
 }
 
 type updater struct {
+	mode          Mode
 	config        model.Config
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
@@ -59,6 +68,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())
+	setupEncryption(config, provider, resources)
 	steps := getRunnableSteps(config, flags.Steps)
 	sources, moduleSources := createSources(ctx, steps, config.Sources, state, resources.GetSSM())
 	destinations := createDestinations(ctx, config.Destinations)
@@ -269,10 +279,102 @@ func getLocalPipeline(resources model.Resources, flags *common.Flags) *LocalPipe
 }
 
 func (u *updater) Run() {
-	u.updateAgentJob(common.RunCommand)
+	u.mode = ModeRun
+	u.process()
+}
+
+func (u *updater) Update() {
+	u.mode = ModeUpdate
+	u.process()
+}
+
+func (u *updater) process() {
+	u.updateAgentJob(common.UpdateCommand)
 	index := 0
+	mostReleases := 1
+	if u.mode == ModeUpdate {
+		index = 1
+		mostReleases = u.getMostReleases()
+		if mostReleases < 2 {
+			log.Println("No updates found")
+			return
+		}
+	}
+	for ; index < mostReleases; index++ {
+		u.processRelease(index)
+	}
+}
+
+func (u *updater) updateAgentJob(cmd common.Command) {
+	if u.pipelineType == common.PipelineTypeLocal {
+		return
+	}
+	agent := NewAgent(u.resources)
+	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd, u.provider.IsRunningLocally())
+	if err != nil {
+		log.Fatalf("Failed to update agent job: %s", err)
+	}
+}
+
+func setupEncryption(config model.Config, provider model.CloudProvider, resources model.Resources) {
+	if resources.GetProviderType() == model.GCLOUD {
+		return // TODO Remove when GCP encryption is implemented
+	}
+	step, module := getEncryptionModule(config)
+	if step == nil || module == nil {
+		return
+	}
+	log.Printf("Processing encryption based on %s module %s\n", step.Name, module.Name)
+	outputs, err := getModuleOutputs(*step, resources)
+	if err != nil {
+		log.Fatalf("Failed to get outputs for %s: %v", step.Name, err)
+	}
+	if len(outputs) == 0 {
+		return
+	}
+	err = provider.AddEncryption(module.Name, outputs)
+	if err != nil {
+		log.Fatalf("Failed to add encryption: %v", err)
+	}
+}
+
+func getEncryptionModule(config model.Config) (*model.Step, *model.Module) {
+	for _, step := range config.Steps {
+		for _, module := range step.Modules {
+			moduleType := getModuleType(module)
+			if moduleType != "kms" {
+				continue
+			}
+			return &step, &module
+		}
+	}
+	return nil, nil
+}
+
+func getModuleOutputs(step model.Step, resources model.Resources) (map[string]model.TFOutput, error) {
+	filePath := fmt.Sprintf("%s-%s/%s", resources.GetCloudPrefix(), step.Name, terraformOutput)
+	file, err := resources.GetBucket().GetFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	outputs := make(map[string]model.TFOutput)
+	if file == nil {
+		slog.Debug(fmt.Sprintf("terraform output file %s not found", filePath))
+		return outputs, nil
+	}
+	err = json.Unmarshal(file, &outputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %s", filePath, err)
+	}
+	return outputs, nil
+}
+
+func (u *updater) processRelease(index int) {
 	u.logReleases(index)
 	u.updateState()
+	if u.mode == ModeUpdate {
+		u.updateChecksums(index)
+	}
 	wg := new(model.SafeCounter)
 	errChan := make(chan error, len(u.steps))
 	failed := false
@@ -296,57 +398,7 @@ func (u *updater) Run() {
 		log.Fatalf("One or more steps failed to apply")
 	}
 	u.retrySteps(index, retrySteps, wg)
-}
-
-func (u *updater) logReleases(index int) {
-	var sourceReleases []string
-	for url, source := range u.sources {
-		if source.ForcedVersion != "" {
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, source.ForcedVersion))
-			continue
-		}
-		if index < len(source.Releases) {
-			release := source.Releases[index]
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
-		}
-	}
-	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
-}
-
-func (u *updater) Update() {
-	u.updateAgentJob(common.UpdateCommand)
-	mostReleases := u.getMostReleases()
-	if mostReleases < 2 {
-		log.Println("No updates found")
-		return
-	}
-	for index := 1; index < mostReleases; index++ {
-		u.logReleases(index)
-		u.updateState()
-		u.getChecksums(index)
-		wg := new(model.SafeCounter)
-		errChan := make(chan error, len(u.steps))
-		failed := false
-		retrySteps := make([]model.Step, 0)
-		for _, step := range u.steps {
-			retry, err := u.processStep(index, step, wg, errChan)
-			if err != nil {
-				slog.Error(common.PrefixError(err))
-				failed = true
-				break
-			}
-			if retry {
-				retrySteps = append(retrySteps, step)
-			}
-		}
-		wg.Wait()
-		close(errChan)
-		time.Sleep(1 * time.Second)
-		u.putStateFileOrDie()
-		if _, ok := <-errChan; ok || failed {
-			log.Fatalf("One or more steps failed to apply")
-		}
-		u.retrySteps(index, retrySteps, wg)
+	if u.mode == ModeUpdate {
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
 		}
@@ -365,6 +417,21 @@ func (u *updater) getMostReleases() int {
 		}
 	}
 	return mostReleases
+}
+
+func (u *updater) logReleases(index int) {
+	var sourceReleases []string
+	for url, source := range u.sources {
+		if source.ForcedVersion != "" {
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, source.ForcedVersion))
+			continue
+		}
+		if index < len(source.Releases) {
+			release := source.Releases[index]
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
+		}
+	}
+	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
 func (u *updater) updateState() {
@@ -402,14 +469,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		}
 		return false, err
 	}
-	var executePipelines bool
-	var providers map[string]model.Set[string]
-	var files map[string]model.File
-	if !u.firstRunDone[step.Name] {
-		executePipelines, files, err = u.createStepFiles(step, moduleVersions, index)
-	} else {
-		executePipelines, providers, files, err = u.updateStepFiles(step, moduleVersions, index)
-	}
+	executePipelines, providers, files, err := u.updateStepFiles(step, moduleVersions, index)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
@@ -668,34 +728,12 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	return err
 }
 
-func (u *updater) updateAgentJob(cmd common.Command) {
-	if u.pipelineType == common.PipelineTypeLocal {
-		return
-	}
-	agent := NewAgent(u.resources)
-	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
-	if err != nil {
-		log.Fatalf("Failed to update agent codebuild: %s", err)
-	}
-}
-
 func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 	stepState := GetStepState(u.state, step.Name)
 	if stepState == nil {
 		return nil, fmt.Errorf("failed to get state for step %s", step.Name)
 	}
 	return stepState, nil
-}
-
-func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
-	switch step.Type {
-	case model.StepTypeTerraform:
-		return u.createTerraformFiles(step, moduleVersions, index)
-	case model.StepTypeArgoCD:
-		return u.updateArgoCDFiles(step, moduleVersions)
-	default:
-		return false, nil, fmt.Errorf("step type %s not supported", step.Type)
-	}
 }
 
 func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
@@ -952,11 +990,6 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	} else {
 		return moduleVersion, nil
 	}
-}
-
-func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
-	execute, _, files, err := u.updateTerraformFiles(step, moduleVersions, index)
-	return execute, files, err
 }
 
 func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
@@ -1337,7 +1370,7 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 	return release, imageSource
 }
 
-func (u *updater) getChecksums(index int) {
+func (u *updater) updateChecksums(index int) {
 	for url, source := range u.sources {
 		if len(source.Releases)-1 < index {
 			continue
@@ -1347,6 +1380,7 @@ func (u *updater) getChecksums(index int) {
 			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
 		source.CurrentChecksums = checksums
+		u.sources[url] = source
 	}
 }
 

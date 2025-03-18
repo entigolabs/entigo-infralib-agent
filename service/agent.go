@@ -9,7 +9,7 @@ import (
 
 type Agent interface {
 	CreatePipeline(version string) error
-	UpdateProjectImage(version string, cmd common.Command) error
+	UpdateProjectImage(version string, cmd common.Command, local bool) error
 }
 
 type agent struct {
@@ -56,7 +56,7 @@ func (a *agent) createCodeBuild(version string, cmd common.Command) error {
 	return a.resources.GetBuilder().CreateAgentProject(projectName, a.cloudPrefix, version, cmd)
 }
 
-func (a *agent) UpdateProjectImage(version string, cmd common.Command) error {
+func (a *agent) UpdateProjectImage(version string, cmd common.Command, local bool) error {
 	projectName := fmt.Sprintf("%s-%s", a.name, cmd)
 	project, err := a.resources.GetBuilder().GetProject(projectName)
 	if err != nil {
@@ -69,7 +69,7 @@ func (a *agent) UpdateProjectImage(version string, cmd common.Command) error {
 	if err != nil {
 		return err
 	}
-	if !updated {
+	if local || !updated {
 		return nil
 	}
 	err = a.resources.GetPipeline().StartAgentExecution(projectName)

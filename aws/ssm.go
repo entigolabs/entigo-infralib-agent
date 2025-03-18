@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	tagTypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
@@ -11,8 +12,10 @@ import (
 	awsSSM "github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"strings"
+	"time"
 )
 
 type ssm struct {
@@ -20,6 +23,7 @@ type ssm struct {
 	ssmClient *awsSSM.Client
 	smClient  *secretsmanager.Client
 	tagClient *resourcegroupstaggingapi.Client
+	kmsKeyId  string
 }
 
 func NewSSM(ctx context.Context, awsConfig aws.Config) model.SSM {
@@ -133,57 +137,74 @@ func (s *ssm) ListParameters() ([]string, error) {
 	return keys, nil
 }
 
+func (s *ssm) AddKmsKeyId(keyId string) {
+	s.kmsKeyId = keyId
+}
+
 func (s *ssm) PutSecret(name string, value string) error {
-	secret, err := s.getSecret(name)
+	secret, kmsKeyId, err := s.getSecret(name)
 	if err != nil {
 		return err
 	}
 	if secret == nil {
 		return s.createSecret(name, value)
 	}
-	if *secret != value {
+	if (kmsKeyId == nil && s.kmsKeyId != "") || (kmsKeyId != nil && s.kmsKeyId != "" && *kmsKeyId != s.kmsKeyId) {
+		return s.updateKmsKey(name, value)
+	}
+	if *secret == value {
 		return nil
 	}
 	return s.updateSecret(name, value)
 }
 
-func (s *ssm) getSecret(name string) (*string, error) {
+func (s *ssm) getSecret(name string) (*string, *string, error) {
 	described, err := s.smClient.DescribeSecret(s.ctx, &secretsmanager.DescribeSecretInput{
 		SecretId: aws.String(name),
 	})
 	if err != nil {
 		var notFoundError *smTypes.ResourceNotFoundException
 		if errors.As(err, &notFoundError) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	if described.DeletedDate != nil {
 		_, err = s.smClient.RestoreSecret(s.ctx, &secretsmanager.RestoreSecretInput{
 			SecretId: aws.String(name),
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	secret, err := s.smClient.GetSecretValue(s.ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(name),
 	})
 	if err == nil {
-		return secret.SecretString, nil
+		return secret.SecretString, described.KmsKeyId, nil
 	}
 	var notFoundError *smTypes.ResourceNotFoundException
 	if errors.As(err, &notFoundError) {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return nil, err
+	return nil, nil, err
 }
 
 func (s *ssm) createSecret(name, value string) error {
-	_, err := s.smClient.CreateSecret(s.ctx, &secretsmanager.CreateSecretInput{
+	input := secretsmanager.CreateSecretInput{
 		Name:         aws.String(name),
 		SecretString: aws.String(value),
-	})
+		Tags: []smTypes.Tag{
+			{
+				Key:   aws.String(model.ResourceTagKey),
+				Value: aws.String(model.ResourceTagValue),
+			},
+		},
+	}
+	if s.kmsKeyId != "" {
+		input.KmsKeyId = aws.String(s.kmsKeyId)
+	}
+	_, err := s.smClient.CreateSecret(s.ctx, &input)
 	return err
 }
 
@@ -195,10 +216,47 @@ func (s *ssm) updateSecret(name, value string) error {
 	return err
 }
 
+func (s *ssm) updateKmsKey(name string, value string) error {
+	err := s.deleteSecret(name, true)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
+	defer cancel()
+	delay := 1
+	log.Printf("updating kms key for secret %s, timeout %s\n", name, 2*time.Minute)
+	for {
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("failed to update kms key for secret %s", name)
+			}
+			return ctx.Err()
+		default:
+			err = s.createSecret(name, value)
+			if err == nil {
+				return nil
+			}
+			var invalidError *smTypes.InvalidRequestException
+			if !errors.As(err, &invalidError) {
+				return err
+			}
+			time.Sleep(time.Duration(delay) * time.Second)
+			delay = util.MinInt(2*delay, 8)
+		}
+	}
+}
+
 func (s *ssm) DeleteSecret(name string) error {
-	_, err := s.smClient.DeleteSecret(s.ctx, &secretsmanager.DeleteSecretInput{
-		SecretId: aws.String(name),
-	})
+	return s.deleteSecret(name, false)
+}
+
+func (s *ssm) deleteSecret(name string, force bool) error {
+	input := secretsmanager.DeleteSecretInput{
+		SecretId:                   aws.String(name),
+		ForceDeleteWithoutRecovery: &force,
+	}
+	_, err := s.smClient.DeleteSecret(s.ctx, &input)
 	if err == nil {
 		log.Printf("Deleted secret: %s\n", name)
 		return nil

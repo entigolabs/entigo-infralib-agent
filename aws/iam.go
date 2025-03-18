@@ -443,6 +443,7 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"secretsmanager:CreateSecret",
 				"secretsmanager:PutSecretValue",
 				"secretsmanager:DescribeSecret",
+				"secretsmanager:TagResource",
 				"tag:GetResources",
 			},
 		},

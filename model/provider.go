@@ -36,6 +36,8 @@ type CloudProvider interface {
 	GetResources() Resources
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool)
 	CreateServiceAccount()
+	AddEncryption(moduleName string, outputs map[string]TFOutput) error
+	IsRunningLocally() bool
 }
 
 type ResourceProvider interface {
@@ -188,6 +190,12 @@ func GetDestroyCommands(stepType StepType) (ActionCommand, ActionCommand) {
 	default:
 		return PlanDestroyCommand, ApplyDestroyCommand
 	}
+}
+
+type TFOutput struct {
+	Sensitive bool
+	Type      interface{}
+	Value     interface{}
 }
 
 type Parameter struct {

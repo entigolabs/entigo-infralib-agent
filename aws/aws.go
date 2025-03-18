@@ -14,6 +14,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -32,6 +33,7 @@ type Resources struct {
 	IAM           IAM
 	DynamoDBTable string
 	AccountId     string
+	CloudWatch    CloudWatch
 }
 
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
@@ -124,6 +126,7 @@ func (a *awsService) SetupResources() model.Resources {
 
 	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
+	a.resources.CloudWatch = cloudwatch
 	a.resources.IAM = iam
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -133,7 +136,7 @@ func (a *awsService) SetupResources() model.Resources {
 func (a *awsService) GetResources() model.Resources {
 	bucket := a.getBucketName()
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logGroup := a.getLogGroup()
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
@@ -145,8 +148,9 @@ func (a *awsService) GetResources() model.Resources {
 			SSM:          NewSSM(a.ctx, a.awsConfig),
 			Region:       a.awsConfig.Region,
 		},
-		IAM:       NewIAM(a.ctx, a.awsConfig, a.accountId),
-		AccountId: a.accountId,
+		IAM:        NewIAM(a.ctx, a.awsConfig, a.accountId),
+		AccountId:  a.accountId,
+		CloudWatch: cloudwatch,
 	}
 	return a.resources
 }
@@ -189,6 +193,10 @@ func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err)))
 	}
+}
+
+func (a *awsService) IsRunningLocally() bool {
+	return os.Getenv("CODEBUILD_BUILD_ID") == ""
 }
 
 func getAccountId(awsConfig aws.Config) (string, error) {
@@ -240,7 +248,7 @@ func (a *awsService) createDynamoDBTable() *types.TableDescription {
 
 func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logGroup := a.getLogGroup()
 	logGroupArn, err := cloudwatch.GetLogGroup(logGroup)
 	if err != nil {
 		log.Fatalf("Failed to get CloudWatch log group: %s", err)
@@ -251,7 +259,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 			log.Fatalf("Failed to create CloudWatch log group: %s", err)
 		}
 	}
-	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logStream := a.getLogGroup()
 	exists, err := cloudwatch.LogStreamExists(logGroup, logStream)
 	if err != nil {
 		log.Fatalf("Failed to get CloudWatch log stream exists: %s", err)
@@ -264,6 +272,10 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 		log.Fatalf("Failed to create CloudWatch log stream: %s", err)
 	}
 	return logGroup, logGroupArn, logStream, cloudwatch
+}
+
+func (a *awsService) getLogGroup() string {
+	return fmt.Sprintf("%s-log", a.cloudPrefix)
 }
 
 func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
@@ -334,8 +346,8 @@ func (a *awsService) getBuildRoleName() string {
 
 func (a *awsService) deleteCloudWatchLogs() {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
-	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logGroup := a.getLogGroup()
+	logStream := a.getLogGroup()
 	err := cloudwatch.DeleteLogStream(logGroup, logStream)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete CloudWatch log stream: %s", err)))
@@ -438,4 +450,48 @@ func (a *awsService) DeleteServiceAccount() {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", secretAccessKeyParam, err)))
 	}
+}
+
+func (a *awsService) AddEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	err := a.setupConfigEncryption(moduleName, outputs)
+	if err != nil {
+		return err
+	}
+	if a.pipelineType == common.PipelineTypeLocal {
+		return nil
+	}
+	return a.setupTelemetryEncryption(moduleName, outputs)
+}
+
+func (a *awsService) setupConfigEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	key := fmt.Sprintf("%s__config_alias_arn", moduleName)
+	arn, err := util.GetOutputValue(outputs, key)
+	if err != nil {
+		return fmt.Errorf("failed to get output %s value: %v", key, err)
+	}
+	if arn == nil || *arn == "" {
+		return nil
+	}
+	a.resources.GetSSM().(*ssm).AddKmsKeyId(*arn)
+	err = a.resources.GetBucket().(*S3).addEncryption(*arn)
+	if err != nil {
+		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+	}
+	return nil
+}
+
+func (a *awsService) setupTelemetryEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	key := fmt.Sprintf("%s__telemetry_alias_arn", moduleName)
+	arn, err := util.GetOutputValue(outputs, key)
+	if err != nil {
+		return fmt.Errorf("failed to get output %s value: %v", key, err)
+	}
+	if arn == nil || *arn == "" {
+		return nil
+	}
+	err = a.resources.CloudWatch.addEncryption(a.getLogGroup(), *arn)
+	if err != nil {
+		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+	}
+	return nil
 }

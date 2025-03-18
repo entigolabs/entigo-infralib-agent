@@ -7,7 +7,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"log"
+	"log/slog"
 )
 
 type CloudWatch interface {
@@ -18,6 +20,7 @@ type CloudWatch interface {
 	GetLogs(logGroupName string, logStreamName string) ([]string, error)
 	DeleteLogGroup(logGroupName string) error
 	DeleteLogStream(logGroupName, logStreamName string) error
+	addEncryption(logGroupName, keyArn string) error
 }
 
 type cloudWatch struct {
@@ -46,7 +49,9 @@ func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
 	if len(groups.LogGroups) == 0 {
 		return "", nil
 	}
-	return *groups.LogGroups[0].Arn, nil
+	logGroup := groups.LogGroups[0]
+	c.addRetentionPolicy(logGroup)
+	return *logGroup.Arn, nil
 }
 
 func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
@@ -74,7 +79,23 @@ func (c *cloudWatch) getLogGroup(logGroupName string) (string, error) {
 	if len(groups.LogGroups) != 1 {
 		return "", fmt.Errorf("expected 1 log group, got %d", len(groups.LogGroups))
 	}
-	return *groups.LogGroups[0].Arn, nil
+	logGroup := groups.LogGroups[0]
+	c.addRetentionPolicy(logGroup)
+	return *logGroup.Arn, nil
+}
+
+func (c *cloudWatch) addRetentionPolicy(logGroup types.LogGroup) {
+	if logGroup.RetentionInDays != nil {
+		return
+	}
+	_, err := c.cloudwatchlogs.PutRetentionPolicy(c.ctx, &cloudwatchlogs.PutRetentionPolicyInput{
+		LogGroupName:    logGroup.LogGroupName,
+		RetentionInDays: aws.Int32(180),
+	})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to set retention policy for log group %s: %v",
+			*logGroup.LogGroupName, err)))
+	}
 }
 
 func (c *cloudWatch) LogStreamExists(logGroupName string, logStreamName string) (bool, error) {
@@ -149,4 +170,19 @@ func (c *cloudWatch) DeleteLogStream(logGroupName, logStreamName string) error {
 	}
 	log.Printf("Deleted log stream %s\n", logStreamName)
 	return nil
+}
+
+func (c *cloudWatch) addEncryption(logGroupName, keyArn string) error {
+	group, err := c.GetLogGroup(logGroupName)
+	if err != nil {
+		return err
+	}
+	if group == "" {
+		return nil
+	}
+	_, err = c.cloudwatchlogs.AssociateKmsKey(c.ctx, &cloudwatchlogs.AssociateKmsKeyInput{
+		LogGroupName: aws.String(logGroupName),
+		KmsKeyId:     aws.String(keyArn),
+	})
+	return err
 }
