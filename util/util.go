@@ -293,6 +293,17 @@ func HashCode(value string) string {
 	return strings.ToLower(fmt.Sprintf("%x", hasher.Sum32()))
 }
 
+func GetOutputStringValue(outputs map[string]model.TFOutput, key string) (string, error) {
+	value, err := GetOutputValue(outputs, key)
+	if err != nil {
+		return "", fmt.Errorf("failed to get output %s value: %v", key, err)
+	}
+	if value == nil {
+		return "", nil
+	}
+	return *value, nil
+}
+
 func GetOutputValue(outputs map[string]model.TFOutput, key string) (*string, error) {
 	output, found := outputs[key]
 	if !found {

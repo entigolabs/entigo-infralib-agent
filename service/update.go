@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"dario.cat/mergo"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
@@ -314,59 +313,6 @@ func (u *updater) updateAgentJob(cmd common.Command) {
 	if err != nil {
 		log.Fatalf("Failed to update agent job: %s", err)
 	}
-}
-
-func setupEncryption(config model.Config, provider model.CloudProvider, resources model.Resources) {
-	if resources.GetProviderType() == model.GCLOUD {
-		return // TODO Remove when GCP encryption is implemented
-	}
-	step, module := getEncryptionModule(config)
-	if step == nil || module == nil {
-		return
-	}
-	log.Printf("Processing encryption based on %s module %s\n", step.Name, module.Name)
-	outputs, err := getModuleOutputs(*step, resources)
-	if err != nil {
-		log.Fatalf("Failed to get outputs for %s: %v", step.Name, err)
-	}
-	if len(outputs) == 0 {
-		return
-	}
-	err = provider.AddEncryption(module.Name, outputs)
-	if err != nil {
-		log.Fatalf("Failed to add encryption: %v", err)
-	}
-}
-
-func getEncryptionModule(config model.Config) (*model.Step, *model.Module) {
-	for _, step := range config.Steps {
-		for _, module := range step.Modules {
-			moduleType := getModuleType(module)
-			if moduleType != "kms" {
-				continue
-			}
-			return &step, &module
-		}
-	}
-	return nil, nil
-}
-
-func getModuleOutputs(step model.Step, resources model.Resources) (map[string]model.TFOutput, error) {
-	filePath := fmt.Sprintf("%s-%s/%s", resources.GetCloudPrefix(), step.Name, terraformOutput)
-	file, err := resources.GetBucket().GetFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-	outputs := make(map[string]model.TFOutput)
-	if file == nil {
-		slog.Debug(fmt.Sprintf("terraform output file %s not found", filePath))
-		return outputs, nil
-	}
-	err = json.Unmarshal(file, &outputs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %s", filePath, err)
-	}
-	return outputs, nil
 }
 
 func (u *updater) processRelease(index int) {

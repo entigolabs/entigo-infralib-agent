@@ -10,6 +10,7 @@ import (
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
+	"log/slog"
 	"strings"
 )
 
@@ -29,6 +30,10 @@ func NewSM(ctx context.Context, projectId string) (model.SSM, error) {
 		client:    client,
 		projectId: projectId,
 	}, nil
+}
+
+func (s *sm) AddEncryptionKeyId(_ string) {
+	slog.Warn("AddEncryptionKeyId is not supported for GCP")
 }
 
 func (s *sm) GetParameter(name string) (*model.Parameter, error) {

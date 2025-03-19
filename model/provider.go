@@ -41,7 +41,9 @@ type CloudProvider interface {
 }
 
 type ResourceProvider interface {
+	GetProviderType() ProviderType
 	GetSSM() SSM
+	GetBucket(prefix string) Bucket
 }
 
 type Resources interface {
@@ -58,6 +60,7 @@ type Resources interface {
 
 type Bucket interface {
 	GetRepoMetadata() (*RepositoryMetadata, error)
+	BucketExists() (bool, error)
 	PutFile(file string, content []byte) error
 	GetFile(file string) ([]byte, error)
 	DeleteFile(file string) error
@@ -89,6 +92,7 @@ type Builder interface {
 }
 
 type SSM interface {
+	AddEncryptionKeyId(keyId string)
 	GetParameter(name string) (*Parameter, error)
 	ParameterExists(name string) (bool, error)
 	PutParameter(name string, value string) error

@@ -221,7 +221,11 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 }
 
 func (g *gcloudService) getBucketName() string {
-	return fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
+	return getBucketName(g.cloudPrefix, g.projectId, g.location)
+}
+
+func getBucketName(cloudPrefix, projectId, location string) string {
+	return fmt.Sprintf("%s-%s-%s", cloudPrefix, projectId, location)
 }
 
 func (g *gcloudService) CreateServiceAccount() {
@@ -291,5 +295,6 @@ func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
 }
 
 func (g *gcloudService) AddEncryption(_ string, _ map[string]model.TFOutput) error {
+	slog.Warn(common.PrefixWarning("Encryption is not yet supported for GCP"))
 	return nil
 }

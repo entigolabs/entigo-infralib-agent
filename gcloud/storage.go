@@ -41,7 +41,7 @@ func NewStorage(ctx context.Context, projectId string, location string, bucket s
 }
 
 func (g *GStorage) CreateBucket(skipDelay bool) error {
-	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
+	exists, err := g.BucketExists()
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (g *GStorage) CreateBucket(skipDelay bool) error {
 }
 
 func (g *GStorage) Delete() error {
-	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
+	exists, err := g.BucketExists()
 	if err != nil {
 		return err
 	}
@@ -102,11 +102,11 @@ func (g *GStorage) Delete() error {
 	return err
 }
 
-func (g *GStorage) bucketExists(ctx context.Context, bucketHandle *storage.BucketHandle) (bool, error) {
+func (g *GStorage) BucketExists() (bool, error) {
 	if g.bucketCreated != nil {
 		return *g.bucketCreated, nil
 	}
-	_, err := bucketHandle.Attrs(ctx)
+	_, err := g.bucketHandle.Attrs(g.ctx)
 	if err == nil {
 		return true, nil
 	}
@@ -120,7 +120,7 @@ func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	if g.repoMetadata != nil {
 		return g.repoMetadata, nil
 	}
-	exists, err := g.bucketExists(g.ctx, g.bucketHandle)
+	exists, err := g.BucketExists()
 	if err != nil {
 		return nil, err
 	}

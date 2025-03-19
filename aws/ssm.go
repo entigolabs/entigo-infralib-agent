@@ -66,14 +66,18 @@ func (s *ssm) ParameterExists(name string) (bool, error) {
 }
 
 func (s *ssm) PutParameter(name string, value string) error {
-	param, err := s.GetParameter(name)
+	output, err := s.ssmClient.GetParameter(s.ctx, &awsSSM.GetParameterInput{
+		Name:           aws.String(name),
+		WithDecryption: aws.Bool(true),
+	})
 	if err != nil {
-		var notFoundErr *model.ParameterNotFoundError
+		var notFoundErr *types.ParameterNotFound
 		if !errors.As(err, &notFoundErr) {
 			return err
 		}
+		output = nil
 	}
-	if param != nil && *param.Value == value {
+	if output != nil && *output.Parameter.Value == value {
 		return nil
 	}
 	input := &awsSSM.PutParameterInput{
@@ -81,7 +85,10 @@ func (s *ssm) PutParameter(name string, value string) error {
 		Value: aws.String(value),
 		Type:  types.ParameterTypeSecureString,
 	}
-	if param == nil {
+	if s.kmsKeyId != "" {
+		input.KeyId = &s.kmsKeyId
+	}
+	if output != nil {
 		input.Overwrite = aws.Bool(true)
 	} else {
 		input.Tags = []types.Tag{{
@@ -137,7 +144,7 @@ func (s *ssm) ListParameters() ([]string, error) {
 	return keys, nil
 }
 
-func (s *ssm) AddKmsKeyId(keyId string) {
+func (s *ssm) AddEncryptionKeyId(keyId string) {
 	s.kmsKeyId = keyId
 }
 
