@@ -221,7 +221,7 @@ func removeStepIncludeFolder(bucket model.Bucket, name string) {
 func removeFolder(bucket model.Bucket, folder string) {
 	err := removeFolderE(bucket, folder)
 	if err != nil {
-		log.Fatalf(common.PrefixError(err))
+		log.Fatal(err)
 	}
 }
 
