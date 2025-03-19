@@ -21,6 +21,7 @@ const (
 	ConfigFile    = "config.yaml"
 	EntigoSource  = "github.com/entigolabs/entigo-infralib-release"
 
+	certsFolder    = "ca-certificates"
 	terraformCache = ".terraform"
 )
 
@@ -69,9 +70,10 @@ func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucke
 	config = replaceConfigValues(ssm, prefix, config)
 	reserveAppsFiles(config)
 	basePath := filepath.Dir(configFile) + "/"
+	AddCertFilesFromFolder(&config, basePath)
 	AddStepsFilesFromFolder(&config, basePath)
 	AddModuleInputFiles(&config, basePath, os.ReadFile, addInputs)
-	PutAdditionalFiles(bucket, config.Steps)
+	PutAdditionalFiles(bucket, config)
 	return config
 }
 
@@ -96,6 +98,27 @@ func reserveAppsFiles(config model.Config) {
 		for _, module := range step.Modules {
 			ReservedAppsFiles.Add(fmt.Sprintf("%s.yaml", module.Name))
 		}
+	}
+}
+
+func AddCertFilesFromFolder(config *model.Config, basePath string) {
+	entries, err := os.ReadDir(fmt.Sprintf("%s%s", basePath, certsFolder))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		filePath := fmt.Sprintf("%s/%s", certsFolder, entry.Name())
+		fileBytes, err := os.ReadFile(basePath + filePath)
+		if err != nil {
+			log.Fatalf("failed to read file %s: %v", filePath, err)
+		}
+		config.Certs = append(config.Certs, model.File{
+			Name:    filePath,
+			Content: fileBytes,
+		})
 	}
 }
 
@@ -147,73 +170,95 @@ func PutConfig(bucket model.Bucket, config model.Config) {
 	}
 }
 
-func PutAdditionalFiles(bucket model.Bucket, steps []model.Step) {
-	for _, step := range steps {
+func PutAdditionalFiles(bucket model.Bucket, config model.Config) {
+	if len(config.Certs) == 0 {
+		removeFolder(bucket, certsFolder)
+	} else {
+		putFolderFiles(bucket, certsFolder, config.Certs)
+	}
+	for _, step := range config.Steps {
 		if len(step.Files) == 0 {
 			removeStepIncludeFolder(bucket, step.Name)
 		} else if step.Files != nil {
-			putStepFiles(bucket, step)
+			putFolderFiles(bucket, fmt.Sprintf(IncludeFormat, step.Name), step.Files)
 		}
 		if step.Modules == nil {
 			continue
 		}
 		for _, module := range step.Modules {
-			if module.InputsFile == "" {
-				inputsFile := fmt.Sprintf("config/%s/%s.yaml", step.Name, module.Name)
-				bytes, err := bucket.GetFile(inputsFile)
-				if err != nil {
-					log.Fatalf("Failed to get module %s inputs file: %s", module.Name, err)
-				}
-				if bytes != nil {
-					err = bucket.DeleteFile(inputsFile)
-					if err != nil {
-						log.Fatalf("Failed to delete module %s inputs file: %s", module.Name, err)
-					}
-				}
-			} else {
-				err := bucket.PutFile(module.InputsFile, module.FileContent)
-				if err != nil {
-					log.Fatalf("Failed to put module %s inputs file: %s", module.Name, err)
-				}
-				module.InputsFile = ""
-				module.FileContent = nil
+			putModuleFiles(step, module, bucket)
+		}
+	}
+}
+
+func putModuleFiles(step model.Step, module model.Module, bucket model.Bucket) {
+	if module.InputsFile == "" {
+		inputsFile := fmt.Sprintf("config/%s/%s.yaml", step.Name, module.Name)
+		bytes, err := bucket.GetFile(inputsFile)
+		if err != nil {
+			log.Fatalf("Failed to get module %s inputs file: %s", module.Name, err)
+		}
+		if bytes != nil {
+			err = bucket.DeleteFile(inputsFile)
+			if err != nil {
+				log.Fatalf("Failed to delete module %s inputs file: %s", module.Name, err)
 			}
 		}
+	} else {
+		err := bucket.PutFile(module.InputsFile, module.FileContent)
+		if err != nil {
+			log.Fatalf("Failed to put module %s inputs file: %s", module.Name, err)
+		}
+		module.InputsFile = ""
+		module.FileContent = nil
 	}
 }
 
 func removeStepIncludeFolder(bucket model.Bucket, name string) {
-	files, err := bucket.ListFolderFiles(fmt.Sprintf(IncludeFormat, name))
+	removeFolder(bucket, fmt.Sprintf(IncludeFormat, name))
+}
+
+func removeFolder(bucket model.Bucket, folder string) {
+	err := removeFolderE(bucket, folder)
 	if err != nil {
-		log.Fatalf("Failed to list folder files: %s", err)
-	}
-	if len(files) == 0 {
-		return
-	}
-	log.Printf("Removing included files for step %s", name)
-	for _, file := range files {
-		err = bucket.DeleteFile(file)
-		if err != nil {
-			log.Fatalf("Failed to delete file %s: %s", file, err)
-		}
+		log.Fatalf(common.PrefixError(err))
 	}
 }
 
-func putStepFiles(bucket model.Bucket, step model.Step) {
-	files := model.NewSet[string]()
-	for _, file := range step.Files {
+func removeFolderE(bucket model.Bucket, folder string) error {
+	files, err := bucket.ListFolderFiles(folder)
+	if err != nil {
+		return fmt.Errorf("failed to list folder %s files: %s", folder, err)
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	log.Printf("Removing bucket folder %s", folder)
+	for _, file := range files {
+		err = bucket.DeleteFile(file)
+		if err != nil {
+			return fmt.Errorf("failed to delete file %s: %s", file, err)
+		}
+	}
+	return nil
+}
+
+func putFolderFiles(bucket model.Bucket, folder string, files []model.File) {
+	allFiles := model.NewSet[string]()
+	for _, file := range files {
+
 		err := bucket.PutFile(file.Name, file.Content)
 		if err != nil {
 			log.Fatalf("Failed to put step file %s: %s", file.Name, err)
 		}
-		files.Add(file.Name)
+		allFiles.Add(file.Name)
 	}
-	bucketFiles, err := bucket.ListFolderFiles(fmt.Sprintf(IncludeFormat, step.Name))
+	bucketFiles, err := bucket.ListFolderFiles(folder)
 	if err != nil {
-		log.Fatalf("Failed to list folder files: %s", err)
+		log.Fatalf("Failed to list folder allFiles: %s", err)
 	}
 	for _, bucketFile := range bucketFiles {
-		if files.Contains(bucketFile) {
+		if allFiles.Contains(bucketFile) {
 			continue
 		}
 		err = bucket.DeleteFile(bucketFile)
@@ -226,6 +271,7 @@ func putStepFiles(bucket model.Bucket, step model.Step) {
 func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket, addInputs bool) model.Config {
 	config := replaceConfigValues(ssm, prefix, getRemoteConfigFile(bucket))
 	reserveAppsFiles(config)
+	AddCertFilesFromBucket(&config, bucket)
 	AddStepsFilesFromBucket(&config, bucket)
 	AddModuleInputFiles(&config, "", bucket.GetFile, addInputs)
 	return config
@@ -245,6 +291,26 @@ func getRemoteConfigFile(bucket model.Bucket) model.Config {
 		log.Fatalf("Failed to unmarshal config: %s", err)
 	}
 	return config
+}
+
+func AddCertFilesFromBucket(config *model.Config, bucket model.Bucket) {
+	files, err := bucket.ListFolderFiles(certsFolder)
+	if err != nil {
+		log.Fatalf("Failed to list %s folder files: %s", certsFolder, err)
+	}
+	for _, file := range files {
+		fileBytes, err := bucket.GetFile(file)
+		if err != nil {
+			log.Fatalf("Failed to get file %s: %s", file, err)
+		}
+		if fileBytes == nil {
+			continue
+		}
+		config.Certs = append(config.Certs, model.File{
+			Name:    file,
+			Content: fileBytes,
+		})
+	}
 }
 
 func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) {
