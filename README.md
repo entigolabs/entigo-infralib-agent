@@ -473,6 +473,10 @@ Infralib modules may use `{{ .tmodule.type }}` in their default input files to r
 
 It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and named files for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.
 
+### Including CA certificates
+
+It's possible to include CA certificates by adding the files into a `./ca-certificates` subdirectory. Files will be copied into the bucket root and each step directory for Infralib.
+
 ### Callback
 
 When configuring a callback, agent will send requests to the specified URL about the status of step pipelines.

@@ -14,6 +14,7 @@ type Config struct {
 	Destinations     []ConfigDestination `yaml:"destinations,omitempty"`
 	Callback         Callback            `yaml:"callback,omitempty"`
 	Steps            []Step              `yaml:"steps,omitempty"`
+	Certs            []File              `yaml:"-"`
 }
 
 type ConfigSource struct {

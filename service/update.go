@@ -415,6 +415,13 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		}
 		return false, err
 	}
+	if !u.firstRunDone[step.Name] {
+		err = u.updateCertFiles(step.Name)
+		if err != nil {
+			u.postCallback(model.ApplyStatusFailure, *stepState)
+			return false, err
+		}
+	}
 	executePipelines, providers, files, err := u.updateStepFiles(step, moduleVersions, index)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState)
@@ -680,6 +687,36 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 		return nil, fmt.Errorf("failed to get state for step %s", step.Name)
 	}
 	return stepState, nil
+}
+
+func (u *updater) updateCertFiles(stepName string) error {
+	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), stepName)
+	if len(u.config.Certs) == 0 {
+		return removeFolderE(u.resources.GetBucket(), fmt.Sprintf("%s/%s", folder, certsFolder))
+	}
+	allFiles := model.NewSet[string]()
+	for _, file := range u.config.Certs {
+		filePath := fmt.Sprintf("%s/%s", folder, file.Name)
+		err := u.resources.GetBucket().PutFile(filePath, file.Content)
+		if err != nil {
+			return err
+		}
+		allFiles.Add(filePath)
+	}
+	bucketFiles, err := u.resources.GetBucket().ListFolderFiles(fmt.Sprintf("%s/%s", folder, certsFolder))
+	if err != nil {
+		log.Fatalf("Failed to list folder allFiles: %s", err)
+	}
+	for _, bucketFile := range bucketFiles {
+		if allFiles.Contains(bucketFile) {
+			continue
+		}
+		err = u.resources.GetBucket().DeleteFile(bucketFile)
+		if err != nil {
+			log.Fatalf("Failed to delete file %s: %s", bucketFile, err)
+		}
+	}
+	return nil
 }
 
 func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
@@ -950,7 +987,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 		return false, nil, nil, err
 	}
 	files[mainPath] = model.File{Content: mainBytes}
-	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache}), files)
+	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache, certsFolder}), files)
 	if err != nil {
 		return false, nil, nil, err
 	}
@@ -1044,7 +1081,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		}
 		files[filePath] = model.File{Content: file}
 	}
-	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet[string](), files)
+	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.ToSet([]string{certsFolder}), files)
 	return executePipeline, files, err
 }
 
