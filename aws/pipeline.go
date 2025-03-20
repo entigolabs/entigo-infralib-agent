@@ -41,22 +41,24 @@ const (
 )
 
 type Pipeline struct {
-	ctx          context.Context
-	codePipeline *codepipeline.Client
-	roleArn      string
-	cloudWatch   CloudWatch
-	logGroup     string
-	logStream    string
+	ctx            context.Context
+	codePipeline   *codepipeline.Client
+	roleArn        string
+	cloudWatch     CloudWatch
+	logGroup       string
+	logStream      string
+	terraformCache bool
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool) *Pipeline {
 	return &Pipeline{
-		ctx:          ctx,
-		codePipeline: codepipeline.NewFromConfig(awsConfig),
-		roleArn:      roleArn,
-		cloudWatch:   cloudWatch,
-		logGroup:     logGroup,
-		logStream:    logStream,
+		ctx:            ctx,
+		codePipeline:   codepipeline.NewFromConfig(awsConfig),
+		roleArn:        roleArn,
+		cloudWatch:     cloudWatch,
+		logGroup:       logGroup,
+		logStream:      logStream,
+		terraformCache: terraformCache,
 	}
 }
 
@@ -149,7 +151,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources),
 					},
 				},
 				},
@@ -180,7 +182,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources),
 					},
 				},
 				},
@@ -277,7 +279,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(planCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources),
 					},
 				},
 				},
@@ -308,7 +310,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": getTerraformEnvironmentVariables(applyCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources),
 					},
 				},
 				},
@@ -477,7 +479,7 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 			continue
 		}
 		for _, action := range stage.Actions {
-			envVars := getActionEnvironmentVariables(*action.Name, stepName, step, bucket, authSources)
+			envVars := p.getActionEnvironmentVariables(*action.Name, stepName, step, bucket, authSources)
 			if action.Configuration == nil || action.Configuration["EnvironmentVariables"] == envVars {
 				continue
 			}
@@ -498,10 +500,10 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 	return err
 }
 
-func getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+func (p *Pipeline) getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
 	command := getCommand(actionName, step.Type)
 	if step.Type == model.StepTypeTerraform {
-		return getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
+		return p.getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
 	} else {
 		return getEnvironmentVariables(command, stepName, step, bucket, authSources)
 	}
@@ -869,8 +871,16 @@ func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 	return pipelineOutput.Pipeline, nil
 }
 
-func getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+	if step.Type == model.StepTypeTerraform {
+		return p.getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
+	}
+	return getEnvironmentVariables(command, stepName, step, bucket, authSources)
+}
+
+func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
 	envVars := getEnvironmentVariablesList(command, stepName, step, bucket, authSources)
+	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TERRAFORM_CACHE\",\"value\":\"%t\"}", p.terraformCache))
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}",

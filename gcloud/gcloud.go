@@ -12,14 +12,14 @@ import (
 )
 
 type gcloudService struct {
-	ctx          context.Context
-	cloudPrefix  string
-	projectId    string
-	location     string
-	zone         string
-	resources    Resources
-	pipelineType common.PipelineType
-	skipDelay    bool
+	ctx         context.Context
+	cloudPrefix string
+	projectId   string
+	location    string
+	zone        string
+	resources   Resources
+	pipeline    common.Pipeline
+	skipDelay   bool
 }
 
 type Resources struct {
@@ -34,15 +34,15 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipelineType common.PipelineType, skipBucketDelay bool) model.CloudProvider {
+func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipeline common.Pipeline, skipBucketDelay bool) model.CloudProvider {
 	return &gcloudService{
-		ctx:          ctx,
-		cloudPrefix:  cloudPrefix,
-		projectId:    gCloud.ProjectId,
-		location:     gCloud.Location,
-		zone:         gCloud.Zone,
-		pipelineType: pipelineType,
-		skipDelay:    skipBucketDelay,
+		ctx:         ctx,
+		cloudPrefix: cloudPrefix,
+		projectId:   gCloud.ProjectId,
+		location:    gCloud.Location,
+		zone:        gCloud.Zone,
+		pipeline:    pipeline,
+		skipDelay:   skipBucketDelay,
 	}
 }
 
@@ -73,7 +73,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 		},
 		ProjectId: g.projectId,
 	}
-	if g.pipelineType == common.PipelineTypeLocal {
+	if g.pipeline.Type == string(common.PipelineTypeLocal) {
 		return resources
 	}
 
@@ -86,7 +86,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 		log.Fatalf("Failed to create IAM service: %s", err)
 	}
 	serviceAccount := g.createServiceAccount(iam)
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount)
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount, g.pipeline.TerraformCache)
 	if err != nil {
 		log.Fatalf("Failed to create builder: %s", err)
 	}
@@ -105,7 +105,7 @@ func (g *gcloudService) GetResources() model.Resources {
 	if err != nil {
 		log.Fatalf("Failed to create storage service: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "")
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "", true)
 	if err != nil {
 		log.Fatalf("Failed to create builder: %s", err)
 	}
