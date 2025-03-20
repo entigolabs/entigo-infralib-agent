@@ -30,9 +30,10 @@ type Builder struct {
 	location       string
 	zone           string
 	serviceAccount string
+	terraformCache bool
 }
 
-func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount string) (*Builder, error) {
+func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount string, terraformCache bool) (*Builder, error) {
 	client, err := run.NewJobsClient(ctx)
 	if err != nil {
 		return nil, err
@@ -44,6 +45,7 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 		location:       location,
 		zone:           zone,
 		serviceAccount: serviceAccount,
+		terraformCache: terraformCache,
 	}, nil
 }
 
@@ -491,7 +493,7 @@ func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step 
 		"INFRALIB_BUCKET": bucket,
 	}
 	if step.Type == model.StepTypeTerraform {
-		envVars = addTerraformEnvironmentVariables(envVars, step)
+		envVars = b.addTerraformEnvironmentVariables(envVars, step)
 	}
 	if step.Type == model.StepTypeArgoCD {
 		envVars = addArgoCDEnvironmentVariables(envVars, step)
@@ -517,7 +519,8 @@ func (b *Builder) deleteJob(name string) error {
 	return err
 }
 
-func addTerraformEnvironmentVariables(envVars map[string]string, step model.Step) map[string]string {
+func (b *Builder) addTerraformEnvironmentVariables(envVars map[string]string, step model.Step) map[string]string {
+	envVars["TERRAFORM_CACHE"] = fmt.Sprintf("%t", b.terraformCache)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			envVars[fmt.Sprintf("GIT_AUTH_USERNAME_%s", strings.ToUpper(module.Name))] = module.HttpUsername

@@ -51,13 +51,12 @@ type updater struct {
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
-	pipelineType  common.PipelineType
+	pipelineFlags common.Pipeline
 	localPipeline *LocalPipeline
 	callback      Callback
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
-	allowParallel bool
 }
 
 func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
@@ -80,13 +79,12 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
 		destinations:  destinations,
 		state:         state,
-		pipelineType:  common.PipelineType(flags.Pipeline.Type),
+		pipelineFlags: flags.Pipeline,
 		localPipeline: getLocalPipeline(resources, flags),
 		callback:      NewCallback(ctx, config.Callback),
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
-		allowParallel: flags.AllowParallel,
 	}
 }
 
@@ -305,7 +303,7 @@ func (u *updater) process() {
 }
 
 func (u *updater) updateAgentJob(cmd common.Command) {
-	if u.pipelineType == common.PipelineTypeLocal {
+	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
 		return
 	}
 	agent := NewAgent(u.resources)
@@ -440,7 +438,7 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 	if len(retrySteps) == 0 {
 		return
 	}
-	u.allowParallel = false
+	u.pipelineFlags.AllowParallel = false
 	for _, step := range retrySteps {
 		log.Printf("Retrying step %s\n", step.Name)
 		_, err := u.processStep(index, step, wg, nil)
@@ -486,7 +484,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		}
 		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
-	if !u.allowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
+	if !u.pipelineFlags.AllowParallel || !u.appliedVersionMatchesRelease(step, *stepState, index) {
 		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
 	wg.Add(1)
@@ -662,7 +660,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	log.Printf("Applying release for step %s\n", step.Name)
 	autoApprove := getAutoApprove(*stepState)
 	var err error
-	if u.pipelineType == common.PipelineTypeLocal {
+	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
 		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step))
 	} else if firstRun {
 		err = u.createExecuteStepPipelines(step, autoApprove, index)
@@ -752,7 +750,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, 
 }
 
 func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
-	if u.pipelineType == common.PipelineTypeLocal {
+	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
 		return nil
 	}
 	if !*step.Vpc.Attach {

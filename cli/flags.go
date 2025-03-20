@@ -22,10 +22,10 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
 		return append(append(baseFlags, getProviderFlags()...), &stepsFlag, &pipelineTypeFlag,
-			&logsPathFlag, &printLogsFlag, &skipBucketDelayFlag)
+			&logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag)
 	case common.RunCommand:
 		return append(append(baseFlags, getProviderFlags()...), &allowParallelFlag, &stepsFlag,
-			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &skipBucketDelayFlag)
+			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag)
 	case common.PullCommand:
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
 	case common.SACommand:
@@ -138,7 +138,7 @@ var allowParallelFlag = cli.BoolFlag{
 	EnvVars:     []string{"ALLOW_PARALLEL"},
 	Value:       true,
 	Usage:       "allow running steps in parallel on first execution cycle",
-	Destination: &flags.AllowParallel,
+	Destination: &flags.Pipeline.AllowParallel,
 }
 
 var yesFlag = cli.BoolFlag{
@@ -213,7 +213,19 @@ var printLogsFlag = cli.BoolFlag{
 	EnvVars:     []string{"PRINT_LOGS"},
 	Usage:       "print terraform/helm logs to stdout when using local pipelines",
 	Value:       true,
+	DefaultText: "true",
 	Destination: &flags.Pipeline.PrintLogs,
+	Required:    false,
+}
+
+var terraformCacheFlag = cli.BoolFlag{
+	Name:        "terraform-cache",
+	Aliases:     []string{"tc"},
+	EnvVars:     []string{"TERRAFORM_CACHE"},
+	Usage:       "use terraform caching",
+	Value:       true,
+	DefaultText: "true",
+	Destination: &flags.Pipeline.TerraformCache,
 	Required:    false,
 }
 

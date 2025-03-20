@@ -19,13 +19,13 @@ import (
 )
 
 type awsService struct {
-	ctx          context.Context
-	awsConfig    aws.Config
-	cloudPrefix  string
-	accountId    string
-	resources    Resources
-	pipelineType common.PipelineType
-	skipDelay    bool
+	ctx         context.Context
+	awsConfig   aws.Config
+	cloudPrefix string
+	accountId   string
+	resources   Resources
+	pipeline    common.Pipeline
+	skipDelay   bool
 }
 
 type Resources struct {
@@ -45,7 +45,7 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipelineType common.PipelineType, skipBucketDelay bool) model.CloudProvider {
+func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeline common.Pipeline, skipBucketDelay bool) model.CloudProvider {
 	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
@@ -53,12 +53,12 @@ func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeli
 	}
 	log.Printf("AWS account id: %s\n", accountId)
 	return &awsService{
-		ctx:          ctx,
-		awsConfig:    awsConfig,
-		cloudPrefix:  cloudPrefix,
-		accountId:    accountId,
-		pipelineType: pipelineType,
-		skipDelay:    skipBucketDelay,
+		ctx:         ctx,
+		awsConfig:   awsConfig,
+		cloudPrefix: cloudPrefix,
+		accountId:   accountId,
+		pipeline:    pipeline,
+		skipDelay:   skipBucketDelay,
 	}
 }
 
@@ -120,7 +120,7 @@ func (a *awsService) SetupResources() model.Resources {
 		AccountId:     a.accountId,
 		IAM:           iam,
 	}
-	if a.pipelineType == common.PipelineTypeLocal {
+	if a.pipeline.Type == string(common.PipelineTypeLocal) {
 		return a.resources
 	}
 
@@ -128,7 +128,7 @@ func (a *awsService) SetupResources() model.Resources {
 	buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
 	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream)
+	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream, a.pipeline.TerraformCache)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -144,7 +144,7 @@ func (a *awsService) GetResources() model.Resources {
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    NewBuilder(a.ctx, a.awsConfig, "", "", "", ""),
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),

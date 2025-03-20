@@ -29,8 +29,7 @@ type LocalPipeline struct {
 	region    string
 	project   string
 	bucket    string
-	logsPath  string
-	printLogs bool
+	pipeline  common.Pipeline
 	inputLock sync.Mutex
 }
 
@@ -47,8 +46,7 @@ func NewLocalPipeline(resources model.Resources, flags common.Pipeline) *LocalPi
 		region:    resources.GetRegion(),
 		project:   project,
 		bucket:    resources.GetBucketName(),
-		logsPath:  flags.LogsPath,
-		printLogs: flags.PrintLogs,
+		pipeline:  flags,
 	}
 }
 
@@ -93,7 +91,7 @@ func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionC
 	cmd.Env = l.getEnv(prefix, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer
 	writers := []io.Writer{&stdoutBuf}
-	if l.printLogs {
+	if l.pipeline.PrintLogs {
 		writers = append(writers, log.Writer())
 	}
 	file := l.getLogFileWriter(prefix, command)
@@ -134,16 +132,26 @@ func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step 
 			env = append(env, fmt.Sprintf("ARGOCD_NAMESPACE=%s", step.ArgocdNamespace))
 		}
 	}
+	if step.Type == model.StepTypeTerraform {
+		env = append(env, fmt.Sprintf("TERRAFORM_CACHE=%t", l.pipeline.TerraformCache))
+		for _, module := range step.Modules {
+			if util.IsClientModule(module) {
+				env = append(env, fmt.Sprintf("GIT_AUTH_USERNAME_%s=%s", strings.ToUpper(module.Name), module.HttpUsername),
+					fmt.Sprintf("GIT_AUTH_PASSWORD_%s=%s", strings.ToUpper(module.Name), module.HttpPassword),
+					fmt.Sprintf("GIT_AUTH_SOURCE_%s=%s", strings.ToUpper(module.Name), module.Source))
+			}
+		}
+	}
 	return env
 }
 
 func (l *LocalPipeline) getLogFileWriter(prefix string, command model.ActionCommand) *os.File {
-	if l.logsPath == "" {
+	if l.pipeline.LogsPath == "" {
 		return nil
 	}
 	fileName := fmt.Sprintf("%s_%s_%s.log", command, prefix, time.Now().Format(time.RFC3339))
 	fileName = strings.ReplaceAll(fileName, "-", "_")
-	file, err := os.OpenFile(filepath.Join(l.logsPath, fileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filepath.Join(l.pipeline.LogsPath, fileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to open log file: %v", err)))
 		return nil

@@ -1,6 +1,8 @@
 package common
 
-import "github.com/urfave/cli/v2"
+import (
+	"github.com/urfave/cli/v2"
+)
 
 const (
 	AwsPrefixEnv       = "AWS_PREFIX"
@@ -14,7 +16,6 @@ type Flags struct {
 	LogLevel                string
 	Config                  string
 	Prefix                  string
-	AllowParallel           bool
 	Force                   bool
 	SkipBucketCreationDelay bool
 	Steps                   cli.StringSlice
@@ -24,6 +25,10 @@ type Flags struct {
 	Delete                  DeleteFlags
 	Params                  Params
 	Migrate                 Migrate
+}
+
+func (f *Flags) Setup(cmd Command) error {
+	return f.validate(cmd)
 }
 
 type GCloud struct {
@@ -43,9 +48,11 @@ type DeleteFlags struct {
 }
 
 type Pipeline struct {
-	Type      string
-	LogsPath  string
-	PrintLogs bool
+	Type           string
+	LogsPath       string
+	PrintLogs      bool
+	TerraformCache bool
+	AllowParallel  bool
 }
 
 type Migrate struct {
@@ -66,8 +73,4 @@ type Params struct {
 	Key       string
 	Value     string
 	Overwrite bool
-}
-
-func (f *Flags) Setup(cmd Command) error {
-	return f.validate(cmd)
 }
