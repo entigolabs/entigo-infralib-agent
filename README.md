@@ -32,6 +32,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Overriding with agent logic](#overriding-with-agent-logic)
     * [Overriding with module properties](#overriding-with-module-properties)
   * [Including files in steps](#including-files-in-steps)
+  * [Including CA certificates](#including-ca-certificates)
   * [Callback](#callback)
   * [Encryption](#encryption)
 * [Migration Helper](#migration-helper)
