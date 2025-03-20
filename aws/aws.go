@@ -459,7 +459,7 @@ func (a *awsService) AddEncryption(moduleName string, outputs map[string]model.T
 	if err != nil {
 		return err
 	}
-	if a.pipelineType == common.PipelineTypeLocal {
+	if a.pipeline.Type == string(common.PipelineTypeLocal) {
 		return nil
 	}
 	return a.setupTelemetryEncryption(moduleName, outputs)
