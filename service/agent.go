@@ -5,6 +5,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
+	"strconv"
 )
 
 type Agent interface {
@@ -13,16 +14,18 @@ type Agent interface {
 }
 
 type agent struct {
-	name        string
-	cloudPrefix string
-	resources   model.Resources
+	name           string
+	cloudPrefix    string
+	resources      model.Resources
+	terraformCache bool
 }
 
-func NewAgent(resources model.Resources) Agent {
+func NewAgent(resources model.Resources, terraformCache bool) Agent {
 	return &agent{
-		name:        resources.GetCloudPrefix() + "-agent",
-		cloudPrefix: resources.GetCloudPrefix(),
-		resources:   resources,
+		name:           resources.GetCloudPrefix() + "-agent",
+		cloudPrefix:    resources.GetCloudPrefix(),
+		resources:      resources,
+		terraformCache: terraformCache,
 	}
 }
 
@@ -89,7 +92,8 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 	} else {
 		image = model.AgentImageDocker
 	}
-	if project.Image == image+":"+version {
+	tfCache := strconv.FormatBool(a.terraformCache)
+	if project.Image == image+":"+version && tfCache == project.TerraformCache {
 		return false, nil
 	}
 	err := a.resources.GetBuilder().UpdateAgentProject(project.Name, version, a.cloudPrefix)

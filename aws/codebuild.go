@@ -39,26 +39,28 @@ type Artifacts struct {
 }
 
 type builder struct {
-	ctx          context.Context
-	codeBuild    *codebuild.Client
-	region       *string
-	buildRoleArn string
-	logGroup     string
-	logStream    string
-	bucketArn    string
-	buildSpec    *string
+	ctx            context.Context
+	codeBuild      *codebuild.Client
+	region         *string
+	buildRoleArn   string
+	logGroup       string
+	logStream      string
+	bucketArn      string
+	buildSpec      *string
+	terraformCache bool
 }
 
-func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string) model.Builder {
+func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string, terraformCache bool) model.Builder {
 	return &builder{
-		ctx:          ctx,
-		codeBuild:    codebuild.NewFromConfig(awsConfig),
-		region:       &awsConfig.Region,
-		buildRoleArn: buildRoleArn,
-		logGroup:     logGroup,
-		logStream:    logStream,
-		bucketArn:    bucketArn,
-		buildSpec:    buildSpec(),
+		ctx:            ctx,
+		codeBuild:      codebuild.NewFromConfig(awsConfig),
+		region:         &awsConfig.Region,
+		buildRoleArn:   buildRoleArn,
+		logGroup:       logGroup,
+		logStream:      logStream,
+		bucketArn:      bucketArn,
+		buildSpec:      buildSpec(),
+		terraformCache: terraformCache,
 	}
 }
 
@@ -134,7 +136,7 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 			Image:                    aws.String(model.AgentImage + ":" + imageVersion),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
-			EnvironmentVariables:     getAgentEnvVars(awsPrefix),
+			EnvironmentVariables:     getAgentEnvVars(awsPrefix, b.terraformCache),
 		},
 		LogsConfig: &types.LogsConfig{
 			CloudWatchLogs: &types.CloudWatchLogsConfig{
@@ -158,11 +160,15 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 	return err
 }
 
-func getAgentEnvVars(awsPrefix string) []types.EnvironmentVariable {
+func getAgentEnvVars(awsPrefix string, terraformCache bool) []types.EnvironmentVariable {
 	return []types.EnvironmentVariable{
 		{
 			Name:  aws.String(common.AwsPrefixEnv),
 			Value: aws.String(awsPrefix),
+		},
+		{
+			Name:  aws.String("TERRAFORM_CACHE"),
+			Value: aws.String(fmt.Sprintf("%t", terraformCache)),
 		},
 	}
 }
@@ -175,9 +181,17 @@ func (b *builder) GetProject(projectName string) (*model.Project, error) {
 	if project == nil {
 		return nil, nil
 	}
+	var terraformCache string
+	for _, env := range project.Environment.EnvironmentVariables {
+		if *env.Name == "TERRAFORM_CACHE" {
+			terraformCache = *env.Value
+			break
+		}
+	}
 	return &model.Project{
-		Name:  *project.Name,
-		Image: *project.Environment.Image,
+		Name:           *project.Name,
+		Image:          *project.Environment.Image,
+		TerraformCache: terraformCache,
 	}, nil
 }
 
@@ -202,14 +216,8 @@ func (b *builder) UpdateAgentProject(projectName string, version string, awsPref
 	if project == nil {
 		return fmt.Errorf("project %s not found", projectName)
 	}
-	image := fmt.Sprintf("%s:%s", model.AgentImage, version)
-
-	if *project.Environment.Image == image {
-		return nil
-	}
-
-	project.Environment.Image = aws.String(image)
-	project.Environment.EnvironmentVariables = getAgentEnvVars(awsPrefix)
+	project.Environment.Image = aws.String(fmt.Sprintf("%s:%s", model.AgentImage, version))
+	project.Environment.EnvironmentVariables = getAgentEnvVars(awsPrefix, b.terraformCache)
 	_, err = b.codeBuild.UpdateProject(b.ctx, &codebuild.UpdateProjectInput{
 		Name:        aws.String(projectName),
 		Environment: project.Environment,
