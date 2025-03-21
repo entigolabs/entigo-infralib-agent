@@ -17,9 +17,16 @@ func Bootstrap(ctx context.Context, flags *common.Flags) {
 	}
 
 	log.Printf("Agent version: %s\n", config.AgentVersion)
-	agent := service.NewAgent(resources)
+	agent := service.NewAgent(resources, getTerraformCache(flags.Pipeline))
 	err := agent.CreatePipeline(config.AgentVersion)
 	if err != nil {
 		log.Fatalf("Failed to create agent pipeline: %s", err)
 	}
+}
+
+func getTerraformCache(pipeline common.Pipeline) bool {
+	if pipeline.TerraformCache.Value != nil {
+		return *pipeline.TerraformCache.Value
+	}
+	return true
 }

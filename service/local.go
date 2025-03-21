@@ -133,7 +133,7 @@ func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step 
 		}
 	}
 	if step.Type == model.StepTypeTerraform {
-		env = append(env, fmt.Sprintf("TERRAFORM_CACHE=%t", l.pipeline.TerraformCache))
+		env = append(env, fmt.Sprintf("TERRAFORM_CACHE=%t", *l.pipeline.TerraformCache.Value))
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				env = append(env, fmt.Sprintf("GIT_AUTH_USERNAME_%s=%s", strings.ToUpper(module.Name), module.HttpUsername),

@@ -29,9 +29,9 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.PullCommand:
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
 	case common.SACommand:
-		fallthrough
-	case common.BootstrapCommand, common.ListCustomCommand:
 		return append(baseFlags, getProviderFlags()...)
+	case common.BootstrapCommand, common.ListCustomCommand:
+		return append(append(baseFlags, getProviderFlags()...), &terraformCacheFlag)
 	case common.DestroyCommand:
 		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &stepsFlag, &pipelineTypeFlag, &logsPathFlag,
 			&printLogsFlag)
@@ -218,12 +218,11 @@ var printLogsFlag = cli.BoolFlag{
 	Required:    false,
 }
 
-var terraformCacheFlag = cli.BoolFlag{
+var terraformCacheFlag = cli.GenericFlag{
 	Name:        "terraform-cache",
 	Aliases:     []string{"tc"},
 	EnvVars:     []string{"TERRAFORM_CACHE"},
 	Usage:       "use terraform caching",
-	Value:       true,
 	DefaultText: "true",
 	Destination: &flags.Pipeline.TerraformCache,
 	Required:    false,

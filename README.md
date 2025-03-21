@@ -114,7 +114,7 @@ OPTIONS:
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
 * logs-path - **optional** path for storing terraform/helm logs when running local pipelines [$LOGS_PATH]
-* terraform-cache - use terraform caching (default: **true**) [$TERRAFORM_CACHE]
+* terraform-cache - use terraform caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
 
 Example
 ```bash
@@ -139,7 +139,7 @@ OPTIONS:
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
 * logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
-* terraform-cache - use terraform caching (default: **true**) [$TERRAFORM_CACHE]
+* terraform-cache - use terraform caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
 
 Example
 ```bash
@@ -204,6 +204,7 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* terraform-cache - use terraform caching, adds the param to the bootstrapped agent (default: **true**) [$TERRAFORM_CACHE]
 
 Example
 ```bash

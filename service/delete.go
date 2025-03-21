@@ -48,7 +48,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
 		resources:            resources,
 		deleteBucket:         flags.Delete.DeleteBucket,
 		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
-		localPipeline:        getLocalPipeline(resources, flags),
+		localPipeline:        getLocalPipeline(resources, processPipelineFlags(flags.Pipeline)),
 	}
 }
 

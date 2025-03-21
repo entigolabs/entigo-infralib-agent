@@ -155,8 +155,9 @@ type VpcConfig struct {
 }
 
 type Project struct {
-	Name  string
-	Image string
+	Name           string
+	Image          string
+	TerraformCache string
 }
 
 type ActionCommand string

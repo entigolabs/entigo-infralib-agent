@@ -122,8 +122,9 @@ func (a *awsService) SetupResources() model.Resources {
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
 	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
-	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn)
-	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream, a.pipeline.TerraformCache)
+	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn, *a.pipeline.TerraformCache.Value)
+	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
+		*a.pipeline.TerraformCache.Value)
 	a.resources.IAM = iam
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -138,7 +139,7 @@ func (a *awsService) GetResources() model.Resources {
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
-			CodeBuild:    NewBuilder(a.ctx, a.awsConfig, "", "", "", ""),
+			CodeBuild:    NewBuilder(a.ctx, a.awsConfig, "", "", "", "", true),
 			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,

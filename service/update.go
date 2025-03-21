@@ -61,6 +61,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	steps := getRunnableSteps(config, flags.Steps)
 	sources, moduleSources := createSources(ctx, steps, config.Sources, state, resources.GetSSM())
 	destinations := createDestinations(ctx, config.Destinations)
+	pipeline := processPipelineFlags(flags.Pipeline)
 	return &updater{
 		config:        config,
 		steps:         steps,
@@ -70,8 +71,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
 		destinations:  destinations,
 		state:         state,
-		pipelineFlags: flags.Pipeline,
-		localPipeline: getLocalPipeline(resources, flags),
+		pipelineFlags: pipeline,
+		localPipeline: getLocalPipeline(resources, pipeline),
 		callback:      NewCallback(ctx, config.Callback),
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -259,9 +260,9 @@ func createDestinations(ctx context.Context, destinations []model.ConfigDestinat
 	return dests
 }
 
-func getLocalPipeline(resources model.Resources, flags *common.Flags) *LocalPipeline {
-	if flags.Pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, flags.Pipeline)
+func getLocalPipeline(resources model.Resources, pipeline common.Pipeline) *LocalPipeline {
+	if pipeline.Type == string(common.PipelineTypeLocal) {
+		return NewLocalPipeline(resources, pipeline)
 	}
 	return nil
 }
@@ -677,7 +678,7 @@ func (u *updater) updateAgentJob(cmd common.Command) {
 	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
 		return
 	}
-	agent := NewAgent(u.resources)
+	agent := NewAgent(u.resources, *u.pipelineFlags.TerraformCache.Value)
 	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
 	if err != nil {
 		log.Fatalf("Failed to update agent codebuild: %s", err)

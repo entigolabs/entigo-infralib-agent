@@ -2,6 +2,7 @@ package common
 
 import (
 	"github.com/urfave/cli/v2"
+	"strconv"
 )
 
 const (
@@ -51,7 +52,7 @@ type Pipeline struct {
 	Type           string
 	LogsPath       string
 	PrintLogs      bool
-	TerraformCache bool
+	TerraformCache BoolPtrFlag
 	AllowParallel  bool
 }
 
@@ -73,4 +74,24 @@ type Params struct {
 	Key       string
 	Value     string
 	Overwrite bool
+}
+
+type BoolPtrFlag struct {
+	Value *bool
+}
+
+func (b *BoolPtrFlag) Set(value string) error {
+	boolValue, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	b.Value = &boolValue
+	return nil
+}
+
+func (b *BoolPtrFlag) String() string {
+	if b.Value == nil {
+		return ""
+	}
+	return strconv.FormatBool(*b.Value)
 }

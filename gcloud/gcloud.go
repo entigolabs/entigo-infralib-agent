@@ -86,7 +86,7 @@ func (g *gcloudService) SetupResources() model.Resources {
 		log.Fatalf("Failed to create IAM service: %s", err)
 	}
 	serviceAccount := g.createServiceAccount(iam)
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount, g.pipeline.TerraformCache)
+	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value)
 	if err != nil {
 		log.Fatalf("Failed to create builder: %s", err)
 	}

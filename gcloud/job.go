@@ -264,6 +264,9 @@ func (b *Builder) getAgentEnvVars(awsPrefix string) []*runpb.EnvVar {
 	}, {
 		Name:   common.GCloudZoneEnv,
 		Values: &runpb.EnvVar_Value{Value: b.zone},
+	}, {
+		Name:   "TERRAFORM_CACHE",
+		Values: &runpb.EnvVar_Value{Value: fmt.Sprintf("%t", b.terraformCache)},
 	}}
 }
 
@@ -275,9 +278,17 @@ func (b *Builder) GetProject(projectName string) (*model.Project, error) {
 	if job == nil {
 		return nil, nil
 	}
+	var terraformCache string
+	for _, env := range job.Template.Template.Containers[0].Env {
+		if env.Name == "TERRAFORM_CACHE" {
+			terraformCache = env.GetValue()
+			break
+		}
+	}
 	return &model.Project{
-		Name:  projectName,
-		Image: job.Template.Template.Containers[0].Image,
+		Name:           projectName,
+		Image:          job.Template.Template.Containers[0].Image,
+		TerraformCache: terraformCache,
 	}, nil
 }
 
@@ -289,13 +300,7 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 	if job == nil {
 		return fmt.Errorf("job %s not found", projectName)
 	}
-	image := fmt.Sprintf("%s:%s", model.AgentImageDocker, version)
-
-	if job.Template.Template.Containers[0].Image == image {
-		return nil
-	}
-
-	job.Template.Template.Containers[0].Image = image
+	job.Template.Template.Containers[0].Image = fmt.Sprintf("%s:%s", model.AgentImageDocker, version)
 	job.Template.Template.Containers[0].Env = b.getAgentEnvVars(cloudPrefix)
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
