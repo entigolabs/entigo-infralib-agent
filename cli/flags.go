@@ -224,6 +224,7 @@ var terraformCacheFlag = cli.GenericFlag{
 	EnvVars:     []string{"TERRAFORM_CACHE"},
 	Usage:       "use terraform caching",
 	DefaultText: "true",
+	Value:       &flags.Pipeline.TerraformCache,
 	Destination: &flags.Pipeline.TerraformCache,
 	Required:    false,
 }
