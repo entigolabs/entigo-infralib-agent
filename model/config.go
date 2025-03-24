@@ -27,6 +27,7 @@ type ConfigSource struct {
 	Password     string   `yaml:"password,omitempty"`
 	Insecure     bool     `yaml:"insecure,omitempty"`
 	RepoPath     string   `yaml:"repo_path,omitempty"`
+	CAFile       string   `yaml:"ca_file,omitempty"`
 }
 
 type ConfigDestination struct {
@@ -44,6 +45,7 @@ type Git struct {
 	AuthorName      string `yaml:"author_name,omitempty"`
 	AuthorEmail     string `yaml:"author_email,omitempty"`
 	Insecure        bool   `yaml:"insecure,omitempty"`
+	CAFile          string `yaml:"ca_file,omitempty"`
 }
 
 type Callback struct {

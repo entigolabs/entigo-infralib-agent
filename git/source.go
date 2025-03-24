@@ -38,12 +38,13 @@ type SourceClient struct {
 	mu             sync.Mutex
 	currentRelease string
 	pulled         model.Set[string]
+	CABundle       []byte
 }
 
-func NewSourceClient(ctx context.Context, source model.ConfigSource) (*SourceClient, error) {
+func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []byte) (*SourceClient, error) {
 	log.Printf("Initializing repository for %s", source.URL)
 	auth := getSourceAuth(source)
-	repo, err := getSourceRepo(ctx, auth, source)
+	repo, err := getSourceRepo(ctx, auth, source, CABundle)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +65,7 @@ func NewSourceClient(ctx context.Context, source model.ConfigSource) (*SourceCli
 		releases:    releases,
 		releasesSet: releasesSet,
 		pulled:      model.NewSet[string](),
+		CABundle:    CABundle,
 	}, nil
 }
 
@@ -106,14 +108,14 @@ func getSourceAuth(source model.ConfigSource) transport.AuthMethod {
 	}
 }
 
-func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.ConfigSource) (*git.Repository, error) {
+func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.ConfigSource, CABundle []byte) (*git.Repository, error) {
 	repoPath, err := getRepoPath(source)
 	if err != nil {
 		return nil, err
 	}
 	repoMutex.Lock()
 	defer repoMutex.Unlock()
-	repo, err := openSourceRepo(ctx, auth, source, repoPath)
+	repo, err := openSourceRepo(ctx, auth, source, repoPath, CABundle)
 	if err == nil {
 		return repo, nil
 	}
@@ -125,6 +127,7 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 		URL:             source.URL,
 		Auth:            auth,
 		InsecureSkipTLS: source.Insecure,
+		CABundle:        CABundle,
 	})
 }
 
@@ -144,7 +147,7 @@ func getRepoPath(source model.ConfigSource) (string, error) {
 	return filepath.Join(os.TempDir(), fullPath), nil
 }
 
-func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.ConfigSource, path string) (*git.Repository, error) {
+func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.ConfigSource, path string, CABundle []byte) (*git.Repository, error) {
 	repo, err := git.PlainOpen(path)
 	if err != nil {
 		return nil, err
@@ -154,6 +157,7 @@ func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model
 		Prune:           true,
 		Tags:            git.AllTags,
 		InsecureSkipTLS: source.Insecure,
+		CABundle:        CABundle,
 	})
 	if errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return repo, nil
@@ -169,6 +173,7 @@ func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model
 		Force:           true,
 		Auth:            auth,
 		InsecureSkipTLS: source.Insecure,
+		CABundle:        CABundle,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return nil, err
@@ -254,6 +259,7 @@ func (s *SourceClient) checkoutClean(release string) error {
 		SingleBranch:    true,
 		Auth:            s.auth,
 		InsecureSkipTLS: s.insecure,
+		CABundle:        s.CABundle,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return err
