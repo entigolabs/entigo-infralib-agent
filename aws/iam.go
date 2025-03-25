@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"log"
+	"net/url"
 	"strings"
 )
 
@@ -19,8 +20,9 @@ type IAM interface {
 	DeleteRolePolicyAttachment(policyName string, roleName string) error
 	DeleteRolePolicyAttachments(roleName string) error
 	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
+	GetPolicy(policyName string) (*types.Policy, error)
 	DeletePolicy(policyName string, accountId string) error
-	UpdatePolicy(policyName string, statement []PolicyStatement) string
+	UpdatePolicy(policyArn string, statement []PolicyStatement)
 	CreateRole(roleName string, statement []PolicyStatement) *types.Role
 	DeleteRole(roleName string) error
 	GetRole(roleName string) *types.Role
@@ -104,29 +106,70 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 	return result.Policy
 }
 
-func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) string {
-	policyArn := fmt.Sprintf(policyArnFormat, i.accountId, policyName)
+func (i *identity) GetPolicy(policyName string) (*types.Policy, error) {
+	result, err := i.iamClient.GetPolicy(i.ctx, &iam.GetPolicyInput{
+		PolicyArn: aws.String(fmt.Sprintf(policyArnFormat, i.accountId, policyName)),
+	})
+	if err != nil {
+		var awsError *types.NoSuchEntityException
+		if errors.As(err, &awsError) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return result.Policy, nil
+}
 
+func (i *identity) UpdatePolicy(policyArn string, statement []PolicyStatement) {
 	versionsOutput, err := i.iamClient.ListPolicyVersions(i.ctx, &iam.ListPolicyVersionsInput{
 		PolicyArn: aws.String(policyArn),
 	})
 	if err != nil {
-		log.Fatalf("Failed to list policy versions for %s: %s", policyName, err)
+		log.Fatalf("Failed to list policy versions for %s: %s", policyArn, err)
+	}
+	if i.policyNotChanged(policyArn, statement, versionsOutput.Versions) {
+		log.Printf("Policy %s is already up to date\n", policyArn)
+		return
 	}
 	if len(versionsOutput.Versions) >= 5 {
 		i.deleteOldestPolicyVersion(policyArn, versionsOutput.Versions)
 	}
-
 	_, err = i.iamClient.CreatePolicyVersion(i.ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn:      aws.String(policyArn),
 		PolicyDocument: getPolicy(statement),
 		SetAsDefault:   true,
 	})
 	if err != nil {
-		log.Fatalf("Failed to update policy %s: %s", policyName, err)
+		log.Fatalf("Failed to update policy %s: %s", policyArn, err)
 	}
-	log.Printf("Updated IAM policy: %s\n", policyName)
-	return policyArn
+	log.Printf("Updated IAM policy: %s\n", policyArn)
+}
+
+func (i *identity) policyNotChanged(policyArn string, statement []PolicyStatement, versions []types.PolicyVersion) bool {
+	if len(versions) == 0 {
+		return false
+	}
+	var newestVersion *types.PolicyVersion
+	for _, version := range versions {
+		if newestVersion == nil || version.CreateDate.After(*newestVersion.CreateDate) {
+			newestVersion = &version
+		}
+	}
+	if newestVersion == nil {
+		return false
+	}
+	version, err := i.iamClient.GetPolicyVersion(i.ctx, &iam.GetPolicyVersionInput{
+		PolicyArn: aws.String(policyArn),
+		VersionId: newestVersion.VersionId,
+	})
+	if err != nil {
+		log.Fatalf("Failed to get policy version %s: %s", *newestVersion.VersionId, err)
+	}
+	decodedDocument, err := url.QueryUnescape(*version.PolicyVersion.Document)
+	if err != nil {
+		log.Fatalf("Failed to decode policy document: %s", err)
+	}
+	return decodedDocument == *getPolicy(statement)
 }
 
 func getPolicy(statements []PolicyStatement) *string {
@@ -445,6 +488,8 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"logs:DescribeLogGroups",
 				"logs:DescribeLogStreams",
 				"logs:GetLogEvents",
+				"logs:AssociateKmsKey",
+				"logs:PutRetentionPolicy",
 				"iam:GetRole",
 				"sts:GetCallerIdentity",
 				"ssm:GetParameter",
@@ -458,6 +503,8 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"secretsmanager:DescribeSecret",
 				"secretsmanager:TagResource",
 				"tag:GetResources",
+				"kms:GenerateDataKey",
+				"kms:Decrypt",
 			},
 		},
 		{
