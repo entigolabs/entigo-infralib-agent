@@ -396,15 +396,17 @@ func (a *awsService) CreateServiceAccount() {
 	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
+	policyStatement := ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName())
 
 	user := a.resources.IAM.GetUser(username)
 	if user != nil {
 		log.Printf("Service account %s already exists\n", username)
+		a.updateServiceAccountPolicy(username, policyStatement)
 		return
 	}
 
 	user = a.resources.IAM.CreateUser(username)
-	policy := a.resources.IAM.CreatePolicy(username, ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName()))
+	policy := a.resources.IAM.CreatePolicy(username, policyStatement)
 	a.resources.IAM.AttachUserPolicy(*policy.Arn, *user.UserName)
 	accessKey := a.resources.IAM.CreateAccessKey(*user.UserName)
 
@@ -422,6 +424,19 @@ func (a *awsService) CreateServiceAccount() {
 	}
 
 	log.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
+}
+
+func (a *awsService) updateServiceAccountPolicy(username string, statement []PolicyStatement) {
+	policy, err := a.resources.IAM.GetPolicy(username)
+	if err != nil {
+		log.Fatalf("Failed to get policy for user %s: %s", username, err)
+	}
+	if policy != nil {
+		a.resources.IAM.UpdatePolicy(*policy.Arn, statement)
+		return
+	}
+	policy = a.resources.IAM.CreatePolicy(username, statement)
+	a.resources.IAM.AttachUserPolicy(*policy.Arn, username)
 }
 
 func (a *awsService) DeleteServiceAccount() {
@@ -496,7 +511,7 @@ func (a *awsService) setupTelemetryEncryption(moduleName string, outputs map[str
 	}
 	err = a.resources.CloudWatch.addEncryption(a.getLogGroup(), arn)
 	if err != nil {
-		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+		return fmt.Errorf("failed to add encryption to log group: %v", err)
 	}
 	return nil
 }
