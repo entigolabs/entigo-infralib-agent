@@ -20,13 +20,7 @@ import (
 	"strings"
 )
 
-type paramCache map[string]map[string]tfOutput
-
-type tfOutput struct {
-	Sensitive bool
-	Type      interface{}
-	Value     interface{}
-}
+type paramCache map[string]map[string]model.TFOutput
 
 type keyType struct {
 	ReplaceKey  string
@@ -37,7 +31,7 @@ const (
 	terraformOutput = "terraform-output.json"
 )
 
-var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*.*?(?:}}\x60)*)}}`)
+var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*[^{}\n]*?(?:}}\x60)*)}}`)
 var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[(\d+)(-(\d+))?])?`)
 
 func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Step, error) {
@@ -344,17 +338,17 @@ func (u *updater) getParameter(match []string, replaceKey string, step, foundSte
 	return value, nil
 }
 
-func getOutputValue(output tfOutput, replaceKey string, match []string) (string, error) {
+func getOutputValue(output model.TFOutput, replaceKey string, match []string) (string, error) {
 	switch v := output.Value.(type) {
 	case string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
 		if match[2] != "" {
 			return "", fmt.Errorf("output %s is not a list, but an index was given", replaceKey)
 		}
-		return strings.Trim(getStringValue(v), "\""), nil
+		return strings.Trim(util.GetStringValue(v), "\""), nil
 	case []interface{}:
 		values := make([]string, 0)
 		for _, value := range v {
-			values = append(values, getStringValue(value))
+			values = append(values, util.GetStringValue(value))
 		}
 		if match[2] == "" {
 			return strings.Join(values, ","), nil
@@ -371,22 +365,7 @@ func getOutputValue(output tfOutput, replaceKey string, match []string) (string,
 	return "", fmt.Errorf("unsupported type: %s", reflect.TypeOf(output.Value))
 }
 
-func getStringValue(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return fmt.Sprintf(`"%s"`, v)
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return fmt.Sprintf("%d", v)
-	case float32, float64:
-		return fmt.Sprintf("%f", v)
-	case bool:
-		return fmt.Sprintf("%t", v)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
-func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[string]tfOutput, error) {
+func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[string]model.TFOutput, error) {
 	filePath := fmt.Sprintf("%s-%s/%s", u.resources.GetCloudPrefix(), step.Name, terraformOutput)
 	outputs, found := cache[filePath]
 	if found {
@@ -398,7 +377,7 @@ func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[strin
 	}
 	if file == nil {
 		slog.Debug(fmt.Sprintf("terraform output file %s not found", filePath))
-		cache[filePath] = make(map[string]tfOutput)
+		cache[filePath] = make(map[string]model.TFOutput)
 		return cache[filePath], nil
 	}
 	err = json.Unmarshal(file, &outputs)

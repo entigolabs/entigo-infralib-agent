@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+const policyArnFormat = "arn:aws:iam::%s:policy/%s"
+
 type IAM interface {
 	AttachRolePolicy(policyArn string, roleName string) error
 	DeleteRolePolicyAttachment(policyName string, roleName string) error
@@ -93,18 +95,17 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 	})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
-		if errors.As(err, &awsError) {
-			return nil
-		} else {
+		if !errors.As(err, &awsError) {
 			log.Fatalf("Failed to create policy %s: %s", policyName, err)
 		}
+		return &types.Policy{Arn: aws.String(fmt.Sprintf(policyArnFormat, i.accountId, policyName))}
 	}
 	log.Printf("Created IAM policy: %s\n", policyName)
 	return result.Policy
 }
 
 func (i *identity) UpdatePolicy(policyName string, statement []PolicyStatement) string {
-	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", i.accountId, policyName)
+	policyArn := fmt.Sprintf(policyArnFormat, i.accountId, policyName)
 
 	versionsOutput, err := i.iamClient.ListPolicyVersions(i.ctx, &iam.ListPolicyVersionsInput{
 		PolicyArn: aws.String(policyArn),
@@ -189,7 +190,7 @@ func (i *identity) DeleteRolePolicyAttachments(roleName string) error {
 }
 
 func (i *identity) DeletePolicy(policyName string, accountId string) error {
-	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", accountId, policyName)
+	policyArn := fmt.Sprintf(policyArnFormat, accountId, policyName)
 	_, err := i.iamClient.DeletePolicy(i.ctx, &iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
 	if err != nil {
 		var awsError *types.NoSuchEntityException
@@ -368,7 +369,19 @@ func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []Pol
 			"dynamodb:PutItem",
 			"dynamodb:DeleteItem",
 		},
-	}}
+	}, {
+		Effect:   "Allow",
+		Resource: []string{"*"},
+		Action: []string{
+			"secretsmanager:GetSecretValue",
+			"secretsmanager:DeleteSecret",
+			"secretsmanager:CreateSecret",
+			"secretsmanager:PutSecretValue",
+			"secretsmanager:DescribeSecret",
+			"secretsmanager:TagResource",
+		},
+	},
+	}
 }
 
 func CodeBuildS3Policy(s3Arn string) PolicyStatement {
@@ -443,6 +456,7 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"secretsmanager:CreateSecret",
 				"secretsmanager:PutSecretValue",
 				"secretsmanager:DescribeSecret",
+				"secretsmanager:TagResource",
 				"tag:GetResources",
 			},
 		},

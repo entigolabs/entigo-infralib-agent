@@ -1,8 +1,8 @@
 # Entigo Infralib Agent
 
-Entigo infralib agent prepares an AWS Account or Google Cloud Project for Entigo infralib terraform modules.
+Entigo infralib agent prepares an AWS Account or Google Cloud Project for [Entigo infralib terraform modules](https://github.com/entigolabs/entigo-infralib).
 Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
-Executes pipelines which apply the specified Entigo infralib terraform modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
+Executes pipelines which apply the configured modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 
 * [Requirements](#requirements)
 * [Compiling Source](#compiling-source)
@@ -24,8 +24,17 @@ Executes pipelines which apply the specified Entigo infralib terraform modules. 
 * [Config](#config)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
+    * [List indexes](#list-indexes)
+    * [Optional replacement tags](#optional-replacement-tags)
+    * [Escaping replacement tags](#escaping-replacement-tags)
+    * [Overriding with custom parameters](#overriding-with-custom-parameters)
+    * [Overriding with config values](#overriding-with-config-values)
+    * [Overriding with agent logic](#overriding-with-agent-logic)
+    * [Overriding with module properties](#overriding-with-module-properties)
   * [Including files in steps](#including-files-in-steps)
+  * [Including CA certificates](#including-ca-certificates)
   * [Callback](#callback)
+  * [Encryption](#encryption)
 * [Migration Helper](#migration-helper)
   * [Import File](#import-file)
   * [Type Identifications File](#type-identifications-file)
@@ -198,7 +207,10 @@ bin/ei-agent delete --config=config.yaml --prefix=infralib
 Creates a service account and a key for the account. The key is stored in the AWS SSM Parameter Store or Google Cloud Secret Manager.
 This account can be used for running the agent in a CI/CD pipeline.
 
+Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
+
 OPTIONS:
+* config - config file path and name, only needed when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
@@ -237,8 +249,12 @@ Agent has helpful commands for managing custom parameters that can be used in th
 * `get-custom` - for getting a custom parameter value
 * `list-custom` - for listing all custom parameters created by the agent
 
+Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
+
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* config - config file path and name, only needed when overriding an existing config [$CONFIG]
+* prefix - prefix used when creating cloud resources [$PREFIX]
 * project-id - project id used when creating gcloud resources [$PROJECT_ID]
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
@@ -295,7 +311,7 @@ Config is provided with a yaml file:
 prefix: string
 sources:
   - url: https://github.com/entigolabs/entigo-infralib-release | path
-    version: stable | semver
+    version: stable | semver | branch
     include: []string
     exclude: []string
     force_version: bool
@@ -423,26 +439,41 @@ Step, module and input field values can be overwritten by using replacement tags
 
 Replacement tags can be overwritten by values from terraform output, config itself or custom agent logic. If the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager. For output values it's possible to use the keywords `ssm`, `gcsm` and `output`. There's also a special type based keyword `toutput` that uses the output from a module with the specified type instead of a name.
 
-If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
-
-Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, ``{{`{{ .dbupdate }}`}}`` will be replaced with `{{ .dbupdate }}`. This can be used to pass helm template values through the agent.
-
-For example, `{{ .ssm.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
-If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .ssm.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
+For example, `{{ .output.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
 
 It's possible to build a custom array by using yaml multiline string, even mixing replaced values with inputted values. For example creating a list of strings for terraform:
 ```yaml
 inputs:
   key-1: |
-    ["{{ .ssm.stepName.moduleName.key-1 }}", "value-1", "value-2"]
+    ["{{ .output.stepName.moduleName.key-1 }}", "value-1", "value-2"]
 ```
+
+#### List indexes
+
+If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
+
+#### Optional replacement tags
+
+If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
+
+#### Escaping replacement tags
+
+Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, ``{{`{{ .dbupdate }}`}}`` will be replaced with `{{ .dbupdate }}`. This can be used to pass helm template values through the agent.
+
+#### Overriding with custom parameters
 
 Custom SSM parameter example `{{ .ssm-custom.key }}` will be overwritten by the value of the custom SSM parameter `key`.
 For custom GCloud SM, replace the ssm with gcsm. For universal output, replace the ssm with output `output-custom`.
 
+#### Overriding with config values
+
 Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
 
+#### Overriding with agent logic
+
 Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports AWS account id using key accountId.
+
+#### Overriding with module properties
 
 Infralib modules may use `{{ .tmodule.type }}` in their default input files to replace it with the name of the module used in the config. Alternatively, modules may use `{{ .tsmodule.type }}` to replace it with the name of the typed module used in the active step. It's also possible to use `{{ .module.name  }}` and `{{ .module.source }}` to replace them with module name and source, but those tags only exclusively apply for module inputs, including all input files.
 
@@ -483,6 +514,12 @@ Payload example:
   * name - name of the module
   * applied_version - version of the module that was successfully applied previously
   * version - version of the module that was or will be applied
+
+### Encryption
+
+Agent uses default cloud provider encryption settings if no encryption module is present in config.
+
+Currently, infralib only supports customer provided encryption in AWS with KMS. When KMS module is present in the config file, agent will use the KMS arn from the module terraform output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets. Agent applies those changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in S3 after the KMS module was applied will be encrypted with it.
 
 ## Migration Helper
 

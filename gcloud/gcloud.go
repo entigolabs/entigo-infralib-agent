@@ -7,6 +7,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 )
@@ -174,6 +175,10 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	}
 }
 
+func (g *gcloudService) IsRunningLocally() bool {
+	return os.Getenv("CLOUD_RUN_JOB") == ""
+}
+
 func (g *gcloudService) enableApiServices() {
 	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
 	if err != nil {
@@ -216,7 +221,11 @@ func (g *gcloudService) createServiceAccount(iam *IAM) string {
 }
 
 func (g *gcloudService) getBucketName() string {
-	return fmt.Sprintf("%s-%s-%s", g.cloudPrefix, g.projectId, g.location)
+	return getBucketName(g.cloudPrefix, g.projectId, g.location)
+}
+
+func getBucketName(cloudPrefix, projectId, location string) string {
+	return fmt.Sprintf("%s-%s-%s", cloudPrefix, projectId, location)
 }
 
 func (g *gcloudService) CreateServiceAccount() {
@@ -283,4 +292,9 @@ func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete secret %s: %s", keyParam, err)))
 	}
+}
+
+func (g *gcloudService) AddEncryption(_ string, _ map[string]model.TFOutput) error {
+	slog.Warn(common.PrefixWarning("Encryption is not yet supported for GCP"))
+	return nil
 }

@@ -292,3 +292,57 @@ func HashCode(value string) string {
 	_, _ = hasher.Write([]byte(value))
 	return strings.ToLower(fmt.Sprintf("%x", hasher.Sum32()))
 }
+
+func GetOutputStringValue(outputs map[string]model.TFOutput, key string) (string, error) {
+	value, err := GetOutputValue(outputs, key)
+	if err != nil {
+		return "", fmt.Errorf("failed to get output %s value: %v", key, err)
+	}
+	if value == nil {
+		return "", nil
+	}
+	return *value, nil
+}
+
+func GetOutputValue(outputs map[string]model.TFOutput, key string) (*string, error) {
+	output, found := outputs[key]
+	if !found {
+		return nil, nil
+	}
+	var value string
+	switch v := output.Value.(type) {
+	case string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
+		value = strings.Trim(GetStringValue(v), "\"")
+	case []interface{}:
+		values := make([]string, 0)
+		for _, value := range v {
+			values = append(values, GetStringValue(value))
+		}
+		value = strings.Join(values, ",")
+	case map[string]interface{}:
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", output.Type)))
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		value = string(jsonBytes)
+	default:
+		return nil, fmt.Errorf("unsupported type: %s", reflect.TypeOf(output.Value))
+	}
+	return &value, nil
+}
+
+func GetStringValue(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return fmt.Sprintf(`"%s"`, v)
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		return fmt.Sprintf("%f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}

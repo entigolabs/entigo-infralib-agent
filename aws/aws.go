@@ -14,6 +14,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -32,6 +33,7 @@ type Resources struct {
 	IAM           IAM
 	DynamoDBTable string
 	AccountId     string
+	CloudWatch    CloudWatch
 }
 
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
@@ -102,6 +104,8 @@ func (a *awsService) SetupResources() model.Resources {
 	bucket := a.getBucketName()
 	s3, s3Arn := a.createBucket(bucket)
 	dynamoDBTable := a.createDynamoDBTable()
+	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
+	iam.CreateServiceLinkedRole("autoscaling.amazonaws.com")
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
@@ -114,18 +118,19 @@ func (a *awsService) SetupResources() model.Resources {
 		},
 		DynamoDBTable: *dynamoDBTable.TableName,
 		AccountId:     a.accountId,
+		IAM:           iam,
 	}
 	if a.pipeline.Type == string(common.PipelineTypeLocal) {
 		return a.resources
 	}
 
 	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
-	iam, buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
+	buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
 
 	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn, *a.pipeline.TerraformCache.Value)
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
 		*a.pipeline.TerraformCache.Value)
-	a.resources.IAM = iam
+	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
 	return a.resources
@@ -134,7 +139,7 @@ func (a *awsService) SetupResources() model.Resources {
 func (a *awsService) GetResources() model.Resources {
 	bucket := a.getBucketName()
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logGroup := a.getLogGroup()
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
@@ -146,8 +151,9 @@ func (a *awsService) GetResources() model.Resources {
 			SSM:          NewSSM(a.ctx, a.awsConfig),
 			Region:       a.awsConfig.Region,
 		},
-		IAM:       NewIAM(a.ctx, a.awsConfig, a.accountId),
-		AccountId: a.accountId,
+		IAM:        NewIAM(a.ctx, a.awsConfig, a.accountId),
+		AccountId:  a.accountId,
+		CloudWatch: cloudwatch,
 	}
 	return a.resources
 }
@@ -192,13 +198,21 @@ func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	}
 }
 
+func (a *awsService) IsRunningLocally() bool {
+	return os.Getenv("CODEBUILD_BUILD_ID") == ""
+}
+
 func getAccountId(awsConfig aws.Config) (string, error) {
 	stsService := NewSTS(awsConfig)
 	return stsService.GetAccountID()
 }
 
 func (a *awsService) getBucketName() string {
-	return fmt.Sprintf("%s-%s-%s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+	return getBucketName(a.cloudPrefix, a.accountId, a.awsConfig.Region)
+}
+
+func getBucketName(cloudPrefix, accountId, region string) string {
+	return fmt.Sprintf("%s-%s-%s", cloudPrefix, accountId, region)
 }
 
 func (a *awsService) createBucket(bucket string) (*S3, string) {
@@ -241,7 +255,7 @@ func (a *awsService) createDynamoDBTable() *types.TableDescription {
 
 func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logGroup := a.getLogGroup()
 	logGroupArn, err := cloudwatch.GetLogGroup(logGroup)
 	if err != nil {
 		log.Fatalf("Failed to get CloudWatch log group: %s", err)
@@ -252,7 +266,7 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 			log.Fatalf("Failed to create CloudWatch log group: %s", err)
 		}
 	}
-	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logStream := a.getLogGroup()
 	exists, err := cloudwatch.LogStreamExists(logGroup, logStream)
 	if err != nil {
 		log.Fatalf("Failed to get CloudWatch log stream exists: %s", err)
@@ -267,18 +281,20 @@ func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch)
 	return logGroup, logGroupArn, logStream, cloudwatch
 }
 
-func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (IAM, string, string) {
-	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
-	iam.CreateServiceLinkedRole("autoscaling.amazonaws.com")
-	buildRoleArn, buildRoleCreated := a.createBuildRole(iam, logGroupArn, s3Arn, dynamoDBTableArn)
-	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(iam, s3Arn)
+func (a *awsService) getLogGroup() string {
+	return fmt.Sprintf("%s-log", a.cloudPrefix)
+}
+
+func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, string) {
+	buildRoleArn, buildRoleCreated := a.createBuildRole(a.resources.IAM, logGroupArn, s3Arn, dynamoDBTableArn)
+	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(a.resources.IAM, s3Arn)
 
 	if buildRoleCreated || pipelineRoleCreated {
 		log.Println("Waiting for roles to be available...")
 		time.Sleep(15 * time.Second)
 	}
 
-	return iam, buildRoleArn, pipelineRoleArn
+	return buildRoleArn, pipelineRoleArn
 }
 
 func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {
@@ -335,8 +351,8 @@ func (a *awsService) getBuildRoleName() string {
 
 func (a *awsService) deleteCloudWatchLogs() {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
-	logGroup := fmt.Sprintf("%s-log", a.cloudPrefix)
-	logStream := fmt.Sprintf("%s-log", a.cloudPrefix)
+	logGroup := a.getLogGroup()
+	logStream := a.getLogGroup()
 	err := cloudwatch.DeleteLogStream(logGroup, logStream)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete CloudWatch log stream: %s", err)))
@@ -378,30 +394,28 @@ func (a *awsService) deleteIAMRoles() {
 
 func (a *awsService) CreateServiceAccount() {
 	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
-	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
-	ssmService := NewSSM(a.ctx, a.awsConfig)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
 
-	user := iam.GetUser(username)
+	user := a.resources.IAM.GetUser(username)
 	if user != nil {
 		log.Printf("Service account %s already exists\n", username)
 		return
 	}
 
-	user = iam.CreateUser(username)
-	policy := iam.CreatePolicy(username, ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName()))
-	iam.AttachUserPolicy(*policy.Arn, *user.UserName)
-	accessKey := iam.CreateAccessKey(*user.UserName)
+	user = a.resources.IAM.CreateUser(username)
+	policy := a.resources.IAM.CreatePolicy(username, ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName()))
+	a.resources.IAM.AttachUserPolicy(*policy.Arn, *user.UserName)
+	accessKey := a.resources.IAM.CreateAccessKey(*user.UserName)
 
 	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
-	err := ssmService.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
+	err := a.resources.SSM.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
 	if err != nil {
 		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
 		log.Fatalf("Failed to store access key id: %s", err)
 	}
 	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
-	err = ssmService.PutParameter(secretAccessKeyParam, *accessKey.SecretAccessKey)
+	err = a.resources.SSM.PutParameter(secretAccessKeyParam, *accessKey.SecretAccessKey)
 	if err != nil {
 		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
 		log.Fatalf("Failed to store secret access key: %s", err)
@@ -439,4 +453,50 @@ func (a *awsService) DeleteServiceAccount() {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", secretAccessKeyParam, err)))
 	}
+}
+
+func (a *awsService) AddEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	err := a.setupConfigEncryption(moduleName, outputs)
+	if err != nil {
+		return err
+	}
+	if a.pipeline.Type == string(common.PipelineTypeLocal) {
+		return nil
+	}
+	return a.setupTelemetryEncryption(moduleName, outputs)
+}
+
+func GetConfigEncryptionKey(moduleName string, outputs map[string]model.TFOutput) (string, error) {
+	return util.GetOutputStringValue(outputs, fmt.Sprintf("%s__config_alias_arn", moduleName))
+}
+
+func (a *awsService) setupConfigEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	arn, err := GetConfigEncryptionKey(moduleName, outputs)
+	if err != nil {
+		return err
+	}
+	if arn == "" {
+		return nil
+	}
+	a.resources.GetSSM().(*ssm).AddEncryptionKeyId(arn)
+	err = a.resources.GetBucket().(*S3).addEncryption(arn)
+	if err != nil {
+		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+	}
+	return nil
+}
+
+func (a *awsService) setupTelemetryEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	arn, err := util.GetOutputStringValue(outputs, fmt.Sprintf("%s__telemetry_alias_arn", moduleName))
+	if err != nil {
+		return err
+	}
+	if arn == "" {
+		return nil
+	}
+	err = a.resources.CloudWatch.addEncryption(a.getLogGroup(), arn)
+	if err != nil {
+		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+	}
+	return nil
 }

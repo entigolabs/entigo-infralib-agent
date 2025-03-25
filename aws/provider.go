@@ -9,9 +9,10 @@ import (
 )
 
 type awsProvider struct {
-	ctx       context.Context
-	awsConfig aws.Config
-	accountId string
+	ctx          context.Context
+	awsConfig    aws.Config
+	accountId    string
+	providerType model.ProviderType
 }
 
 func NewAWSProvider(ctx context.Context, awsFlags common.AWS) model.ResourceProvider {
@@ -22,12 +23,22 @@ func NewAWSProvider(ctx context.Context, awsFlags common.AWS) model.ResourceProv
 	}
 	log.Printf("AWS account id: %s\n", accountId)
 	return &awsProvider{
-		ctx:       ctx,
-		awsConfig: awsConfig,
-		accountId: accountId,
+		ctx:          ctx,
+		awsConfig:    awsConfig,
+		accountId:    accountId,
+		providerType: model.AWS,
 	}
 }
 
 func (a *awsProvider) GetSSM() model.SSM {
 	return NewSSM(a.ctx, a.awsConfig)
+}
+
+func (a *awsProvider) GetBucket(prefix string) model.Bucket {
+	bucket := getBucketName(prefix, a.accountId, a.awsConfig.Region)
+	return NewS3(a.ctx, a.awsConfig, bucket)
+}
+
+func (a *awsProvider) GetProviderType() model.ProviderType {
+	return a.providerType
 }

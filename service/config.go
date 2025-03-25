@@ -620,6 +620,9 @@ func GetStepState(state *model.State, stepName string) *model.StateStep {
 }
 
 func GetModuleState(stepState *model.StateStep, moduleName string) *model.StateModule {
+	if stepState == nil {
+		return nil
+	}
 	for _, module := range stepState.Modules {
 		if module.Name == moduleName {
 			return module
