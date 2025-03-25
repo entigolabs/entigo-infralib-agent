@@ -294,14 +294,14 @@ func HashCode(value string) string {
 }
 
 func ShouldStopPipeline(changes model.PipelineChanges, approve model.Approve, manualApprove model.ManualApprove) bool {
-	if approve == model.ApproveReject || manualApprove == model.ManualApproveReject {
-		return true
-	}
-	return changes.NoChanges || (manualApprove == "" && changes.Changed == 0 && changes.Destroyed == 0)
+	return approve == model.ApproveReject || manualApprove == model.ManualApproveReject || changes.NoChanges
 }
 
 func ShouldApprovePipeline(changes model.PipelineChanges, approve model.Approve, autoApprove bool, manualApprove model.ManualApprove) bool {
 	if approve == model.ApproveForce || manualApprove == model.ManualApproveNever {
+		return true
+	}
+	if changes.Added == 0 && changes.Changed == 0 && changes.Destroyed == 0 {
 		return true
 	}
 	if manualApprove != "" {

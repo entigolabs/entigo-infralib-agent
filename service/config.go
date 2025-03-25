@@ -551,6 +551,9 @@ func validateStep(step model.Step) {
 	if (step.Vpc.SubnetIds != "" || step.Vpc.SecurityGroupIds != "") && step.Vpc.Id == "" {
 		log.Fatalf("VPC ID is not set for step %s", step.Name)
 	}
+	if step.Approve != "" && (step.UpdateApprove != "" || step.RunApprove != "") {
+		log.Fatalf("step %s can't have both approve and manual_approve set", step.Name)
+	}
 }
 
 func validateConfigModules(step model.Step, state *model.State) {
