@@ -42,15 +42,16 @@ type DestClient struct {
 	repo     *git.Repository
 	insecure bool
 	mu       sync.Mutex
+	CABundle []byte
 }
 
-func NewDestClient(ctx context.Context, name string, config model.Git) (*DestClient, error) {
+func NewDestClient(ctx context.Context, name string, config model.Git, CABundle []byte) (*DestClient, error) {
 	log.Printf("Preparing git repository %s", config.URL)
 	auth, err := getAuth(config)
 	if err != nil {
 		return nil, err
 	}
-	worktree, repo, err := getRepo(ctx, auth, config, filepath.Join(os.TempDir(), name))
+	worktree, repo, err := getRepo(ctx, auth, config, name, CABundle)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +63,7 @@ func NewDestClient(ctx context.Context, name string, config model.Git) (*DestCli
 		worktree: worktree,
 		repo:     repo,
 		insecure: config.Insecure,
+		CABundle: CABundle,
 	}, nil
 }
 
@@ -98,10 +100,11 @@ func getAuthor(config model.Git) *object.Signature {
 	}
 }
 
-func getRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, repoPath string) (*git.Worktree, *git.Repository, error) {
-	repo, err := openRepo(ctx, auth, gitConfig, repoPath)
+func getRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, name string, CABundle []byte) (*git.Worktree, *git.Repository, error) {
+	repoPath := filepath.Join(os.TempDir(), name)
+	repo, err := openRepo(ctx, auth, gitConfig, repoPath, CABundle)
 	if errors.Is(err, git.ErrRepositoryNotExists) {
-		repo, err = cloneRepo(ctx, auth, gitConfig, repoPath)
+		repo, err = cloneRepo(ctx, auth, gitConfig, repoPath, CABundle)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -110,18 +113,18 @@ func getRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git
 	if err != nil {
 		return nil, nil, err
 	}
-	err = ensureBranch(auth, repo, worktree, PlanBranch, gitConfig.Insecure)
+	err = ensureBranch(auth, repo, worktree, PlanBranch, gitConfig.Insecure, CABundle)
 	if err != nil {
 		return nil, nil, err
 	}
-	err = ensureBranch(auth, repo, worktree, ApplyBranch, gitConfig.Insecure)
+	err = ensureBranch(auth, repo, worktree, ApplyBranch, gitConfig.Insecure, CABundle)
 	if err != nil {
 		return nil, nil, err
 	}
 	return worktree, repo, nil
 }
 
-func openRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, path string) (*git.Repository, error) {
+func openRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, path string, CABundle []byte) (*git.Repository, error) {
 	repo, err := git.PlainOpen(path)
 	if err != nil {
 		return nil, err
@@ -132,6 +135,7 @@ func openRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Gi
 		InsecureSkipTLS: gitConfig.Insecure,
 		Depth:           1,
 		Prune:           true,
+		CABundle:        CABundle,
 	})
 	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return repo, nil
@@ -139,15 +143,16 @@ func openRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Gi
 	return nil, err
 }
 
-func cloneRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, repoPath string) (*git.Repository, error) {
+func cloneRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.Git, repoPath string, CABundle []byte) (*git.Repository, error) {
 	repo, err := git.PlainCloneContext(ctx, repoPath, false, &git.CloneOptions{
 		URL:             gitConfig.URL,
 		Depth:           1,
 		Auth:            auth,
 		InsecureSkipTLS: gitConfig.Insecure,
+		CABundle:        CABundle,
 	})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
-		repo, err = initRepo(auth, gitConfig, repoPath)
+		repo, err = initRepo(auth, gitConfig, repoPath, CABundle)
 	}
 	if err != nil {
 		return nil, err
@@ -155,7 +160,7 @@ func cloneRepo(ctx context.Context, auth transport.AuthMethod, gitConfig model.G
 	return repo, nil
 }
 
-func initRepo(auth transport.AuthMethod, gitConfig model.Git, repoPath string) (*git.Repository, error) {
+func initRepo(auth transport.AuthMethod, gitConfig model.Git, repoPath string, CABundle []byte) (*git.Repository, error) {
 	repo, err := git.PlainInit(repoPath, false)
 	if err != nil {
 		return nil, err
@@ -182,11 +187,12 @@ func initRepo(auth transport.AuthMethod, gitConfig model.Git, repoPath string) (
 	err = repo.Push(&git.PushOptions{
 		Auth:            auth,
 		InsecureSkipTLS: gitConfig.Insecure,
+		CABundle:        CABundle,
 	})
 	return repo, err
 }
 
-func ensureBranch(auth transport.AuthMethod, repo *git.Repository, worktree *git.Worktree, branch string, insecure bool) error {
+func ensureBranch(auth transport.AuthMethod, repo *git.Repository, worktree *git.Worktree, branch string, insecure bool, CABundle []byte) error {
 	remoteExists, err := remoteBranchExists(repo, branch)
 	if err != nil {
 		return err
@@ -196,7 +202,7 @@ func ensureBranch(auth transport.AuthMethod, repo *git.Repository, worktree *git
 		return err
 	}
 	if !remoteExists {
-		return createRemoteBranch(auth, repo, worktree, branch, insecure, localExists)
+		return createRemoteBranch(auth, repo, worktree, branch, insecure, localExists, CABundle)
 	}
 	if localExists {
 		return nil
@@ -248,7 +254,7 @@ func createLocalBranch(repo *git.Repository, branch string) error {
 	return repo.Storer.SetReference(hashRef)
 }
 
-func createRemoteBranch(auth transport.AuthMethod, repo *git.Repository, worktree *git.Worktree, branch string, insecure, localExists bool) error {
+func createRemoteBranch(auth transport.AuthMethod, repo *git.Repository, worktree *git.Worktree, branch string, insecure, localExists bool, CABundle []byte) error {
 	err := worktree.Checkout(&git.CheckoutOptions{
 		Branch: plumbing.NewBranchReferenceName(branch),
 		Create: !localExists,
@@ -260,6 +266,7 @@ func createRemoteBranch(auth transport.AuthMethod, repo *git.Repository, worktre
 		RefSpecs:        []config.RefSpec{config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", branch, branch))},
 		Auth:            auth,
 		InsecureSkipTLS: insecure,
+		CABundle:        CABundle,
 	})
 }
 
@@ -298,6 +305,7 @@ func (g *DestClient) UpdateFiles(branch, folder string, files map[string]model.F
 		RefSpecs:        []config.RefSpec{config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", branch, branch))},
 		Auth:            g.auth,
 		InsecureSkipTLS: g.insecure,
+		CABundle:        g.CABundle,
 	})
 	if errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return nil
@@ -320,6 +328,7 @@ func (g *DestClient) checkoutCleanBranch(branch string) error {
 		SingleBranch:    true,
 		Auth:            g.auth,
 		InsecureSkipTLS: g.insecure,
+		CABundle:        g.CABundle,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return err

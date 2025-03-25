@@ -18,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -68,8 +69,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	ProcessConfig(&config, resources.GetProviderType())
 	setupEncryption(config, provider, resources)
 	steps := getRunnableSteps(config, flags.Steps)
-	sources, moduleSources := createSources(ctx, steps, config.Sources, state, resources.GetSSM())
-	destinations := createDestinations(ctx, config.Destinations)
+	sources, moduleSources := createSources(ctx, steps, config, state, resources.GetSSM())
+	destinations := createDestinations(ctx, config)
 	pipeline := processPipelineFlags(flags.Pipeline)
 	return &updater{
 		config:        config,
@@ -126,15 +127,19 @@ func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.St
 	return runnableSteps
 }
 
-func createSources(ctx context.Context, steps []model.Step, configSources []model.ConfigSource, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string) {
+func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string) {
 	sources := make(map[string]*model.Source)
-	for _, source := range configSources {
+	for _, source := range config.Sources {
 		var stableVersion *version.Version
 		var storage model.Storage
 		if util.IsLocalSource(source.URL) {
 			storage = git.NewLocalPath(source.URL)
 		} else {
-			sourceClient, err := git.NewSourceClient(ctx, source)
+			CABundle, err := getCABundle(source.CAFile, config.Certs)
+			if err != nil {
+				log.Fatalf("Failed to get CABundle for source %s: %v", source.CAFile, err)
+			}
+			sourceClient, err := git.NewSourceClient(ctx, source, CABundle)
 			if err != nil {
 				log.Fatalf("Failed to create source %s client: %v", source.URL, err)
 			}
@@ -156,9 +161,21 @@ func createSources(ctx context.Context, steps []model.Step, configSources []mode
 			Auth:          model.SourceAuth{Username: source.Username, Password: source.Password},
 		}
 	}
-	moduleSources := addSourceModules(steps, configSources, sources)
-	addSourceReleases(steps, configSources, state, sources)
+	moduleSources := addSourceModules(steps, config.Sources, sources)
+	addSourceReleases(steps, config.Sources, state, sources)
 	return sources, moduleSources
+}
+
+func getCABundle(file string, certs []model.File) ([]byte, error) {
+	if file == "" {
+		return nil, nil
+	}
+	for _, cert := range certs {
+		if filepath.Base(cert.Name) == file {
+			return cert.Content, nil
+		}
+	}
+	return nil, fmt.Errorf("CA file %s not found", file)
 }
 
 func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) {
@@ -255,16 +272,21 @@ func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, s
 	}
 }
 
-func createDestinations(ctx context.Context, destinations []model.ConfigDestination) map[string]model.Destination {
+func createDestinations(ctx context.Context, config model.Config) map[string]model.Destination {
 	dests := make(map[string]model.Destination)
-	for _, destination := range destinations {
-		if destination.Git != nil {
-			client, err := git.NewDestClient(ctx, destination.Name, *destination.Git)
-			if err != nil {
-				log.Fatalf("Destination %s failed to create git client: %v", destination.Name, err)
-			}
-			dests[destination.Name] = client
+	for _, destination := range config.Destinations {
+		if destination.Git == nil {
+			continue
 		}
+		CABundle, err := getCABundle(destination.Git.CAFile, config.Certs)
+		if err != nil {
+			log.Fatalf("Failed to get CABundle for destination %s: %v", destination.Name, err)
+		}
+		client, err := git.NewDestClient(ctx, destination.Name, *destination.Git, CABundle)
+		if err != nil {
+			log.Fatalf("Destination %s failed to create git client: %v", destination.Name, err)
+		}
+		dests[destination.Name] = client
 	}
 	return dests
 }
