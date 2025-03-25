@@ -301,8 +301,8 @@ sources:
     force_version: bool
     username: string
     password: string
-    insecure: bool
     repo_path: string
+    ca_file: string
 destinations:
   - name:
     git:
@@ -314,6 +314,7 @@ destinations:
       author_name: string
       author_email: string
       insecure: bool
+      ca_file: string
 callback:
   url: string
   key: string
@@ -364,8 +365,8 @@ Source version is overwritten by module version. Default version is **stable** w
   * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
   * username - username for git authentication
   * password - password for git authentication, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-password}}"`
-  * insecure - allow insecure connection, default **false**
   * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
+  * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
   * name - name of the destination
   * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
@@ -378,6 +379,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * author_name - author name for commits, default **Entigo Infralib Agent**
     * author_email - author email for commits, default **no-reply@localhost**
     * insecure - allow insecure connection, default **false**
+    * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
 * callback - optionally send updates about the status of modules
   * url - url for the callback
   * key - unique identifier for the callback
@@ -440,7 +442,7 @@ For custom GCloud SM, replace the ssm with gcsm. For universal output, replace t
 
 Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
 
-Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports account id using key accountId.
+Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports AWS account id using key accountId.
 
 Infralib modules may use `{{ .tmodule.type }}` in their default input files to replace it with the name of the module used in the config. Alternatively, modules may use `{{ .tsmodule.type }}` to replace it with the name of the typed module used in the active step. It's also possible to use `{{ .module.name  }}` and `{{ .module.source }}` to replace them with module name and source, but those tags only exclusively apply for module inputs, including all input files.
 
