@@ -496,7 +496,7 @@ func (a *awsService) setupTelemetryEncryption(moduleName string, outputs map[str
 	}
 	err = a.resources.CloudWatch.addEncryption(a.getLogGroup(), arn)
 	if err != nil {
-		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+		return fmt.Errorf("failed to add encryption to log group: %v", err)
 	}
 	return nil
 }
