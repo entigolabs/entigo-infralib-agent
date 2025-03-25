@@ -29,12 +29,20 @@ const (
 	ssmPrefix = "/entigo-infralib"
 )
 
+type Mode string
+
+const (
+	ModeRun    Mode = "run"
+	ModeUpdate Mode = "update"
+)
+
 type Updater interface {
 	Run()
 	Update()
 }
 
 type updater struct {
+	mode          Mode
 	config        model.Config
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
@@ -290,10 +298,49 @@ func getLocalPipeline(resources model.Resources, pipeline common.Pipeline) *Loca
 }
 
 func (u *updater) Run() {
-	u.updateAgentJob(common.RunCommand)
+	u.mode = ModeRun
+	u.process()
+}
+
+func (u *updater) Update() {
+	u.mode = ModeUpdate
+	u.process()
+}
+
+func (u *updater) process() {
+	u.updateAgentJob(common.UpdateCommand)
 	index := 0
+	mostReleases := 1
+	if u.mode == ModeUpdate {
+		index = 1
+		mostReleases = u.getMostReleases()
+		if mostReleases < 2 {
+			log.Println("No updates found")
+			return
+		}
+	}
+	for ; index < mostReleases; index++ {
+		u.processRelease(index)
+	}
+}
+
+func (u *updater) updateAgentJob(cmd common.Command) {
+	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
+		return
+	}
+	agent := NewAgent(u.resources, *u.pipelineFlags.TerraformCache.Value)
+	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
+	if err != nil {
+		log.Fatalf("Failed to update agent job: %s", err)
+	}
+}
+
+func (u *updater) processRelease(index int) {
 	u.logReleases(index)
 	u.updateState()
+	if u.mode == ModeUpdate {
+		u.updateChecksums(index)
+	}
 	wg := new(model.SafeCounter)
 	errChan := make(chan error, len(u.steps))
 	failed := false
@@ -317,57 +364,7 @@ func (u *updater) Run() {
 		log.Fatalf("One or more steps failed to apply")
 	}
 	u.retrySteps(index, retrySteps, wg)
-}
-
-func (u *updater) logReleases(index int) {
-	var sourceReleases []string
-	for url, source := range u.sources {
-		if source.ForcedVersion != "" {
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, source.ForcedVersion))
-			continue
-		}
-		if index < len(source.Releases) {
-			release := source.Releases[index]
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
-		}
-	}
-	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
-}
-
-func (u *updater) Update() {
-	u.updateAgentJob(common.UpdateCommand)
-	mostReleases := u.getMostReleases()
-	if mostReleases < 2 {
-		log.Println("No updates found")
-		return
-	}
-	for index := 1; index < mostReleases; index++ {
-		u.logReleases(index)
-		u.updateState()
-		u.getChecksums(index)
-		wg := new(model.SafeCounter)
-		errChan := make(chan error, len(u.steps))
-		failed := false
-		retrySteps := make([]model.Step, 0)
-		for _, step := range u.steps {
-			retry, err := u.processStep(index, step, wg, errChan)
-			if err != nil {
-				slog.Error(common.PrefixError(err))
-				failed = true
-				break
-			}
-			if retry {
-				retrySteps = append(retrySteps, step)
-			}
-		}
-		wg.Wait()
-		close(errChan)
-		time.Sleep(1 * time.Second)
-		u.putStateFileOrDie()
-		if _, ok := <-errChan; ok || failed {
-			log.Fatalf("One or more steps failed to apply")
-		}
-		u.retrySteps(index, retrySteps, wg)
+	if u.mode == ModeUpdate {
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
 		}
@@ -386,6 +383,21 @@ func (u *updater) getMostReleases() int {
 		}
 	}
 	return mostReleases
+}
+
+func (u *updater) logReleases(index int) {
+	var sourceReleases []string
+	for url, source := range u.sources {
+		if source.ForcedVersion != "" {
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, source.ForcedVersion))
+			continue
+		}
+		if index < len(source.Releases) {
+			release := source.Releases[index]
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
+		}
+	}
+	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
 func (u *updater) updateState() {
@@ -423,9 +435,6 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		}
 		return false, err
 	}
-	var executePipelines bool
-	var providers map[string]model.Set[string]
-	var files map[string]model.File
 	if !u.firstRunDone[step.Name] {
 		err = u.updateCertFiles(step.Name)
 		if err != nil {
@@ -433,11 +442,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 			return false, err
 		}
 	}
-	if !u.firstRunDone[step.Name] {
-		executePipelines, files, err = u.createStepFiles(step, moduleVersions, index)
-	} else {
-		executePipelines, providers, files, err = u.updateStepFiles(step, moduleVersions, index)
-	}
+	executePipelines, providers, files, err := u.updateStepFiles(step, moduleVersions, index)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
@@ -678,7 +683,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	autoApprove := getAutoApprove(*stepState)
 	var err error
 	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step))
+		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step), u.getManualApproval(step))
 	} else if firstRun {
 		err = u.createExecuteStepPipelines(step, autoApprove, index)
 	} else {
@@ -694,17 +699,6 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 		u.updateDestinationsApplyFiles(step, files)
 	}
 	return err
-}
-
-func (u *updater) updateAgentJob(cmd common.Command) {
-	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		return
-	}
-	agent := NewAgent(u.resources, *u.pipelineFlags.TerraformCache.Value)
-	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
-	if err != nil {
-		log.Fatalf("Failed to update agent codebuild: %s", err)
-	}
 }
 
 func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
@@ -743,17 +737,6 @@ func (u *updater) updateCertFiles(stepName string) error {
 		}
 	}
 	return nil
-}
-
-func (u *updater) createStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
-	switch step.Type {
-	case model.StepTypeTerraform:
-		return u.createTerraformFiles(step, moduleVersions, index)
-	case model.StepTypeArgoCD:
-		return u.updateArgoCDFiles(step, moduleVersions)
-	default:
-		return false, nil, fmt.Errorf("step type %s not supported", step.Type)
-	}
 }
 
 func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
@@ -807,11 +790,32 @@ func (u *updater) createExecutePipelines(projectName string, stepName string, st
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step, u.getManualApproval(step))
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
 	return nil
+}
+
+func (u *updater) getManualApproval(step model.Step) model.ManualApprove {
+	if step.Approve != "" {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s uses deprecated 'approve' property, use 'manual_approve_run' and 'manual_approve_update'", step.Name)))
+		return ""
+	}
+	if step.RunApprove == "" && step.UpdateApprove == "" {
+		return ""
+	}
+	if u.mode == ModeRun {
+		if step.RunApprove == "" {
+			return model.ManualApproveChanges
+		}
+		return step.RunApprove
+	} else {
+		if step.UpdateApprove == "" {
+			return model.ManualApproveRemoves
+		}
+		return step.UpdateApprove
+	}
 }
 
 func (u *updater) getStepAuthSources(step model.Step) map[string]model.SourceAuth {
@@ -852,7 +856,7 @@ func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index 
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
-	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step)
+	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step, u.getManualApproval(step))
 }
 
 func getAutoApprove(state model.StateStep) bool {
@@ -1010,11 +1014,6 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	} else {
 		return moduleVersion, nil
 	}
-}
-
-func (u *updater) createTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.File, error) {
-	execute, _, files, err := u.updateTerraformFiles(step, moduleVersions, index)
-	return execute, files, err
 }
 
 func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
@@ -1395,7 +1394,7 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 	return release, imageSource
 }
 
-func (u *updater) getChecksums(index int) {
+func (u *updater) updateChecksums(index int) {
 	for url, source := range u.sources {
 		if len(source.Releases)-1 < index {
 			continue
@@ -1405,6 +1404,7 @@ func (u *updater) getChecksums(index int) {
 			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}
 		source.CurrentChecksums = checksums
+		u.sources[url] = source
 	}
 }
 

@@ -50,7 +50,7 @@ func NewLocalPipeline(resources model.Resources, flags common.Pipeline) *LocalPi
 	}
 }
 
-func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth) error {
+func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth, approve model.ManualApprove) error {
 	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	log.Printf("Starting local pipeline %s", prefix)
 	planCommand, applyCommand := model.GetCommands(step.Type)
@@ -58,7 +58,7 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, 
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
 	}
-	approved, err := l.getApproval(prefix, step, autoApprove, output)
+	approved, err := l.getApproval(prefix, step, autoApprove, output, approve)
 	if err != nil {
 		return fmt.Errorf("failed to get approval for %s: %v", prefix, err)
 	}
@@ -159,7 +159,7 @@ func (l *LocalPipeline) getLogFileWriter(prefix string, command model.ActionComm
 	return file
 }
 
-func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoApprove bool, output []byte) (bool, error) {
+func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoApprove bool, output []byte, approve model.ManualApprove) (bool, error) {
 	if output == nil {
 		return false, fmt.Errorf("no output from execution")
 	}
@@ -167,14 +167,14 @@ func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoAp
 	if err != nil {
 		return false, err
 	}
-	if step.Approve == model.ApproveReject {
+	if step.Approve == model.ApproveReject || approve == model.ManualApproveReject {
 		return false, fmt.Errorf("stopped because step approve type is 'reject'")
 	}
-	if pipeChanges.NoChanges {
+	if pipeChanges.NoChanges || (approve == "" && pipeChanges.Changed == 0 && pipeChanges.Destroyed == 0) {
 		log.Printf("No changes detected for %s, skipping apply", pipelineName)
 		return false, nil
 	}
-	if step.Approve == model.ApproveForce || (pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove)) {
+	if util.ShouldApprovePipeline(*pipeChanges, step.Approve, autoApprove, approve) {
 		log.Printf("Approved %s\n", pipelineName)
 		return true, nil
 	}

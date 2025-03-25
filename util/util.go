@@ -292,3 +292,27 @@ func HashCode(value string) string {
 	_, _ = hasher.Write([]byte(value))
 	return strings.ToLower(fmt.Sprintf("%x", hasher.Sum32()))
 }
+
+func ShouldStopPipeline(changes model.PipelineChanges, approve model.Approve, manualApprove model.ManualApprove) bool {
+	if approve == model.ApproveReject || manualApprove == model.ManualApproveReject {
+		return true
+	}
+	return changes.NoChanges || (manualApprove == "" && changes.Changed == 0 && changes.Destroyed == 0)
+}
+
+func ShouldApprovePipeline(changes model.PipelineChanges, approve model.Approve, autoApprove bool, manualApprove model.ManualApprove) bool {
+	if approve == model.ApproveForce || manualApprove == model.ManualApproveNever {
+		return true
+	}
+	if manualApprove != "" {
+		switch manualApprove {
+		case model.ManualApproveAlways:
+			return false
+		case model.ManualApproveChanges:
+			return changes.Changed == 0 && changes.Destroyed == 0
+		case model.ManualApproveRemoves:
+			return changes.Destroyed == 0
+		}
+	}
+	return changes.Destroyed == 0 && (changes.Changed == 0 || autoApprove)
+}

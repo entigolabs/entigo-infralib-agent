@@ -539,7 +539,7 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	return ""
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executionId *string, autoApprove bool, step model.Step) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
@@ -577,7 +577,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executio
 				return err
 			}
 			p.stopPreviousExecution(pipelineName, *executionId, executionsList.ActionExecutionDetails)
-			status, err = p.processStateStages(pipelineName, *executionId, executionsList.ActionExecutionDetails, step, autoApprove, status)
+			status, err = p.processStateStages(pipelineName, *executionId, executionsList.ActionExecutionDetails, step, autoApprove, status, approve)
 			if err != nil {
 				return err
 			}
@@ -678,7 +678,7 @@ func preApproveStage(actions []types.ActionExecutionDetail) bool {
 	return planned
 }
 
-func (p *Pipeline) processStateStages(pipelineName, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, status approvalStatus) (approvalStatus, error) {
+func (p *Pipeline) processStateStages(pipelineName, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, status approvalStatus, approve model.ManualApprove) (approvalStatus, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName {
 			continue
@@ -695,12 +695,12 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		} else if status == approvalStatusApprove {
 			return p.approveStage(pipelineName)
 		}
-		return p.processChanges(pipelineName, executionId, actions, step, autoApprove)
+		return p.processChanges(pipelineName, executionId, actions, step, autoApprove, approve)
 	}
 	return status, nil
 }
 
-func (p *Pipeline) processChanges(pipelineName string, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool) (approvalStatus, error) {
+func (p *Pipeline) processChanges(pipelineName string, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, approve model.ManualApprove) (approvalStatus, error) {
 	pipeChanges, err := p.getChanges(pipelineName, actions, step.Type)
 	if err != nil {
 		return approvalStatusStop, err
@@ -708,10 +708,10 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 	if pipeChanges == nil {
 		return approvalStatusStop, fmt.Errorf("couldn't get pipeline changes for %s", pipelineName)
 	}
-	if step.Approve == model.ApproveReject || pipeChanges.NoChanges {
-		return p.stopPipeline(pipelineName, executionId, step.Approve)
+	if util.ShouldStopPipeline(*pipeChanges, step.Approve, approve) {
+		return p.stopPipeline(pipelineName, executionId, step.Approve, approve)
 	}
-	if step.Approve == model.ApproveForce || (pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove)) {
+	if util.ShouldApprovePipeline(*pipeChanges, step.Approve, autoApprove, approve) {
 		return p.approveStage(pipelineName)
 	} else {
 		log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
@@ -750,17 +750,17 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.Actio
 	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
 }
 
-func (p *Pipeline) stopPipeline(pipelineName, executionId string, approve model.Approve) (approvalStatus, error) {
+func (p *Pipeline) stopPipeline(pipelineName, executionId string, approve model.Approve, manualApprove model.ManualApprove) (approvalStatus, error) {
 	log.Printf("Stopping pipeline %s\n", pipelineName)
 	reason := "No changes detected"
-	if approve == model.ApproveReject {
+	if approve == model.ApproveReject || manualApprove == model.ManualApproveReject {
 		reason = "Rejected"
 	}
 	err := p.stopPipelineExecution(pipelineName, executionId, reason)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error())))
 	}
-	if approve == model.ApproveReject {
+	if approve == model.ApproveReject || manualApprove == model.ManualApproveReject {
 		return approvalStatusStop, fmt.Errorf("stopped because step approve type is 'reject'")
 	}
 	return approvalStatusStop, nil
@@ -961,7 +961,7 @@ func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) er
 	if err != nil {
 		return err
 	}
-	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step)
+	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step, "")
 }
 
 func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {
