@@ -20,7 +20,7 @@ func (f *Flags) validate(cmd Command) error {
 			return fmt.Errorf("config or prefix must be set")
 		}
 		fallthrough
-	case SACommand:
+	case SACommand, AddCustomCommand, DeleteCustomCommand, GetCustomCommand, ListCustomCommand:
 		if f.GCloud.ProjectId != "" {
 			if f.GCloud.Location == "" || f.GCloud.Zone == "" {
 				return fmt.Errorf("gcloud location and zone must be set")

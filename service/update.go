@@ -67,6 +67,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())
+	setupEncryption(config, provider, resources)
 	steps := getRunnableSteps(config, flags.Steps)
 	sources, moduleSources := createSources(ctx, steps, config, state, resources.GetSSM())
 	destinations := createDestinations(ctx, config)
@@ -329,7 +330,7 @@ func (u *updater) updateAgentJob(cmd common.Command) {
 		return
 	}
 	agent := NewAgent(u.resources, *u.pipelineFlags.TerraformCache.Value)
-	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd)
+	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd, u.provider.IsRunningLocally())
 	if err != nil {
 		log.Fatalf("Failed to update agent job: %s", err)
 	}

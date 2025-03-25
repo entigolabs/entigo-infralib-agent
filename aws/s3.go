@@ -29,11 +29,8 @@ type S3 struct {
 
 func NewS3(ctx context.Context, awsConfig aws.Config, bucket string) *S3 {
 	return &S3{
-		ctx: ctx,
-		awsS3: awsS3.NewFromConfig(awsConfig, func(o *awsS3.Options) {
-			// Avoids checksum warn on error responses https://github.com/aws/aws-sdk-go-v2/issues/3020
-			o.DisableLogOutputChecksumValidationSkipped = true
-		}),
+		ctx:    ctx,
+		awsS3:  awsS3.NewFromConfig(awsConfig),
 		region: awsConfig.Region,
 		bucket: bucket,
 	}
@@ -107,6 +104,47 @@ func (s *S3) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 		URL:  fmt.Sprintf("%s/", s.bucket),
 	}
 	return s.repoMetadata, nil
+}
+
+func (s *S3) addEncryption(kmsArn string) error {
+	encryption, err := s.awsS3.GetBucketEncryption(s.ctx, &awsS3.GetBucketEncryptionInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err != nil {
+		return err
+	}
+	if hasKMSEncryption(encryption.ServerSideEncryptionConfiguration) {
+		return nil
+	}
+	_, err = s.awsS3.PutBucketEncryption(s.ctx, &awsS3.PutBucketEncryptionInput{
+		Bucket: aws.String(s.bucket),
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{
+				{ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+					KMSMasterKeyID: aws.String(kmsArn),
+					SSEAlgorithm:   types.ServerSideEncryptionAwsKms,
+				},
+					BucketKeyEnabled: aws.Bool(true),
+				},
+			},
+		},
+	})
+	return err
+}
+
+func hasKMSEncryption(config *types.ServerSideEncryptionConfiguration) bool {
+	if config == nil {
+		return false
+	}
+	for _, rule := range config.Rules {
+		if rule.ApplyServerSideEncryptionByDefault == nil {
+			continue
+		}
+		if rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm == types.ServerSideEncryptionAwsKms {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *S3) PutFile(file string, content []byte) error {

@@ -12,7 +12,7 @@ import (
 
 func Custom(ctx context.Context, flags *common.Flags, command common.Command) {
 	provider := service.GetResourceProvider(ctx, flags)
-	ssm := provider.GetSSM()
+	ssm := getSSM(provider, flags)
 	var err error
 	switch command {
 	case common.AddCustomCommand:
@@ -27,6 +27,21 @@ func Custom(ctx context.Context, flags *common.Flags, command common.Command) {
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
 	}
+}
+
+func getSSM(provider model.ResourceProvider, flags *common.Flags) model.SSM {
+	ssm := provider.GetSSM()
+	if flags.Prefix == "" && flags.Config == "" {
+		return ssm
+	}
+	prefix := service.GetProviderPrefix(flags)
+	bucket := provider.GetBucket(prefix)
+	keyId := service.GetEncryptionKey(provider.GetProviderType(), prefix, flags.Config, bucket)
+	if keyId == "" {
+		return ssm
+	}
+	ssm.AddEncryptionKeyId(keyId)
+	return ssm
 }
 
 func addParam(ssm model.SSM, params common.Params) error {
