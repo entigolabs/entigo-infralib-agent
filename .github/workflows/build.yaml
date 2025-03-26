@@ -73,7 +73,7 @@ jobs:
         with:
           registry: europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent
           username: _json_key
-          password: ${{ secrets.GOOGLE_CREDENTIALS }}
+          password: ${{ secrets.GCLOUDAR_JSON_KEY }}
 
       - name: Build and push image
         run: |
