@@ -42,6 +42,7 @@ type Updater interface {
 }
 
 type updater struct {
+	cmd           common.Command
 	config        model.Config
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
@@ -306,6 +307,7 @@ func (u *updater) Update() {
 }
 
 func (u *updater) process(command common.Command) {
+	u.cmd = command
 	u.updateAgentJob(command)
 	index := 0
 	mostReleases := 1
@@ -803,7 +805,7 @@ func (u *updater) getManualApproval(step model.Step) model.ManualApprove {
 	if step.RunApprove == "" && step.UpdateApprove == "" {
 		return ""
 	}
-	if u.mode == ModeRun {
+	if u.cmd == common.RunCommand {
 		if step.RunApprove == "" {
 			return model.ManualApproveChanges
 		}
