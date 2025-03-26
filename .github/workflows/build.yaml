@@ -17,23 +17,23 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-#      - name: Run tests
-#        env:
-#          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#          AWS_REGION: eu-north-1
-#          PROJECT_ID: entigo-infralib-agent
-#          LOCATION: europe-west1
-#          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-#          ZONE: europe-west1-a
-#        run: |
-#          mkdir -p $(echo ~)/.config/gcloud
-#          echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
-#          gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
-#          gcloud config set project $PROJECT_ID
-#          gcloud auth list
-#          gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
-#          go test -timeout 25m -v ./...
+      - name: Run tests
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: eu-north-1
+          PROJECT_ID: entigo-infralib-agent
+          LOCATION: europe-west1
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ZONE: europe-west1-a
+        run: |
+          mkdir -p $(echo ~)/.config/gcloud
+          echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud config set project $PROJECT_ID
+          gcloud auth list
+          gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          go test -timeout 25m -v ./...
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -85,24 +85,24 @@ jobs:
           -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} .
 
-#      - name: Authenticate with GitHub CLI
-#        run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
-#        if: ${{ github.event_name == 'push' }}
+      - name: Authenticate with GitHub CLI
+        run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event_name == 'push' }}
 
-#      - name: Create Release
-#        id: create_release
-#        run: |
-#          git config user.name "GitHub Actions"
-#          git config user.email "actions@github.com"
-#          git tag -a ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -m "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}"
-#          git push origin ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
-#          RELEASE_URL=$(gh release create ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
-#          --title "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}" \
-#          --generate-notes \
-#          --draft=false \
-#          --latest=false \
-#          --prerelease=true)
-#          echo "RELEASE_URL=$RELEASE_URL" >> $GITHUB_ENV
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#        if: ${{ github.event_name == 'push' }}
+      - name: Create Release
+        id: create_release
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -m "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}"
+          git push origin ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          RELEASE_URL=$(gh release create ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          --title "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}" \
+          --generate-notes \
+          --draft=false \
+          --latest=false \
+          --prerelease=true)
+          echo "RELEASE_URL=$RELEASE_URL" >> $GITHUB_ENV
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event_name == 'push' }}
