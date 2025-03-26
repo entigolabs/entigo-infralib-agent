@@ -42,7 +42,6 @@ type Updater interface {
 }
 
 type updater struct {
-	mode          Mode
 	config        model.Config
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
@@ -299,20 +298,18 @@ func getLocalPipeline(resources model.Resources, pipeline common.Pipeline) *Loca
 }
 
 func (u *updater) Run() {
-	u.mode = ModeRun
-	u.process()
+	u.process(common.RunCommand)
 }
 
 func (u *updater) Update() {
-	u.mode = ModeUpdate
-	u.process()
+	u.process(common.UpdateCommand)
 }
 
-func (u *updater) process() {
-	u.updateAgentJob(common.UpdateCommand)
+func (u *updater) process(command common.Command) {
+	u.updateAgentJob(command)
 	index := 0
 	mostReleases := 1
-	if u.mode == ModeUpdate {
+	if command == common.UpdateCommand {
 		index = 1
 		mostReleases = u.getMostReleases()
 		if mostReleases < 2 {
@@ -321,7 +318,7 @@ func (u *updater) process() {
 		}
 	}
 	for ; index < mostReleases; index++ {
-		u.processRelease(index)
+		u.processRelease(index, command)
 	}
 }
 
@@ -336,10 +333,10 @@ func (u *updater) updateAgentJob(cmd common.Command) {
 	}
 }
 
-func (u *updater) processRelease(index int) {
+func (u *updater) processRelease(index int, command common.Command) {
 	u.logReleases(index)
 	u.updateState()
-	if u.mode == ModeUpdate {
+	if command == common.UpdateCommand {
 		u.updateChecksums(index)
 	}
 	wg := new(model.SafeCounter)
@@ -365,7 +362,7 @@ func (u *updater) processRelease(index int) {
 		log.Fatalf("One or more steps failed to apply")
 	}
 	u.retrySteps(index, retrySteps, wg)
-	if u.mode == ModeUpdate {
+	if command == common.UpdateCommand {
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
 		}

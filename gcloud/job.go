@@ -218,7 +218,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 				Template: &runpb.TaskTemplate{
 					Containers: []*runpb.Container{{
 						Name:  "agent",
-						Image: model.AgentImageDocker + ":" + imageVersion,
+						Image: model.AgentImageGCloud + ":" + imageVersion,
 						Args:  []string{"ei-agent", string(cmd)},
 						Env:   b.getAgentEnvVars(awsPrefix),
 						VolumeMounts: []*runpb.VolumeMount{{
@@ -300,7 +300,7 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 	if job == nil {
 		return fmt.Errorf("job %s not found", projectName)
 	}
-	job.Template.Template.Containers[0].Image = fmt.Sprintf("%s:%s", model.AgentImageDocker, version)
+	job.Template.Template.Containers[0].Image = fmt.Sprintf("%s:%s", model.AgentImageGCloud, version)
 	job.Template.Template.Containers[0].Env = b.getAgentEnvVars(cloudPrefix)
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
