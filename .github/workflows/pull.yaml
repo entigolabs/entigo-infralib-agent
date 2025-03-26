@@ -4,6 +4,12 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'examples/**'
+      - 'deploy_yaml/**'
   workflow_dispatch:
 
 jobs:
