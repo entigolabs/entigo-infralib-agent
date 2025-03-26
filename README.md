@@ -433,11 +433,11 @@ Source version is overwritten by module version. Default version is **stable** w
 
 ### Auto approval logic
 
-Each step can set run and update approval types which lets agent decide when to auto approve pipeline changes. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped. If only one of the `manual_approve_*` properties is set for a step, then the other property uses the default value. Possible values for the approval types are:
-* always - will ask for user manual approval even when new resources are added.
-* changes - will ask for user manual approval when existing resources are changed or removed (or replaced by removal), default for run.
-* removes - will ask for user manual approval when resources are removed (or replaced by removal), default for update.
-* never - will never ask for manual approval.
+Each step can be configured how it automatically aproves infrastructure changes for the agents "run" and "update" commands. To decide when to auto approve changes. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped. If only one of the `manual_approve_*` properties is set for a step, then the other property uses the default value. Possible values for the manual_approve_run and manual_approve_update are:
+* always - will ask for user manual approval when resources are added, changed or removed.
+* changes - will ask for user manual approval when resources are changed or removed. (default for manual_approve_run).
+* removes - will ask for user manual approval when resources are removed (default for manual_approve_update).
+* never - will never ask for manual approval. (DANGEROUS!)
 * reject - stop the pipeline instead of approving, marks the step as failed. This can be used to generate plan files without applying them.
 
 Step property `approve` is deprecated and replaced by `manual_approve_run` and `manual_approve_update`. If none of those fields is set then `approve` will be used with default `always` value for backwards compatibility.
