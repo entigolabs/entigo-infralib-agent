@@ -403,7 +403,8 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, execu
 }
 
 func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string) error {
-	_, err := p.builder.executeJob(pipelineName, false)
+	job := fmt.Sprintf("%s-%s", pipelineName, common.RunCommand)
+	_, err := p.builder.executeJob(job, false)
 	return err
 }
 

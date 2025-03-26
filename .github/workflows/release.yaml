@@ -103,6 +103,14 @@ jobs:
         env:
           AWS_REGION: us-east-1
 
+      - name: Login to Google AR
+        uses: docker/login-action@v3
+        if: ${{ steps.get_latest_release.outputs.new_release_needed == 'true' }}
+        with:
+          registry: europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent
+          username: _json_key
+          password: ${{ secrets.GCLOUDAR_JSON_KEY }}
+
       - name: Build and push image
         if: ${{ steps.get_latest_release.outputs.new_release_needed == 'true' }}
         run: |
@@ -113,6 +121,9 @@ jobs:
             -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} \
             -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.major_version }} \
             -t public.ecr.aws/entigolabs/entigo-infralib-agent:latest \
+            -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} \
+            -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.major_version }} \
+            -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:latest \
             -t entigolabs/entigo-infralib-agent:latest \
             -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.major_version }} \
             -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} .

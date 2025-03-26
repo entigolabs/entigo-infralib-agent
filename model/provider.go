@@ -5,7 +5,9 @@ import "github.com/entigolabs/entigo-infralib-agent/common"
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
-const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
+
+// const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
+const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
