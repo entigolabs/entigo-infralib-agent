@@ -346,3 +346,27 @@ func GetStringValue(value interface{}) string {
 		return fmt.Sprintf("%v", v)
 	}
 }
+
+func ShouldStopPipeline(changes model.PipelineChanges, approve model.Approve, manualApprove model.ManualApprove) bool {
+	return approve == model.ApproveReject || manualApprove == model.ManualApproveReject || changes.NoChanges
+}
+
+func ShouldApprovePipeline(changes model.PipelineChanges, approve model.Approve, autoApprove bool, manualApprove model.ManualApprove) bool {
+	if approve == model.ApproveForce || manualApprove == model.ManualApproveNever {
+		return true
+	}
+	if changes.Added == 0 && changes.Changed == 0 && changes.Destroyed == 0 {
+		return true
+	}
+	if manualApprove != "" {
+		switch manualApprove {
+		case model.ManualApproveAlways:
+			return false
+		case model.ManualApproveChanges:
+			return changes.Changed == 0 && changes.Destroyed == 0
+		case model.ManualApproveRemoves:
+			return changes.Destroyed == 0
+		}
+	}
+	return changes.Destroyed == 0 && (changes.Changed == 0 || autoApprove)
+}

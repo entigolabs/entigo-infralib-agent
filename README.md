@@ -341,6 +341,8 @@ steps:
   - name: string
     type: terraform | argocd-apps
     approve: minor | major | never | always | force | reject
+    manual_approve_run: always | changes | removes | never | reject
+    manual_approve_update: always | changes | removes | never | reject
     base_image_source: string
     base_image_version: stable | semver
     vpc:
@@ -405,7 +407,9 @@ Source version is overwritten by module version. Default version is **stable** w
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step
-  * approve - approval type for the step, possible values `minor | major | never | always | force | reject`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
+  * approve - **deprecated**, approval type for the step, possible values `minor | major | never | always | force | reject`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
+  * manual_approve_update - approval type for the step when using the update command, possible values `always | changes | removes | never | reject`, default **removes**. More info in [Auto approval logic](#auto-approval-logic)
+  * manual_approve_run - approval type for the step when using the run command, possible values `always | changes | removes | never | reject`, default **changes**. More info in [Auto approval logic](#auto-approval-logic)
   * base_image_source - source of Entigo Infralib Base Image to use
   * base_image_version - image version of Entigo Infralib Base Image to use, default uses the newest module version
   * vpc - vpc values to add
@@ -429,9 +433,16 @@ Source version is overwritten by module version. Default version is **stable** w
 
 ### Auto approval logic
 
-Each step can set an approval type which lets agent decide when to auto approve pipeline changes. Auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval, except when using type `force`. Approve `always` means that manual approval is required, `never` means that agent approves automatically. Types `major` and `minor` require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped.
+Each step can set run and update approval types which lets agent decide when to auto approve pipeline changes. If the planning stage of a step finds no changes, then the pipeline apply stage will be skipped. If only one of the `manual_approve_*` properties is set for a step, then the other property uses the default value. Possible values for the approval types are:
+* always - will ask for user manual approval even when new resources are added.
+* changes - will ask for user manual approval when existing resources are changed or removed (or replaced by removal), default for run.
+* removes - will ask for user manual approval when resources are removed (or replaced by removal), default for update.
+* never - will never ask for manual approval.
+* reject - stop the pipeline instead of approving, marks the step as failed. This can be used to generate plan files without applying them.
 
-It's possible to use the type `reject` to stop the pipeline instead of approving. This can be used to generate plan files without applying them. Agent marks the step as failed.
+Step property `approve` is deprecated and replaced by `manual_approve_run` and `manual_approve_update`. If none of those fields is set then `approve` will be used with default `always` value for backwards compatibility.
+
+When using the `approve` property, auto approve type is only considered when resources will be changed. Adding resources doesn't require manual approval. Destroying resources always requires manual approval, except when using type `force`. Approve `always` means that manual approval is required, `never` means that agent approves automatically. Types `major` and `minor` require manual approval only when any of the step modules has a major or minor semver version change. Modules with external source require manual approval.
 
 ### Overriding config values
 

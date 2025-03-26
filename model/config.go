@@ -54,17 +54,19 @@ type Callback struct {
 }
 
 type Step struct {
-	Name                  string   `yaml:"name"`
-	Type                  StepType `yaml:"type,omitempty"`
-	Approve               Approve  `yaml:"approve,omitempty"`
-	BaseImageSource       string   `yaml:"base_image_source,omitempty"`
-	BaseImageVersion      string   `yaml:"base_image_version,omitempty"`
-	Vpc                   VPC      `yaml:"vpc,omitempty"`
-	KubernetesClusterName string   `yaml:"kubernetes_cluster_name,omitempty"`
-	ArgocdNamespace       string   `yaml:"argocd_namespace,omitempty"`
-	Provider              Provider `yaml:"provider,omitempty"`
-	Modules               []Module `yaml:"modules,omitempty"`
-	Files                 []File   `yaml:"-"`
+	Name                  string        `yaml:"name"`
+	Type                  StepType      `yaml:"type,omitempty"`
+	Approve               Approve       `yaml:"approve,omitempty"`
+	RunApprove            ManualApprove `yaml:"manual_approve_run,omitempty"`
+	UpdateApprove         ManualApprove `yaml:"manual_approve_update,omitempty"`
+	BaseImageSource       string        `yaml:"base_image_source,omitempty"`
+	BaseImageVersion      string        `yaml:"base_image_version,omitempty"`
+	Vpc                   VPC           `yaml:"vpc,omitempty"`
+	KubernetesClusterName string        `yaml:"kubernetes_cluster_name,omitempty"`
+	ArgocdNamespace       string        `yaml:"argocd_namespace,omitempty"`
+	Provider              Provider      `yaml:"provider,omitempty"`
+	Modules               []Module      `yaml:"modules,omitempty"`
+	Files                 []File        `yaml:"-"`
 }
 
 func NewStepsChecksums() StepsChecksums {
@@ -196,6 +198,16 @@ const (
 	ApproveNever  Approve = "never"
 	ApproveForce  Approve = "force"
 	ApproveReject Approve = "reject"
+)
+
+type ManualApprove string
+
+const (
+	ManualApproveAlways  ManualApprove = "always"
+	ManualApproveChanges ManualApprove = "changes"
+	ManualApproveRemoves ManualApprove = "removes"
+	ManualApproveNever   ManualApprove = "never"
+	ManualApproveReject  ManualApprove = "reject"
 )
 
 type State struct {

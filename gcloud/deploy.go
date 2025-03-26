@@ -289,7 +289,7 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 	}
 }
 
-func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges) error {
+func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges, approve model.ManualApprove) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
@@ -330,17 +330,17 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 				if err != nil {
 					return err
 				}
-				if pipeChanges != nil && (step.Approve == model.ApproveReject || pipeChanges.NoChanges) {
+				if pipeChanges != nil && util.ShouldStopPipeline(*pipeChanges, step.Approve, approve) {
 					log.Printf("Stopping rollout for %s", pipelineName)
 					_, _ = p.client.CancelRollout(p.ctx, &deploypb.CancelRolloutRequest{
 						Name: rollout.GetName(),
 					})
-					if step.Approve == model.ApproveReject {
+					if step.Approve == model.ApproveReject || approve == model.ManualApproveReject {
 						return fmt.Errorf("stopped because step approve type is 'reject'")
 					}
 					return nil
 				}
-				if pipeChanges != nil && (step.Approve == model.ApproveForce || (pipeChanges.Destroyed == 0 && (pipeChanges.Changed == 0 || autoApprove))) {
+				if pipeChanges != nil && util.ShouldApprovePipeline(*pipeChanges, step.Approve, autoApprove, approve) {
 					_, err = p.client.ApproveRollout(p.ctx, &deploypb.ApproveRolloutRequest{
 						Name:     rollout.GetName(),
 						Approved: true,
@@ -453,7 +453,7 @@ func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 	return err
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, step model.Step) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
 	if releaseId == nil {
 		return fmt.Errorf("release id is nil")
 	}
@@ -474,7 +474,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, step, "", "", autoApprove, nil)
+	err = p.waitForRollout(rollout, pipelineName, step, "", "", autoApprove, nil, approve)
 	if err != nil {
 		return err
 	}
@@ -510,7 +510,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, step, planJob, executionName, autoApprove, pipeChanges)
+	err = p.waitForRollout(rollout, pipelineName, step, planJob, executionName, autoApprove, pipeChanges, approve)
 	if err != nil {
 		return err
 	}

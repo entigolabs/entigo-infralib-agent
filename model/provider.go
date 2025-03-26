@@ -79,7 +79,7 @@ type Pipeline interface {
 	UpdatePipeline(pipelineName, stepName string, step Step, bucket string, authSources map[string]SourceAuth) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
-	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step) error
+	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
 }
@@ -211,6 +211,7 @@ type Parameter struct {
 }
 
 type PipelineChanges struct {
+	Added     int
 	Changed   int
 	Destroyed int
 	NoChanges bool

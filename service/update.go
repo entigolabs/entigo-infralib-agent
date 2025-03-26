@@ -681,7 +681,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	autoApprove := getAutoApprove(*stepState)
 	var err error
 	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step))
+		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step), u.getManualApproval(step))
 	} else if firstRun {
 		err = u.createExecuteStepPipelines(step, autoApprove, index)
 	} else {
@@ -788,11 +788,32 @@ func (u *updater) createExecutePipelines(projectName string, stepName string, st
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step)
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step, u.getManualApproval(step))
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
 	return nil
+}
+
+func (u *updater) getManualApproval(step model.Step) model.ManualApprove {
+	if step.Approve != "" {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s uses deprecated 'approve' property, use 'manual_approve_run' and 'manual_approve_update'", step.Name)))
+		return ""
+	}
+	if step.RunApprove == "" && step.UpdateApprove == "" {
+		return ""
+	}
+	if u.mode == ModeRun {
+		if step.RunApprove == "" {
+			return model.ManualApproveChanges
+		}
+		return step.RunApprove
+	} else {
+		if step.UpdateApprove == "" {
+			return model.ManualApproveRemoves
+		}
+		return step.UpdateApprove
+	}
 }
 
 func (u *updater) getStepAuthSources(step model.Step) map[string]model.SourceAuth {
@@ -833,7 +854,7 @@ func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index 
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
-	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step)
+	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step, u.getManualApproval(step))
 }
 
 func getAutoApprove(state model.StateStep) bool {

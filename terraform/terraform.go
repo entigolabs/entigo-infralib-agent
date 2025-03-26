@@ -482,10 +482,11 @@ func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, erro
 		tfChanges.NoChanges = true
 		return &tfChanges, nil
 	}
-	if changed == "0" && destroyed == "0" {
-		return &tfChanges, nil
-	}
 	var err error
+	tfChanges.Added, err = strconv.Atoi(added)
+	if err != nil {
+		return nil, err
+	}
 	tfChanges.Changed, err = strconv.Atoi(changed)
 	if err != nil {
 		return nil, err
