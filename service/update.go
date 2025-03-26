@@ -82,7 +82,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline),
+		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud),
 		callback:      NewCallback(ctx, config.Callback),
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -291,9 +291,9 @@ func createDestinations(ctx context.Context, config model.Config) map[string]mod
 	return dests
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline) *LocalPipeline {
+func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline)
+		return NewLocalPipeline(resources, pipeline, gcloudFlags)
 	}
 	return nil
 }

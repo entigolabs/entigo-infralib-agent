@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/gcloud"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -28,25 +27,29 @@ type LocalPipeline struct {
 	regionKey string
 	region    string
 	project   string
+	zone      string
 	bucket    string
 	pipeline  common.Pipeline
 	inputLock sync.Mutex
 }
 
-func NewLocalPipeline(resources model.Resources, flags common.Pipeline) *LocalPipeline {
+func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud) *LocalPipeline {
 	regionKey := "AWS_REGION"
 	project := ""
+	zone := ""
 	if resources.GetProviderType() == model.GCLOUD {
 		regionKey = "GOOGLE_REGION"
-		project = resources.(gcloud.Resources).ProjectId
+		project = gcloudFlags.ProjectId
+		zone = gcloudFlags.Zone
 	}
 	return &LocalPipeline{
 		prefix:    resources.GetCloudPrefix(),
 		regionKey: regionKey,
 		region:    resources.GetRegion(),
 		project:   project,
+		zone:      zone,
 		bucket:    resources.GetBucketName(),
-		pipeline:  flags,
+		pipeline:  pipeline,
 	}
 }
 
@@ -115,12 +118,12 @@ func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step 
 		fmt.Sprintf("INFRALIB_BUCKET=%s", l.bucket), fmt.Sprintf("%s=%s", l.regionKey, l.region))
 	for source, auth := range sourceAuths {
 		hash := util.HashCode(source)
-		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitSourceEnvFormat, hash), source))
-		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitUsernameEnvFormat, hash), auth.Username))
-		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitPasswordEnvFormat, hash), auth.Password))
+		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitSourceEnvFormat, hash), source),
+			fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitUsernameEnvFormat, hash), auth.Username),
+			fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitPasswordEnvFormat, hash), auth.Password))
 	}
 	if l.project != "" {
-		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project))
+		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project), fmt.Sprintf("GOOGLE_ZONE=%s", l.zone))
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {
