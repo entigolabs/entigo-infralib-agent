@@ -299,26 +299,21 @@ func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 }
 
 func (u *updater) Run() {
-	u.process(common.RunCommand)
+	u.process(common.RunCommand, 0, 1)
 }
 
 func (u *updater) Update() {
-	u.process(common.UpdateCommand)
+	mostReleases := u.getMostReleases()
+	if mostReleases < 2 {
+		log.Println("No updates found")
+		return
+	}
+	u.process(common.UpdateCommand, 1, mostReleases)
 }
 
-func (u *updater) process(command common.Command) {
+func (u *updater) process(command common.Command, index, mostReleases int) {
 	u.cmd = command
 	u.updateAgentJob(command)
-	index := 0
-	mostReleases := 1
-	if command == common.UpdateCommand {
-		index = 1
-		mostReleases = u.getMostReleases()
-		if mostReleases < 2 {
-			log.Println("No updates found")
-			return
-		}
-	}
 	for ; index < mostReleases; index++ {
 		u.processRelease(index, command)
 	}
@@ -1396,10 +1391,14 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 
 func (u *updater) updateChecksums(index int) {
 	for url, source := range u.sources {
-		if len(source.Releases)-1 < index {
+		if index != 1 && len(source.Releases)-1 < index {
 			continue
 		}
-		checksums, err := source.Storage.CalculateChecksums(source.Releases[index].Original())
+		release := source.ForcedVersion
+		if release == "" {
+			release = source.Releases[index].Original()
+		}
+		checksums, err := source.Storage.CalculateChecksums(release)
 		if err != nil {
 			log.Fatalf("Failed to get checksums for %s: %s", url, err)
 		}

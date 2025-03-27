@@ -75,7 +75,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 
 func calculateModuleChecksums(step model.Step) (map[string][]byte, error) {
 	checksums := make(map[string][]byte)
-	for i, module := range step.Modules {
+	for _, module := range step.Modules {
 		if len(module.Inputs) == 0 {
 			continue
 		}
@@ -86,7 +86,6 @@ func calculateModuleChecksums(step model.Step) (map[string][]byte, error) {
 				module.Name, err)
 		}
 		checksums[module.Name] = util.CalculateHash(inputsYaml)
-		step.Modules[i] = module
 	}
 	return checksums, nil
 }
