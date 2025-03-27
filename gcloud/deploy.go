@@ -383,14 +383,10 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, execu
 	lastSlash := strings.LastIndex(executionName, "/")
 	logIterator := p.logging.GetJobExecutionLogs(jobName, executionName[lastSlash+1:], p.location)
 	for {
-		entry, err := logIterator.Next()
+		logRow, err := p.logging.GetLogRow(logIterator)
 		if errors.Is(err, iterator.Done) {
 			break
 		}
-		if err != nil {
-			return nil, err
-		}
-		logRow := entry.GetTextPayload()
 		changes, err := logParser(pipelineName, logRow)
 		if err != nil {
 			return nil, err

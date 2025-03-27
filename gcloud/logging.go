@@ -4,7 +4,15 @@ import (
 	logging "cloud.google.com/go/logging/apiv2"
 	"cloud.google.com/go/logging/apiv2/loggingpb"
 	"context"
+	"errors"
 	"fmt"
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"log"
+	"log/slog"
+	"time"
 )
 
 type Logging struct {
@@ -31,5 +39,41 @@ func (l *Logging) GetJobExecutionLogs(job string, execution string, location str
 	return l.client.ListLogEntries(l.ctx, &loggingpb.ListLogEntriesRequest{
 		ResourceNames: []string{l.resource},
 		Filter:        filter,
+		OrderBy:       "timestamp desc",
 	})
+}
+
+func (l *Logging) GetLogRow(logIterator *logging.LogEntryIterator) (string, error) {
+	backoff := 2
+	var err error
+	var entry *loggingpb.LogEntry
+	ctx, cancel := context.WithTimeout(l.ctx, 90*time.Second)
+	defer cancel()
+	first := true
+
+	for {
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", errors.New("reading log entries timed out")
+			}
+			return "", ctx.Err()
+		default:
+			entry, err = logIterator.Next()
+			if err == nil {
+				return entry.GetTextPayload(), nil
+			}
+			if status.Code(err) == codes.ResourceExhausted {
+				if first {
+					slog.Error(common.PrefixError(err))
+					first = false
+				}
+				log.Printf("Log api resource exhausted, retrying in %d seconds", backoff)
+				time.Sleep(time.Duration(backoff) * time.Second)
+				backoff = util.MinInt(16, backoff*2)
+				continue
+			}
+			return "", err
+		}
+	}
 }

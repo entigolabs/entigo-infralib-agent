@@ -21,6 +21,7 @@ import (
 
 const (
 	pollingDelay = 10 * time.Second
+	waitTimeout  = 2 * time.Minute
 
 	approveStageName  = "Approve"
 	approveActionName = "Approval"
@@ -589,7 +590,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executio
 }
 
 func (p *Pipeline) waitPipelineExecutionStart(pipelineName string, executionId *string) error {
-	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Minute)
+	ctx, cancel := context.WithTimeout(p.ctx, waitTimeout)
 	ticker := time.NewTicker(pollingDelay)
 	defer ticker.Stop()
 	defer cancel()
@@ -597,7 +598,7 @@ func (p *Pipeline) waitPipelineExecutionStart(pipelineName string, executionId *
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("pipeline %s execution %s failed to start", pipelineName, *executionId)
+				return fmt.Errorf("execution %s failed to start in %s", *executionId, waitTimeout)
 			}
 			return ctx.Err()
 		case <-ticker.C:
