@@ -387,6 +387,9 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, execu
 		if errors.Is(err, iterator.Done) {
 			break
 		}
+		if err != nil {
+			return nil, err
+		}
 		changes, err := logParser(pipelineName, logRow)
 		if err != nil {
 			return nil, err
