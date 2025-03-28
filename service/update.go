@@ -794,7 +794,6 @@ func (u *updater) createExecutePipelines(projectName string, stepName string, st
 
 func (u *updater) getManualApproval(step model.Step) model.ManualApprove {
 	if step.Approve != "" {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s uses deprecated 'approve' property, use 'manual_approve_run' and 'manual_approve_update'", step.Name)))
 		return ""
 	}
 	if step.RunApprove == "" && step.UpdateApprove == "" {
@@ -1396,7 +1395,11 @@ func (u *updater) updateChecksums(index int) {
 		}
 		release := source.ForcedVersion
 		if release == "" {
-			release = source.Releases[index].Original()
+			if index >= len(source.Releases) {
+				release = source.Releases[len(source.Releases)-1].Original()
+			} else {
+				release = source.Releases[index].Original()
+			}
 		}
 		checksums, err := source.Storage.CalculateChecksums(release)
 		if err != nil {
