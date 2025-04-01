@@ -22,6 +22,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Migrate Plan](#migrate-plan)
     * [Migrate Validate](#migrate-validate)
 * [Config](#config)
+  * [Including and excluding modules in sources](#including-and-excluding-modules-in-sources)
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
     * [List indexes](#list-indexes)
@@ -430,6 +431,28 @@ Source version is overwritten by module version. Default version is **stable** w
     * inputs - variables for provider tf file
     * aws - aws provider default and ignore tags to add
     * kubernetes - kubernetes provider ignore annotations and labels to add
+
+### Including and excluding modules in sources
+
+Agent associates modules with sources for requesting module files.
+Module association is done by checking if a source includes a module.
+This is done by checking the source list from top to bottom.
+Source includes a module if:
+* source config `include` property contains the module source
+* source config `exclude` property does not contain the module source
+* module source path is a subdirectory in source `modules` folder
+
+For modules in steps with type `argocd-apps`, agent currently prefixes the `k8s` part of the path in the module source automatically.
+
+Example
+```yaml
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
+    exclude: ["argocd"]
+    include:
+      - aws/eks
+  - url: https://github.com/entigolabs/entigo-infralib
+```
 
 ### Auto approval logic
 

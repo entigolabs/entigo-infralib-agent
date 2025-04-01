@@ -17,6 +17,7 @@ import (
 var appYaml []byte
 
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
+var newPlanRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) to add, (\d+) to change, (\d+) to destroy.`)
 
 func GetApplicationFile(storage model.Storage, module model.Module, source, version string, values []byte, provider model.ProviderType) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
@@ -104,7 +105,11 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 }
 
 func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, error) {
-	matches := planRegex.FindStringSubmatch(message)
+	matches := newPlanRegex.FindStringSubmatch(message)
+	if matches != nil {
+		return util.GetChangesFromMatches(pipelineName, message, matches)
+	}
+	matches = planRegex.FindStringSubmatch(message)
 	if matches == nil {
 		return nil, nil
 	}

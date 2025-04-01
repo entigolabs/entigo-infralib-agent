@@ -66,6 +66,19 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
 	}
 	for i, module := range modifiedStep.Modules {
+		var originalModule model.Module
+		for _, stepModule := range step.Modules {
+			if module.Name == stepModule.Name {
+				originalModule = stepModule
+				break
+			}
+		}
+		metadata, err := u.replaceMetadataValues(modifiedStep, module, originalModule.Metadata, index, cache)
+		if err != nil {
+			return modifiedStep, fmt.Errorf("failed to replace module %s metadata values in step %s: %v",
+				module.Name, step.Name, err)
+		}
+		module.Metadata = metadata
 		module.InputsChecksum = moduleChecksums[module.Name]
 		modifiedStep.Modules[i] = module
 	}
@@ -198,6 +211,49 @@ func (u *updater) replaceDelayedStringValues(step model.Step, content string, in
 
 func hasSamePrefixSuffix(s, prefixSuffix string) bool {
 	return strings.HasPrefix(s, prefixSuffix) && strings.HasSuffix(s, prefixSuffix)
+}
+
+func (u *updater) replaceMetadataValues(step model.Step, module model.Module, metadata map[string]string, index int, cache paramCache) (map[string]string, error) {
+	if len(metadata) == 0 {
+		return metadata, nil
+	}
+	for key, value := range metadata {
+		matches := replaceRegex.FindAllStringSubmatch(value, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		for _, match := range matches {
+			keyTypes, err := parseReplaceTag(match)
+			if err != nil {
+				return nil, err
+			}
+			var replacement string
+			for _, keyType := range keyTypes {
+				if strings.HasPrefix(keyType.ReplaceKey, `"`) {
+					replacement = strings.Trim(keyType.ReplaceKey, `"`)
+					break
+				}
+				replacement, err = u.getReplacementMetadataValue(step, module, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
+				if err != nil {
+					return nil, err
+				}
+				if replacement != "" {
+					break
+				}
+			}
+			replacement = strings.Trim(replacement, `"`)
+			value = strings.Replace(value, match[0], replacement, 1)
+		}
+		metadata[key] = value
+	}
+	return metadata, nil
+}
+
+func (u *updater) getReplacementMetadataValue(step model.Step, module model.Module, index int, replaceKey, replaceType string, cache paramCache) (string, error) {
+	if replaceType == string(model.ReplaceTypeInput) {
+		return getModuleInputValue(module, replaceKey)
+	}
+	return u.getReplacementValue(step, index, replaceKey, replaceType, cache)
 }
 
 func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, replaceType string, cache paramCache) (string, error) {
@@ -456,6 +512,46 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 		return "", fmt.Errorf("failed to find step module for tsmodule key %s", replaceKey)
 	}
 	return module.Name, nil
+}
+
+func getModuleInputValue(module model.Module, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("failed to parse module input key %s, got %d split parts instead of at least 2", replaceKey, len(parts))
+	}
+	currentValue := module.Inputs[parts[1]]
+	if currentValue == nil {
+		slog.Warn(fmt.Sprintf("module %s input %s key not found", module.Name, replaceKey))
+		return "", nil
+	}
+
+	for i := 2; i < len(parts); i++ {
+		switch v := currentValue.(type) {
+		case map[string]interface{}:
+			currentValue = v[parts[i]]
+			if currentValue == nil {
+				slog.Warn(fmt.Sprintf("module %s input %s key not found", module.Name, replaceKey))
+				return "", nil
+			}
+		case []interface{}:
+			index, err := strconv.Atoi(parts[i])
+			if err != nil {
+				return "", fmt.Errorf("invalid array index: %s", parts[i])
+			}
+			if index < 0 || index >= len(v) {
+				slog.Warn(fmt.Sprintf("module %s input %s array element not found", module.Name, replaceKey))
+				return "", nil
+			}
+			currentValue = v[index]
+		default:
+			if i < len(parts)-1 {
+				slog.Warn(fmt.Sprintf("module %s input %s key not found", module.Name, replaceKey))
+				return "", nil
+			}
+		}
+	}
+
+	return util.GetStringValue(currentValue), nil
 }
 
 func (u *updater) findStepModuleByName(stepName, moduleName string) (*model.Step, *model.Module) {

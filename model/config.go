@@ -1,7 +1,10 @@
 package model
 
 import (
+	"fmt"
 	"github.com/hashicorp/go-version"
+	"gopkg.in/yaml.v3"
+	"log/slog"
 	"time"
 )
 
@@ -154,6 +157,7 @@ type Module struct {
 	InputsChecksum []byte                 `yaml:"-"`
 	InputsFile     string                 `yaml:"-"`
 	FileContent    []byte                 `yaml:"-"`
+	Metadata       map[string]string      `yaml:"-"`
 }
 
 type StepType string
@@ -180,6 +184,7 @@ const (
 	ReplaceTypeModuleType      ReplaceType = "tmodule"
 	ReplaceTypeStepModule      ReplaceType = "tsmodule"
 	ReplaceTypeModule          ReplaceType = "module"
+	ReplaceTypeInput           ReplaceType = "input"
 )
 
 type AgentReplaceType string
@@ -267,4 +272,36 @@ type ModuleVersion struct {
 	Version   string
 	Changed   bool
 	SourceURL string
+}
+
+type V1Agent struct {
+	Version     string            `json:"version" yaml:"version"`
+	Metadata    map[string]string `json:"metadata" yaml:"metadata"`
+	ModuleTypes []string          `json:"module_types" yaml:"module_types"`
+}
+
+func UnmarshalAgentYaml(yamlData []byte) (interface{}, error) {
+	var genericMap map[string]interface{}
+	err := yaml.Unmarshal(yamlData, &genericMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent file yaml: %v", err)
+	}
+
+	metaVersion, ok := genericMap["version"].(string)
+	if !ok {
+		slog.Debug("agent file version not found in metadata, defaulting to v1")
+		metaVersion = "v1"
+	}
+
+	switch metaVersion {
+	case "v1":
+		var v1 V1Agent
+		err = yaml.Unmarshal(yamlData, &v1)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal v1 agent file: %v", err)
+		}
+		return v1, nil
+	default:
+		return nil, fmt.Errorf("unsupported version: %s", metaVersion)
+	}
 }

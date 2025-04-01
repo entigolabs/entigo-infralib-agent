@@ -21,7 +21,7 @@ type callback struct {
 }
 
 type Callback interface {
-	PostStepState(status model.ApplyStatus, stepState model.StateStep) error
+	PostStepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step) error
 }
 
 func NewCallback(ctx context.Context, config model.Callback) Callback {
@@ -39,14 +39,14 @@ func NewCallback(ctx context.Context, config model.Callback) Callback {
 	}
 }
 
-func (c *callback) PostStepState(status model.ApplyStatus, stepState model.StateStep) error {
+func (c *callback) PostStepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step) error {
 	fullUrl, err := url.JoinPath(c.url, "steps", "status")
 	if err != nil {
 		return fmt.Errorf("error joining url: %v", err)
 	}
 	headers := c.getHeaders()
 	headers.Add("Content-Type", "application/json")
-	request := model.ToModulesRequest(status, stepState)
+	request := model.ToModulesRequest(status, stepState, step)
 	_, err = c.Post(c.ctx, fullUrl, headers, request)
 	return err
 }

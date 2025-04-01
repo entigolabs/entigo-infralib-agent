@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -342,6 +343,8 @@ func GetStringValue(value interface{}) string {
 		return fmt.Sprintf("%f", v)
 	case bool:
 		return fmt.Sprintf("%t", v)
+	case nil:
+		return ""
 	default:
 		return fmt.Sprintf("%v", v)
 	}
@@ -369,4 +372,30 @@ func ShouldApprovePipeline(changes model.PipelineChanges, approve model.Approve,
 		}
 	}
 	return changes.Destroyed == 0 && (changes.Changed == 0 || autoApprove)
+}
+
+func GetChangesFromMatches(pipelineName, message string, matches []string) (*model.PipelineChanges, error) {
+	log.Printf("Pipeline %s: %s", pipelineName, message)
+	changes := model.PipelineChanges{}
+	added := matches[1]
+	changed := matches[2]
+	destroyed := matches[3]
+	if added == "0" && changed == "0" && destroyed == "0" {
+		changes.NoChanges = true
+		return &changes, nil
+	}
+	var err error
+	changes.Added, err = strconv.Atoi(added)
+	if err != nil {
+		return nil, err
+	}
+	changes.Changed, err = strconv.Atoi(changed)
+	if err != nil {
+		return nil, err
+	}
+	changes.Destroyed, err = strconv.Atoi(destroyed)
+	if err != nil {
+		return nil, err
+	}
+	return &changes, nil
 }

@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -474,26 +473,5 @@ func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, erro
 	if matches == nil {
 		return nil, nil
 	}
-	log.Printf("Pipeline %s: %s", pipelineName, message)
-	added := matches[1]
-	changed := matches[2]
-	destroyed := matches[3]
-	if added == "0" && changed == "0" && destroyed == "0" {
-		tfChanges.NoChanges = true
-		return &tfChanges, nil
-	}
-	var err error
-	tfChanges.Added, err = strconv.Atoi(added)
-	if err != nil {
-		return nil, err
-	}
-	tfChanges.Changed, err = strconv.Atoi(changed)
-	if err != nil {
-		return nil, err
-	}
-	tfChanges.Destroyed, err = strconv.Atoi(destroyed)
-	if err != nil {
-		return nil, err
-	}
-	return &tfChanges, nil
+	return util.GetChangesFromMatches(pipelineName, message, matches)
 }

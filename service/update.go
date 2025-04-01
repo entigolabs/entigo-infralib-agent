@@ -145,7 +145,7 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 			}
 			storage = sourceClient
 			if !source.ForceVersion {
-				stableVersion = getLatestRelease(sourceClient)
+				stableVersion = getLatestRelease(source.URL, sourceClient)
 			}
 		}
 		if source.Username != "" {
@@ -414,7 +414,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
 	}
-	step, err = u.mergeModuleInputs(step, moduleVersions)
+	step, err = u.processModules(step, moduleVersions)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState)
 		return false, err
@@ -497,7 +497,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			log.Printf("Skipping step %s\n", step.Name)
-			return u.putAppliedStateFile(stepState, model.ApplyStatusSkipped)
+			return u.putAppliedStateFile(stepState, step, model.ApplyStatusSkipped)
 		}
 		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
@@ -689,7 +689,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 		return err
 	}
 	log.Printf("release applied successfully for step %s\n", step.Name)
-	err = u.putAppliedStateFile(stepState, model.ApplyStatusSuccess)
+	err = u.putAppliedStateFile(stepState, step, model.ApplyStatusSuccess)
 	if err == nil {
 		u.updateDestinationsApplyFiles(step, files)
 	}
@@ -732,6 +732,32 @@ func (u *updater) updateCertFiles(stepName string) error {
 		}
 	}
 	return nil
+}
+
+func (u *updater) updateStepChecksums(step model.Step, files map[string]model.File) {
+	sums, exists := u.stepChecksums.CurrentChecksums[step.Name]
+	if exists {
+		u.stepChecksums.PreviousChecksums[step.Name] = sums
+	}
+	moduleChecksums := make(map[string][]byte)
+	for _, module := range step.Modules {
+		moduleChecksums[module.Name] = module.InputsChecksum
+	}
+	fileChecksums := make(map[string][]byte)
+	for _, file := range step.Files {
+		fileChecksums[file.Name] = file.Checksum
+	}
+	for _, file := range files {
+		if file.Checksum == nil {
+			continue
+		}
+		fileChecksums[file.Name] = file.Checksum
+	}
+	stepChecksum := model.StepChecksums{
+		ModuleChecksums: moduleChecksums,
+		FileChecksums:   fileChecksums,
+	}
+	u.stepChecksums.CurrentChecksums[step.Name] = stepChecksum
 }
 
 func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
@@ -899,10 +925,10 @@ func getSourceReleases(steps []model.Step, source *model.Source, state *model.St
 	return releases[len(releases)-1], releases, nil
 }
 
-func getLatestRelease(sourceClient *git.SourceClient) *version.Version {
+func getLatestRelease(sourceUrl string, sourceClient *git.SourceClient) *version.Version {
 	latestRelease, err := sourceClient.GetLatestReleaseTag()
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatalf("Failed to get latest release for %s: %s", sourceUrl, err)
 	}
 	return latestRelease
 }
@@ -1162,7 +1188,7 @@ func (u *updater) putStateFile() error {
 	return u.resources.GetBucket().PutFile(stateFile, bytes)
 }
 
-func (u *updater) putAppliedStateFile(stepState *model.StateStep, status model.ApplyStatus) error {
+func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Step, status model.ApplyStatus) error {
 	u.stateLock.Lock()
 	defer u.stateLock.Unlock()
 
@@ -1170,16 +1196,20 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, status model.A
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
-	u.postCallback(status, *stepState)
+	u.postCallbackWithStep(status, *stepState, &step)
 	return u.putStateFile()
 }
 
 func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep) {
+	u.postCallbackWithStep(status, stepState, nil)
+}
+
+func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model.StateStep, step *model.Step) {
 	if u.callback == nil {
 		return
 	}
 	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
-	err := u.callback.PostStepState(status, stepState)
+	err := u.callback.PostStepState(status, stepState, step)
 	if err != nil {
 		slog.Error(common.PrefixError(fmt.Errorf("error posting step %s status '%s' to callback: %v",
 			stepState.Name, status, err)))
@@ -1441,7 +1471,7 @@ func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, exclud
 	return nil
 }
 
-func (u *updater) mergeModuleInputs(step model.Step, moduleVersions map[string]model.ModuleVersion) (model.Step, error) {
+func (u *updater) processModules(step model.Step, moduleVersions map[string]model.ModuleVersion) (model.Step, error) {
 	for i, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
@@ -1450,21 +1480,26 @@ func (u *updater) mergeModuleInputs(step model.Step, moduleVersions map[string]m
 		if !found {
 			return step, fmt.Errorf("module %s version not found", module.Name)
 		}
-		moduleSource := u.getModuleSource(module.Source)
-		inputs, err := u.getModuleInputs(step.Type, module, moduleSource, moduleVersion.Version)
+		source := u.getModuleSource(module.Source)
+		moduleSource := module.Source
+		if step.Type == model.StepTypeArgoCD {
+			moduleSource = fmt.Sprintf("k8s/%s", module.Source)
+		}
+		inputs, err := u.getModuleInputs(module, moduleSource, source, moduleVersion.Version)
 		if err != nil {
 			return step, err
 		}
 		step.Modules[i].Inputs = inputs
+		metadata, err := u.getModuleMetadata(module, moduleSource, source, moduleVersion.Version)
+		if err != nil {
+			return step, err
+		}
+		step.Modules[i].Metadata = metadata
 	}
 	return step, nil
 }
 
-func (u *updater) getModuleInputs(stepType model.StepType, module model.Module, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
-	moduleSource := module.Source
-	if stepType == model.StepTypeArgoCD {
-		moduleSource = fmt.Sprintf("k8s/%s", module.Source)
-	}
+func (u *updater) getModuleInputs(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
 	filePath := fmt.Sprintf("modules/%s/agent_input.yaml", moduleSource)
 	defaultInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
 	if err != nil {
@@ -1511,30 +1546,27 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 	return defaultInputs, nil
 }
 
-func (u *updater) updateStepChecksums(step model.Step, files map[string]model.File) {
-	sums, exists := u.stepChecksums.CurrentChecksums[step.Name]
-	if exists {
-		u.stepChecksums.PreviousChecksums[step.Name] = sums
-	}
-	moduleChecksums := make(map[string][]byte)
-	for _, module := range step.Modules {
-		moduleChecksums[module.Name] = module.InputsChecksum
-	}
-	fileChecksums := make(map[string][]byte)
-	for _, file := range step.Files {
-		fileChecksums[file.Name] = file.Checksum
-	}
-	for _, file := range files {
-		if file.Checksum == nil {
-			continue
+func (u *updater) getModuleMetadata(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]string, error) {
+	filePath := fmt.Sprintf("modules/%s/agent.yaml", moduleSource)
+	metadataRaw, err := source.Storage.GetFile(filePath, moduleVersion)
+	if err != nil {
+		var fileError model.FileNotFoundError
+		if errors.As(err, &fileError) {
+			slog.Debug(fmt.Sprintf("Module %s agent file not found", module.Name))
+			return nil, nil
 		}
-		fileChecksums[file.Name] = file.Checksum
+		return nil, fmt.Errorf("failed to get module file %s: %v", filePath, err)
 	}
-	stepChecksum := model.StepChecksums{
-		ModuleChecksums: moduleChecksums,
-		FileChecksums:   fileChecksums,
+	agentFile, err := model.UnmarshalAgentYaml(metadataRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal module %s agent: %v", module.Name, err)
 	}
-	u.stepChecksums.CurrentChecksums[step.Name] = stepChecksum
+	switch v := agentFile.(type) {
+	case model.V1Agent:
+		return v.Metadata, nil
+	default:
+		return nil, fmt.Errorf("unsupported agent file version: %T", v)
+	}
 }
 
 func mergeInputs(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {
