@@ -43,7 +43,7 @@ func (s *ssm) GetParameter(name string) (*model.Parameter, error) {
 	if err != nil {
 		var notFoundErr *types.ParameterNotFound
 		if errors.As(err, &notFoundErr) {
-			return nil, &model.ParameterNotFoundError{Name: name, Err: err}
+			return nil, &model.ParameterNotFoundError{Name: name}
 		}
 		return nil, err
 	}

@@ -29,13 +29,6 @@ const (
 	ssmPrefix = "/entigo-infralib"
 )
 
-type Mode string
-
-const (
-	ModeRun    Mode = "run"
-	ModeUpdate Mode = "update"
-)
-
 type Updater interface {
 	Run()
 	Update()
@@ -1547,6 +1540,9 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 }
 
 func (u *updater) getModuleMetadata(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]string, error) {
+	if u.callback == nil {
+		return nil, nil
+	}
 	filePath := fmt.Sprintf("modules/%s/agent.yaml", moduleSource)
 	metadataRaw, err := source.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {

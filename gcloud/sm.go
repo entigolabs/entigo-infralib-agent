@@ -44,7 +44,7 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 	if err != nil {
 		var apiError *apierror.APIError
 		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
-			return nil, &model.ParameterNotFoundError{Name: name, Err: err}
+			return nil, &model.ParameterNotFoundError{Name: name}
 		}
 		return nil, err
 	}
