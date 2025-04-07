@@ -73,12 +73,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 				break
 			}
 		}
-		metadata, err := u.replaceMetadataValues(modifiedStep, module, originalModule.Metadata, index, cache)
-		if err != nil {
-			return modifiedStep, fmt.Errorf("failed to replace module %s metadata values in step %s: %v",
-				module.Name, step.Name, err)
-		}
-		module.Metadata = metadata
+		module.Metadata = originalModule.Metadata
 		module.InputsChecksum = moduleChecksums[module.Name]
 		modifiedStep.Modules[i] = module
 	}
@@ -213,11 +208,28 @@ func hasSamePrefixSuffix(s, prefixSuffix string) bool {
 	return strings.HasPrefix(s, prefixSuffix) && strings.HasSuffix(s, prefixSuffix)
 }
 
-func (u *updater) replaceMetadataValues(step model.Step, module model.Module, metadata map[string]string, index int, cache paramCache) (map[string]string, error) {
-	if len(metadata) == 0 {
-		return metadata, nil
+func (u *updater) replaceStepMetadataValues(step model.Step, index int) (model.Step, error) {
+	cache := make(paramCache)
+	for i, module := range step.Modules {
+		if len(module.Metadata) == 0 {
+			continue
+		}
+		var err error
+		module.Metadata, err = u.replaceMetadataValues(step, module, index, cache)
+		if err != nil {
+			return step, fmt.Errorf("failed to replace module %s metadata values in step %s: %v",
+				module.Name, step.Name, err)
+		}
+		step.Modules[i] = module
 	}
-	for key, value := range metadata {
+	return step, nil
+}
+
+func (u *updater) replaceMetadataValues(step model.Step, module model.Module, index int, cache paramCache) (map[string]string, error) {
+	if len(module.Metadata) == 0 {
+		return module.Metadata, nil
+	}
+	for key, value := range module.Metadata {
 		matches := replaceRegex.FindAllStringSubmatch(value, -1)
 		if len(matches) == 0 {
 			continue
@@ -244,14 +256,16 @@ func (u *updater) replaceMetadataValues(step model.Step, module model.Module, me
 			replacement = strings.Trim(replacement, `"`)
 			value = strings.Replace(value, match[0], replacement, 1)
 		}
-		metadata[key] = value
+		module.Metadata[key] = value
 	}
-	return metadata, nil
+	return module.Metadata, nil
 }
 
 func (u *updater) getReplacementMetadataValue(step model.Step, module model.Module, index int, replaceKey, replaceType string, cache paramCache) (string, error) {
 	if replaceType == string(model.ReplaceTypeInput) {
 		return getModuleInputValue(module, replaceKey)
+	} else if replaceType == string(model.ReplaceTypeSelfOutput) {
+		return u.getModuleSelfOutputValue(step, module, replaceKey, cache)
 	}
 	return u.getReplacementValue(step, index, replaceKey, replaceType, cache)
 }
@@ -552,6 +566,26 @@ func getModuleInputValue(module model.Module, replaceKey string) (string, error)
 	}
 
 	return util.GetStringValue(currentValue), nil
+}
+
+func (u *updater) getModuleSelfOutputValue(step model.Step, module model.Module, replaceKey string, cache paramCache) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse ssm parameter key %s for step %s, got %d split parts instead of 3",
+			replaceKey, step.Name, len(parts))
+	}
+	match := parameterIndexRegex.FindStringSubmatch(parts[1])
+	outputs, err := u.getModuleOutputs(step, cache)
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("%s__%s", module.Name, strings.Replace(match[1], "/", "_", -1))
+	output, found := outputs[key]
+	if !found {
+		slog.Warn(fmt.Sprintf("step %s key %s not found in tf output", step.Name, key))
+		return "", nil
+	}
+	return getOutputValue(output, replaceKey, match)
 }
 
 func (u *updater) findStepModuleByName(stepName, moduleName string) (*model.Step, *model.Module) {

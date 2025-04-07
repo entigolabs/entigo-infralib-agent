@@ -185,6 +185,7 @@ const (
 	ReplaceTypeStepModule      ReplaceType = "tsmodule"
 	ReplaceTypeModule          ReplaceType = "module"
 	ReplaceTypeInput           ReplaceType = "input"
+	ReplaceTypeSelfOutput      ReplaceType = "sout"
 )
 
 type AgentReplaceType string

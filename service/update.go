@@ -490,7 +490,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	if !firstRun {
 		if !u.hasChanged(step, providers) {
 			log.Printf("Skipping step %s\n", step.Name)
-			return u.putAppliedStateFile(stepState, step, model.ApplyStatusSkipped)
+			return u.putAppliedStateFile(stepState, step, model.ApplyStatusSkipped, index)
 		}
 		return u.executePipeline(firstRun, step, stepState, index, files)
 	}
@@ -556,7 +556,7 @@ func (u *updater) getChangedProviders(repoProviders map[string]model.Set[string]
 			}
 			if !bytes.Equal(previousChecksum, currentChecksum) {
 				slog.Debug(fmt.Sprintf("Provider %s has changed, previous %s, current %s", provider,
-					previousChecksum, currentChecksum))
+					string(previousChecksum), string(currentChecksum)))
 				changed = append(changed, provider)
 			}
 		}
@@ -575,6 +575,7 @@ func (u *updater) getChangedModules(step model.Step) []string {
 		}
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.PreviousChecksums == nil || moduleSource.CurrentChecksums == nil {
+			slog.Debug(fmt.Sprintf("Module %s source is missing checksums", module.Name))
 			changed = append(changed, module.Name)
 			continue
 		}
@@ -585,15 +586,19 @@ func (u *updater) getChangedModules(step model.Step) []string {
 		moduleKey := fmt.Sprintf("modules/%s", source)
 		previousChecksum, ok := moduleSource.PreviousChecksums[moduleKey]
 		if !ok {
+			slog.Debug(fmt.Sprintf("Module %s not found in previous checksums", module.Name))
 			changed = append(changed, module.Name)
 			continue
 		}
 		currentChecksum, ok := moduleSource.CurrentChecksums[moduleKey]
 		if !ok {
+			slog.Debug(fmt.Sprintf("Module %s not found in current checksums", module.Name))
 			changed = append(changed, module.Name)
 			continue
 		}
 		if !bytes.Equal(previousChecksum, currentChecksum) {
+			slog.Debug(fmt.Sprintf("Module %s has changed, previous %s, current %s", module.Name,
+				string(previousChecksum), string(currentChecksum)))
 			changed = append(changed, module.Name)
 		}
 	}
@@ -607,18 +612,31 @@ func (u *updater) getChangedStepModules(step model.Step) []string {
 	}
 	previousChecksums, exists := u.stepChecksums.PreviousChecksums[step.Name]
 	if !exists {
+		slog.Debug(fmt.Sprintf("Step %s is missing previous checksums", step.Name))
 		for _, module := range step.Modules {
 			changed = append(changed, module.Name)
 		}
 		return changed
 	}
-	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
+	currentChecksums, exists := u.stepChecksums.CurrentChecksums[step.Name]
+	if !exists {
+		slog.Debug(fmt.Sprintf("Step %s is missing current checksums", step.Name))
+		for _, module := range step.Modules {
+			changed = append(changed, module.Name)
+		}
+		return changed
+	}
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			changed = append(changed, module.Name)
 		}
-		if !bytes.Equal(previousChecksums.ModuleChecksums[module.Name], currentChecksums.ModuleChecksums[module.Name]) {
+		previous := previousChecksums.ModuleChecksums[module.Name]
+		current := currentChecksums.ModuleChecksums[module.Name]
+		if !bytes.Equal(previous, current) {
 			changed = append(changed, module.Name)
+			slog.Debug(fmt.Sprintf("Module %s inputs have changed, previous %s, current %s", module.Name,
+				string(previous), string(current)))
+
 		}
 	}
 	return changed
@@ -631,15 +649,26 @@ func (u *updater) getChangedStepFiles(step model.Step) []string {
 	}
 	previousChecksums, exists := u.stepChecksums.PreviousChecksums[step.Name]
 	if !exists {
+		slog.Debug(fmt.Sprintf("Step %s is missing previous checksums", step.Name))
 		for _, file := range step.Files {
 			changed = append(changed, file.Name)
 		}
 		return changed
 	}
-	currentChecksums := u.stepChecksums.CurrentChecksums[step.Name]
+	currentChecksums, exists := u.stepChecksums.CurrentChecksums[step.Name]
+	if !exists {
+		slog.Debug(fmt.Sprintf("Step %s is missing current checksums", step.Name))
+		for _, file := range step.Files {
+			changed = append(changed, file.Name)
+		}
+		return changed
+	}
 	for name, file := range currentChecksums.FileChecksums {
-		if !bytes.Equal(previousChecksums.FileChecksums[name], file) {
+		previous := previousChecksums.FileChecksums[name]
+		if !bytes.Equal(previous, file) {
 			changed = append(changed, name)
+			slog.Debug(fmt.Sprintf("File %s has changed, previous %s, current %s", name, string(previous),
+				string(file)))
 		}
 	}
 	return changed
@@ -682,7 +711,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 		return err
 	}
 	log.Printf("release applied successfully for step %s\n", step.Name)
-	err = u.putAppliedStateFile(stepState, step, model.ApplyStatusSuccess)
+	err = u.putAppliedStateFile(stepState, step, model.ApplyStatusSuccess, index)
 	if err == nil {
 		u.updateDestinationsApplyFiles(step, files)
 	}
@@ -1143,22 +1172,22 @@ func getModuleInputBytes(inputs map[string]interface{}) ([]byte, error) {
 	if len(inputs) == 0 {
 		return []byte{}, nil
 	}
-	bytes, err := yaml.Marshal(inputs)
+	inputBytes, err := yaml.Marshal(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal inputs: %s", err)
 	}
-	return bytes, nil
+	return inputBytes, nil
 }
 
 func (u *updater) createBackendConf(path string, bucket model.Bucket) (string, []byte, error) {
 	key := fmt.Sprintf("%s/terraform.tfstate", path)
 	backendConfig := u.resources.GetBackendConfigVars(key)
-	bytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
+	confBytes, err := util.CreateKeyValuePairs(backendConfig, "", "")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to convert backend config values: %w", err)
 	}
 	filePath := fmt.Sprintf("steps/%s/backend.conf", path)
-	return filePath, bytes, bucket.PutFile(filePath, bytes)
+	return filePath, confBytes, bucket.PutFile(filePath, confBytes)
 }
 
 func (u *updater) putStateFileOrDie() {
@@ -1174,14 +1203,14 @@ func (u *updater) putStateFileOrDie() {
 }
 
 func (u *updater) putStateFile() error {
-	bytes, err := yaml.Marshal(u.state)
+	stateBytes, err := yaml.Marshal(u.state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.GetBucket().PutFile(stateFile, bytes)
+	return u.resources.GetBucket().PutFile(stateFile, stateBytes)
 }
 
-func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Step, status model.ApplyStatus) error {
+func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Step, status model.ApplyStatus, index int) error {
 	u.stateLock.Lock()
 	defer u.stateLock.Unlock()
 
@@ -1189,7 +1218,15 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
-	u.postCallbackWithStep(status, *stepState, &step)
+	if u.callback == nil {
+		return u.putStateFile()
+	}
+	modifiedStep, err := u.replaceStepMetadataValues(step, index)
+	if err == nil {
+		u.postCallbackWithStep(status, *stepState, &modifiedStep)
+	} else {
+		slog.Error(common.PrefixError(fmt.Errorf("error replacing step %s metadata values: %v", step.Name, err)))
+	}
 	return u.putStateFile()
 }
 
