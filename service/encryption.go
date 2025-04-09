@@ -9,21 +9,18 @@ import (
 	"log/slog"
 )
 
-func setupEncryption(config model.Config, provider model.CloudProvider, resources model.Resources) {
+func SetupEncryption(config model.Config, provider model.CloudProvider, resources model.Resources) error {
 	if resources.GetProviderType() != model.AWS {
-		return // TODO Remove when GCP encryption is implemented
+		return nil // TODO Remove when GCP encryption is implemented
 	}
 	moduleName, outputs, err := GetEncryptionOutputs(config, resources.GetCloudPrefix(), resources.GetBucket())
 	if err != nil {
-		log.Fatalf("Failed to get outputs for %s: %v", moduleName, err)
+		return fmt.Errorf("failed to get outputs for %s: %v", moduleName, err)
 	}
 	if outputs == nil {
-		return
+		return nil
 	}
-	err = provider.AddEncryption(moduleName, outputs)
-	if err != nil {
-		log.Fatalf("Failed to add encryption: %v", err)
-	}
+	return provider.AddEncryption(moduleName, outputs)
 }
 
 func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string, bucket model.Bucket) string {

@@ -24,7 +24,10 @@ import (
 	"time"
 )
 
-const bucketFileFormat = "%s.tar.gz"
+const (
+	bucketFileFormat = "%s.tar.gz"
+	linkFormat       = "https://console.cloud.google.com/deploy/delivery-pipelines/%s/%s?project=%s"
+)
 
 type skaffold struct {
 	APIVersion string    `yaml:"apiVersion"`
@@ -61,6 +64,7 @@ type Pipeline struct {
 	storage        *GStorage
 	builder        *Builder
 	logging        *Logging
+	notifiers      []model.Notifier
 }
 
 func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging) (*Pipeline, error) {
@@ -297,6 +301,7 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 		return err
 	}
 	approved := false
+	notified := false
 	delay := 1
 	for {
 		select {
@@ -353,6 +358,11 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 					}
 				} else {
 					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+					if !notified {
+						util.Notify(p.notifiers, fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s\nPipeline: %s",
+							pipelineName, util.FormatChanges(*pipeChanges), p.getLink(pipelineName)))
+						notified = true
+					}
 				}
 				time.Sleep(time.Duration(delay) * time.Second)
 				delay = util.MinInt(delay*2, 30)
@@ -364,6 +374,10 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 			return nil
 		}
 	}
+}
+
+func (p *Pipeline) getLink(pipelineName string) string {
+	return fmt.Sprintf(linkFormat, p.location, pipelineName, p.projectId)
 }
 
 func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.PipelineChanges, stepType model.StepType, jobName string, executionName string) (*model.PipelineChanges, error) {
@@ -524,4 +538,8 @@ func (p *Pipeline) StartDestroyExecution(projectName string, _ model.Step) error
 	}
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-apply-destroy", projectName), true)
 	return err
+}
+
+func (p *Pipeline) AddNotifiers(notifiers []model.Notifier) {
+	p.notifiers = notifiers
 }

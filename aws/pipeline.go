@@ -30,6 +30,8 @@ const (
 	sourceName        = "Source"
 	destroyName       = "Destroy"
 	applyDestroyName  = "ApplyDestroy"
+
+	linkFormat = "https://%s.console.aws.amazon.com/codesuite/codepipeline/pipelines/%s/view?region=%s"
 )
 
 type approvalStatus string
@@ -43,17 +45,20 @@ const (
 
 type Pipeline struct {
 	ctx            context.Context
+	region         string
 	codePipeline   *codepipeline.Client
 	roleArn        string
 	cloudWatch     CloudWatch
 	logGroup       string
 	logStream      string
 	terraformCache bool
+	notifiers      []model.Notifier
 }
 
 func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
+		region:         awsConfig.Region,
 		codePipeline:   codepipeline.NewFromConfig(awsConfig),
 		roleArn:        roleArn,
 		cloudWatch:     cloudWatch,
@@ -716,8 +721,15 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 		return p.approveStage(pipelineName)
 	} else {
 		log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+		// TODO Would it be possible to notify when it was approved manually?
+		util.Notify(p.notifiers, fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s\nPipeline: %s",
+			pipelineName, util.FormatChanges(*pipeChanges), p.getLink(pipelineName)))
 		return approvalStatusWaiting, nil
 	}
+}
+
+func (p *Pipeline) getLink(pipelineName string) string {
+	return fmt.Sprintf(linkFormat, p.region, pipelineName, p.region)
 }
 
 func (p *Pipeline) getChanges(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.PipelineChanges, error) {
@@ -987,4 +999,8 @@ func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {
 	}
 	log.Printf("Enabled all stage transitions for pipeline %s", pipelineName)
 	return nil
+}
+
+func (p *Pipeline) AddNotifiers(notifiers []model.Notifier) {
+	p.notifiers = notifiers
 }

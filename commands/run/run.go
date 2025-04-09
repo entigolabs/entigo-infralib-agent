@@ -7,6 +7,5 @@ import (
 )
 
 func Run(ctx context.Context, flags *common.Flags) {
-	updater := service.NewUpdater(ctx, flags)
-	updater.Run()
+	service.RunUpdater(ctx, common.RunCommand, flags)
 }

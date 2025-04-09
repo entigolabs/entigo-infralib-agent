@@ -82,6 +82,7 @@ type Pipeline interface {
 	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
+	AddNotifiers(notifiers []Notifier)
 }
 
 type Builder interface {

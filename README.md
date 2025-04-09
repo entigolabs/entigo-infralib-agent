@@ -321,7 +321,7 @@ sources:
     repo_path: string
     ca_file: string
 destinations:
-  - name:
+  - name: string
     git:
       url: string
       key: string
@@ -332,6 +332,11 @@ destinations:
       author_email: string
       insecure: bool
       ca_file: string
+notifications:
+  - name: string
+    slack:
+      token: string
+      channel_id: string
 callback:
   url: string
   key: string
@@ -399,6 +404,11 @@ Source version is overwritten by module version. Default version is **stable** w
     * author_email - author email for commits, default **no-reply@localhost**
     * insecure - allow insecure connection, default **false**
     * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
+* notifications - send notifications about manual approvals and agent finish
+  * name - name of the notifier
+  * slack - send notifications to slack
+    * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
+    * channel_id - slack channel id
 * callback - optionally send updates about the status of modules
   * url - url for the callback
   * key - unique identifier for the callback

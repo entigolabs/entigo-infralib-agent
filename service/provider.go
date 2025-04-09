@@ -12,7 +12,7 @@ import (
 
 func GetCloudProvider(ctx context.Context, flags *common.Flags) model.CloudProvider {
 	prefix := GetProviderPrefix(flags)
-	pipelineFlags := processPipelineFlags(flags.Pipeline)
+	pipelineFlags := ProcessPipelineFlags(flags.Pipeline)
 	if flags.GCloud.ProjectId != "" {
 		log.Println("Using GCloud with project ID: ", flags.GCloud.ProjectId)
 		return gcloud.NewGCloud(ctx, strings.ToLower(prefix), flags.GCloud, pipelineFlags, flags.SkipBucketCreationDelay)
@@ -28,7 +28,7 @@ func GetResourceProvider(ctx context.Context, flags *common.Flags) model.Resourc
 	return aws.NewAWSProvider(ctx, flags.AWS)
 }
 
-func processPipelineFlags(pipeline common.Pipeline) common.Pipeline {
+func ProcessPipelineFlags(pipeline common.Pipeline) common.Pipeline {
 	if pipeline.TerraformCache.Value != nil {
 		return pipeline
 	}

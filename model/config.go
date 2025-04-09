@@ -9,15 +9,16 @@ import (
 )
 
 type Config struct {
-	Prefix           string              `yaml:"prefix,omitempty"`
-	Sources          []ConfigSource      `yaml:"sources,omitempty"`
-	AgentVersion     string              `yaml:"agent_version,omitempty"`
-	BaseImageSource  string              `yaml:"base_image_source,omitempty"`
-	BaseImageVersion string              `yaml:"base_image_version,omitempty"`
-	Destinations     []ConfigDestination `yaml:"destinations,omitempty"`
-	Callback         Callback            `yaml:"callback,omitempty"`
-	Steps            []Step              `yaml:"steps,omitempty"`
-	Certs            []File              `yaml:"-"`
+	Prefix           string               `yaml:"prefix,omitempty"`
+	Sources          []ConfigSource       `yaml:"sources,omitempty"`
+	AgentVersion     string               `yaml:"agent_version,omitempty"`
+	BaseImageSource  string               `yaml:"base_image_source,omitempty"`
+	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
+	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
+	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
+	Callback         Callback             `yaml:"callback,omitempty"`
+	Steps            []Step               `yaml:"steps,omitempty"`
+	Certs            []File               `yaml:"-"`
 }
 
 type ConfigSource struct {
@@ -49,6 +50,16 @@ type Git struct {
 	AuthorEmail     string `yaml:"author_email,omitempty"`
 	Insecure        bool   `yaml:"insecure,omitempty"`
 	CAFile          string `yaml:"ca_file,omitempty"`
+}
+
+type ConfigNotification struct {
+	Name  string `yaml:"name,omitempty"`
+	Slack *Slack `yaml:"slack,omitempty"`
+}
+
+type Slack struct {
+	Token     string `yaml:"token,omitempty"`
+	ChannelId string `yaml:"channel_id,omitempty"`
 }
 
 type Callback struct {

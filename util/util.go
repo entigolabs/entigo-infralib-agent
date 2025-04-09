@@ -399,3 +399,18 @@ func GetChangesFromMatches(pipelineName, message string, matches []string) (*mod
 	}
 	return &changes, nil
 }
+
+func FormatChanges(changes model.PipelineChanges) string {
+	return fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy.", changes.Added, changes.Changed, changes.Destroyed)
+}
+
+func Notify(notifiers []model.Notifier, message string) {
+	for _, notifier := range notifiers {
+		go func() {
+			err := notifier.Notify(message)
+			if err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to notify %s: %v", notifier.GetName(), err)))
+			}
+		}()
+	}
+}

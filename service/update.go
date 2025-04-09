@@ -30,8 +30,7 @@ const (
 )
 
 type Updater interface {
-	Run()
-	Update()
+	Process(command common.Command)
 }
 
 type updater struct {
@@ -39,7 +38,6 @@ type updater struct {
 	config        model.Config
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
-	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
 	destinations  map[string]model.Destination
@@ -53,29 +51,26 @@ type updater struct {
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
-	provider := GetCloudProvider(ctx, flags)
-	resources := provider.SetupResources()
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, notifiers []model.Notifier) Updater {
 	config := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	state := getLatestState(resources.GetBucket())
 	ValidateConfig(config, state)
 	ProcessConfig(&config, resources.GetProviderType())
-	setupEncryption(config, provider, resources)
 	steps := getRunnableSteps(config, flags.Steps)
 	sources, moduleSources := createSources(ctx, steps, config, state, resources.GetSSM())
 	destinations := createDestinations(ctx, config)
-	pipeline := processPipelineFlags(flags.Pipeline)
+	pipeline := ProcessPipelineFlags(flags.Pipeline)
+	resources.GetPipeline().AddNotifiers(notifiers)
 	return &updater{
 		config:        config,
 		steps:         steps,
 		stepChecksums: model.NewStepsChecksums(),
-		provider:      provider,
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud),
+		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, notifiers),
 		callback:      NewCallback(ctx, config.Callback),
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -284,42 +279,27 @@ func createDestinations(ctx context.Context, config model.Config) map[string]mod
 	return dests
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud) *LocalPipeline {
+func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, notifiers []model.Notifier) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline, gcloudFlags)
+		return NewLocalPipeline(resources, pipeline, gcloudFlags, notifiers)
 	}
 	return nil
 }
 
-func (u *updater) Run() {
-	u.process(common.RunCommand, 0, 1)
-}
-
-func (u *updater) Update() {
-	mostReleases := u.getMostReleases()
-	if mostReleases < 2 {
-		log.Println("No updates found")
-		return
+func (u *updater) Process(command common.Command) {
+	index := 0
+	mostReleases := 1
+	if command == common.UpdateCommand {
+		index = 1
+		mostReleases = u.getMostReleases()
+		if mostReleases < 2 {
+			log.Println("No updates found")
+			return
+		}
 	}
-	u.process(common.UpdateCommand, 1, mostReleases)
-}
-
-func (u *updater) process(command common.Command, index, mostReleases int) {
 	u.cmd = command
-	u.updateAgentJob(command)
 	for ; index < mostReleases; index++ {
 		u.processRelease(index, command)
-	}
-}
-
-func (u *updater) updateAgentJob(cmd common.Command) {
-	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		return
-	}
-	agent := NewAgent(u.resources, *u.pipelineFlags.TerraformCache.Value)
-	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd, u.provider.IsRunningLocally())
-	if err != nil {
-		log.Fatalf("Failed to update agent job: %s", err)
 	}
 }
 
