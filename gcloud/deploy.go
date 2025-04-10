@@ -16,6 +16,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
@@ -87,15 +88,39 @@ func NewPipeline(ctx context.Context, projectId string, location string, prefix 
 
 func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projectId, location, prefix, serviceAccount string) error {
 	collection := fmt.Sprintf("projects/%s/locations/%s", projectId, location)
-	err := createTarget(ctx, client, collection, fmt.Sprintf("%s-plan", prefix), serviceAccount)
+	err := createTarget(ctx, client, collection, fmt.Sprintf("%s-plan", prefix), serviceAccount, false)
 	if err != nil {
 		return err
 	}
-	return createTarget(ctx, client, collection, fmt.Sprintf("%s-apply", prefix), serviceAccount)
+	return createTarget(ctx, client, collection, fmt.Sprintf("%s-apply", prefix), serviceAccount, true)
 }
 
-func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collection, name, serviceAccount string) error {
-	_, err := client.CreateTarget(ctx, &deploypb.CreateTargetRequest{
+func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collection, name, serviceAccount string, requireApproval bool) error {
+	target, err := client.GetTarget(ctx, &deploypb.GetTargetRequest{Name: fmt.Sprintf("%s/targets/%s", collection, name)})
+	if err == nil {
+		if target.GetRequireApproval() == requireApproval {
+			return nil
+		}
+		updateTargetOp, err := client.UpdateTarget(ctx, &deploypb.UpdateTargetRequest{
+			UpdateMask: &fieldmaskpb.FieldMask{
+				Paths: []string{"require_approval"},
+			},
+			Target: &deploypb.Target{
+				Name:            target.GetName(),
+				RequireApproval: requireApproval,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		_, err = updateTargetOp.Wait(ctx)
+		return err
+	}
+	var apiError *apierror.APIError
+	if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.NotFound {
+		return err
+	}
+	createOp, err := client.CreateTarget(ctx, &deploypb.CreateTargetRequest{
 		Parent:   collection,
 		TargetId: name,
 		Target: &deploypb.Target{
@@ -104,6 +129,7 @@ func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collect
 					Location: collection,
 				},
 			},
+			RequireApproval: requireApproval,
 			ExecutionConfigs: []*deploypb.ExecutionConfig{{
 				Usages: []deploypb.ExecutionConfig_ExecutionEnvironmentUsage{
 					deploypb.ExecutionConfig_RENDER,
@@ -120,7 +146,8 @@ func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collect
 			return err
 		}
 	}
-	return nil
+	_, err = createOp.Wait(ctx)
+	return err
 }
 
 func (p *Pipeline) deleteTargets() error {
