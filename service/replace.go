@@ -253,7 +253,7 @@ func (u *updater) replaceMetadataValues(step model.Step, module model.Module, in
 					break
 				}
 			}
-			replacement = strings.Trim(replacement, `"`)
+			replacement = strings.Trim(strings.Trim(replacement, `"`), "\n")
 			value = strings.Replace(value, match[0], replacement, 1)
 		}
 		module.Metadata[key] = value
@@ -564,8 +564,7 @@ func getModuleInputValue(module model.Module, replaceKey string) (string, error)
 			}
 		}
 	}
-
-	return util.GetStringValue(currentValue), nil
+	return strings.Trim(util.GetStringValue(currentValue), "\n"), nil
 }
 
 func (u *updater) getModuleSelfOutputValue(step model.Step, module model.Module, replaceKey string, cache paramCache) (string, error) {
