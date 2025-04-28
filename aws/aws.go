@@ -123,7 +123,7 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 	return a.resources, nil
 }
 
-func (a *awsService) SetupResources() (model.Resources, error) {
+func (a *awsService) SetupResources(manager model.NotificationManager) (model.Resources, error) {
 	bucket := a.getBucketName()
 	s3, s3Arn, err := a.createBucket(bucket)
 	if err != nil {
@@ -170,7 +170,7 @@ func (a *awsService) SetupResources() (model.Resources, error) {
 		return nil, err
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
-		*a.pipeline.TerraformCache.Value)
+		*a.pipeline.TerraformCache.Value, manager)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -190,7 +190,7 @@ func (a *awsService) GetResources() (model.Resources, error) {
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    codeBuild,
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, nil),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),

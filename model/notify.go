@@ -1,14 +1,79 @@
 package model
 
+import "time"
+
+type NotificationManager interface {
+	HasNotifier(messageType MessageType) bool
+	Message(messageType MessageType, message string)
+	ManualApproval(pipelineName string, changes PipelineChanges, link string)
+	StepState(status ApplyStatus, stepState StateStep, step *Step)
+}
+
+type MessageType string
+
+const (
+	MessageTypeProgress  MessageType = "progress"
+	MessageTypeApprovals MessageType = "approvals"
+	MessageTypeFailure   MessageType = "failure"
+)
+
 type NotifierType struct {
-	Name string
+	Name         string
+	MessageTypes Set[MessageType]
 }
 
 type Notifier interface {
 	GetName() string
-	Notify(message string) error
+	Includes(messageType MessageType) bool
+	Message(message string) error
+	ManualApproval(pipelineName string, changes PipelineChanges, link string) error
+	StepState(status ApplyStatus, stepState StateStep, step *Step) error
 }
 
 func (n NotifierType) GetName() string {
 	return n.Name
+}
+
+func (n NotifierType) Includes(messageType MessageType) bool {
+	return n.MessageTypes.Contains(messageType)
+}
+
+type ApplyStatus string
+
+const (
+	ApplyStatusSuccess  ApplyStatus = "success"
+	ApplyStatusFailure  ApplyStatus = "failure"
+	ApplyStatusSkipped  ApplyStatus = "skipped"
+	ApplyStatusStarting ApplyStatus = "starting"
+)
+
+type ModulesRequest struct {
+	Status    ApplyStatus    `json:"status"`
+	StatusAt  time.Time      `json:"status_at"`
+	Step      string         `json:"step"`
+	AppliedAt time.Time      `json:"applied_at"`
+	Modules   []ModuleEntity `json:"modules"`
+}
+
+type ModuleEntity struct {
+	Name           string            `json:"name"`
+	AppliedVersion *string           `json:"applied_version,omitempty"`
+	Version        string            `json:"version"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+}
+
+type MessageRequest struct {
+	Message string `json:"message"`
+}
+
+type PipelineRequest struct {
+	Name string     `json:"name"`
+	Plan PlanEntity `json:"plan"`
+	Link string     `json:"link,omitempty"`
+}
+
+type PlanEntity struct {
+	Add     int `json:"added,omitempty"`
+	Change  int `json:"changed,omitempty"`
+	Destroy int `json:"removed,omitempty"`
 }

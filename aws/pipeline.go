@@ -52,10 +52,10 @@ type Pipeline struct {
 	logGroup       string
 	logStream      string
 	terraformCache bool
-	notifiers      []model.Notifier
+	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -65,6 +65,7 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		logGroup:       logGroup,
 		logStream:      logStream,
 		terraformCache: terraformCache,
+		manager:        manager,
 	}
 }
 
@@ -690,8 +691,8 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 			continue
 		}
 		if action.Status == types.ActionExecutionStatusSucceeded {
-			if status == approvalStatusWaiting {
-				util.Notify(p.notifiers, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+			if status == approvalStatusWaiting && p.manager != nil {
+				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
 			}
 			return approvalStatusApproved, nil
 		}
@@ -724,8 +725,9 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 		return p.approveStage(pipelineName)
 	} else {
 		log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
-		util.Notify(p.notifiers, fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s\nPipeline: %s",
-			pipelineName, util.FormatChanges(*pipeChanges), p.getLink(pipelineName)))
+		if p.manager != nil {
+			p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+		}
 		return approvalStatusWaiting, nil
 	}
 }
@@ -1001,8 +1003,4 @@ func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {
 	}
 	log.Printf("Enabled all stage transitions for pipeline %s", pipelineName)
 	return nil
-}
-
-func (p *Pipeline) AddNotifiers(notifiers []model.Notifier) {
-	p.notifiers = notifiers
 }

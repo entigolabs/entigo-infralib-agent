@@ -31,10 +31,10 @@ type LocalPipeline struct {
 	bucket    string
 	pipeline  common.Pipeline
 	inputLock sync.Mutex
-	notifiers []model.Notifier
+	manager   model.NotificationManager
 }
 
-func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, notifiers []model.Notifier) *LocalPipeline {
+func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
 	regionKey := "AWS_REGION"
 	project := ""
 	zone := ""
@@ -51,7 +51,7 @@ func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 		zone:      zone,
 		bucket:    resources.GetBucketName(),
 		pipeline:  pipeline,
-		notifiers: notifiers,
+		manager:   manager,
 	}
 }
 
@@ -221,8 +221,7 @@ func (l *LocalPipeline) getManualApproval(pipelineName string, changes *model.Pi
 		l.inputLock.Unlock()
 	}()
 	time.Sleep(1 * time.Second) // Wait for output to be redirected
-	util.Notify(l.notifiers, fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s", pipelineName,
-		util.FormatChanges(*changes)))
+	l.manager.ManualApproval(pipelineName, *changes, "")
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

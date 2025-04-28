@@ -529,9 +529,6 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		}
 		destinations.Add(destination.Name)
 	}
-	if err := validateCallback(config.Callback); err != nil {
-		return err
-	}
 	stepNames := model.NewSet[string]()
 	for _, step := range config.Steps {
 		if err := validateStep(step); err != nil {
@@ -596,16 +593,6 @@ func validateDestination(index int, destination model.ConfigDestination) error {
 	}
 	if destination.Git.Password != "" && destination.Git.Username == "" {
 		return fmt.Errorf("%d. destination git username is required when using basic auth", index+1)
-	}
-	return nil
-}
-
-func validateCallback(callback model.Callback) error {
-	if callback.URL != "" && callback.Key == "" {
-		return fmt.Errorf("callback url is set but uuid is not")
-	}
-	if callback.URL == "" && callback.Key != "" {
-		return fmt.Errorf("callback uuid is set but url is not")
 	}
 	return nil
 }

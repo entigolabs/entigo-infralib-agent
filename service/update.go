@@ -45,13 +45,13 @@ type updater struct {
 	stateLock     sync.Mutex
 	pipelineFlags common.Pipeline
 	localPipeline *LocalPipeline
-	callback      Callback
+	manager       model.NotificationManager
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, notifiers []model.Notifier) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
@@ -77,7 +77,6 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		return nil, err
 	}
 	pipeline := ProcessPipelineFlags(flags.Pipeline)
-	resources.GetPipeline().AddNotifiers(notifiers)
 	return &updater{
 		config:        config,
 		steps:         steps,
@@ -87,8 +86,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, notifiers),
-		callback:      NewCallback(ctx, config.Callback),
+		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, manager),
+		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
@@ -308,9 +307,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, notifiers []model.Notifier) *LocalPipeline {
+func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline, gcloudFlags, notifiers)
+		return NewLocalPipeline(resources, pipeline, gcloudFlags, manager)
 	}
 	return nil
 }
@@ -1233,7 +1232,7 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
-	if u.callback == nil {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return u.putStateFile()
 	}
 	modifiedStep, err := u.replaceStepMetadataValues(step, index)
@@ -1250,15 +1249,11 @@ func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateSt
 }
 
 func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model.StateStep, step *model.Step) {
-	if u.callback == nil {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return
 	}
-	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
-	err := u.callback.PostStepState(status, stepState, step)
-	if err != nil {
-		slog.Error(common.PrefixError(fmt.Errorf("error posting step %s status '%s' to callback: %v",
-			stepState.Name, status, err)))
-	}
+	log.Printf("Notifying step %s status '%s'", stepState.Name, status)
+	u.manager.StepState(status, stepState, step)
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
@@ -1593,7 +1588,7 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 }
 
 func (u *updater) getModuleMetadata(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]string, error) {
-	if u.callback == nil {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return nil, nil
 	}
 	filePath := fmt.Sprintf("modules/%s/agent.yaml", moduleSource)

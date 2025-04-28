@@ -14,7 +14,7 @@ func Bootstrap(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
-	resources, err := provider.SetupResources()
+	resources, err := provider.SetupResources(nil)
 	if err != nil {
 		return fmt.Errorf("failed to setup resources: %v", err)
 	}

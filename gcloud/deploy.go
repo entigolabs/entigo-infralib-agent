@@ -65,10 +65,10 @@ type Pipeline struct {
 	storage        *GStorage
 	builder        *Builder
 	logging        *Logging
-	notifiers      []model.Notifier
+	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging) (*Pipeline, error) {
+func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
 	client, err := deploy.NewCloudDeployClient(ctx)
 	if err != nil {
 		return nil, err
@@ -87,6 +87,7 @@ func NewPipeline(ctx context.Context, projectId string, location string, prefix 
 		storage:        storage,
 		builder:        builder,
 		logging:        logging,
+		manager:        manager,
 	}, nil
 }
 
@@ -380,9 +381,8 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 					}
 				} else {
 					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
-					if !notified {
-						util.Notify(p.notifiers, fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s\nPipeline: %s",
-							pipelineName, util.FormatChanges(*pipeChanges), p.getLink(pipelineName)))
+					if !notified && p.manager != nil {
+						p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
 						notified = true
 					}
 				}
@@ -392,7 +392,7 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 			}
 			if (rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS ||
 				rollout.GetState() == deploypb.Rollout_SUCCEEDED) && notified {
-				util.Notify(p.notifiers, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
 				notified = false
 			}
 			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
@@ -570,8 +570,4 @@ func (p *Pipeline) StartDestroyExecution(projectName string, _ model.Step) error
 	}
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-apply-destroy", projectName), true)
 	return err
-}
-
-func (p *Pipeline) AddNotifiers(notifiers []model.Notifier) {
-	p.notifiers = notifiers
 }

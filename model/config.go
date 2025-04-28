@@ -16,7 +16,6 @@ type Config struct {
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
-	Callback         Callback             `yaml:"callback,omitempty"`
 	Steps            []Step               `yaml:"steps,omitempty"`
 	Certs            []File               `yaml:"-"`
 }
@@ -53,8 +52,10 @@ type Git struct {
 }
 
 type ConfigNotification struct {
-	Name  string `yaml:"name,omitempty"`
-	Slack *Slack `yaml:"slack,omitempty"`
+	Name         string           `yaml:"name,omitempty"`
+	MessageTypes []MessageType    `yaml:"message_types,omitempty"`
+	Slack        *Slack           `yaml:"slack,omitempty"`
+	Api          *NotificationApi `yaml:"api,omitempty"`
 }
 
 type Slack struct {
@@ -62,7 +63,7 @@ type Slack struct {
 	ChannelId string `yaml:"channel_id,omitempty"`
 }
 
-type Callback struct {
+type NotificationApi struct {
 	URL string `yaml:"url,omitempty"`
 	Key string `yaml:"key,omitempty"`
 }

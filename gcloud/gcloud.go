@@ -78,7 +78,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	}, nil
 }
 
-func (g *gcloudService) SetupResources() (model.Resources, error) {
+func (g *gcloudService) SetupResources(manager model.NotificationManager) (model.Resources, error) {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	err := g.enableApiServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
@@ -130,7 +130,7 @@ func (g *gcloudService) SetupResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, serviceAccount, storage, builder, logging)
+	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, serviceAccount, storage, builder, logging, manager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
@@ -149,7 +149,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, "", codeStorage, builder, nil)
+	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, "", codeStorage, builder, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
