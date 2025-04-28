@@ -2,9 +2,9 @@ package gcloud
 
 import (
 	"context"
+	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"log"
 )
 
 type gcloudProvider struct {
@@ -25,21 +25,21 @@ func NewGCloudProvider(ctx context.Context, gCloud common.GCloud) model.Resource
 	}
 }
 
-func (g *gcloudProvider) GetSSM() model.SSM {
+func (g *gcloudProvider) GetSSM() (model.SSM, error) {
 	sm, err := NewSM(g.ctx, g.projectId)
 	if err != nil {
-		log.Fatalf("Failed to create secret manager: %s", err)
+		return nil, fmt.Errorf("failed to create secret manager: %w", err)
 	}
-	return sm
+	return sm, nil
 }
 
-func (g *gcloudProvider) GetBucket(prefix string) model.Bucket {
+func (g *gcloudProvider) GetBucket(prefix string) (model.Bucket, error) {
 	bucket := getBucketName(prefix, g.projectId, g.location)
 	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
 	if err != nil {
-		log.Fatalf("Failed to create storage service: %s", err)
+		return nil, fmt.Errorf("failed to create storage service: %s", err)
 	}
-	return storage
+	return storage, nil
 }
 
 func (g *gcloudProvider) GetProviderType() model.ProviderType {

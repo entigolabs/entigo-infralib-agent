@@ -23,30 +23,33 @@ func SetupEncryption(config model.Config, provider model.CloudProvider, resource
 	return provider.AddEncryption(moduleName, outputs)
 }
 
-func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string, bucket model.Bucket) string {
+func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string, bucket model.Bucket) (string, error) {
 	if providerType != model.AWS {
-		return "" // TODO Remove when GCP encryption is implemented
+		return "", nil // TODO Remove when GCP encryption is implemented
 	}
 	exists, err := bucket.BucketExists()
 	if err != nil {
-		log.Fatalf("Failed to check bucket existence: %s", err)
+		return "", fmt.Errorf("failed to check bucket existence: %s", err)
 	}
 	if !exists {
-		return ""
+		return "", nil
 	}
-	config := GetBaseConfig(prefix, configFlag, bucket)
+	config, err := GetBaseConfig(prefix, configFlag, bucket)
+	if err != nil {
+		return "", err
+	}
 	moduleName, outputs, err := GetEncryptionOutputs(config, prefix, bucket)
 	if err != nil {
-		log.Fatalf("Failed to get encryption outputs: %s", err)
+		return "", fmt.Errorf("failed to get encryption outputs: %s", err)
 	}
 	if len(outputs) == 0 {
-		return ""
+		return "", nil
 	}
 	keyId, err := aws.GetConfigEncryptionKey(moduleName, outputs)
 	if err != nil {
-		log.Fatalf("Failed to get encryption key: %s", err)
+		return "", fmt.Errorf("failed to get encryption key: %s", err)
 	}
-	return keyId
+	return keyId, nil
 }
 
 func GetEncryptionOutputs(config model.Config, prefix string, bucket model.Bucket) (string, map[string]model.TFOutput, error) {
@@ -57,7 +60,7 @@ func GetEncryptionOutputs(config model.Config, prefix string, bucket model.Bucke
 	log.Printf("Processing encryption based on %s module %s\n", step.Name, module.Name)
 	outputs, err := getModuleOutputs(*step, prefix, bucket)
 	if err != nil {
-		log.Fatalf("Failed to get outputs for %s: %v", step.Name, err)
+		return "", nil, fmt.Errorf("failed to get outputs for %s: %v", step.Name, err)
 	}
 	return module.Name, outputs, nil
 }

@@ -15,10 +15,19 @@ import (
 	"strings"
 )
 
-func Run(ctx context.Context, flags *common.Flags) {
-	provider := service.GetCloudProvider(ctx, flags)
-	resources := provider.GetResources()
-	conf := service.GetRemoteConfig(nil, resources.GetCloudPrefix(), resources.GetBucket(), false)
+func Run(ctx context.Context, flags *common.Flags) error {
+	provider, err := service.GetCloudProvider(ctx, flags)
+	if err != nil {
+		return err
+	}
+	resources, err := provider.GetResources()
+	if err != nil {
+		return fmt.Errorf("failed to get resources: %v", err)
+	}
+	conf, err := service.GetRemoteConfig(nil, resources.GetCloudPrefix(), resources.GetBucket(), false)
+	if err != nil {
+		return err
+	}
 	basePath := ""
 	if flags.Config != "" {
 		basePath = filepath.Dir(flags.Config) + "/"
@@ -26,19 +35,18 @@ func Run(ctx context.Context, flags *common.Flags) {
 	existingFiles := getExistingFiles(flags.Config, conf, basePath)
 	if len(existingFiles) != 0 {
 		if !flags.Force {
-			log.Fatalf("Files already exist in config folder. Use force to overwrite. Files: %s", strings.Join(existingFiles, ", "))
+			return fmt.Errorf("files already exist in config folder. Use force to overwrite. Files: %s", strings.Join(existingFiles, ", "))
 		} else {
 			log.Printf("Force flag set. Overwriting existing files: %s", strings.Join(existingFiles, ", "))
 		}
 	}
 	if flags.Force {
-		removeConfigFolder(basePath)
+		err = removeConfigFolder(basePath)
+		if err != nil {
+			return fmt.Errorf("failed to remove config folder: %v", err)
+		}
 	}
-	err := writeConfigFiles(conf, flags.Config, basePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Config files written successfully")
+	return writeConfigFiles(conf, flags.Config, basePath)
 }
 
 func getExistingFiles(config string, conf model.Config, basePath string) []string {
@@ -81,19 +89,20 @@ func getModuleFiles(step model.Step, basePath string) []string {
 	return files
 }
 
-func removeConfigFolder(basePath string) {
+func removeConfigFolder(basePath string) error {
 	fullPath := filepath.Join(basePath, "config")
 	err := os.RemoveAll(fullPath)
 	if err != nil {
-		log.Fatalf("Failed to delete folder %s: %v", fullPath, err)
+		return fmt.Errorf("failed to delete folder %s: %v", fullPath, err)
 	}
 	slog.Debug(fmt.Sprintf("Deleted folder %s", fullPath))
+	return nil
 }
 
 func writeConfigFiles(conf model.Config, config string, basePath string) error {
 	bytes, err := yaml.Marshal(conf)
 	if err != nil {
-		log.Fatalf("Failed to marshal config: %s", err)
+		return fmt.Errorf("failed to marshal config: %s", err)
 	}
 	if config == "" {
 		config = filepath.Join(basePath, service.ConfigFile)
@@ -120,6 +129,7 @@ func writeConfigFiles(conf model.Config, config string, basePath string) error {
 			}
 		}
 	}
+	log.Println("Config files written successfully")
 	return nil
 }
 
@@ -133,7 +143,7 @@ func writeModuleFiles(step model.Step, basePath string) error {
 		}
 		bytes, err := yaml.Marshal(module.Inputs)
 		if err != nil {
-			log.Fatalf("Failed to marshal module inputs: %s", err)
+			return fmt.Errorf("failed to marshal module inputs: %s", err)
 		}
 		err = writeFile(basePath+module.InputsFile, bytes)
 		if err != nil {

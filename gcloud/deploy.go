@@ -341,11 +341,6 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 			if err != nil {
 				return err
 			}
-			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
-				time.Sleep(time.Duration(delay) * time.Second)
-				delay = util.MinInt(delay*2, 30)
-				continue
-			}
 			if rollout.GetState() == deploypb.Rollout_PENDING_APPROVAL {
 				if approved {
 					time.Sleep(time.Duration(delay) * time.Second)
@@ -391,6 +386,16 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 						notified = true
 					}
 				}
+				time.Sleep(time.Duration(delay) * time.Second)
+				delay = util.MinInt(delay*2, 30)
+				continue
+			}
+			if (rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS ||
+				rollout.GetState() == deploypb.Rollout_SUCCEEDED) && notified {
+				util.Notify(p.notifiers, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+				notified = false
+			}
+			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
 				time.Sleep(time.Duration(delay) * time.Second)
 				delay = util.MinInt(delay*2, 30)
 				continue

@@ -628,60 +628,67 @@ func getModuleType(module model.Module) string {
 	return moduleSource[strings.Index(module.Source, "/")+1:]
 }
 
-func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) model.Config {
+func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) (model.Config, error) {
 	if ssm == nil {
-		return config
+		return config, nil
 	}
 	steps := config.Steps
 	config.Steps = nil
-	config = replaceConfigRootValues(ssm, prefix, config)
-	steps = replaceConfigStepsValues(prefix, steps)
+	var err error
+	config, err = replaceConfigRootValues(ssm, prefix, config)
+	if err != nil {
+		return config, err
+	}
+	steps, err = replaceConfigStepsValues(prefix, steps)
+	if err != nil {
+		return config, err
+	}
 	config.Steps = steps
-	return config
+	return config, nil
 }
 
-func replaceConfigRootValues(ssm model.SSM, prefix string, config model.Config) model.Config {
+func replaceConfigRootValues(ssm model.SSM, prefix string, config model.Config) (model.Config, error) {
 	configYaml, err := yaml.Marshal(config)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return config, err
 	}
 	matches := replaceRegex.FindAllStringSubmatch(string(configYaml), -1)
 	if len(matches) == 0 {
-		return config
+		return config, nil
 	}
 	modifiedConfigYaml, err := replaceConfigTags(prefix, config, string(configYaml), matches)
 	if err != nil {
-		log.Fatalf("Failed to replace tags in config root, error: %v", err)
+		return config, fmt.Errorf("failed to replace tags in config root, error: %v", err)
 	}
 	modifiedConfigYaml, err = replaceConfigCustomTags(ssm, modifiedConfigYaml, matches)
 	if err != nil {
-		log.Fatalf("Failed to replace custom output tags in config root, error: %v", err)
+		return config, fmt.Errorf("failed to replace custom output tags in config root, error: %v", err)
 	}
 	err = yaml.Unmarshal([]byte(modifiedConfigYaml), &config)
 	if err != nil {
-		log.Fatalf("Failed to unmarshal modified config: %s", err)
+		return config, fmt.Errorf("failed to unmarshal modified config: %s", err)
 	}
-	return config
+	return config, nil
 }
 
-func replaceConfigStepsValues(prefix string, steps []model.Step) []model.Step {
+func replaceConfigStepsValues(prefix string, steps []model.Step) ([]model.Step, error) {
 	stepsYaml, err := yaml.Marshal(steps)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return nil, err
 	}
 	matches := replaceRegex.FindAllStringSubmatch(string(stepsYaml), -1)
 	if len(matches) == 0 {
-		return steps
+		return steps, nil
 	}
 	modifiedStepsYaml, err := replaceConfigTags(prefix, model.Config{}, string(stepsYaml), matches)
 	if err != nil {
-		log.Fatalf("Failed to replace config tags in steps, error: %s", err.Error())
+		return nil, fmt.Errorf("failed to replace config tags in steps, error: %s", err.Error())
 	}
 	err = yaml.Unmarshal([]byte(modifiedStepsYaml), &steps)
 	if err != nil {
-		log.Fatalf("Failed to unmarshal modified steps: %s", err)
+		return nil, fmt.Errorf("failed to unmarshal modified steps: %s", err)
 	}
-	return steps
+	return steps, nil
 }
 
 func replaceConfigTags(prefix string, config model.Config, content string, matches [][]string) (string, error) {

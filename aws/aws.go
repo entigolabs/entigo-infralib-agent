@@ -45,11 +45,14 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeline common.Pipeline, skipBucketDelay bool) model.CloudProvider {
-	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
+func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeline common.Pipeline, skipBucketDelay bool) (model.CloudProvider, error) {
+	awsConfig, err := GetAWSConfig(ctx, awsFlags.RoleArn)
+	if err != nil {
+		return nil, err
+	}
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
-		log.Fatal(err.Error())
+		return nil, err
 	}
 	log.Printf("AWS account id: %s\n", accountId)
 	return &awsService{
@@ -59,24 +62,24 @@ func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeli
 		accountId:   accountId,
 		pipeline:    pipeline,
 		skipDelay:   skipBucketDelay,
-	}
+	}, nil
 }
 
-func GetAWSConfig(ctx context.Context, roleArn string) aws.Config {
+func GetAWSConfig(ctx context.Context, roleArn string) (aws.Config, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRetryer(func() aws.Retryer {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
 	if err != nil {
-		log.Fatalf("Failed to initialize AWS session: %s", err)
+		return cfg, fmt.Errorf("failed to initialize AWS session: %s", err)
 	}
 	log.Printf("AWS session initialized with region: %s\n", cfg.Region)
 	if roleArn != "" {
 		return GetAssumedConfig(ctx, cfg, roleArn)
 	}
-	return cfg
+	return cfg, nil
 }
 
-func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string) aws.Config {
+func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string) (aws.Config, error) {
 	stsClient := sts.NewFromConfig(baseConfig)
 	assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
 		RoleArn:         aws.String(roleArn),
@@ -84,7 +87,7 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 		DurationSeconds: aws.Int32(3600),
 	})
 	if err != nil {
-		log.Fatalf("Failed to assume role %s: %s", roleArn, err)
+		return baseConfig, fmt.Errorf("failed to assume role %s: %s", roleArn, err)
 	}
 	assumedConfig, err := config.LoadDefaultConfig(ctx,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -95,17 +98,46 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 		config.WithRegion(baseConfig.Region),
 	)
 	if err != nil {
-		log.Fatalf("Failed to initialize assumed AWS session: %s", err)
+		return assumedConfig, fmt.Errorf("failed to initialize assumed AWS session: %s", err)
 	}
-	return assumedConfig
+	return assumedConfig, nil
 }
 
-func (a *awsService) SetupResources() model.Resources {
+func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 	bucket := a.getBucketName()
-	s3, s3Arn := a.createBucket(bucket)
-	dynamoDBTable := a.createDynamoDBTable()
+	s3, _, err := a.createBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+	a.resources = Resources{
+		CloudResources: model.CloudResources{
+			ProviderType: model.AWS,
+			Bucket:       s3,
+			SSM:          NewSSM(a.ctx, a.awsConfig),
+			CloudPrefix:  a.cloudPrefix,
+			BucketName:   bucket,
+			Region:       a.awsConfig.Region,
+		},
+		AccountId: a.accountId,
+	}
+	return a.resources, nil
+}
+
+func (a *awsService) SetupResources() (model.Resources, error) {
+	bucket := a.getBucketName()
+	s3, s3Arn, err := a.createBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+	dynamoDBTable, err := a.createDynamoDBTable()
+	if err != nil {
+		return nil, err
+	}
 	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
-	iam.CreateServiceLinkedRole("autoscaling.amazonaws.com")
+	err = iam.CreateServiceLinkedRole("autoscaling.amazonaws.com")
+	if err != nil {
+		return nil, err
+	}
 
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
@@ -121,30 +153,43 @@ func (a *awsService) SetupResources() model.Resources {
 		IAM:           iam,
 	}
 	if a.pipeline.Type == string(common.PipelineTypeLocal) {
-		return a.resources
+		return a.resources, nil
 	}
 
-	logGroup, logGroupArn, logStream, cloudwatch := a.createCloudWatchLogs()
-	buildRoleArn, pipelineRoleArn := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
+	logGroup, logGroupArn, logStream, cloudwatch, err := a.createCloudWatchLogs()
+	if err != nil {
+		return nil, err
+	}
+	buildRoleArn, pipelineRoleArn, err := a.createIAMRoles(logGroupArn, s3Arn, *dynamoDBTable.TableArn)
+	if err != nil {
+		return nil, err
+	}
 
-	codeBuild := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn, *a.pipeline.TerraformCache.Value)
+	codeBuild, err := NewBuilder(a.ctx, a.awsConfig, buildRoleArn, logGroup, logStream, s3Arn, *a.pipeline.TerraformCache.Value)
+	if err != nil {
+		return nil, err
+	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
 		*a.pipeline.TerraformCache.Value)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
-	return a.resources
+	return a.resources, nil
 }
 
-func (a *awsService) GetResources() model.Resources {
+func (a *awsService) GetResources() (model.Resources, error) {
 	bucket := a.getBucketName()
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
 	logGroup := a.getLogGroup()
+	codeBuild, err := NewBuilder(a.ctx, a.awsConfig, "", "", "", "", true)
+	if err != nil {
+		return nil, err
+	}
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
-			CodeBuild:    NewBuilder(a.ctx, a.awsConfig, "", "", "", "", true),
+			CodeBuild:    codeBuild,
 			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
@@ -155,10 +200,10 @@ func (a *awsService) GetResources() model.Resources {
 		AccountId:  a.accountId,
 		CloudWatch: cloudwatch,
 	}
-	return a.resources
+	return a.resources, nil
 }
 
-func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
+func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
 	agentProjectName := fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.RunCommand)
 	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
@@ -190,12 +235,13 @@ func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) {
 	}
 	if !deleteBucket {
 		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
-		return
+		return nil
 	}
 	err = a.resources.GetBucket().Delete()
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete S3 bucket: %s", err)))
 	}
+	return nil
 }
 
 func (a *awsService) IsRunningLocally() bool {
@@ -215,134 +261,156 @@ func getBucketName(cloudPrefix, accountId, region string) string {
 	return fmt.Sprintf("%s-%s-%s", cloudPrefix, accountId, region)
 }
 
-func (a *awsService) createBucket(bucket string) (*S3, string) {
+func (a *awsService) createBucket(bucket string) (*S3, string, error) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	exists, err := s3.BucketExists()
 	if err != nil {
-		log.Fatalf("Failed to check if S3 Bucket %s exists: %s", bucket, err)
+		return nil, "", fmt.Errorf("failed to check if S3 Bucket %s exists: %s", bucket, err)
 	}
 	if exists {
-		log.Printf("S3 Bucket %s already exists\n", bucket)
-		return s3, fmt.Sprintf(bucketArnFormat, bucket)
+		return s3, fmt.Sprintf(bucketArnFormat, bucket), nil
 	}
 	util.DelayBucketCreation(bucket, a.skipDelay) // This allows users to react if they ran the agent with wrong credentials
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
-		log.Fatalf("Failed to create S3 Bucket %s: %s", bucket, err)
+		return nil, "", fmt.Errorf("failed to create S3 Bucket %s: %s", bucket, err)
 	}
 	err = s3.addDummyZip()
 	if err != nil {
-		log.Fatalf("Failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
+		return nil, "", fmt.Errorf("failed to add dummy zip to S3 Bucket %s: %s", bucket, err)
 	}
-	return s3, s3Arn
+	return s3, s3Arn, nil
 }
 
-func (a *awsService) createDynamoDBTable() *types.TableDescription {
+func (a *awsService) createDynamoDBTable() (*types.TableDescription, error) {
 	tableName := fmt.Sprintf("%s-%s", a.cloudPrefix, a.accountId)
 	dynamoDBTable, err := GetDynamoDBTable(a.ctx, a.awsConfig, tableName)
 	if err != nil {
-		log.Fatalf("Failed to get DynamoDB table: %s", err)
+		return nil, fmt.Errorf("failed to get DynamoDB table: %s", err)
 	}
 	if dynamoDBTable != nil {
-		return dynamoDBTable
+		return dynamoDBTable, nil
 	}
 	dynamoDBTable, err = CreateDynamoDBTable(a.ctx, a.awsConfig, tableName)
 	if err != nil {
-		log.Fatalf("Failed to create DynamoDB table: %s", err)
+		return nil, fmt.Errorf("failed to create DynamoDB table: %s", err)
 	}
-	return dynamoDBTable
+	return dynamoDBTable, nil
 }
 
-func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch) {
+func (a *awsService) createCloudWatchLogs() (string, string, string, CloudWatch, error) {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
 	logGroup := a.getLogGroup()
 	logGroupArn, err := cloudwatch.GetLogGroup(logGroup)
 	if err != nil {
-		log.Fatalf("Failed to get CloudWatch log group: %s", err)
+		return "", "", "", nil, fmt.Errorf("failed to get CloudWatch log group: %s", err)
 	}
 	if logGroupArn == "" {
 		logGroupArn, err = cloudwatch.CreateLogGroup(logGroup)
 		if err != nil {
-			log.Fatalf("Failed to create CloudWatch log group: %s", err)
+			return "", "", "", nil, fmt.Errorf("failed to create CloudWatch log group: %s", err)
 		}
 	}
 	logStream := a.getLogGroup()
 	exists, err := cloudwatch.LogStreamExists(logGroup, logStream)
 	if err != nil {
-		log.Fatalf("Failed to get CloudWatch log stream exists: %s", err)
+		return "", "", "", nil, fmt.Errorf("failed to get CloudWatch log stream exists: %s", err)
 	}
 	if exists {
-		return logGroup, logGroupArn, logStream, cloudwatch
+		return logGroup, logGroupArn, logStream, cloudwatch, nil
 	}
 	err = cloudwatch.CreateLogStream(logGroup, logStream)
 	if err != nil {
-		log.Fatalf("Failed to create CloudWatch log stream: %s", err)
+		return "", "", "", nil, fmt.Errorf("failed to create CloudWatch log stream: %s", err)
 	}
-	return logGroup, logGroupArn, logStream, cloudwatch
+	return logGroup, logGroupArn, logStream, cloudwatch, nil
 }
 
 func (a *awsService) getLogGroup() string {
 	return fmt.Sprintf("%s-log", a.cloudPrefix)
 }
 
-func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, string) {
-	buildRoleArn, buildRoleCreated := a.createBuildRole(a.resources.IAM, logGroupArn, s3Arn, dynamoDBTableArn)
-	pipelineRoleArn, pipelineRoleCreated := a.createPipelineRole(a.resources.IAM, s3Arn)
+func (a *awsService) createIAMRoles(logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, string, error) {
+	buildRoleArn, buildRoleCreated, err := a.createBuildRole(a.resources.IAM, logGroupArn, s3Arn, dynamoDBTableArn)
+	if err != nil {
+		return "", "", err
+	}
+	pipelineRoleArn, pipelineRoleCreated, err := a.createPipelineRole(a.resources.IAM, s3Arn)
+	if err != nil {
+		return "", "", err
+	}
 
 	if buildRoleCreated || pipelineRoleCreated {
 		log.Println("Waiting for roles to be available...")
 		time.Sleep(15 * time.Second)
 	}
 
-	return buildRoleArn, pipelineRoleArn
+	return buildRoleArn, pipelineRoleArn, nil
 }
 
-func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool) {
+func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool, error) {
 	pipelineRoleName := a.getPipelineRoleName()
-	pipelineRole := iam.GetRole(pipelineRoleName)
-	if pipelineRole != nil {
-		return *pipelineRole.Arn, false
+	pipelineRole, err := iam.GetRole(pipelineRoleName)
+	if err != nil {
+		return "", false, err
 	}
-	pipelineRole = iam.CreateRole(pipelineRoleName, []PolicyStatement{{
+	if pipelineRole != nil {
+		return *pipelineRole.Arn, false, nil
+	}
+	pipelineRole, err = iam.CreateRole(pipelineRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
 	}})
-	pipelinePolicy := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn))
-	err := iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
 	if err != nil {
-		log.Fatalf("Failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
+		return "", false, err
 	}
-	return *pipelineRole.Arn, true
+	pipelinePolicy, err := iam.CreatePolicy(pipelineRoleName, CodePipelinePolicy(s3Arn))
+	if err != nil {
+		return "", false, err
+	}
+	err = iam.AttachRolePolicy(*pipelinePolicy.Arn, *pipelineRole.RoleName)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to attach pipeline policy to role %s: %s", *pipelineRole.RoleName, err)
+	}
+	return *pipelineRole.Arn, true, nil
 }
 
 func (a *awsService) getPipelineRoleName() string {
 	return fmt.Sprintf("%s-pipeline-%s", a.cloudPrefix, a.awsConfig.Region)
 }
 
-func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool) {
+func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, dynamoDBTableArn string) (string, bool, error) {
 	buildRoleName := a.getBuildRoleName()
-	buildRole := iam.GetRole(buildRoleName)
-	if buildRole != nil {
-		return *buildRole.Arn, false
+	buildRole, err := iam.GetRole(buildRoleName)
+	if err != nil {
+		return "", false, err
 	}
-	buildRole = iam.CreateRole(buildRoleName, []PolicyStatement{{
+	if buildRole != nil {
+		return *buildRole.Arn, false, nil
+	}
+	buildRole, err = iam.CreateRole(buildRoleName, []PolicyStatement{{
 		Effect:    "Allow",
 		Action:    []string{"sts:AssumeRole"},
 		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
 	}})
-
-	err := iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
 	if err != nil {
-		log.Fatalf("Failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
+		return "", false, err
 	}
-	buildPolicy := iam.CreatePolicy(buildRoleName,
-		CodeBuildPolicy(logGroupArn, s3Arn, dynamoDBTableArn))
+
+	err = iam.AttachRolePolicy("arn:aws:iam::aws:policy/AdministratorAccess", *buildRole.RoleName)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to attach admin policy to role %s: %s", *buildRole.RoleName, err)
+	}
+	buildPolicy, err := iam.CreatePolicy(buildRoleName, CodeBuildPolicy(logGroupArn, s3Arn, dynamoDBTableArn))
+	if err != nil {
+		return "", false, err
+	}
 	err = iam.AttachRolePolicy(*buildPolicy.Arn, *buildRole.RoleName)
 	if err != nil {
-		log.Fatalf("Failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
+		return "", false, fmt.Errorf("failed to attach build policy to role %s: %s", *buildRole.RoleName, err)
 	}
-	return *buildRole.Arn, true
+	return *buildRole.Arn, true, nil
 }
 
 func (a *awsService) getBuildRoleName() string {
@@ -392,51 +460,68 @@ func (a *awsService) deleteIAMRoles() {
 	}
 }
 
-func (a *awsService) CreateServiceAccount() {
+func (a *awsService) CreateServiceAccount() error {
 	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
 	policyStatement := ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName())
 
-	user := a.resources.IAM.GetUser(username)
+	user, err := a.resources.IAM.GetUser(username)
+	if err != nil {
+		return err
+	}
 	if user != nil {
 		log.Printf("Service account %s already exists\n", username)
-		a.updateServiceAccountPolicy(username, policyStatement)
-		return
+		return a.updateServiceAccountPolicy(username, policyStatement)
 	}
 
-	user = a.resources.IAM.CreateUser(username)
-	policy := a.resources.IAM.CreatePolicy(username, policyStatement)
-	a.resources.IAM.AttachUserPolicy(*policy.Arn, *user.UserName)
-	accessKey := a.resources.IAM.CreateAccessKey(*user.UserName)
+	user, err = a.resources.IAM.CreateUser(username)
+	if err != nil {
+		return err
+	}
+	policy, err := a.resources.IAM.CreatePolicy(username, policyStatement)
+	if err != nil {
+		return err
+	}
+	err = a.resources.IAM.AttachUserPolicy(*policy.Arn, *user.UserName)
+	if err != nil {
+		return err
+	}
+	accessKey, err := a.resources.IAM.CreateAccessKey(*user.UserName)
+	if err != nil {
+		return err
+	}
 
 	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
-	err := a.resources.SSM.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
+	err = a.resources.SSM.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
 	if err != nil {
 		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
-		log.Fatalf("Failed to store access key id: %s", err)
+		return fmt.Errorf("failed to store access key id: %s", err)
 	}
 	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
 	err = a.resources.SSM.PutParameter(secretAccessKeyParam, *accessKey.SecretAccessKey)
 	if err != nil {
 		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
-		log.Fatalf("Failed to store secret access key: %s", err)
+		return fmt.Errorf("failed to store secret access key: %s", err)
 	}
 
 	log.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
+	return nil
 }
 
-func (a *awsService) updateServiceAccountPolicy(username string, statement []PolicyStatement) {
+func (a *awsService) updateServiceAccountPolicy(username string, statement []PolicyStatement) error {
 	policy, err := a.resources.IAM.GetPolicy(username)
 	if err != nil {
-		log.Fatalf("Failed to get policy for user %s: %s", username, err)
+		return fmt.Errorf("failed to get policy for user %s: %s", username, err)
 	}
 	if policy != nil {
-		a.resources.IAM.UpdatePolicy(*policy.Arn, statement)
-		return
+		return a.resources.IAM.UpdatePolicy(*policy.Arn, statement)
 	}
-	policy = a.resources.IAM.CreatePolicy(username, statement)
-	a.resources.IAM.AttachUserPolicy(*policy.Arn, username)
+	policy, err = a.resources.IAM.CreatePolicy(username, statement)
+	if err != nil {
+		return err
+	}
+	return a.resources.IAM.AttachUserPolicy(*policy.Arn, username)
 }
 
 func (a *awsService) DeleteServiceAccount() {

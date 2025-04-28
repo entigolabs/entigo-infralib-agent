@@ -28,66 +28,97 @@ const (
 var ReservedTFFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
 var ReservedAppsFiles = model.ToSet([]string{"argocd.yaml"})
 
-func GetProviderPrefix(flags *common.Flags) string {
+func GetProviderPrefix(flags *common.Flags) (string, error) {
 	prefix := flags.Prefix
 	if prefix == "" {
 		if flags.Config == "" {
-			log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("prefix or config must be provided")})
+			return "", errors.New("prefix or config must be provided")
 		}
-		prefix = getLocalConfigFile(flags.Config).Prefix
+		config, err := getLocalConfigFile(flags.Config)
+		if err != nil {
+			return "", err
+		}
+		prefix = config.Prefix
 	}
 	if prefix == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("config prefix is not set")})
+		return "", errors.New("config prefix is not set")
 	}
 	if len(prefix) > 10 {
 		slog.Warn(common.PrefixWarning("prefix longer than 10 characters, trimming to fit"))
 		prefix = prefix[:10]
 	}
-	return prefix
+	return prefix, nil
 }
 
-func GetFullConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) model.Config {
+func GetFullConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) (model.Config, error) {
 	return getConfig(ssm, prefix, configFile, bucket, true)
 }
 
-func GetBaseConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+func GetRootConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) (model.Config, error) {
+	var config model.Config
+	var err error
+	if configFile != "" {
+		config, err = getLocalConfigFile(configFile)
+	} else {
+		config, err = getRemoteConfigFile(bucket)
+	}
+	if err != nil {
+		return config, err
+	}
+	return replaceConfigValues(ssm, prefix, config)
+}
+
+func GetBaseConfig(prefix, configFile string, bucket model.Bucket) (model.Config, error) {
 	return getConfig(nil, prefix, configFile, bucket, false)
 }
 
-func getConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) model.Config {
-	var config model.Config
+func getConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) (model.Config, error) {
 	if configFile != "" {
-		config = GetLocalConfig(ssm, prefix, configFile, bucket, addInputs)
-	} else {
-		config = GetRemoteConfig(ssm, prefix, bucket, addInputs)
+		return GetLocalConfig(ssm, prefix, configFile, bucket, addInputs)
 	}
-	return config
+	return GetRemoteConfig(ssm, prefix, bucket, addInputs)
 }
 
-func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) model.Config {
-	config := getLocalConfigFile(configFile)
-	PutConfig(bucket, config)
-	config = replaceConfigValues(ssm, prefix, config)
+func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) (model.Config, error) {
+	config, err := getLocalConfigFile(configFile)
+	if err != nil {
+		return config, err
+	}
+	if err = PutConfig(bucket, config); err != nil {
+		return config, err
+	}
+	config, err = replaceConfigValues(ssm, prefix, config)
+	if err != nil {
+		return config, err
+	}
 	reserveAppsFiles(config)
 	basePath := filepath.Dir(configFile) + "/"
-	AddCertFilesFromFolder(&config, basePath)
-	AddStepsFilesFromFolder(&config, basePath)
-	AddModuleInputFiles(&config, basePath, os.ReadFile, addInputs)
-	PutAdditionalFiles(bucket, config)
-	return config
+	if err = AddCertFilesFromFolder(&config, basePath); err != nil {
+		return config, err
+	}
+	if err = AddStepsFilesFromFolder(&config, basePath); err != nil {
+		return config, err
+	}
+	if err = AddModuleInputFiles(&config, basePath, os.ReadFile, addInputs); err != nil {
+		return config, err
+	}
+	if err = PutAdditionalFiles(bucket, config); err != nil {
+		return config, err
+	}
+	return config, nil
 }
 
-func getLocalConfigFile(configFile string) model.Config {
+func getLocalConfigFile(configFile string) (model.Config, error) {
 	fileBytes, err := os.ReadFile(configFile)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return model.Config{}, err
 	}
 	var config model.Config
 	err = yaml.Unmarshal(fileBytes, &config)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return model.Config{}, err
 	}
-	return config
+	return config, nil
 }
 
 func reserveAppsFiles(config model.Config) {
@@ -101,10 +132,13 @@ func reserveAppsFiles(config model.Config) {
 	}
 }
 
-func AddCertFilesFromFolder(config *model.Config, basePath string) {
+func AddCertFilesFromFolder(config *model.Config, basePath string) error {
 	entries, err := os.ReadDir(fmt.Sprintf("%s%s", basePath, certsFolder))
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -113,119 +147,127 @@ func AddCertFilesFromFolder(config *model.Config, basePath string) {
 		filePath := fmt.Sprintf("%s/%s", certsFolder, entry.Name())
 		fileBytes, err := os.ReadFile(basePath + filePath)
 		if err != nil {
-			log.Fatalf("failed to read file %s: %v", filePath, err)
+			return fmt.Errorf("failed to read file %s: %v", filePath, err)
 		}
 		config.Certs = append(config.Certs, model.File{
 			Name:    filePath,
 			Content: fileBytes,
 		})
 	}
+	return nil
 }
 
-func AddStepsFilesFromFolder(config *model.Config, basePath string) {
-	if config.Steps == nil {
-		return
-	}
+func AddStepsFilesFromFolder(config *model.Config, basePath string) error {
 	for i := range config.Steps {
 		step := &config.Steps[i]
-		addStepFilesFromFolder(step, basePath, fmt.Sprintf(IncludeFormat, step.Name))
+		err := addStepFilesFromFolder(step, basePath, fmt.Sprintf(IncludeFormat, step.Name))
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func addStepFilesFromFolder(step *model.Step, basePath, folder string) {
+func addStepFilesFromFolder(step *model.Step, basePath, folder string) error {
 	entries, err := os.ReadDir(fmt.Sprintf("%s%s", basePath, folder))
 	if err != nil {
-		return
+		return nil
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			addStepFilesFromFolder(step, basePath, fmt.Sprintf("%s/%s", folder, entry.Name()))
+			err = addStepFilesFromFolder(step, basePath, fmt.Sprintf("%s/%s", folder, entry.Name()))
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if step.Type == model.StepTypeTerraform && ReservedTFFiles.Contains(entry.Name()) {
-			log.Fatalf("Can't include files %s in step %s", ReservedTFFiles, step.Name)
+			return fmt.Errorf("can't include files %s in step %s", ReservedTFFiles, step.Name)
 		} else if step.Type == model.StepTypeArgoCD && ReservedAppsFiles.Contains(entry.Name()) {
-			log.Fatalf("Can't include files %s in step %s", ReservedAppsFiles, step.Name)
+			return fmt.Errorf("can't include files %s in step %s", ReservedAppsFiles, step.Name)
 		}
 		filePath := fmt.Sprintf("%s/%s", folder, entry.Name())
 		fileBytes, err := os.ReadFile(basePath + filePath)
 		if err != nil {
-			log.Fatalf("failed to read file %s: %v", filePath, err)
+			return fmt.Errorf("failed to read file %s: %v", filePath, err)
 		}
 		step.Files = append(step.Files, model.File{
 			Name:    filePath,
 			Content: fileBytes,
 		})
 	}
+	return nil
 }
 
-func PutConfig(bucket model.Bucket, config model.Config) {
+func PutConfig(bucket model.Bucket, config model.Config) error {
 	bytes, err := yaml.Marshal(config)
 	if err != nil {
-		log.Fatalf("Failed to marshal config: %s", err)
+		return fmt.Errorf("failed to marshal config: %s", err)
 	}
 	err = bucket.PutFile(ConfigFile, bytes)
 	if err != nil {
-		log.Fatalf("Failed to put config: %s", err)
+		return fmt.Errorf("failed to put config: %s", err)
 	}
+	return nil
 }
 
-func PutAdditionalFiles(bucket model.Bucket, config model.Config) {
+func PutAdditionalFiles(bucket model.Bucket, config model.Config) error {
 	if len(config.Certs) == 0 {
-		removeFolder(bucket, certsFolder)
+		if err := removeFolder(bucket, certsFolder); err != nil {
+			return err
+		}
 	} else {
-		putFolderFiles(bucket, certsFolder, config.Certs)
+		if err := putFolderFiles(bucket, certsFolder, config.Certs); err != nil {
+			return err
+		}
 	}
 	for _, step := range config.Steps {
 		if len(step.Files) == 0 {
-			removeStepIncludeFolder(bucket, step.Name)
+			if err := removeFolder(bucket, fmt.Sprintf(IncludeFormat, step.Name)); err != nil {
+				return err
+			}
 		} else if step.Files != nil {
-			putFolderFiles(bucket, fmt.Sprintf(IncludeFormat, step.Name), step.Files)
+			if err := putFolderFiles(bucket, fmt.Sprintf(IncludeFormat, step.Name), step.Files); err != nil {
+				return err
+			}
 		}
 		if step.Modules == nil {
 			continue
 		}
 		for _, module := range step.Modules {
-			putModuleFiles(step, module, bucket)
+			if err := putModuleFiles(step, module, bucket); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-func putModuleFiles(step model.Step, module model.Module, bucket model.Bucket) {
+func putModuleFiles(step model.Step, module model.Module, bucket model.Bucket) error {
 	if module.InputsFile == "" {
 		inputsFile := fmt.Sprintf("config/%s/%s.yaml", step.Name, module.Name)
 		bytes, err := bucket.GetFile(inputsFile)
 		if err != nil {
-			log.Fatalf("Failed to get module %s inputs file: %s", module.Name, err)
+			return fmt.Errorf("failed to get module %s inputs file: %s", module.Name, err)
 		}
 		if bytes != nil {
 			err = bucket.DeleteFile(inputsFile)
 			if err != nil {
-				log.Fatalf("Failed to delete module %s inputs file: %s", module.Name, err)
+				return fmt.Errorf("failed to delete module %s inputs file: %s", module.Name, err)
 			}
 		}
 	} else {
 		err := bucket.PutFile(module.InputsFile, module.FileContent)
 		if err != nil {
-			log.Fatalf("Failed to put module %s inputs file: %s", module.Name, err)
+			return fmt.Errorf("failed to put module %s inputs file: %s", module.Name, err)
 		}
 		module.InputsFile = ""
 		module.FileContent = nil
 	}
+	return nil
 }
 
-func removeStepIncludeFolder(bucket model.Bucket, name string) {
-	removeFolder(bucket, fmt.Sprintf(IncludeFormat, name))
-}
-
-func removeFolder(bucket model.Bucket, folder string) {
-	err := removeFolderE(bucket, folder)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func removeFolderE(bucket model.Bucket, folder string) error {
+func removeFolder(bucket model.Bucket, folder string) error {
 	files, err := bucket.ListFolderFiles(folder)
 	if err != nil {
 		return fmt.Errorf("failed to list folder %s files: %s", folder, err)
@@ -243,19 +285,19 @@ func removeFolderE(bucket model.Bucket, folder string) error {
 	return nil
 }
 
-func putFolderFiles(bucket model.Bucket, folder string, files []model.File) {
+func putFolderFiles(bucket model.Bucket, folder string, files []model.File) error {
 	allFiles := model.NewSet[string]()
 	for _, file := range files {
 
 		err := bucket.PutFile(file.Name, file.Content)
 		if err != nil {
-			log.Fatalf("Failed to put step file %s: %s", file.Name, err)
+			return fmt.Errorf("failed to put step file %s: %s", file.Name, err)
 		}
 		allFiles.Add(file.Name)
 	}
 	bucketFiles, err := bucket.ListFolderFiles(folder)
 	if err != nil {
-		log.Fatalf("Failed to list folder allFiles: %s", err)
+		return fmt.Errorf("failed to list folder allFiles: %s", err)
 	}
 	for _, bucketFile := range bucketFiles {
 		if allFiles.Contains(bucketFile) {
@@ -263,45 +305,59 @@ func putFolderFiles(bucket model.Bucket, folder string, files []model.File) {
 		}
 		err = bucket.DeleteFile(bucketFile)
 		if err != nil {
-			log.Fatalf("Failed to delete file %s: %s", bucketFile, err)
+			return fmt.Errorf("failed to delete file %s: %s", bucketFile, err)
 		}
 	}
+	return nil
 }
 
-func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket, addInputs bool) model.Config {
-	config := replaceConfigValues(ssm, prefix, getRemoteConfigFile(bucket))
+func GetRemoteConfig(ssm model.SSM, prefix string, bucket model.Bucket, addInputs bool) (model.Config, error) {
+	config, err := getRemoteConfigFile(bucket)
+	if err != nil {
+		return config, err
+	}
+	config, err = replaceConfigValues(ssm, prefix, config)
+	if err != nil {
+		return config, err
+	}
 	reserveAppsFiles(config)
-	AddCertFilesFromBucket(&config, bucket)
-	AddStepsFilesFromBucket(&config, bucket)
-	AddModuleInputFiles(&config, "", bucket.GetFile, addInputs)
-	return config
+	if err = AddCertFilesFromBucket(&config, bucket); err != nil {
+		return config, err
+	}
+	if err = AddStepsFilesFromBucket(&config, bucket); err != nil {
+		return config, err
+	}
+	if err = AddModuleInputFiles(&config, "", bucket.GetFile, addInputs); err != nil {
+		return config, err
+	}
+	return config, nil
 }
 
-func getRemoteConfigFile(bucket model.Bucket) model.Config {
+func getRemoteConfigFile(bucket model.Bucket) (model.Config, error) {
 	bytes, err := bucket.GetFile(ConfigFile)
 	if err != nil {
-		log.Fatalf("Failed to get config: %s", err)
+		return model.Config{}, fmt.Errorf("failed to get config: %s", err)
 	}
 	if bytes == nil {
-		log.Fatalf("Config file not found")
+		return model.Config{}, errors.New("config file not found")
 	}
 	var config model.Config
 	err = yaml.Unmarshal(bytes, &config)
 	if err != nil {
-		log.Fatalf("Failed to unmarshal config: %s", err)
+		return model.Config{}, fmt.Errorf("failed to unmarshal config: %s", err)
 	}
-	return config
+	return config, nil
 }
 
-func AddCertFilesFromBucket(config *model.Config, bucket model.Bucket) {
+func AddCertFilesFromBucket(config *model.Config, bucket model.Bucket) error {
 	files, err := bucket.ListFolderFiles(certsFolder)
 	if err != nil {
-		log.Fatalf("Failed to list %s folder files: %s", certsFolder, err)
+		return fmt.Errorf("failed to list %s folder files: %s", certsFolder, err)
 	}
 	for _, file := range files {
 		fileBytes, err := bucket.GetFile(file)
 		if err != nil {
-			log.Fatalf("Failed to get file %s: %s", file, err)
+			return fmt.Errorf("failed to get file %s: %s", file, err)
 		}
 		if fileBytes == nil {
 			continue
@@ -311,33 +367,34 @@ func AddCertFilesFromBucket(config *model.Config, bucket model.Bucket) {
 			Content: fileBytes,
 		})
 	}
+	return nil
 }
 
-func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) {
-	if config.Steps == nil {
-		return
-	}
+func AddStepsFilesFromBucket(config *model.Config, bucket model.Bucket) error {
 	for i := range config.Steps {
 		step := &config.Steps[i]
-		addStepFilesFromBucket(step, bucket)
+		if err := addStepFilesFromBucket(step, bucket); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
+func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) error {
 	folder := fmt.Sprintf(IncludeFormat, step.Name)
 	files, err := bucket.ListFolderFiles(folder)
 	if err != nil {
-		log.Fatalf("Failed to list folder files: %s", err)
+		return fmt.Errorf("failed to list folder files: %s", err)
 	}
 	for _, file := range files {
 		if step.Type == model.StepTypeTerraform && ReservedTFFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
-			log.Fatalf("Can't include files %s in step %s", ReservedTFFiles, step.Name)
+			return fmt.Errorf("can't include files %s in step %s", ReservedTFFiles, step.Name)
 		} else if step.Type == model.StepTypeArgoCD && ReservedAppsFiles.Contains(strings.TrimPrefix(file, folder+"/")) {
-			log.Fatalf("Can't include files %s in step %s", ReservedAppsFiles, step.Name)
+			return fmt.Errorf("can't include files %s in step %s", ReservedAppsFiles, step.Name)
 		}
 		fileBytes, err := bucket.GetFile(file)
 		if err != nil {
-			log.Fatalf("Failed to get file %s: %s", file, err)
+			return fmt.Errorf("failed to get file %s: %s", file, err)
 		}
 		if fileBytes == nil {
 			continue
@@ -347,54 +404,55 @@ func addStepFilesFromBucket(step *model.Step, bucket model.Bucket) {
 			Content: fileBytes,
 		})
 	}
+	return nil
 }
 
-func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error), addInputs bool) {
-	if config.Steps == nil {
-		return
-	}
+func AddModuleInputFiles(config *model.Config, basePath string, readFile func(string) ([]byte, error), addInputs bool) error {
 	for _, step := range config.Steps {
 		if step.Modules == nil {
 			continue
 		}
 		if step.Name == "" {
-			log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
+			return errors.New("step name is not set")
 		}
 		for i := range step.Modules {
 			module := &step.Modules[i]
 			if module.Name == "" {
-				log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", step.Name)})
+				return fmt.Errorf("module name is not set in step %s", step.Name)
 			}
-			processModuleInputs(step.Name, module, basePath, readFile, addInputs)
+			if err := processModuleInputs(step.Name, module, basePath, readFile, addInputs); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error), addInputs bool) {
+func processModuleInputs(stepName string, module *model.Module, basePath string, readFile func(string) ([]byte, error), addInputs bool) error {
 	yamlFile := fmt.Sprintf("%sconfig/%s/%s.yaml", basePath, stepName, module.Name)
 	bytes, err := readFile(yamlFile)
 	if module.Inputs != nil {
 		if err == nil && bytes != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile)))
 		}
-		return
+		return nil
 	}
 	if bytes == nil && (err == nil || errors.Is(err, os.ErrNotExist)) {
-		return
+		return nil
 	}
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to read input file %s: %v", yamlFile, err)})
+		return fmt.Errorf("failed to read input file %s: %v", yamlFile, err)
 	}
 	module.InputsFile = strings.TrimPrefix(yamlFile, basePath)
 	module.FileContent = bytes
 	if !addInputs {
-		return
+		return nil
 	}
 	err = yaml.Unmarshal(bytes, &module.Inputs)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("failed to unmarshal input file %s: %v",
-			yamlFile, err)})
+		return fmt.Errorf("failed to unmarshal input file %s: %v", yamlFile, err)
 	}
+	return nil
 }
 
 func ProcessConfig(config *model.Config, providerType model.ProviderType) {
@@ -452,165 +510,187 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 	}
 }
 
-func ValidateConfig(config model.Config, state *model.State) {
+func ValidateConfig(config model.Config, state *model.State) error {
 	if len(config.Sources) == 0 {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("at least one source must be provided")})
+		return fmt.Errorf("at least one source must be provided")
 	}
 	for index, source := range config.Sources {
-		validateSource(index, source)
+		if err := validateSource(index, source); err != nil {
+			return err
+		}
 	}
 	destinations := model.NewSet[string]()
 	for index, destination := range config.Destinations {
-		validateDestination(index, destination)
+		if err := validateDestination(index, destination); err != nil {
+			return err
+		}
 		if destinations.Contains(destination.Name) {
-			log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("destination name %s is not unique", destination.Name)})
+			return fmt.Errorf("destination name %s is not unique", destination.Name)
 		}
 		destinations.Add(destination.Name)
 	}
-	validateCallback(config.Callback)
+	if err := validateCallback(config.Callback); err != nil {
+		return err
+	}
 	stepNames := model.NewSet[string]()
 	for _, step := range config.Steps {
-		validateStep(step)
+		if err := validateStep(step); err != nil {
+			return err
+		}
 		if stepNames.Contains(step.Name) {
-			log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name %s is not unique", step.Name)})
+			return fmt.Errorf("step name %s is not unique", step.Name)
 		}
 		stepNames.Add(step.Name)
-		validateConfigModules(step, state)
+		if err := validateConfigModules(step, state); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func validateSource(index int, source model.ConfigSource) {
+func validateSource(index int, source model.ConfigSource) error {
 	if source.URL == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. source URL is not set", index+1)})
+		return fmt.Errorf("%d. source URL is not set", index+1)
 	}
 	if source.Include != nil && source.Exclude != nil {
-		log.Fatalf("source %s can't have both include and exclude", source.URL)
+		return fmt.Errorf("source %s can't have both include and exclude", source.URL)
 	}
 	if source.Version == "" && source.ForceVersion {
-		log.Fatalf("source %s force version is set but version is not", source.URL)
+		return fmt.Errorf("source %s force version is set but version is not", source.URL)
 	}
 	if source.ForceVersion {
-		return
+		return nil
 	}
 	if source.Version != "" && source.Version != StableVersion {
 		_, err := version.NewVersion(source.Version)
 		if err != nil {
-			log.Fatalf("source %s version must follow semantic versioning: %s", source.URL, err)
+			return fmt.Errorf("source %s version must follow semantic versioning: %s", source.URL, err)
 		}
 	}
 	if source.Username != "" && source.Password == "" {
-		log.Fatalf("source %s username given but password is empty", source.URL)
+		return fmt.Errorf("source %s username given but password is empty", source.URL)
 	}
 	if source.Password != "" && source.Username == "" {
-		log.Fatalf("source %s password given but username is empty", source.URL)
+		return fmt.Errorf("source %s password given but username is empty", source.URL)
 	}
+	return nil
 }
 
-func validateDestination(index int, destination model.ConfigDestination) {
+func validateDestination(index int, destination model.ConfigDestination) error {
 	if destination.Name == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. destination name is not set", index+1)})
+		return fmt.Errorf("%d. destination name is not set", index+1)
 	}
 	if destination.Git == nil {
-		return
+		return nil
 	}
 	if destination.Git.URL == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("%d. destination git URL is not set", index+1)})
+		return fmt.Errorf("%d. destination git URL is not set", index+1)
 	}
 	if destination.Git.Key != "" {
 		if destination.Git.Username != "" || destination.Git.Password != "" {
-			log.Fatalf("%d. destination git key and username/password can't be set together", index+1)
+			return fmt.Errorf("%d. destination git key and username/password can't be set together", index+1)
 		}
 	}
 	if destination.Git.Username != "" && destination.Git.Password == "" {
-		log.Fatalf("%d. destination git password is required when using basic auth", index+1)
+		return fmt.Errorf("%d. destination git password is required when using basic auth", index+1)
 	}
 	if destination.Git.Password != "" && destination.Git.Username == "" {
-		log.Fatalf("%d. destination git username is required when using basic auth", index+1)
+		return fmt.Errorf("%d. destination git username is required when using basic auth", index+1)
 	}
+	return nil
 }
 
-func validateCallback(callback model.Callback) {
+func validateCallback(callback model.Callback) error {
 	if callback.URL != "" && callback.Key == "" {
-		log.Fatal("callback url is set but uuid is not")
+		return fmt.Errorf("callback url is set but uuid is not")
 	}
 	if callback.URL == "" && callback.Key != "" {
-		log.Fatal("callback uuid is set but url is not")
+		return fmt.Errorf("callback uuid is set but url is not")
 	}
+	return nil
 }
 
-func validateStep(step model.Step) {
+func validateStep(step model.Step) error {
 	if step.Name == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step name is not set")})
+		return errors.New("step name is not set")
 	}
 	if step.Type == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("step type is not set for step %s", step.Name)})
+		return fmt.Errorf("step type is not set for step %s", step.Name)
 	}
 	if step.Vpc.Id != "" && step.Vpc.SubnetIds == "" {
-		log.Fatalf("VPC ID is set for step %s but subnet IDs are not", step.Name)
+		return fmt.Errorf("VPC ID is set for step %s but subnet IDs are not", step.Name)
 	}
 	if (step.Vpc.SubnetIds != "" || step.Vpc.SecurityGroupIds != "") && step.Vpc.Id == "" {
-		log.Fatalf("VPC ID is not set for step %s", step.Name)
+		return fmt.Errorf("VPC ID is not set for step %s", step.Name)
 	}
 	if step.Approve != "" {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s uses deprecated 'approve' property, use 'manual_approve_run' and 'manual_approve_update'", step.Name)))
 	}
 	if step.Approve != "" && (step.UpdateApprove != "" || step.RunApprove != "") {
-		log.Fatalf("step %s can't have both approve and manual_approve set", step.Name)
+		return fmt.Errorf("step %s can't have both approve and manual_approve set", step.Name)
 	}
+	return nil
 }
 
-func validateConfigModules(step model.Step, state *model.State) {
+func validateConfigModules(step model.Step, state *model.State) error {
 	stepState := GetStepState(state, step.Name)
 	moduleNames := model.NewSet[string]()
 	for _, module := range step.Modules {
-		validateModule(module, step.Name)
+		if err := validateModule(module, step.Name); err != nil {
+			return err
+		}
 		if moduleNames.Contains(module.Name) {
-			log.Fatalf("module name %s is not unique in step %s", module.Name, step.Name)
+			return fmt.Errorf("module name %s is not unique in step %s", module.Name, step.Name)
 		}
 		moduleNames.Add(module.Name)
 		if stepState == nil {
 			continue
 		}
-		validateModuleVersioning(step, stepState, module)
+		if err := validateModuleVersioning(step, stepState, module); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func validateModule(module model.Module, stepName string) {
+func validateModule(module model.Module, stepName string) error {
 	if module.Name == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module name is not set in step %s", stepName)})
+		return fmt.Errorf("module name is not set in step %s", stepName)
 	}
 	if module.Source == "" {
-		log.Fatal(&common.PrefixedError{Reason: fmt.Errorf("module Source is not set for module %s in step %s", module.Name, stepName)})
+		return fmt.Errorf("module Source is not set for module %s in step %s", module.Name, stepName)
 	}
+	return nil
 }
 
-func validateModuleVersioning(step model.Step, stepState *model.StateStep, module model.Module) {
+func validateModuleVersioning(step model.Step, stepState *model.StateStep, module model.Module) error {
 	stateModule := GetModuleState(stepState, module.Name)
 	moduleVersionString := module.Version
 	if util.IsClientModule(module) {
 		if moduleVersionString == "" {
-			log.Fatalf("module version is not set for client module %s in step %s", module.Name, step.Name)
+			return fmt.Errorf("module version is not set for client module %s in step %s", module.Name, step.Name)
 		}
-		return
+		return nil
 	}
 	if moduleVersionString == "" || moduleVersionString == StableVersion {
-		return
+		return nil
 	}
 	moduleVersion, err := version.NewVersion(moduleVersionString)
 	if err != nil {
-		log.Fatalf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
+		return fmt.Errorf("failed to parse module version %s for module %s: %s", module.Version, module.Name, err)
 	}
 	if stateModule == nil || stateModule.Version == "" {
-		return
+		return nil
 	}
 	stateModuleVersion, err := version.NewVersion(stateModule.Version)
 	if err != nil {
-		log.Fatalf("failed to parse state module version %s for module %s: %s", stateModule.Version, module.Name, err)
+		return fmt.Errorf("failed to parse state module version %s for module %s: %s", stateModule.Version, module.Name, err)
 	}
 	if moduleVersion.LessThan(stateModuleVersion) {
-		log.Fatalf("config module %s version %s is less than state version %s", module.Name,
+		return fmt.Errorf("config module %s version %s is less than state version %s", module.Name,
 			moduleVersionString, stateModule.Version)
 	}
+	return nil
 }
 
 func GetStepState(state *model.State, stepName string) *model.StateStep {

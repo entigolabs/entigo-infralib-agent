@@ -10,10 +10,15 @@ import (
 	"log"
 )
 
-func Custom(ctx context.Context, flags *common.Flags, command common.Command) {
-	provider := service.GetResourceProvider(ctx, flags)
-	ssm := getSSM(provider, flags)
-	var err error
+func Custom(ctx context.Context, flags *common.Flags, command common.Command) error {
+	provider, err := service.GetResourceProvider(ctx, flags)
+	if err != nil {
+		return err
+	}
+	ssm, err := getSSM(provider, flags)
+	if err != nil {
+		return err
+	}
 	switch command {
 	case common.AddCustomCommand:
 		err = addParam(ssm, flags.Params)
@@ -24,24 +29,34 @@ func Custom(ctx context.Context, flags *common.Flags, command common.Command) {
 	case common.ListCustomCommand:
 		err = listParams(ssm)
 	}
-	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
-	}
+	return err
 }
 
-func getSSM(provider model.ResourceProvider, flags *common.Flags) model.SSM {
-	ssm := provider.GetSSM()
-	if flags.Prefix == "" && flags.Config == "" {
-		return ssm
+func getSSM(provider model.ResourceProvider, flags *common.Flags) (model.SSM, error) {
+	ssm, err := provider.GetSSM()
+	if err != nil {
+		return nil, err
 	}
-	prefix := service.GetProviderPrefix(flags)
-	bucket := provider.GetBucket(prefix)
-	keyId := service.GetEncryptionKey(provider.GetProviderType(), prefix, flags.Config, bucket)
+	if flags.Prefix == "" && flags.Config == "" {
+		return ssm, nil
+	}
+	prefix, err := service.GetProviderPrefix(flags)
+	if err != nil {
+		return nil, err
+	}
+	bucket, err := provider.GetBucket(prefix)
+	if err != nil {
+		return nil, err
+	}
+	keyId, err := service.GetEncryptionKey(provider.GetProviderType(), prefix, flags.Config, bucket)
+	if err != nil {
+		return nil, err
+	}
 	if keyId == "" {
-		return ssm
+		return ssm, nil
 	}
 	ssm.AddEncryptionKeyId(keyId)
-	return ssm
+	return ssm, nil
 }
 
 func addParam(ssm model.SSM, params common.Params) error {
@@ -51,7 +66,10 @@ func addParam(ssm model.SSM, params common.Params) error {
 	}
 	if exists && !params.Overwrite {
 		fmt.Printf("Parameter '%s' already exists. Overwrite the value? (Y/N):", params.Key)
-		util.AskForConfirmation()
+		err = util.AskForConfirmation()
+		if err != nil {
+			return err
+		}
 	}
 	err = ssm.PutParameter(params.Key, params.Value)
 	if err == nil {

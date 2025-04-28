@@ -11,7 +11,9 @@ import (
 
 func TestRunAWS(t *testing.T) {
 	t.Parallel()
-	common.ChooseLogger(string(common.DebugLogLevel))
+	if err := common.ChooseLogger(string(common.DebugLogLevel)); err != nil {
+		t.Fatalf("failed to choose logger: %v", err)
+	}
 	test.ChangeRunDir()
 	prefix := os.Getenv(common.AwsPrefixEnv)
 	if len(prefix) > 10 {
@@ -28,15 +30,24 @@ func TestRunAWS(t *testing.T) {
 			Type: string(common.PipelineTypeCloud),
 		},
 	}
-	Run(context.Background(), flags)
-	deleter := service.NewDeleter(context.Background(), flags)
+	if err := Run(context.Background(), flags); err != nil {
+		t.Fatalf("failed to run: %v", err)
+	}
+	deleter, err := service.NewDeleter(context.Background(), flags)
+	if err != nil {
+		t.Fatalf("failed to create deleter: %v", err)
+	}
 	deleter.Destroy()
-	deleter.Delete()
+	if err := deleter.Delete(); err != nil {
+		t.Fatalf("failed to delete: %v", err)
+	}
 }
 
 func TestRunGCloud(t *testing.T) {
 	t.Parallel()
-	common.ChooseLogger(string(common.DebugLogLevel))
+	if err := common.ChooseLogger(string(common.DebugLogLevel)); err != nil {
+		t.Fatalf("failed to choose logger: %v", err)
+	}
 	test.ChangeRunDir()
 	projectId := os.Getenv(common.GCloudProjectIdEnv)
 	location := os.Getenv(common.GCloudLocationEnv)
@@ -61,8 +72,15 @@ func TestRunGCloud(t *testing.T) {
 			Type: string(common.PipelineTypeCloud),
 		},
 	}
-	Run(context.Background(), flags)
-	deleter := service.NewDeleter(context.Background(), flags)
+	if err := Run(context.Background(), flags); err != nil {
+		t.Fatalf("failed to run: %v", err)
+	}
+	deleter, err := service.NewDeleter(context.Background(), flags)
+	if err != nil {
+		t.Fatalf("failed to create deleter: %v", err)
+	}
 	deleter.Destroy()
-	deleter.Delete()
+	if err := deleter.Delete(); err != nil {
+		t.Fatalf("failed to delete: %v", err)
+	}
 }

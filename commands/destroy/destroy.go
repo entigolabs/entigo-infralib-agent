@@ -9,13 +9,20 @@ import (
 	"log/slog"
 )
 
-func Destroy(ctx context.Context, flags *common.Flags) {
+func Destroy(ctx context.Context, flags *common.Flags) error {
 	slog.Warn(common.PrefixWarning(`Destroy pipelines will be executed in reverse config order.
 This will remove the resources provisioned by the step pipelines.`))
 	if !flags.Delete.SkipConfirmation {
 		fmt.Print("Do you want to run the destroy pipelines that remove the provisioned resources? (Y/N): ")
-		util.AskForConfirmation()
+		err := util.AskForConfirmation()
+		if err != nil {
+			return err
+		}
 	}
-	deleter := service.NewDeleter(ctx, flags)
+	deleter, err := service.NewDeleter(ctx, flags)
+	if err != nil {
+		return err
+	}
 	deleter.Destroy()
+	return nil
 }

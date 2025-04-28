@@ -690,6 +690,9 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 			continue
 		}
 		if action.Status == types.ActionExecutionStatusSucceeded {
+			if status == approvalStatusWaiting {
+				util.Notify(p.notifiers, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+			}
 			return approvalStatusApproved, nil
 		}
 		if action.Status != types.ActionExecutionStatusInProgress {
@@ -721,7 +724,6 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 		return p.approveStage(pipelineName)
 	} else {
 		log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
-		// TODO Would it be possible to notify when it was approved manually?
 		util.Notify(p.notifiers, fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s\nPipeline: %s",
 			pipelineName, util.FormatChanges(*pipeChanges), p.getLink(pipelineName)))
 		return approvalStatusWaiting, nil
