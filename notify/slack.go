@@ -1,57 +1,21 @@
 package notify
 
 import (
-	"bytes"
-	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/slack-go/slack"
 )
 
-type SlackClient struct {
-	model.NotifierType
-	client    *slack.Client
-	channelId string
-}
-
-func newSlackClient(notifierType model.NotifierType, configSlack model.Slack) *SlackClient {
-	return &SlackClient{
+func newSlackClient(notifierType model.NotifierType, configSlack model.Slack) *BaseNotifier {
+	client := slack.New(configSlack.Token)
+	return &BaseNotifier{
 		NotifierType: notifierType,
-		client:       slack.New(configSlack.Token),
-		channelId:    configSlack.ChannelId,
+		MessageFunc: func(message string) error {
+			return slackMessage(client, configSlack.ChannelId, message)
+		},
 	}
 }
 
-func (s *SlackClient) Message(messageType model.MessageType, message string) error {
-	if messageType == model.MessageTypeFailure {
-		message = fmt.Sprintf("ERROR %s", message)
-	}
-	return s.message(message)
-}
-
-func (s *SlackClient) ManualApproval(pipelineName string, changes model.PipelineChanges, link string) error {
-	formattedChanges := fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy.", changes.Added,
-		changes.Changed, changes.Destroyed)
-	message := fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s",
-		pipelineName, formattedChanges)
-	if link != "" {
-		message += fmt.Sprintf("\nPipeline: %s", link)
-	}
-	return s.message(message)
-}
-
-func (s *SlackClient) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step) error {
-	var buffer bytes.Buffer
-	buffer.WriteString(fmt.Sprintf("Step '%s' status: %s", stepState.Name, status))
-	for _, module := range stepState.Modules {
-		buffer.WriteString(fmt.Sprintf("\nModule '%s' version: %s", module.Name, module.Version))
-		if module.AppliedVersion != nil {
-			buffer.WriteString(fmt.Sprintf(", applied version: %s", *module.AppliedVersion))
-		}
-	}
-	return s.message(buffer.String())
-}
-
-func (s *SlackClient) message(message string) error {
-	_, _, err := s.client.PostMessage(s.channelId, slack.MsgOptionText(message, false))
+func slackMessage(client *slack.Client, channelId, message string) error {
+	_, _, err := client.PostMessage(channelId, slack.MsgOptionText(message, false))
 	return err
 }

@@ -338,6 +338,8 @@ notifications:
     slack:
       token: string
       channel_id: string
+    teams:
+      webhook_url: string
     api:
       url: string
       key: string
@@ -414,6 +416,8 @@ Source version is overwritten by module version. Default version is **stable** w
   * slack - send notifications to slack
     * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
     * channel_id - slack channel id
+  * teams - send notifications to teams
+    * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify github](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step

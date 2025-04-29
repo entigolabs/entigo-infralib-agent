@@ -399,3 +399,10 @@ func GetChangesFromMatches(pipelineName, message string, matches []string) (*mod
 	}
 	return &changes, nil
 }
+
+func BoolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

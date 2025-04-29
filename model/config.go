@@ -55,12 +55,17 @@ type ConfigNotification struct {
 	Name         string           `yaml:"name,omitempty"`
 	MessageTypes []MessageType    `yaml:"message_types,omitempty"`
 	Slack        *Slack           `yaml:"slack,omitempty"`
+	Teams        *Teams           `yaml:"teams,omitempty"`
 	Api          *NotificationApi `yaml:"api,omitempty"`
 }
 
 type Slack struct {
 	Token     string `yaml:"token,omitempty"`
 	ChannelId string `yaml:"channel_id,omitempty"`
+}
+
+type Teams struct {
+	WebhookUrl string `yaml:"webhook_url,omitempty"`
 }
 
 type NotificationApi struct {

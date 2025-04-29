@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log/slog"
 	"sync"
 )
@@ -28,12 +29,19 @@ func NewNotificationManager(ctx context.Context, configNotifiers []model.ConfigN
 
 func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotification) ([]model.Notifier, error) {
 	notifiers := make([]model.Notifier, 0)
+	names := model.NewSet[string]()
 	for i, configNotifier := range configNotifiers {
 		if configNotifier.Name == "" {
 			return nil, fmt.Errorf("configNotifier[%d] name is empty", i)
 		}
-		if configNotifier.Slack != nil && configNotifier.Api != nil {
-			return nil, fmt.Errorf("configNotifier %s can have only 1 subtype specified", configNotifier.Name)
+		if names.Contains(configNotifier.Name) {
+			return nil, fmt.Errorf("configNotifier %s name must be unique", configNotifier.Name)
+		}
+		names.Add(configNotifier.Name)
+		if (util.BoolToInt(configNotifier.Slack != nil) +
+			util.BoolToInt(configNotifier.Api != nil) +
+			util.BoolToInt(configNotifier.Teams != nil)) != 1 {
+			return nil, fmt.Errorf("configNotifier %s must have exactly 1 subtype specified", configNotifier.Name)
 		}
 		notifier, err := createNotifier(ctx, configNotifier)
 		if err != nil {
@@ -58,6 +66,9 @@ func createNotifier(ctx context.Context, configNotifier model.ConfigNotification
 	if configNotifier.Slack != nil {
 		return createSlackNotifier(notifierType, *configNotifier.Slack)
 	}
+	if configNotifier.Teams != nil {
+		return createTeamsNotifier(notifierType, *configNotifier.Teams)
+	}
 	if configNotifier.Api != nil {
 		return createApiNotifier(ctx, notifierType, *configNotifier.Api)
 	}
@@ -72,6 +83,13 @@ func createSlackNotifier(notifierType model.NotifierType, slack model.Slack) (mo
 		return nil, errors.New("slack channel id is empty")
 	}
 	return newSlackClient(notifierType, slack), nil
+}
+
+func createTeamsNotifier(notifierType model.NotifierType, teams model.Teams) (model.Notifier, error) {
+	if teams.WebhookUrl == "" {
+		return nil, errors.New("teams webhook url is empty")
+	}
+	return newTeamsClient(notifierType, teams), nil
 }
 
 func createApiNotifier(ctx context.Context, notifierType model.NotifierType, notificationApi model.NotificationApi) (model.Notifier, error) {

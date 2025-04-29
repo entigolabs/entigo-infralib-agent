@@ -9,6 +9,7 @@ require (
 	cloud.google.com/go/secretmanager v1.14.6
 	cloud.google.com/go/storage v1.51.0
 	dario.cat/mergo v1.0.1
+	github.com/atc0005/go-teams-notify/v2 v2.13.0
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.13
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.66
