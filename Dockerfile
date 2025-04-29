@@ -15,7 +15,7 @@ RUN --mount=target=. \
      "-X github.com/entigolabs/entigo-infralib-agent/common.version=${VERSION} \
       -X github.com/entigolabs/entigo-infralib-agent/common.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
       -X github.com/entigolabs/entigo-infralib-agent/common.gitCommit=${GITHUB_SHA} \
-               -extldflags -static" -o /out/ei-agent main.go
+               -extldflags -static -s -w" -o /out/ei-agent main.go
 
 FROM alpine:3
 WORKDIR /etc/ei-agent
