@@ -7,13 +7,16 @@ import (
 )
 
 type BaseNotifier struct {
-	model.NotifierType
+	model.BaseNotifier
 	MessageFunc func(message string) error
 }
 
 func (b *BaseNotifier) Message(messageType model.MessageType, message string) error {
 	if messageType == model.MessageTypeFailure {
 		message = fmt.Sprintf("ERROR %s", message)
+	}
+	if b.Context != "" {
+		message = fmt.Sprintf("%s %s", b.Context, message)
 	}
 	return b.MessageFunc(message)
 }
@@ -24,11 +27,17 @@ func (b *BaseNotifier) ManualApproval(pipelineName string, changes model.Pipelin
 	if link != "" {
 		message += fmt.Sprintf("\nPipeline: %s", link)
 	}
+	if b.Context != "" {
+		message = fmt.Sprintf("%s %s", b.Context, message)
+	}
 	return b.MessageFunc(message)
 }
 
 func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step) error {
 	var buffer bytes.Buffer
+	if b.Context != "" {
+		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
+	}
 	buffer.WriteString(fmt.Sprintf("Step '%s' status: %s", stepState.Name, status))
 	for _, module := range stepState.Modules {
 		buffer.WriteString(fmt.Sprintf("\nModule '%s' version: %s", module.Name, module.Version))

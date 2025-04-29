@@ -334,6 +334,7 @@ destinations:
       ca_file: string
 notifications:
   - name: string
+    context: string
     message_types: []string
     slack:
       token: string
@@ -409,6 +410,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
 * notifications - send notifications with selected types, each notifier can only use one subtype
   * name - name of the notifier
+  * context - optional, extra context added to the notification
   * message_types - list of types of messages to send, possible values `started | approvals | progress | success | failure`, default **`[approvals, failure]`**
   * api - send notifications to a custom API
     * url - url for the api

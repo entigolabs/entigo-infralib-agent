@@ -11,8 +11,6 @@ import (
 	"sync"
 )
 
-const warningFormat = "failed to notify '%s': %v"
-
 type NotificationManager struct {
 	notifiers []model.Notifier
 }
@@ -59,47 +57,48 @@ func createNotifier(ctx context.Context, configNotifier model.ConfigNotification
 	} else {
 		messageTypes = model.ToSet(configNotifier.MessageTypes)
 	}
-	notifierType := model.NotifierType{
+	baseNotifier := model.BaseNotifier{
 		Name:         configNotifier.Name,
+		Context:      configNotifier.Context,
 		MessageTypes: messageTypes,
 	}
 	if configNotifier.Slack != nil {
-		return createSlackNotifier(notifierType, *configNotifier.Slack)
+		return createSlackNotifier(baseNotifier, *configNotifier.Slack)
 	}
 	if configNotifier.Teams != nil {
-		return createTeamsNotifier(notifierType, *configNotifier.Teams)
+		return createTeamsNotifier(baseNotifier, *configNotifier.Teams)
 	}
 	if configNotifier.Api != nil {
-		return createApiNotifier(ctx, notifierType, *configNotifier.Api)
+		return createApiNotifier(ctx, baseNotifier, *configNotifier.Api)
 	}
 	return nil, errors.New("has no subtype specified")
 }
 
-func createSlackNotifier(notifierType model.NotifierType, slack model.Slack) (model.Notifier, error) {
+func createSlackNotifier(baseNotifier model.BaseNotifier, slack model.Slack) (model.Notifier, error) {
 	if slack.Token == "" {
 		return nil, errors.New("slack token is empty")
 	}
 	if slack.ChannelId == "" {
 		return nil, errors.New("slack channel id is empty")
 	}
-	return newSlackClient(notifierType, slack), nil
+	return newSlackClient(baseNotifier, slack), nil
 }
 
-func createTeamsNotifier(notifierType model.NotifierType, teams model.Teams) (model.Notifier, error) {
+func createTeamsNotifier(baseNotifier model.BaseNotifier, teams model.Teams) (model.Notifier, error) {
 	if teams.WebhookUrl == "" {
 		return nil, errors.New("teams webhook url is empty")
 	}
-	return newTeamsClient(notifierType, teams), nil
+	return newTeamsClient(baseNotifier, teams), nil
 }
 
-func createApiNotifier(ctx context.Context, notifierType model.NotifierType, notificationApi model.NotificationApi) (model.Notifier, error) {
+func createApiNotifier(ctx context.Context, baseNotifier model.BaseNotifier, notificationApi model.NotificationApi) (model.Notifier, error) {
 	if notificationApi.URL == "" {
 		return nil, errors.New("api url is empty")
 	}
 	if notificationApi.Key == "" {
 		return nil, errors.New("api key is empty")
 	}
-	return newApi(ctx, notifierType, notificationApi), nil
+	return newApi(ctx, baseNotifier, notificationApi), nil
 }
 
 func (n *NotificationManager) HasNotifier(messageType model.MessageType) bool {
@@ -112,33 +111,24 @@ func (n *NotificationManager) HasNotifier(messageType model.MessageType) bool {
 }
 
 func (n *NotificationManager) Message(messageType model.MessageType, message string) {
-	n.notify(messageType, func(notifier model.Notifier) {
-		err := notifier.Message(messageType, message)
-		if err != nil {
-			slog.Error(common.PrefixError(fmt.Errorf(warningFormat, notifier.GetName(), err)))
-		}
+	n.notify(messageType, func(notifier model.Notifier) error {
+		return notifier.Message(messageType, message)
 	})
 }
 
 func (n *NotificationManager) ManualApproval(pipelineName string, changes model.PipelineChanges, link string) {
-	n.notify(model.MessageTypeApprovals, func(notifier model.Notifier) {
-		err := notifier.ManualApproval(pipelineName, changes, link)
-		if err != nil {
-			slog.Error(common.PrefixError(fmt.Errorf(warningFormat, notifier.GetName(), err)))
-		}
+	n.notify(model.MessageTypeApprovals, func(notifier model.Notifier) error {
+		return notifier.ManualApproval(pipelineName, changes, link)
 	})
 }
 
 func (n *NotificationManager) StepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step) {
-	n.notify(model.MessageTypeProgress, func(notifier model.Notifier) {
-		err := notifier.StepState(status, stepState, step)
-		if err != nil {
-			slog.Error(common.PrefixError(fmt.Errorf(warningFormat, notifier.GetName(), err)))
-		}
+	n.notify(model.MessageTypeProgress, func(notifier model.Notifier) error {
+		return notifier.StepState(status, stepState, step)
 	})
 }
 
-func (n *NotificationManager) notify(messageType model.MessageType, action func(notifier model.Notifier)) {
+func (n *NotificationManager) notify(messageType model.MessageType, action func(notifier model.Notifier) error) {
 	var wg sync.WaitGroup
 	for _, notifier := range n.notifiers {
 		if !notifier.Includes(messageType) {
@@ -147,7 +137,10 @@ func (n *NotificationManager) notify(messageType model.MessageType, action func(
 		wg.Add(1)
 		go func(notifier model.Notifier) {
 			defer wg.Done()
-			action(notifier)
+			err := action(notifier)
+			if err != nil {
+				slog.Error(common.PrefixError(fmt.Errorf("failed to notify '%s': %v", notifier.GetName(), err)))
+			}
 		}(notifier)
 	}
 	wg.Wait()

@@ -13,16 +13,16 @@ import (
 const urlErrorFormat = "error joining url: %v"
 
 type API struct {
-	model.NotifierType
+	model.BaseNotifier
 	ctx    context.Context
 	client *common.HttpClient
 	url    string
 	key    string
 }
 
-func newApi(ctx context.Context, notifierType model.NotifierType, configApi model.NotificationApi) *API {
+func newApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi model.NotificationApi) *API {
 	return &API{
-		NotifierType: notifierType,
+		BaseNotifier: baseNotifier,
 		ctx:          ctx,
 		client:       common.NewHttpClient(30*time.Second, 2),
 		url:          configApi.URL,

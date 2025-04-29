@@ -8,10 +8,10 @@ import (
 	"strings"
 )
 
-func newTeamsClient(notifierType model.NotifierType, configTeams model.Teams) *BaseNotifier {
+func newTeamsClient(baseNotifier model.BaseNotifier, configTeams model.Teams) *BaseNotifier {
 	client := goteamsnotify.NewTeamsClient()
 	return &BaseNotifier{
-		NotifierType: notifierType,
+		BaseNotifier: baseNotifier,
 		MessageFunc: func(message string) error {
 			return teamsMessage(client, configTeams.WebhookUrl, message)
 		},

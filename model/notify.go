@@ -19,8 +19,9 @@ const (
 	MessageTypeFailure   MessageType = "failure"
 )
 
-type NotifierType struct {
+type BaseNotifier struct {
 	Name         string
+	Context      string
 	MessageTypes Set[MessageType]
 }
 
@@ -32,11 +33,15 @@ type Notifier interface {
 	StepState(status ApplyStatus, stepState StateStep, step *Step) error
 }
 
-func (n NotifierType) GetName() string {
+func (n BaseNotifier) GetName() string {
 	return n.Name
 }
 
-func (n NotifierType) Includes(messageType MessageType) bool {
+func (n BaseNotifier) GetContext() string {
+	return n.Context
+}
+
+func (n BaseNotifier) Includes(messageType MessageType) bool {
 	return n.MessageTypes.Contains(messageType)
 }
 

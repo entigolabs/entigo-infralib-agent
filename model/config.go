@@ -53,6 +53,7 @@ type Git struct {
 
 type ConfigNotification struct {
 	Name         string           `yaml:"name,omitempty"`
+	Context      string           `yaml:"context,omitempty"`
 	MessageTypes []MessageType    `yaml:"message_types,omitempty"`
 	Slack        *Slack           `yaml:"slack,omitempty"`
 	Teams        *Teams           `yaml:"teams,omitempty"`

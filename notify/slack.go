@@ -5,10 +5,10 @@ import (
 	"github.com/slack-go/slack"
 )
 
-func newSlackClient(notifierType model.NotifierType, configSlack model.Slack) *BaseNotifier {
+func newSlackClient(baseNotifier model.BaseNotifier, configSlack model.Slack) *BaseNotifier {
 	client := slack.New(configSlack.Token)
 	return &BaseNotifier{
-		NotifierType: notifierType,
+		BaseNotifier: baseNotifier,
 		MessageFunc: func(message string) error {
 			return slackMessage(client, configSlack.ChannelId, message)
 		},
