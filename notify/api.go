@@ -36,12 +36,16 @@ func newApi(ctx context.Context, notifierType model.NotifierType, configApi mode
 	}
 }
 
-func (a *API) Message(message string) error {
+func (a *API) Message(messageType model.MessageType, message string) error {
 	fullUrl, err := url.JoinPath(a.url, "message")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
 	}
-	_, err = a.Post(a.ctx, fullUrl, a.getHeaders(), model.MessageRequest{Message: message})
+	requestType := "INFO"
+	if messageType == model.MessageTypeFailure {
+		requestType = "ERROR"
+	}
+	_, err = a.Post(a.ctx, fullUrl, a.getHeaders(), model.MessageRequest{Type: requestType, Message: message})
 	return err
 }
 

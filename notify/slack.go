@@ -21,9 +21,11 @@ func newSlackClient(notifierType model.NotifierType, configSlack model.Slack) *S
 	}
 }
 
-func (s *SlackClient) Message(message string) error {
-	_, _, err := s.client.PostMessage(s.channelId, slack.MsgOptionText(message, false))
-	return err
+func (s *SlackClient) Message(messageType model.MessageType, message string) error {
+	if messageType == model.MessageTypeFailure {
+		message = fmt.Sprintf("ERROR %s", message)
+	}
+	return s.message(message)
 }
 
 func (s *SlackClient) ManualApproval(pipelineName string, changes model.PipelineChanges, link string) error {
@@ -34,7 +36,7 @@ func (s *SlackClient) ManualApproval(pipelineName string, changes model.Pipeline
 	if link != "" {
 		message += fmt.Sprintf("\nPipeline: %s", link)
 	}
-	return s.Message(message)
+	return s.message(message)
 }
 
 func (s *SlackClient) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step) error {
@@ -46,5 +48,10 @@ func (s *SlackClient) StepState(status model.ApplyStatus, stepState model.StateS
 			buffer.WriteString(fmt.Sprintf(", applied version: %s", *module.AppliedVersion))
 		}
 	}
-	return s.Message(buffer.String())
+	return s.message(buffer.String())
+}
+
+func (s *SlackClient) message(message string) error {
+	_, _, err := s.client.PostMessage(s.channelId, slack.MsgOptionText(message, false))
+	return err
 }

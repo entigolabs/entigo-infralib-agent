@@ -26,6 +26,7 @@ func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags
 	if err != nil {
 		return err
 	}
+	manager.Message(model.MessageTypeStarted, fmt.Sprintf("Agent %s started: %s", command, provider.GetIdentifier()))
 	resources, err = provider.SetupResources(manager)
 	if err != nil {
 		return notifyError(manager, fmt.Sprintf("Failed to setup resources: %s", err))
@@ -46,7 +47,8 @@ func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags
 	if err != nil {
 		return notifyError(manager, err.Error())
 	}
-	return err
+	manager.Message(model.MessageTypeSuccess, fmt.Sprintf("Agent %s finished successfully: %s", command, provider.GetIdentifier()))
+	return nil
 }
 
 func updateAgentJob(cmd common.Command, pipelineFlags common.Pipeline, resources model.Resources, config model.Config, runningLocally bool) error {
@@ -59,6 +61,6 @@ func updateAgentJob(cmd common.Command, pipelineFlags common.Pipeline, resources
 }
 
 func notifyError(manager model.NotificationManager, message string) error {
-	manager.Message(model.MessageTypeFailure, "ERROR "+message)
+	manager.Message(model.MessageTypeFailure, message)
 	return errors.New(message)
 }

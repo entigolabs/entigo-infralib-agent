@@ -47,6 +47,10 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pi
 	}
 }
 
+func (g *gcloudService) GetIdentifier() string {
+	return fmt.Sprintf("prefix %s, Google project Id %s, location %s", g.cloudPrefix, g.projectId, g.location)
+}
+
 func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	err := g.enableApiServices([]string{"secretmanager.googleapis.com"})
 	if err != nil {

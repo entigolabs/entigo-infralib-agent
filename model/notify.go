@@ -12,8 +12,10 @@ type NotificationManager interface {
 type MessageType string
 
 const (
+	MessageTypeStarted   MessageType = "started"
 	MessageTypeProgress  MessageType = "progress"
 	MessageTypeApprovals MessageType = "approvals"
+	MessageTypeSuccess   MessageType = "success"
 	MessageTypeFailure   MessageType = "failure"
 )
 
@@ -25,7 +27,7 @@ type NotifierType struct {
 type Notifier interface {
 	GetName() string
 	Includes(messageType MessageType) bool
-	Message(message string) error
+	Message(messageType MessageType, message string) error
 	ManualApproval(pipelineName string, changes PipelineChanges, link string) error
 	StepState(status ApplyStatus, stepState StateStep, step *Step) error
 }
@@ -63,6 +65,7 @@ type ModuleEntity struct {
 }
 
 type MessageRequest struct {
+	Type    string `json:"type"`
 	Message string `json:"message"`
 }
 

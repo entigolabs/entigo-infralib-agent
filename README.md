@@ -34,7 +34,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Overriding with module properties](#overriding-with-module-properties)
   * [Including files in steps](#including-files-in-steps)
   * [Including CA certificates](#including-ca-certificates)
-  * [Callback](#callback)
+  * [Notification API requests](#notification-api-requests)
   * [Encryption](#encryption)
 * [Migration Helper](#migration-helper)
   * [Import File](#import-file)
@@ -407,7 +407,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
 * notifications - send notifications with selected types, each notifier can only use one subtype
   * name - name of the notifier
-  * message_types - list of types of messages to send, possible values `approvals | progress | failure`, default **approvals, failure**
+  * message_types - list of types of messages to send, possible values `started | approvals | progress | success | failure`, default **`[approvals, failure]`**
   * api - send notifications to a custom API
     * url - url for the api
     * key - unique identifier for the api
@@ -531,12 +531,14 @@ It's possible to include files in steps by adding the files into a `./config/<st
 
 It's possible to include CA certificates by adding the files into a `./ca-certificates` subdirectory. Files will be copied into the bucket root and each step directory for Infralib.
 
-### Callback
+### Notification API requests
 
-When configuring a callback, agent will send requests to the specified URL about the status of step pipelines.
+When configuring api notifications, agent will send requests to the specified URL.
 
 #### POST `/steps/status`
 
+Status of step pipelines.
+Required configured message type: `progress`
 Payload example:
 ```json
 {

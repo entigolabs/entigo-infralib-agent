@@ -34,6 +34,7 @@ const (
 )
 
 type CloudProvider interface {
+	GetIdentifier() string
 	SetupResources(manager NotificationManager) (Resources, error)
 	SetupMinimalResources() (Resources, error)
 	GetResources() (Resources, error)

@@ -95,7 +95,7 @@ func (n *NotificationManager) HasNotifier(messageType model.MessageType) bool {
 
 func (n *NotificationManager) Message(messageType model.MessageType, message string) {
 	n.notify(messageType, func(notifier model.Notifier) {
-		err := notifier.Message(message)
+		err := notifier.Message(messageType, message)
 		if err != nil {
 			slog.Error(common.PrefixError(fmt.Errorf(warningFormat, notifier.GetName(), err)))
 		}

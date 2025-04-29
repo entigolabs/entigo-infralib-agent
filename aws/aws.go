@@ -103,6 +103,10 @@ func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string
 	return assumedConfig, nil
 }
 
+func (a *awsService) GetIdentifier() string {
+	return fmt.Sprintf("prefix %s, AWS account id %s, region %s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+}
+
 func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 	bucket := a.getBucketName()
 	s3, _, err := a.createBucket(bucket)
