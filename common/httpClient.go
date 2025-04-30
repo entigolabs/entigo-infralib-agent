@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -33,7 +34,7 @@ func (c *HttpClient) PostWithParams(ctx context.Context, url string, headers htt
 }
 
 func (c *HttpClient) Do(ctx context.Context, method string, url string, object any, headers http.Header, params map[string]string) (*http.Response, error) {
-	var body io.Reader
+	var body *bytes.Reader
 	if object != nil {
 		jsonObject, err := json.Marshal(object)
 		if err != nil {
@@ -47,7 +48,7 @@ func (c *HttpClient) Do(ctx context.Context, method string, url string, object a
 	}
 	req.Header = headers
 	addParams(req, params)
-	return c.DoWithRetry(ctx, req)
+	return c.DoWithRetry(ctx, req, body)
 }
 
 func addParams(req *http.Request, params map[string]string) {
@@ -60,16 +61,25 @@ func addParams(req *http.Request, params map[string]string) {
 	}
 }
 
-func (c *HttpClient) DoWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
+func (c *HttpClient) DoWithRetry(ctx context.Context, req *http.Request, body *bytes.Reader) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 	req = req.WithContext(ctx)
 	for i := 0; i < c.retries; i++ {
+		req.Body = io.NopCloser(body)
 		resp, err = c.client.Do(req)
 		if err == nil && resp.StatusCode/100 == 2 {
 			return resp, nil
 		}
+		message := fmt.Sprintf("http request failed, error: %v", err)
+		if resp != nil {
+			message += fmt.Sprintf(", status code: %d", resp.StatusCode)
+		}
+		slog.Error(message)
 		time.Sleep(time.Second * time.Duration(i*2))
+		if body != nil {
+			_, _ = body.Seek(0, io.SeekStart)
+		}
 	}
 	if resp != nil && resp.StatusCode/100 != 2 {
 		err = getFailedResponseError(resp)
