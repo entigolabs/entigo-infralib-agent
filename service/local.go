@@ -31,9 +31,10 @@ type LocalPipeline struct {
 	bucket    string
 	pipeline  common.Pipeline
 	inputLock sync.Mutex
+	manager   model.NotificationManager
 }
 
-func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud) *LocalPipeline {
+func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
 	regionKey := "AWS_REGION"
 	project := ""
 	zone := ""
@@ -50,6 +51,7 @@ func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 		zone:      zone,
 		bucket:    resources.GetBucketName(),
 		pipeline:  pipeline,
+		manager:   manager,
 	}
 }
 
@@ -219,6 +221,7 @@ func (l *LocalPipeline) getManualApproval(pipelineName string, changes *model.Pi
 		l.inputLock.Unlock()
 	}()
 	time.Sleep(1 * time.Second) // Wait for output to be redirected
+	l.manager.ManualApproval(pipelineName, *changes, "")
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

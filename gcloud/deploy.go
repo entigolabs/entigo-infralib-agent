@@ -25,7 +25,10 @@ import (
 	"time"
 )
 
-const bucketFileFormat = "%s.tar.gz"
+const (
+	bucketFileFormat = "%s.tar.gz"
+	linkFormat       = "https://console.cloud.google.com/deploy/delivery-pipelines/%s/%s?project=%s"
+)
 
 type skaffold struct {
 	APIVersion string    `yaml:"apiVersion"`
@@ -62,9 +65,10 @@ type Pipeline struct {
 	storage        *GStorage
 	builder        *Builder
 	logging        *Logging
+	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging) (*Pipeline, error) {
+func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
 	client, err := deploy.NewCloudDeployClient(ctx)
 	if err != nil {
 		return nil, err
@@ -83,6 +87,7 @@ func NewPipeline(ctx context.Context, projectId string, location string, prefix 
 		storage:        storage,
 		builder:        builder,
 		logging:        logging,
+		manager:        manager,
 	}, nil
 }
 
@@ -317,13 +322,14 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 }
 
 func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges, approve model.ManualApprove) error {
-	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
+	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
 	if err != nil {
 		return err
 	}
 	approved := false
+	notified := false
 	delay := 1
 	for {
 		select {
@@ -335,11 +341,6 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 			})
 			if err != nil {
 				return err
-			}
-			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
-				time.Sleep(time.Duration(delay) * time.Second)
-				delay = util.MinInt(delay*2, 30)
-				continue
 			}
 			if rollout.GetState() == deploypb.Rollout_PENDING_APPROVAL {
 				if approved {
@@ -380,7 +381,20 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 					}
 				} else {
 					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+					if !notified && p.manager != nil {
+						p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+						notified = true
+					}
 				}
+				time.Sleep(time.Duration(delay) * time.Second)
+				delay = util.MinInt(delay*2, 30)
+				continue
+			}
+			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
+				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+				notified = false
+			}
+			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
 				time.Sleep(time.Duration(delay) * time.Second)
 				delay = util.MinInt(delay*2, 30)
 				continue
@@ -391,6 +405,10 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 			return nil
 		}
 	}
+}
+
+func (p *Pipeline) getLink(pipelineName string) string {
+	return fmt.Sprintf(linkFormat, p.location, pipelineName, p.projectId)
 }
 
 func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.PipelineChanges, stepType model.StepType, jobName string, executionName string) (*model.PipelineChanges, error) {

@@ -33,7 +33,7 @@ func PrefixError(err error) string {
 	return prefixed.Error()
 }
 
-func ChooseLogger(loggingLvl string) {
+func ChooseLogger(loggingLvl string) error {
 	switch loggingLvl {
 	case string(DebugLogLevel):
 		slog.SetLogLoggerLevel(slog.LevelDebug)
@@ -48,6 +48,7 @@ func ChooseLogger(loggingLvl string) {
 		log.SetFlags(0)
 	default:
 		msg := fmt.Sprintf("unsupported logging level: %v", loggingLvl)
-		log.Fatal(&PrefixedError{errors.New(msg)})
+		return &PrefixedError{errors.New(msg)}
 	}
+	return nil
 }

@@ -10,7 +10,7 @@ steps:
           tags:
             team: infrastructure
     version: stable
-    approve: never
+    manual_approve_run: never
     modules:
       - name: dns
         source: aws/route53

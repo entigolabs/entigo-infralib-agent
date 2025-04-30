@@ -50,7 +50,11 @@ type builder struct {
 	terraformCache bool
 }
 
-func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string, terraformCache bool) model.Builder {
+func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, logGroup string, logStream string, bucketArn string, terraformCache bool) (model.Builder, error) {
+	spec, err := buildSpec()
+	if err != nil {
+		return nil, err
+	}
 	return &builder{
 		ctx:            ctx,
 		codeBuild:      codebuild.NewFromConfig(awsConfig),
@@ -59,9 +63,9 @@ func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, 
 		logGroup:       logGroup,
 		logStream:      logStream,
 		bucketArn:      bucketArn,
-		buildSpec:      buildSpec(),
+		buildSpec:      spec,
 		terraformCache: terraformCache,
-	}
+	}, nil
 }
 
 func (b *builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
@@ -126,7 +130,11 @@ func (b *builder) getEnvironmentVariables(projectName, stepName, bucket string) 
 }
 
 func (b *builder) CreateAgentProject(projectName string, awsPrefix string, imageVersion string, cmd common.Command) error {
-	_, err := b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
+	spec, err := agentBuildSpec(cmd)
+	if err != nil {
+		return err
+	}
+	_, err = b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
 		ServiceRole:      aws.String(b.buildRoleArn),
@@ -151,7 +159,7 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 		},
 		Source: &types.ProjectSource{
 			Type:      types.SourceTypeNoSource,
-			Buildspec: agentBuildSpec(cmd),
+			Buildspec: spec,
 		},
 	})
 	if err == nil {
@@ -310,7 +318,7 @@ func getAwsVpcConfig(vpcConfig *model.VpcConfig) *types.VpcConfig {
 	}
 }
 
-func buildSpec() *string {
+func buildSpec() (*string, error) {
 	spec := BuildSpec{
 		Version: "0.2",
 		Phases: Phases{
@@ -325,7 +333,7 @@ func buildSpec() *string {
 	return buildSpecYaml(spec)
 }
 
-func agentBuildSpec(cmd common.Command) *string {
+func agentBuildSpec(cmd common.Command) (*string, error) {
 	spec := BuildSpec{
 		Version: "0.2",
 		Phases: Phases{
@@ -340,11 +348,11 @@ func agentBuildSpec(cmd common.Command) *string {
 	return buildSpecYaml(spec)
 }
 
-func buildSpecYaml(spec BuildSpec) *string {
+func buildSpecYaml(spec BuildSpec) (*string, error) {
 	buildSpec, err := yaml.Marshal(spec)
 	if err != nil {
-		log.Fatalf("Failed to marshal buildspec: %s", err)
+		return nil, fmt.Errorf("failed to marshal buildspec: %s", err)
 	}
 	specString := string(buildSpec)
-	return &specString
+	return &specString, nil
 }

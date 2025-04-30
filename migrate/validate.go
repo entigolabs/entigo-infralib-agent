@@ -21,17 +21,28 @@ type validator struct {
 	config importConfig
 }
 
-func NewValidator(ctx context.Context, flags common.Migrate) Validator {
-	state := getState(flags.StateFile)
+func NewValidator(ctx context.Context, flags common.Migrate) (Validator, error) {
+	state, err := getState(flags.StateFile)
+	if err != nil {
+		return nil, err
+	}
 	if state.Version != 4 {
-		log.Fatalf("Unsupported state version: %d", state.Version)
+		return nil, fmt.Errorf("unsupported state version: %d", state.Version)
+	}
+	planFile, err := getPlan(flags.PlanFile)
+	if err != nil {
+		return nil, err
+	}
+	config, err := getConfig(flags.ImportFile)
+	if err != nil {
+		return nil, err
 	}
 	return &validator{
 		ctx:    ctx,
 		state:  state,
-		plan:   getPlan(flags.PlanFile),
-		config: getConfig(flags.ImportFile),
-	}
+		plan:   planFile,
+		config: config,
+	}, nil
 }
 
 func (v *validator) Validate() {

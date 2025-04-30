@@ -6,7 +6,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
-func Run(ctx context.Context, flags *common.Flags) {
-	updater := service.NewUpdater(ctx, flags)
-	updater.Run()
+func Run(ctx context.Context, flags *common.Flags) error {
+	return service.RunUpdater(ctx, common.RunCommand, flags)
 }

@@ -15,11 +15,14 @@ type awsProvider struct {
 	providerType model.ProviderType
 }
 
-func NewAWSProvider(ctx context.Context, awsFlags common.AWS) model.ResourceProvider {
-	awsConfig := GetAWSConfig(ctx, awsFlags.RoleArn)
+func NewAWSProvider(ctx context.Context, awsFlags common.AWS) (model.ResourceProvider, error) {
+	awsConfig, err := GetAWSConfig(ctx, awsFlags.RoleArn)
+	if err != nil {
+		return nil, err
+	}
 	accountId, err := getAccountId(awsConfig)
 	if err != nil {
-		log.Fatal(err.Error())
+		return nil, err
 	}
 	log.Printf("AWS account id: %s\n", accountId)
 	return &awsProvider{
@@ -27,16 +30,16 @@ func NewAWSProvider(ctx context.Context, awsFlags common.AWS) model.ResourceProv
 		awsConfig:    awsConfig,
 		accountId:    accountId,
 		providerType: model.AWS,
-	}
+	}, nil
 }
 
-func (a *awsProvider) GetSSM() model.SSM {
-	return NewSSM(a.ctx, a.awsConfig)
+func (a *awsProvider) GetSSM() (model.SSM, error) {
+	return NewSSM(a.ctx, a.awsConfig), nil
 }
 
-func (a *awsProvider) GetBucket(prefix string) model.Bucket {
+func (a *awsProvider) GetBucket(prefix string) (model.Bucket, error) {
 	bucket := getBucketName(prefix, a.accountId, a.awsConfig.Region)
-	return NewS3(a.ctx, a.awsConfig, bucket)
+	return NewS3(a.ctx, a.awsConfig, bucket), nil
 }
 
 func (a *awsProvider) GetProviderType() model.ProviderType {

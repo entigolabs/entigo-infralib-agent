@@ -33,83 +33,98 @@ type planner struct {
 	config importConfig
 }
 
-func NewPlanner(ctx context.Context, flags common.Migrate) Planner {
-	state := getState(flags.StateFile)
+func NewPlanner(ctx context.Context, flags common.Migrate) (Planner, error) {
+	state, err := getState(flags.StateFile)
+	if err != nil {
+		return nil, err
+	}
 	if state.Version != 4 {
-		log.Fatalf("Unsupported state version: %d", state.Version)
+		return nil, fmt.Errorf("unsupported state version: %d", state.Version)
+	}
+	types, err := getTypes(flags.TypesFile)
+	if err != nil {
+		return nil, err
+	}
+	planFile, err := getPlan(flags.PlanFile)
+	if err != nil {
+		return nil, err
+	}
+	config, err := getConfig(flags.ImportFile)
+	if err != nil {
+		return nil, err
 	}
 	return &planner{
 		ctx:    ctx,
-		types:  getTypes(flags.TypesFile),
+		types:  types,
 		state:  state,
-		plan:   getPlan(flags.PlanFile),
-		config: getConfig(flags.ImportFile),
-	}
+		plan:   planFile,
+		config: config,
+	}, nil
 }
 
-func getTypes(typesFile string) map[string]typeIdentification {
+func getTypes(typesFile string) (map[string]typeIdentification, error) {
 	rawYaml := typesYaml
 	if typesFile != "" {
 		var err error
 		rawYaml, err = os.ReadFile(typesFile)
 		if err != nil {
-			log.Fatal(&common.PrefixedError{Reason: err})
+			return nil, err
 		}
 	}
 	var types typesConfig
 	err := yaml.Unmarshal(rawYaml, &types)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return nil, err
 	}
 	typeMap := make(map[string]typeIdentification)
 	for _, typeIdentification := range types.TypeIdentifications {
 		for _, typeName := range typeIdentification.Types {
 			if id, found := typeMap[typeName]; found {
-				log.Fatalf("Type %s identification already exists in map: %s", typeName, id)
+				return nil, fmt.Errorf("type %s identification already exists in map: %s", typeName, id)
 			}
 			typeMap[typeName] = typeIdentification
 		}
 	}
-	return typeMap
+	return typeMap, nil
 }
 
-func getState(stateFile string) stateV4 {
+func getState(stateFile string) (stateV4, error) {
 	fileBytes, err := os.ReadFile(stateFile)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return stateV4{}, err
 	}
 	var state stateV4
 	err = json.Unmarshal(fileBytes, &state)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return stateV4{}, err
 	}
-	return state
+	return state, nil
 }
 
-func getPlan(planFile string) plan {
+func getPlan(planFile string) (plan, error) {
 	fileBytes, err := os.ReadFile(planFile)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return plan{}, err
 	}
 	var tfPlan plan
 	err = json.Unmarshal(fileBytes, &tfPlan)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return plan{}, err
 	}
-	return tfPlan
+	return tfPlan, nil
 }
 
-func getConfig(stateFile string) importConfig {
+func getConfig(stateFile string) (importConfig, error) {
 	fileBytes, err := os.ReadFile(stateFile)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return importConfig{}, err
 	}
 	var config importConfig
 	err = yaml.Unmarshal(fileBytes, &config)
 	if err != nil {
-		log.Fatal(&common.PrefixedError{Reason: err})
+		return importConfig{}, err
 	}
-	return config
+	return config, nil
 }
 
 func (p *planner) Plan() {

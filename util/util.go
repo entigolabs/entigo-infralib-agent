@@ -243,18 +243,18 @@ func DelayBucketCreation(bucket string, skipDelay bool) {
 	}
 }
 
-func AskForConfirmation() {
+func AskForConfirmation() error {
 	for {
 		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
-			log.Fatalf("Failed to read input: %v", err)
+			return fmt.Errorf("failed to read input: %w", err)
 		}
 		response = strings.ToLower(strings.TrimSpace(response))
 		if response == "y" || response == "yes" {
-			return
+			return nil
 		} else if response == "n" || response == "no" {
-			log.Fatalf("Operation cancelled.")
+			return fmt.Errorf("operation cancelled")
 		} else {
 			slog.Warn(common.PrefixWarning("Invalid input. Please enter Y or N."))
 		}
@@ -398,4 +398,11 @@ func GetChangesFromMatches(pipelineName, message string, matches []string) (*mod
 		return nil, err
 	}
 	return &changes, nil
+}
+
+func BoolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

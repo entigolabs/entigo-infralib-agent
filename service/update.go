@@ -30,8 +30,7 @@ const (
 )
 
 type Updater interface {
-	Run()
-	Update()
+	Process(command common.Command) error
 }
 
 type updater struct {
@@ -39,7 +38,6 @@ type updater struct {
 	config        model.Config
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
-	provider      model.CloudProvider
 	resources     model.Resources
 	terraform     terraform.Terraform
 	destinations  map[string]model.Destination
@@ -47,61 +45,74 @@ type updater struct {
 	stateLock     sync.Mutex
 	pipelineFlags common.Pipeline
 	localPipeline *LocalPipeline
-	callback      Callback
+	manager       model.NotificationManager
 	moduleSources map[string]string
 	sources       map[string]*model.Source
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags) Updater {
-	provider := GetCloudProvider(ctx, flags)
-	resources := provider.SetupResources()
-	config := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
-	state := getLatestState(resources.GetBucket())
-	ValidateConfig(config, state)
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager) (Updater, error) {
+	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
+	if err != nil {
+		return nil, err
+	}
+	state, err := getLatestState(resources.GetBucket())
+	if err != nil {
+		return nil, err
+	}
+	if err = ValidateConfig(config, state); err != nil {
+		return nil, fmt.Errorf("failed to validate config: %v", err)
+	}
 	ProcessConfig(&config, resources.GetProviderType())
-	setupEncryption(config, provider, resources)
-	steps := getRunnableSteps(config, flags.Steps)
-	sources, moduleSources := createSources(ctx, steps, config, state, resources.GetSSM())
-	destinations := createDestinations(ctx, config)
-	pipeline := processPipelineFlags(flags.Pipeline)
+	steps, err := getRunnableSteps(config, flags.Steps)
+	if err != nil {
+		return nil, err
+	}
+	sources, moduleSources, err := createSources(ctx, steps, config, state, resources.GetSSM())
+	if err != nil {
+		return nil, err
+	}
+	destinations, err := createDestinations(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	pipeline := ProcessPipelineFlags(flags.Pipeline)
 	return &updater{
 		config:        config,
 		steps:         steps,
 		stepChecksums: model.NewStepsChecksums(),
-		provider:      provider,
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud),
-		callback:      NewCallback(ctx, config.Callback),
+		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, manager),
+		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
-	}
+	}, nil
 }
 
-func getLatestState(bucket model.Bucket) *model.State {
+func getLatestState(bucket model.Bucket) (*model.State, error) {
 	file, err := bucket.GetFile(stateFile)
 	if err != nil {
-		log.Fatalf("Failed to get state file: %v", err)
+		return nil, fmt.Errorf("failed to get state file: %v", err)
 	}
 	if file == nil {
-		return &model.State{}
+		return &model.State{}, nil
 	}
 	var state model.State
 	err = yaml.Unmarshal(file, &state)
 	if err != nil {
-		log.Fatalf("Failed to unmarshal state file: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal state file: %v", err)
 	}
-	return &state
+	return &state, nil
 }
 
-func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.Step {
+func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) ([]model.Step, error) {
 	if len(stepsFlag.Value()) == 0 {
-		return config.Steps
+		return config.Steps, nil
 	}
 	steps := model.NewSet[string]()
 	for _, step := range stepsFlag.Value() {
@@ -115,12 +126,12 @@ func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) []model.St
 		}
 	}
 	if len(steps) > 0 {
-		log.Fatalf("Runnable steps not found: %s", steps.String())
+		return nil, fmt.Errorf("runnable steps not found: %s", steps.String())
 	}
-	return runnableSteps
+	return runnableSteps, nil
 }
 
-func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string) {
+func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string, error) {
 	sources := make(map[string]*model.Source)
 	for _, source := range config.Sources {
 		var stableVersion *version.Version
@@ -130,19 +141,24 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 		} else {
 			CABundle, err := getCABundle(source.CAFile, config.Certs)
 			if err != nil {
-				log.Fatalf("Failed to get CABundle for source %s: %v", source.CAFile, err)
+				return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
 			}
 			sourceClient, err := git.NewSourceClient(ctx, source, CABundle)
 			if err != nil {
-				log.Fatalf("Failed to create source %s client: %v", source.URL, err)
+				return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
 			}
 			storage = sourceClient
 			if !source.ForceVersion {
-				stableVersion = getLatestRelease(source.URL, sourceClient)
+				stableVersion, err = sourceClient.GetLatestReleaseTag()
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to get latest release for %s: %s", source.URL, err)
+				}
 			}
 		}
 		if source.Username != "" {
-			upsertSourceCredentials(source, ssm)
+			if err := upsertSourceCredentials(source, ssm); err != nil {
+				return nil, nil, err
+			}
 		}
 		sources[source.URL] = &model.Source{
 			URL:           source.URL,
@@ -154,9 +170,12 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 			Auth:          model.SourceAuth{Username: source.Username, Password: source.Password},
 		}
 	}
-	moduleSources := addSourceModules(steps, config.Sources, sources)
-	addSourceReleases(steps, config.Sources, state, sources)
-	return sources, moduleSources
+	moduleSources, err := addSourceModules(steps, config.Sources, sources)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = addSourceReleases(steps, config.Sources, state, sources)
+	return sources, moduleSources, err
 }
 
 func getCABundle(file string, certs []model.File) ([]byte, error) {
@@ -171,21 +190,24 @@ func getCABundle(file string, certs []model.File) ([]byte, error) {
 	return nil, fmt.Errorf("CA file %s not found", file)
 }
 
-func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) {
+func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) error {
 	hash := util.HashCode(source.URL)
-	upsertSourceCredential(fmt.Sprintf(model.GitSourceFormat, hash), source.URL, ssm)
-	upsertSourceCredential(fmt.Sprintf(model.GitUsernameFormat, hash), source.Username, ssm)
-	upsertSourceCredential(fmt.Sprintf(model.GitPasswordFormat, hash), source.Password, ssm)
-}
-
-func upsertSourceCredential(key string, value string, ssm model.SSM) {
-	err := ssm.PutSecret(key, value)
+	err := ssm.PutSecret(fmt.Sprintf(model.GitSourceFormat, hash), source.URL)
 	if err != nil {
-		log.Fatalf("Failed to upsert secret %s: %v", key, err)
+		return fmt.Errorf("failed to upsert secret %s: %v", fmt.Sprintf(model.GitSourceFormat, hash), err)
 	}
+	err = ssm.PutSecret(fmt.Sprintf(model.GitUsernameFormat, hash), source.Username)
+	if err != nil {
+		return fmt.Errorf("failed to upsert secret %s: %v", fmt.Sprintf(model.GitUsernameFormat, hash), err)
+	}
+	err = ssm.PutSecret(fmt.Sprintf(model.GitPasswordFormat, hash), source.Password)
+	if err != nil {
+		return fmt.Errorf("failed to upsert secret %s: %v", fmt.Sprintf(model.GitPasswordFormat, hash), err)
+	}
+	return nil
 }
 
-func addSourceModules(steps []model.Step, configSources []model.ConfigSource, sources map[string]*model.Source) map[string]string {
+func addSourceModules(steps []model.Step, configSources []model.ConfigSource, sources map[string]*model.Source) (map[string]string, error) {
 	moduleSources := make(map[string]string)
 	for _, step := range steps {
 		for _, module := range step.Modules {
@@ -197,12 +219,12 @@ func addSourceModules(steps []model.Step, configSources []model.ConfigSource, so
 			}
 			moduleSource, err := getModuleSource(configSources, step, module, sources)
 			if err != nil {
-				log.Fatalf("Module %s in step %s is not included in any Source", module.Name, step.Name)
+				return nil, fmt.Errorf("module %s in step %s is not included in any Source", module.Name, step.Name)
 			}
 			moduleSources[module.Source] = moduleSource
 		}
 	}
-	return moduleSources
+	return moduleSources, nil
 }
 
 func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
@@ -237,7 +259,7 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 	return "", fmt.Errorf("module %s source not found", module.Name)
 }
 
-func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) {
+func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) error {
 	for _, cSource := range configSources {
 		source := sources[cSource.URL]
 		if cSource.ForceVersion {
@@ -249,7 +271,7 @@ func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, s
 			var err error
 			upperVersion, err = version.NewVersion(cSource.Version)
 			if err != nil {
-				log.Fatalf("Failed to parse version %s: %s", cSource.Version, err)
+				return fmt.Errorf("failed to parse version %s: %s", cSource.Version, err)
 			}
 		}
 		source.Version = upperVersion
@@ -258,14 +280,15 @@ func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, s
 		}
 		newestVersion, releases, err := getSourceReleases(steps, source, state)
 		if err != nil {
-			log.Fatalf("Failed to get releases: %v", err)
+			return fmt.Errorf("failed to get releases: %v", err)
 		}
 		source.NewestVersion = newestVersion
 		source.Releases = releases
 	}
+	return nil
 }
 
-func createDestinations(ctx context.Context, config model.Config) map[string]model.Destination {
+func createDestinations(ctx context.Context, config model.Config) (map[string]model.Destination, error) {
 	dests := make(map[string]model.Destination)
 	for _, destination := range config.Destinations {
 		if destination.Git == nil {
@@ -273,71 +296,62 @@ func createDestinations(ctx context.Context, config model.Config) map[string]mod
 		}
 		CABundle, err := getCABundle(destination.Git.CAFile, config.Certs)
 		if err != nil {
-			log.Fatalf("Failed to get CABundle for destination %s: %v", destination.Name, err)
+			return nil, fmt.Errorf("failed to get CABundle for destination %s: %v", destination.Name, err)
 		}
 		client, err := git.NewDestClient(ctx, destination.Name, *destination.Git, CABundle)
 		if err != nil {
-			log.Fatalf("Destination %s failed to create git client: %v", destination.Name, err)
+			return nil, fmt.Errorf("destination %s failed to create git client: %v", destination.Name, err)
 		}
 		dests[destination.Name] = client
 	}
-	return dests
+	return dests, nil
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud) *LocalPipeline {
+func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline, gcloudFlags)
+		return NewLocalPipeline(resources, pipeline, gcloudFlags, manager)
 	}
 	return nil
 }
 
-func (u *updater) Run() {
-	u.process(common.RunCommand, 0, 1)
-}
-
-func (u *updater) Update() {
-	mostReleases := u.getMostReleases()
-	if mostReleases < 2 {
-		log.Println("No updates found")
-		return
+func (u *updater) Process(command common.Command) error {
+	index := 0
+	mostReleases := 1
+	if command == common.UpdateCommand {
+		index = 1
+		mostReleases = u.getMostReleases()
+		if mostReleases < 2 {
+			log.Println("No updates found")
+			return nil
+		}
 	}
-	u.process(common.UpdateCommand, 1, mostReleases)
-}
-
-func (u *updater) process(command common.Command, index, mostReleases int) {
 	u.cmd = command
-	u.updateAgentJob(command)
 	for ; index < mostReleases; index++ {
-		u.processRelease(index, command)
+		err := u.processRelease(index, command)
+		if err != nil {
+			return fmt.Errorf("failed to process release: %v", err)
+		}
 	}
+	return nil
 }
 
-func (u *updater) updateAgentJob(cmd common.Command) {
-	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		return
-	}
-	agent := NewAgent(u.resources, *u.pipelineFlags.TerraformCache.Value)
-	err := agent.UpdateProjectImage(u.config.AgentVersion, cmd, u.provider.IsRunningLocally())
-	if err != nil {
-		log.Fatalf("Failed to update agent job: %s", err)
-	}
-}
-
-func (u *updater) processRelease(index int, command common.Command) {
+func (u *updater) processRelease(index int, command common.Command) error {
 	u.logReleases(index)
 	u.updateState()
 	if command == common.UpdateCommand {
-		u.updateChecksums(index)
+		if err := u.updateChecksums(index); err != nil {
+			return err
+		}
 	}
 	wg := new(model.SafeCounter)
-	errChan := make(chan error, len(u.steps))
-	failed := false
+	errChan := make(chan string, len(u.steps))
+	var failedSteps []string
 	retrySteps := make([]model.Step, 0)
 	for _, step := range u.steps {
 		retry, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
 			slog.Error(common.PrefixError(err))
-			failed = true
+			failedSteps = append(failedSteps, step.Name)
 			break
 		}
 		if retry {
@@ -347,16 +361,26 @@ func (u *updater) processRelease(index int, command common.Command) {
 	wg.Wait()
 	close(errChan)
 	time.Sleep(1 * time.Second)
-	u.putStateFileOrDie()
-	if _, ok := <-errChan; ok || failed {
-		log.Fatalf("One or more steps failed to apply")
+	err := u.putStateFileOrDie()
+	if err != nil {
+		return err
 	}
-	u.retrySteps(index, retrySteps, wg)
+	if len(failedSteps) == 0 {
+		failedSteps = getFailedSteps(errChan)
+	}
+	if len(failedSteps) > 0 {
+		return fmt.Errorf("failed to apply steps %s", strings.Join(failedSteps, ", "))
+	}
+	err = u.retrySteps(index, retrySteps, wg)
+	if err != nil {
+		return err
+	}
 	if command == common.UpdateCommand {
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
 		}
 	}
+	return nil
 }
 
 func (u *updater) getMostReleases() int {
@@ -388,6 +412,17 @@ func (u *updater) logReleases(index int) {
 	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
+func getFailedSteps(errChan chan string) []string {
+	var failedSteps []string
+	for stepName := range errChan {
+		if stepName == "" {
+			continue
+		}
+		failedSteps = append(failedSteps, stepName)
+	}
+	return failedSteps
+}
+
 func (u *updater) updateState() {
 	if len(u.state.Steps) == 0 {
 		createState(u.config, u.state)
@@ -397,7 +432,7 @@ func (u *updater) updateState() {
 	addNewSteps(u.config, u.state)
 }
 
-func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- error) (bool, error) {
+func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- string) (bool, error) {
 	stepState, err := u.getStepState(step)
 	if err != nil {
 		return false, err
@@ -444,9 +479,9 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	return false, nil
 }
 
-func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeCounter) {
+func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeCounter) error {
 	if len(retrySteps) == 0 {
-		return
+		return nil
 	}
 	u.pipelineFlags.AllowParallel = false
 	for _, step := range retrySteps {
@@ -454,10 +489,10 @@ func (u *updater) retrySteps(index int, retrySteps []model.Step, wg *model.SafeC
 		_, err := u.processStep(index, step, wg, nil)
 		if err != nil {
 			slog.Error(common.PrefixError(err))
-			log.Fatalf("Failed to apply step %s", step.Name)
+			return fmt.Errorf("failed to apply step %s", step.Name)
 		}
 	}
-	u.putStateFileOrDie()
+	return u.putStateFileOrDie()
 }
 
 func (u *updater) updateDestinationsPlanFiles(step model.Step, files map[string]model.File) {
@@ -481,7 +516,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 	}
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string]model.File) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- string, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
 		return nil
@@ -503,7 +538,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		err := u.executePipeline(firstRun, step, stepState, index, files)
 		if err != nil {
 			slog.Error(common.PrefixError(err))
-			errChan <- err
+			errChan <- step.Name
 		}
 	}()
 	return nil
@@ -729,7 +764,7 @@ func (u *updater) getStepState(step model.Step) (*model.StateStep, error) {
 func (u *updater) updateCertFiles(stepName string) error {
 	folder := fmt.Sprintf("steps/%s-%s", u.resources.GetCloudPrefix(), stepName)
 	if len(u.config.Certs) == 0 {
-		return removeFolderE(u.resources.GetBucket(), fmt.Sprintf("%s/%s", folder, certsFolder))
+		return removeFolder(u.resources.GetBucket(), fmt.Sprintf("%s/%s", folder, certsFolder))
 	}
 	allFiles := model.NewSet[string]()
 	for _, file := range u.config.Certs {
@@ -742,7 +777,7 @@ func (u *updater) updateCertFiles(stepName string) error {
 	}
 	bucketFiles, err := u.resources.GetBucket().ListFolderFiles(fmt.Sprintf("%s/%s", folder, certsFolder))
 	if err != nil {
-		log.Fatalf("Failed to list folder allFiles: %s", err)
+		return fmt.Errorf("failed to list folder allFiles: %s", err)
 	}
 	for _, bucketFile := range bucketFiles {
 		if allFiles.Contains(bucketFile) {
@@ -750,7 +785,7 @@ func (u *updater) updateCertFiles(stepName string) error {
 		}
 		err = u.resources.GetBucket().DeleteFile(bucketFile)
 		if err != nil {
-			log.Fatalf("Failed to delete file %s: %s", bucketFile, err)
+			return fmt.Errorf("failed to delete file %s: %s", bucketFile, err)
 		}
 	}
 	return nil
@@ -945,14 +980,6 @@ func getSourceReleases(steps []model.Step, source *model.Source, state *model.St
 		return nil, nil, fmt.Errorf("failed to get newer releases: %w", err)
 	}
 	return releases[len(releases)-1], releases, nil
-}
-
-func getLatestRelease(sourceUrl string, sourceClient *git.SourceClient) *version.Version {
-	latestRelease, err := sourceClient.GetLatestReleaseTag()
-	if err != nil {
-		log.Fatalf("Failed to get latest release for %s: %s", sourceUrl, err)
-	}
-	return latestRelease
 }
 
 func getOldestVersion(steps []model.Step, source *model.Source, state *model.State) (string, error) {
@@ -1190,7 +1217,7 @@ func (u *updater) createBackendConf(path string, bucket model.Bucket) (string, [
 	return filePath, confBytes, bucket.PutFile(filePath, confBytes)
 }
 
-func (u *updater) putStateFileOrDie() {
+func (u *updater) putStateFileOrDie() error {
 	err := u.putStateFile()
 	if err != nil {
 		state, _ := yaml.Marshal(u.state)
@@ -1198,8 +1225,9 @@ func (u *updater) putStateFileOrDie() {
 			log.Println(string(state))
 			log.Println("Update the state file manually to avoid reapplying steps")
 		}
-		log.Fatalf("Failed to put state file: %v", err)
+		return fmt.Errorf("failed to put state file: %v", err)
 	}
+	return nil
 }
 
 func (u *updater) putStateFile() error {
@@ -1218,7 +1246,7 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 	for _, module := range stepState.Modules {
 		module.AppliedVersion = &module.Version
 	}
-	if u.callback == nil {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return u.putStateFile()
 	}
 	modifiedStep, err := u.replaceStepMetadataValues(step, index)
@@ -1235,15 +1263,11 @@ func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateSt
 }
 
 func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model.StateStep, step *model.Step) {
-	if u.callback == nil {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return
 	}
-	log.Printf("Posting step %s status '%s' to callback", stepState.Name, status)
-	err := u.callback.PostStepState(status, stepState, step)
-	if err != nil {
-		slog.Error(common.PrefixError(fmt.Errorf("error posting step %s status '%s' to callback: %v",
-			stepState.Name, status, err)))
-	}
+	log.Printf("Notifying step %s status '%s'", stepState.Name, status)
+	u.manager.StepState(status, stepState, step)
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
@@ -1448,7 +1472,7 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 	return release, imageSource
 }
 
-func (u *updater) updateChecksums(index int) {
+func (u *updater) updateChecksums(index int) error {
 	for url, source := range u.sources {
 		if index != 1 && len(source.Releases)-1 < index {
 			continue
@@ -1463,11 +1487,12 @@ func (u *updater) updateChecksums(index int) {
 		}
 		checksums, err := source.Storage.CalculateChecksums(release)
 		if err != nil {
-			log.Fatalf("Failed to get checksums for %s: %s", url, err)
+			return fmt.Errorf("failed to get checksums for %s: %s", url, err)
 		}
 		source.CurrentChecksums = checksums
 		u.sources[url] = source
 	}
+	return nil
 }
 
 func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string]model.File) error {
@@ -1577,7 +1602,7 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 }
 
 func (u *updater) getModuleMetadata(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]string, error) {
-	if u.callback == nil {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return nil, nil
 	}
 	filePath := fmt.Sprintf("modules/%s/agent.yaml", moduleSource)

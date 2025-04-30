@@ -9,15 +9,15 @@ import (
 )
 
 type Config struct {
-	Prefix           string              `yaml:"prefix,omitempty"`
-	Sources          []ConfigSource      `yaml:"sources,omitempty"`
-	AgentVersion     string              `yaml:"agent_version,omitempty"`
-	BaseImageSource  string              `yaml:"base_image_source,omitempty"`
-	BaseImageVersion string              `yaml:"base_image_version,omitempty"`
-	Destinations     []ConfigDestination `yaml:"destinations,omitempty"`
-	Callback         Callback            `yaml:"callback,omitempty"`
-	Steps            []Step              `yaml:"steps,omitempty"`
-	Certs            []File              `yaml:"-"`
+	Prefix           string               `yaml:"prefix,omitempty"`
+	Sources          []ConfigSource       `yaml:"sources,omitempty"`
+	AgentVersion     string               `yaml:"agent_version,omitempty"`
+	BaseImageSource  string               `yaml:"base_image_source,omitempty"`
+	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
+	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
+	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
+	Steps            []Step               `yaml:"steps,omitempty"`
+	Certs            []File               `yaml:"-"`
 }
 
 type ConfigSource struct {
@@ -51,7 +51,25 @@ type Git struct {
 	CAFile          string `yaml:"ca_file,omitempty"`
 }
 
-type Callback struct {
+type ConfigNotification struct {
+	Name         string           `yaml:"name,omitempty"`
+	Context      string           `yaml:"context,omitempty"`
+	MessageTypes []MessageType    `yaml:"message_types,omitempty"`
+	Slack        *Slack           `yaml:"slack,omitempty"`
+	Teams        *Teams           `yaml:"teams,omitempty"`
+	Api          *NotificationApi `yaml:"api,omitempty"`
+}
+
+type Slack struct {
+	Token     string `yaml:"token,omitempty"`
+	ChannelId string `yaml:"channel_id,omitempty"`
+}
+
+type Teams struct {
+	WebhookUrl string `yaml:"webhook_url,omitempty"`
+}
+
+type NotificationApi struct {
 	URL string `yaml:"url,omitempty"`
 	Key string `yaml:"key,omitempty"`
 }

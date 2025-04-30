@@ -19,21 +19,21 @@ type IAM interface {
 	AttachRolePolicy(policyArn string, roleName string) error
 	DeleteRolePolicyAttachment(policyName string, roleName string) error
 	DeleteRolePolicyAttachments(roleName string) error
-	CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy
+	CreatePolicy(policyName string, statement []PolicyStatement) (*types.Policy, error)
 	GetPolicy(policyName string) (*types.Policy, error)
 	DeletePolicy(policyName string, accountId string) error
-	UpdatePolicy(policyArn string, statement []PolicyStatement)
-	CreateRole(roleName string, statement []PolicyStatement) *types.Role
+	UpdatePolicy(policyArn string, statement []PolicyStatement) error
+	CreateRole(roleName string, statement []PolicyStatement) (*types.Role, error)
 	DeleteRole(roleName string) error
-	GetRole(roleName string) *types.Role
-	GetUser(username string) *types.User
-	CreateUser(userName string) *types.User
+	GetRole(roleName string) (*types.Role, error)
+	GetUser(username string) (*types.User, error)
+	CreateUser(userName string) (*types.User, error)
 	DeleteUser(userName string) error
-	AttachUserPolicy(policyArn string, userName string)
+	AttachUserPolicy(policyArn string, userName string) error
 	DetachUserPolicy(policyArn string, userName string) error
-	CreateAccessKey(userName string) *types.AccessKey
+	CreateAccessKey(userName string) (*types.AccessKey, error)
 	DeleteAccessKeys(userName string) error
-	CreateServiceLinkedRole(service string)
+	CreateServiceLinkedRole(service string) error
 }
 
 type PolicyDocument struct {
@@ -62,48 +62,56 @@ func NewIAM(ctx context.Context, config aws.Config, accountId string) IAM {
 	}
 }
 
-func (i *identity) CreateRole(roleName string, statement []PolicyStatement) *types.Role {
+func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*types.Role, error) {
+	policy, err := getPolicy(statement)
+	if err != nil {
+		return nil, err
+	}
 	result, err := i.iamClient.CreateRole(i.ctx, &iam.CreateRoleInput{
-		AssumeRolePolicyDocument: getPolicy(statement),
+		AssumeRolePolicyDocument: policy,
 		RoleName:                 aws.String(roleName),
 	})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
 		if errors.As(err, &awsError) {
-			return nil
+			return nil, nil
 		}
-		log.Fatalf("Failed to create role %s: %s", roleName, err)
+		return nil, fmt.Errorf("failed to create role %s: %s", roleName, err)
 	}
 	log.Printf("Created IAM role: %s\n", roleName)
-	return result.Role
+	return result.Role, nil
 }
 
-func (i *identity) GetRole(roleName string) *types.Role {
+func (i *identity) GetRole(roleName string) (*types.Role, error) {
 	role, err := i.iamClient.GetRole(i.ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
 		var awsError *types.NoSuchEntityException
 		if errors.As(err, &awsError) {
-			return nil
+			return nil, nil
 		}
-		log.Fatalf("Failed to get role %s: %s", roleName, err)
+		return nil, fmt.Errorf("failed to get role %s: %s", roleName, err)
 	}
-	return role.Role
+	return role.Role, nil
 }
 
-func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) *types.Policy {
+func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) (*types.Policy, error) {
+	policy, err := getPolicy(statement)
+	if err != nil {
+		return nil, err
+	}
 	result, err := i.iamClient.CreatePolicy(i.ctx, &iam.CreatePolicyInput{
-		PolicyDocument: getPolicy(statement),
+		PolicyDocument: policy,
 		PolicyName:     aws.String(policyName),
 	})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
 		if !errors.As(err, &awsError) {
-			log.Fatalf("Failed to create policy %s: %s", policyName, err)
+			return nil, fmt.Errorf("failed to create policy %s: %s", policyName, err)
 		}
-		return &types.Policy{Arn: aws.String(fmt.Sprintf(policyArnFormat, i.accountId, policyName))}
+		return &types.Policy{Arn: aws.String(fmt.Sprintf(policyArnFormat, i.accountId, policyName))}, nil
 	}
 	log.Printf("Created IAM policy: %s\n", policyName)
-	return result.Policy
+	return result.Policy, nil
 }
 
 func (i *identity) GetPolicy(policyName string) (*types.Policy, error) {
@@ -120,34 +128,45 @@ func (i *identity) GetPolicy(policyName string) (*types.Policy, error) {
 	return result.Policy, nil
 }
 
-func (i *identity) UpdatePolicy(policyArn string, statement []PolicyStatement) {
+func (i *identity) UpdatePolicy(policyArn string, statement []PolicyStatement) error {
 	versionsOutput, err := i.iamClient.ListPolicyVersions(i.ctx, &iam.ListPolicyVersionsInput{
 		PolicyArn: aws.String(policyArn),
 	})
 	if err != nil {
-		log.Fatalf("Failed to list policy versions for %s: %s", policyArn, err)
+		return fmt.Errorf("failed to list policy versions for %s: %s", policyArn, err)
 	}
-	if i.policyNotChanged(policyArn, statement, versionsOutput.Versions) {
+	notChanged, err := i.policyNotChanged(policyArn, statement, versionsOutput.Versions)
+	if err != nil {
+		return err
+	}
+	if notChanged {
 		log.Printf("Policy %s is already up to date\n", policyArn)
-		return
+		return nil
 	}
 	if len(versionsOutput.Versions) >= 5 {
-		i.deleteOldestPolicyVersion(policyArn, versionsOutput.Versions)
+		if err = i.deleteOldestPolicyVersion(policyArn, versionsOutput.Versions); err != nil {
+			return err
+		}
+	}
+	policy, err := getPolicy(statement)
+	if err != nil {
+		return err
 	}
 	_, err = i.iamClient.CreatePolicyVersion(i.ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn:      aws.String(policyArn),
-		PolicyDocument: getPolicy(statement),
+		PolicyDocument: policy,
 		SetAsDefault:   true,
 	})
 	if err != nil {
-		log.Fatalf("Failed to update policy %s: %s", policyArn, err)
+		return fmt.Errorf("failed to update policy %s: %s", policyArn, err)
 	}
 	log.Printf("Updated IAM policy: %s\n", policyArn)
+	return nil
 }
 
-func (i *identity) policyNotChanged(policyArn string, statement []PolicyStatement, versions []types.PolicyVersion) bool {
+func (i *identity) policyNotChanged(policyArn string, statement []PolicyStatement, versions []types.PolicyVersion) (bool, error) {
 	if len(versions) == 0 {
-		return false
+		return false, nil
 	}
 	var newestVersion *types.PolicyVersion
 	for _, version := range versions {
@@ -156,32 +175,36 @@ func (i *identity) policyNotChanged(policyArn string, statement []PolicyStatemen
 		}
 	}
 	if newestVersion == nil {
-		return false
+		return false, nil
 	}
 	version, err := i.iamClient.GetPolicyVersion(i.ctx, &iam.GetPolicyVersionInput{
 		PolicyArn: aws.String(policyArn),
 		VersionId: newestVersion.VersionId,
 	})
 	if err != nil {
-		log.Fatalf("Failed to get policy version %s: %s", *newestVersion.VersionId, err)
+		return false, fmt.Errorf("failed to get policy version %s: %s", *newestVersion.VersionId, err)
 	}
 	decodedDocument, err := url.QueryUnescape(*version.PolicyVersion.Document)
 	if err != nil {
-		log.Fatalf("Failed to decode policy document: %s", err)
+		return false, fmt.Errorf("failed to decode policy document: %s", err)
 	}
-	return decodedDocument == *getPolicy(statement)
+	policy, err := getPolicy(statement)
+	if err != nil {
+		return false, err
+	}
+	return decodedDocument == *policy, nil
 }
 
-func getPolicy(statements []PolicyStatement) *string {
+func getPolicy(statements []PolicyStatement) (*string, error) {
 	policy := PolicyDocument{
 		Version:   "2012-10-17",
 		Statement: statements,
 	}
 	policyBytes, err := json.Marshal(policy)
 	if err != nil {
-		log.Fatalf("Failed to marshal policy: %s", err)
+		return nil, fmt.Errorf("failed to marshal policy: %s", err)
 	}
-	return aws.String(string(policyBytes))
+	return aws.String(string(policyBytes)), nil
 }
 
 func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
@@ -259,7 +282,7 @@ func (i *identity) DeleteRole(roleName string) error {
 	return nil
 }
 
-func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.PolicyVersion) {
+func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.PolicyVersion) error {
 	var oldestVersion *types.PolicyVersion
 	for _, version := range versions {
 		if oldestVersion == nil || version.CreateDate.Before(*oldestVersion.CreateDate) {
@@ -272,34 +295,35 @@ func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.
 			VersionId: oldestVersion.VersionId,
 		})
 		if err != nil {
-			log.Fatalf("Failed to delete oldest policy version for %s: %s", policyArn, err)
+			return fmt.Errorf("failed to delete oldest policy version for %s: %s", policyArn, err)
 		}
 	}
+	return nil
 }
 
-func (i *identity) GetUser(username string) *types.User {
+func (i *identity) GetUser(username string) (*types.User, error) {
 	user, err := i.iamClient.GetUser(i.ctx, &iam.GetUserInput{UserName: aws.String(username)})
 	if err != nil {
 		var awsError *types.NoSuchEntityException
 		if errors.As(err, &awsError) {
-			return nil
+			return nil, nil
 		}
-		log.Fatalf("Failed to get user %s: %s", username, err)
+		return nil, fmt.Errorf("failed to get user %s: %s", username, err)
 	}
-	return user.User
+	return user.User, nil
 }
 
-func (i *identity) CreateUser(username string) *types.User {
+func (i *identity) CreateUser(username string) (*types.User, error) {
 	user, err := i.iamClient.CreateUser(i.ctx, &iam.CreateUserInput{UserName: aws.String(username)})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
 		if errors.As(err, &awsError) {
-			return nil
+			return nil, nil
 		}
-		log.Fatalf("Failed to create user %s: %v", username, err)
+		return nil, fmt.Errorf("failed to create user %s: %v", username, err)
 	}
 	log.Printf("Created IAM user: %s\n", username)
-	return user.User
+	return user.User, nil
 }
 
 func (i *identity) DeleteUser(userName string) error {
@@ -315,14 +339,15 @@ func (i *identity) DeleteUser(userName string) error {
 	return nil
 }
 
-func (i *identity) AttachUserPolicy(policyArn string, userName string) {
+func (i *identity) AttachUserPolicy(policyArn string, userName string) error {
 	_, err := i.iamClient.AttachUserPolicy(i.ctx, &iam.AttachUserPolicyInput{
 		PolicyArn: aws.String(policyArn),
 		UserName:  aws.String(userName),
 	})
 	if err != nil {
-		log.Fatalf("Failed to attach policy %s to user %s: %s", policyArn, userName, err)
+		return fmt.Errorf("failed to attach policy %s to user %s: %s", policyArn, userName, err)
 	}
+	return nil
 }
 
 func (i *identity) DetachUserPolicy(policyArn string, userName string) error {
@@ -340,13 +365,13 @@ func (i *identity) DetachUserPolicy(policyArn string, userName string) error {
 	return nil
 }
 
-func (i *identity) CreateAccessKey(userName string) *types.AccessKey {
+func (i *identity) CreateAccessKey(userName string) (*types.AccessKey, error) {
 	accessKey, err := i.iamClient.CreateAccessKey(i.ctx, &iam.CreateAccessKeyInput{UserName: aws.String(userName)})
 	if err != nil {
-		log.Fatalf("Failed to create access key for user %s: %s", userName, err)
+		return nil, fmt.Errorf("failed to create access key for user %s: %s", userName, err)
 	}
 	log.Printf("Created access key for user: %s\n", userName)
-	return accessKey.AccessKey
+	return accessKey.AccessKey, nil
 }
 
 func (i *identity) DeleteAccessKeys(userName string) error {
@@ -376,19 +401,19 @@ func (i *identity) DeleteAccessKeys(userName string) error {
 	return nil
 }
 
-func (i *identity) CreateServiceLinkedRole(service string) {
+func (i *identity) CreateServiceLinkedRole(service string) error {
 	_, err := i.iamClient.CreateServiceLinkedRole(i.ctx, &iam.CreateServiceLinkedRoleInput{
 		AWSServiceName: aws.String(service),
 	})
 	if err == nil {
 		log.Printf("Created service linked role for %s\n", service)
-		return
+		return nil
 	}
 	var awsError *types.InvalidInputException
 	if errors.As(err, &awsError) && strings.Contains(awsError.ErrorMessage(), "has been taken") {
-		return
+		return nil
 	}
-	log.Fatalf("Failed to create service linked role for %s: %s", service, err)
+	return fmt.Errorf("failed to create service linked role for %s: %s", service, err)
 }
 
 func CodeBuildPolicy(logGroupArn string, s3Arn string, dynamodbArn string) []PolicyStatement {

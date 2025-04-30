@@ -14,44 +14,44 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/commands/update"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/urfave/cli/v2"
-	"log"
 )
 
 func action(cmd common.Command) func(c *cli.Context) error {
 	return func(c *cli.Context) error {
 		if err := flags.Setup(cmd); err != nil {
-			log.Fatal(&common.PrefixedError{Reason: err})
+			return err
 		}
-		common.ChooseLogger(flags.LogLevel)
-		run(c.Context, cmd)
-		return nil
+		if err := common.ChooseLogger(flags.LogLevel); err != nil {
+			return err
+		}
+		return run(c.Context, cmd)
 	}
 }
 
-func run(ctx context.Context, cmd common.Command) {
+func run(ctx context.Context, cmd common.Command) error {
 	common.PrintVersion()
 	switch cmd {
 	case common.RunCommand:
-		agentRun.Run(ctx, flags)
+		return agentRun.Run(ctx, flags)
 	case common.UpdateCommand:
-		update.Update(ctx, flags)
+		return update.Update(ctx, flags)
 	case common.BootstrapCommand:
-		bootstrap.Bootstrap(ctx, flags)
+		return bootstrap.Bootstrap(ctx, flags)
 	case common.DeleteCommand:
-		delete.Delete(ctx, flags)
+		return delete.Delete(ctx, flags)
 	case common.DestroyCommand:
-		destroy.Destroy(ctx, flags)
+		return destroy.Destroy(ctx, flags)
 	case common.SACommand:
-		sa.Run(ctx, flags)
+		return sa.Run(ctx, flags)
 	case common.PullCommand:
-		pull.Run(ctx, flags)
+		return pull.Run(ctx, flags)
 	case common.AddCustomCommand, common.DeleteCustomCommand, common.GetCustomCommand, common.ListCustomCommand:
-		params.Custom(ctx, flags, cmd)
+		return params.Custom(ctx, flags, cmd)
 	case common.MigratePlanCommand:
-		migrate.Plan(ctx, flags)
+		return migrate.Plan(ctx, flags)
 	case common.MigrateValidateCommand:
-		migrate.Validate(ctx, flags)
+		return migrate.Validate(ctx, flags)
 	default:
-		log.Fatal(&common.PrefixedError{Reason: errors.New("unsupported command")})
+		return errors.New("unsupported command")
 	}
 }

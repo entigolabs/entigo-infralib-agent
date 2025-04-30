@@ -34,7 +34,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Overriding with module properties](#overriding-with-module-properties)
   * [Including files in steps](#including-files-in-steps)
   * [Including CA certificates](#including-ca-certificates)
-  * [Callback](#callback)
+  * [Notification API requests](#notification-api-requests)
   * [Encryption](#encryption)
 * [Migration Helper](#migration-helper)
   * [Import File](#import-file)
@@ -321,7 +321,7 @@ sources:
     repo_path: string
     ca_file: string
 destinations:
-  - name:
+  - name: string
     git:
       url: string
       key: string
@@ -332,9 +332,18 @@ destinations:
       author_email: string
       insecure: bool
       ca_file: string
-callback:
-  url: string
-  key: string
+notifications:
+  - name: string
+    context: string
+    message_types: []string
+    slack:
+      token: string
+      channel_id: string
+    teams:
+      webhook_url: string
+    api:
+      url: string
+      key: string
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -399,9 +408,18 @@ Source version is overwritten by module version. Default version is **stable** w
     * author_email - author email for commits, default **no-reply@localhost**
     * insecure - allow insecure connection, default **false**
     * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
-* callback - optionally send updates about the status of modules
-  * url - url for the callback
-  * key - unique identifier for the callback
+* notifications - send notifications with selected types, each notifier can only use one subtype
+  * name - name of the notifier
+  * context - optional, extra context added to the notification
+  * message_types - list of types of messages to send, possible values `started | approvals | progress | success | failure`, default **`[approvals, failure]`**
+  * api - send notifications to a custom API
+    * url - url for the api
+    * key - unique identifier for the api
+  * slack - send notifications to slack
+    * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
+    * channel_id - slack channel id
+  * teams - send notifications to teams
+    * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify github](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
@@ -519,12 +537,14 @@ It's possible to include files in steps by adding the files into a `./config/<st
 
 It's possible to include CA certificates by adding the files into a `./ca-certificates` subdirectory. Files will be copied into the bucket root and each step directory for Infralib.
 
-### Callback
+### Notification API requests
 
-When configuring a callback, agent will send requests to the specified URL about the status of step pipelines.
+When configuring api notifications, agent will send requests to the specified URL.
 
 #### POST `/steps/status`
 
+Status of step pipelines.
+Required configured message type: `progress`
 Payload example:
 ```json
 {

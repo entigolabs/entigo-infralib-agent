@@ -7,16 +7,29 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
-func Run(ctx context.Context, flags *common.Flags) {
-	provider := service.GetCloudProvider(ctx, flags)
-	addEncryption(flags, provider.GetResources())
-	provider.CreateServiceAccount()
+func Run(ctx context.Context, flags *common.Flags) error {
+	provider, err := service.GetCloudProvider(ctx, flags)
+	if err != nil {
+		return err
+	}
+	resources, err := provider.GetResources()
+	if err != nil {
+		return err
+	}
+	err = addEncryption(flags, resources)
+	if err != nil {
+		return err
+	}
+	return provider.CreateServiceAccount()
 }
 
-func addEncryption(flags *common.Flags, resources model.Resources) {
-	keyId := service.GetEncryptionKey(resources.GetProviderType(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
-	if keyId == "" {
-		return
+func addEncryption(flags *common.Flags, resources model.Resources) error {
+	keyId, err := service.GetEncryptionKey(resources.GetProviderType(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
+	if err != nil {
+		return err
 	}
-	resources.GetSSM().AddEncryptionKeyId(keyId)
+	if keyId != "" {
+		resources.GetSSM().AddEncryptionKeyId(keyId)
+	}
+	return nil
 }

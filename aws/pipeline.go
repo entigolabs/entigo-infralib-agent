@@ -30,6 +30,8 @@ const (
 	sourceName        = "Source"
 	destroyName       = "Destroy"
 	applyDestroyName  = "ApplyDestroy"
+
+	linkFormat = "https://%s.console.aws.amazon.com/codesuite/codepipeline/pipelines/%s/view?region=%s"
 )
 
 type approvalStatus string
@@ -43,23 +45,27 @@ const (
 
 type Pipeline struct {
 	ctx            context.Context
+	region         string
 	codePipeline   *codepipeline.Client
 	roleArn        string
 	cloudWatch     CloudWatch
 	logGroup       string
 	logStream      string
 	terraformCache bool
+	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
+		region:         awsConfig.Region,
 		codePipeline:   codepipeline.NewFromConfig(awsConfig),
 		roleArn:        roleArn,
 		cloudWatch:     cloudWatch,
 		logGroup:       logGroup,
 		logStream:      logStream,
 		terraformCache: terraformCache,
+		manager:        manager,
 	}
 }
 
@@ -685,6 +691,13 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 			continue
 		}
 		if action.Status == types.ActionExecutionStatusSucceeded {
+			if status == approvalStatusWaiting && p.manager != nil {
+				message := fmt.Sprintf("Pipeline %s was approved", pipelineName)
+				if action.UpdatedBy != nil {
+					message += fmt.Sprintf("\nApproved by %s", *action.UpdatedBy)
+				}
+				p.manager.Message(model.MessageTypeApprovals, message)
+			}
 			return approvalStatusApproved, nil
 		}
 		if action.Status != types.ActionExecutionStatusInProgress {
@@ -716,8 +729,15 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 		return p.approveStage(pipelineName)
 	} else {
 		log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+		if p.manager != nil {
+			p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+		}
 		return approvalStatusWaiting, nil
 	}
+}
+
+func (p *Pipeline) getLink(pipelineName string) string {
+	return fmt.Sprintf(linkFormat, p.region, pipelineName, p.region)
 }
 
 func (p *Pipeline) getChanges(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.PipelineChanges, error) {

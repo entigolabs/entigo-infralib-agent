@@ -10,25 +10,28 @@ import (
 	"strings"
 )
 
-func GetCloudProvider(ctx context.Context, flags *common.Flags) model.CloudProvider {
-	prefix := GetProviderPrefix(flags)
-	pipelineFlags := processPipelineFlags(flags.Pipeline)
+func GetCloudProvider(ctx context.Context, flags *common.Flags) (model.CloudProvider, error) {
+	prefix, err := GetProviderPrefix(flags)
+	if err != nil {
+		return nil, err
+	}
+	pipelineFlags := ProcessPipelineFlags(flags.Pipeline)
 	if flags.GCloud.ProjectId != "" {
 		log.Println("Using GCloud with project ID: ", flags.GCloud.ProjectId)
-		return gcloud.NewGCloud(ctx, strings.ToLower(prefix), flags.GCloud, pipelineFlags, flags.SkipBucketCreationDelay)
+		return gcloud.NewGCloud(ctx, strings.ToLower(prefix), flags.GCloud, pipelineFlags, flags.SkipBucketCreationDelay), nil
 	}
 	return aws.NewAWS(ctx, strings.ToLower(prefix), flags.AWS, pipelineFlags, flags.SkipBucketCreationDelay)
 }
 
-func GetResourceProvider(ctx context.Context, flags *common.Flags) model.ResourceProvider {
+func GetResourceProvider(ctx context.Context, flags *common.Flags) (model.ResourceProvider, error) {
 	if flags.GCloud.ProjectId != "" {
 		log.Println("Using GCloud with project ID: ", flags.GCloud.ProjectId)
-		return gcloud.NewGCloudProvider(ctx, flags.GCloud)
+		return gcloud.NewGCloudProvider(ctx, flags.GCloud), nil
 	}
 	return aws.NewAWSProvider(ctx, flags.AWS)
 }
 
-func processPipelineFlags(pipeline common.Pipeline) common.Pipeline {
+func ProcessPipelineFlags(pipeline common.Pipeline) common.Pipeline {
 	if pipeline.TerraformCache.Value != nil {
 		return pipeline
 	}

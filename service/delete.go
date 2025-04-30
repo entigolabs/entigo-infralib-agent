@@ -11,7 +11,7 @@ import (
 )
 
 type Deleter interface {
-	Delete()
+	Delete() error
 	Destroy()
 }
 
@@ -25,44 +25,63 @@ type deleter struct {
 	localPipeline        *LocalPipeline
 }
 
-func NewDeleter(ctx context.Context, flags *common.Flags) Deleter {
-	provider := GetCloudProvider(ctx, flags)
-	resources := provider.GetResources()
+func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
+	provider, err := GetCloudProvider(ctx, flags)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := provider.GetResources()
+	if err != nil {
+		return nil, err
+	}
 	repo, err := resources.GetBucket().GetRepoMetadata()
 	if err != nil {
-		log.Fatalf("Failed to get repository metadata: %s", err)
+		return nil, fmt.Errorf("failed to get repository metadata: %s", err)
 	}
 	if repo == nil && flags.Config == "" {
 		return &deleter{
 			config:    model.Config{},
 			provider:  provider,
 			resources: resources,
-		}
+		}, nil
 	}
-	config := getBaseConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
-	ValidateConfig(config, nil)
+	config, err := getBaseConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
+	if err != nil {
+		return nil, err
+	}
+	if err = ValidateConfig(config, nil); err != nil {
+		return nil, fmt.Errorf("failed to validate config: %v", err)
+	}
+	steps, err := getRunnableSteps(config, flags.Steps)
+	if err != nil {
+		return nil, err
+	}
 	return &deleter{
 		config:               config,
-		steps:                getRunnableSteps(config, flags.Steps),
+		steps:                steps,
 		provider:             provider,
 		resources:            resources,
 		deleteBucket:         flags.Delete.DeleteBucket,
 		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
-		localPipeline:        getLocalPipeline(resources, processPipelineFlags(flags.Pipeline), flags.GCloud),
-	}
+		localPipeline:        getLocalPipeline(resources, ProcessPipelineFlags(flags.Pipeline), flags.GCloud, nil),
+	}, nil
 }
 
-func getBaseConfig(prefix, configFile string, bucket model.Bucket) model.Config {
+func getBaseConfig(prefix, configFile string, bucket model.Bucket) (model.Config, error) {
 	var config model.Config
+	var err error
 	if configFile != "" {
-		config = getLocalConfigFile(configFile)
+		config, err = getLocalConfigFile(configFile)
 	} else {
-		config = getRemoteConfigFile(bucket)
+		config, err = getRemoteConfigFile(bucket)
+	}
+	if err != nil {
+		return config, err
 	}
 	return replaceConfigValues(nil, prefix, config)
 }
 
-func (d *deleter) Delete() {
+func (d *deleter) Delete() error {
 	for i := len(d.config.Steps) - 1; i >= 0; i-- {
 		step := d.config.Steps[i]
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
@@ -76,7 +95,7 @@ func (d *deleter) Delete() {
 		}
 	}
 	d.deleteSourceSecrets()
-	d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
+	return d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
 }
 
 func (d *deleter) deleteSourceSecrets() {

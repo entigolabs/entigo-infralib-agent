@@ -34,18 +34,20 @@ const (
 )
 
 type CloudProvider interface {
-	SetupResources() Resources
-	GetResources() Resources
-	DeleteResources(deleteBucket bool, deleteServiceAccount bool)
-	CreateServiceAccount()
+	GetIdentifier() string
+	SetupResources(manager NotificationManager) (Resources, error)
+	SetupMinimalResources() (Resources, error)
+	GetResources() (Resources, error)
+	DeleteResources(deleteBucket bool, deleteServiceAccount bool) error
+	CreateServiceAccount() error
 	AddEncryption(moduleName string, outputs map[string]TFOutput) error
 	IsRunningLocally() bool
 }
 
 type ResourceProvider interface {
 	GetProviderType() ProviderType
-	GetSSM() SSM
-	GetBucket(prefix string) Bucket
+	GetSSM() (SSM, error)
+	GetBucket(prefix string) (Bucket, error)
 }
 
 type Resources interface {
