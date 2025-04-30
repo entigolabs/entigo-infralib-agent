@@ -42,7 +42,7 @@ func (c *HttpClient) Do(ctx context.Context, method string, url string, object a
 		}
 		body = bytes.NewReader(jsonObject)
 	}
-	req, err := http.NewRequest(method, url, body)
+	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +65,13 @@ func (c *HttpClient) DoWithRetry(ctx context.Context, req *http.Request, body *b
 	var resp *http.Response
 	var err error
 	req = req.WithContext(ctx)
-	for i := 0; i < c.retries; i++ {
+	if body != nil {
 		req.Body = io.NopCloser(body)
+	}
+	for i := 0; i < c.retries; i++ {
+		if body != nil {
+			_, _ = body.Seek(0, io.SeekStart)
+		}
 		resp, err = c.client.Do(req)
 		if err == nil && resp.StatusCode/100 == 2 {
 			return resp, nil
@@ -77,9 +82,6 @@ func (c *HttpClient) DoWithRetry(ctx context.Context, req *http.Request, body *b
 		}
 		slog.Error(message)
 		time.Sleep(time.Second * time.Duration(i*2))
-		if body != nil {
-			_, _ = body.Seek(0, io.SeekStart)
-		}
 	}
 	if resp != nil && resp.StatusCode/100 != 2 {
 		err = getFailedResponseError(resp)

@@ -63,8 +63,8 @@ func (a *API) StepState(status model.ApplyStatus, stepState model.StateStep, ste
 
 func (a *API) getHeaders() http.Header {
 	return http.Header{
-		"NotificationApi-Key": []string{a.key},
-		"Content-Type":        []string{"application/json"},
+		"Api-Key":      []string{a.key},
+		"Content-Type": []string{"application/json"},
 	}
 }
 
