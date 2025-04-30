@@ -322,7 +322,7 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 }
 
 func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges, approve model.ManualApprove) error {
-	ctx, cancel := context.WithTimeout(p.ctx, 4*time.Hour)
+	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Hour)
 	defer cancel()
 	rollout, err := rolloutOp.Wait(ctx)
 	if err != nil {
@@ -390,8 +390,7 @@ func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipe
 				delay = util.MinInt(delay*2, 30)
 				continue
 			}
-			if (rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS ||
-				rollout.GetState() == deploypb.Rollout_SUCCEEDED) && notified {
+			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
 				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
 				notified = false
 			}

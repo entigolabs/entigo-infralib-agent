@@ -137,6 +137,7 @@ func (n *NotificationManager) notify(messageType model.MessageType, action func(
 		wg.Add(1)
 		go func(notifier model.Notifier) {
 			defer wg.Done()
+			slog.Debug(fmt.Sprintf("Sending %s notification to %s notifier", messageType, notifier.GetName()))
 			err := action(notifier)
 			if err != nil {
 				slog.Error(common.PrefixError(fmt.Errorf("failed to notify '%s': %v", notifier.GetName(), err)))

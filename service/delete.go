@@ -50,7 +50,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 		return nil, err
 	}
 	if err = ValidateConfig(config, nil); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to validate config: %v", err)
 	}
 	steps, err := getRunnableSteps(config, flags.Steps)
 	if err != nil {

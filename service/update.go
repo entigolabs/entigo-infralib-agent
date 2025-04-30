@@ -61,7 +61,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		return nil, err
 	}
 	if err = ValidateConfig(config, state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to validate config: %v", err)
 	}
 	ProcessConfig(&config, resources.GetProviderType())
 	steps, err := getRunnableSteps(config, flags.Steps)
@@ -344,14 +344,14 @@ func (u *updater) processRelease(index int, command common.Command) error {
 		}
 	}
 	wg := new(model.SafeCounter)
-	errChan := make(chan error, len(u.steps))
-	failed := false
+	errChan := make(chan string, len(u.steps))
+	var failedSteps []string
 	retrySteps := make([]model.Step, 0)
 	for _, step := range u.steps {
 		retry, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
 			slog.Error(common.PrefixError(err))
-			failed = true
+			failedSteps = append(failedSteps, step.Name)
 			break
 		}
 		if retry {
@@ -365,8 +365,11 @@ func (u *updater) processRelease(index int, command common.Command) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := <-errChan; ok || failed {
-		return errors.New("one or more steps failed to apply")
+	if len(failedSteps) == 0 {
+		failedSteps = getFailedSteps(errChan)
+	}
+	if len(failedSteps) > 0 {
+		return fmt.Errorf("failed to apply steps %s", strings.Join(failedSteps, ", "))
 	}
 	err = u.retrySteps(index, retrySteps, wg)
 	if err != nil {
@@ -409,6 +412,17 @@ func (u *updater) logReleases(index int) {
 	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
+func getFailedSteps(errChan chan string) []string {
+	var failedSteps []string
+	for stepName := range errChan {
+		if stepName == "" {
+			continue
+		}
+		failedSteps = append(failedSteps, stepName)
+	}
+	return failedSteps
+}
+
 func (u *updater) updateState() {
 	if len(u.state.Steps) == 0 {
 		createState(u.config, u.state)
@@ -418,7 +432,7 @@ func (u *updater) updateState() {
 	addNewSteps(u.config, u.state)
 }
 
-func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- error) (bool, error) {
+func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter, errChan chan<- string) (bool, error) {
 	stepState, err := u.getStepState(step)
 	if err != nil {
 		return false, err
@@ -502,7 +516,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 	}
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- error, files map[string]model.File) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- string, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
 		return nil
@@ -524,7 +538,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 		err := u.executePipeline(firstRun, step, stepState, index, files)
 		if err != nil {
 			slog.Error(common.PrefixError(err))
-			errChan <- err
+			errChan <- step.Name
 		}
 	}()
 	return nil

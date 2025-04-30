@@ -4,7 +4,7 @@ sources:
 steps:
   - name: net
     type: terraform
-    approve: never
+    manual_approve_run: never
     modules:
       - name: main
         source: google/vpc

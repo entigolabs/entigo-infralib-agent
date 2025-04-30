@@ -692,7 +692,11 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		}
 		if action.Status == types.ActionExecutionStatusSucceeded {
 			if status == approvalStatusWaiting && p.manager != nil {
-				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+				message := fmt.Sprintf("Pipeline %s was approved", pipelineName)
+				if action.UpdatedBy != nil {
+					message += fmt.Sprintf("\nApproved by %s", *action.UpdatedBy)
+				}
+				p.manager.Message(model.MessageTypeApprovals, message)
 			}
 			return approvalStatusApproved, nil
 		}
