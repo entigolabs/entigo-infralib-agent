@@ -1,7 +1,6 @@
 package common
 
 import (
-	"github.com/urfave/cli/v2"
 	"strconv"
 )
 
@@ -19,7 +18,7 @@ type Flags struct {
 	Prefix                  string
 	Force                   bool
 	SkipBucketCreationDelay bool
-	Steps                   cli.StringSlice
+	Steps                   []string
 	Pipeline                Pipeline
 	GCloud                  GCloud
 	AWS                     AWS
@@ -78,6 +77,10 @@ type Params struct {
 
 type BoolPtrFlag struct {
 	Value *bool
+}
+
+func (b *BoolPtrFlag) Get() interface{} {
+	return b.Value
 }
 
 func (b *BoolPtrFlag) Set(value string) error {

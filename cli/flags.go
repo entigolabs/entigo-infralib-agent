@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
 func cliFlags(cmd common.Command) []cli.Flag {
@@ -62,7 +62,7 @@ func getProviderFlags() []cli.Flag {
 var loggingFlag = cli.StringFlag{
 	Name:        "logging",
 	Aliases:     []string{"l"},
-	EnvVars:     []string{"LOGGING"},
+	Sources:     cli.EnvVars("LOGGING"),
 	DefaultText: "info",
 	Value:       "info",
 	Usage:       "set logging level (debug | info | warn | error)",
@@ -72,7 +72,7 @@ var loggingFlag = cli.StringFlag{
 var configFlag = cli.StringFlag{
 	Name:        "config",
 	Aliases:     []string{"c"},
-	EnvVars:     []string{"CONFIG"},
+	Sources:     cli.EnvVars("CONFIG"),
 	Value:       "",
 	Usage:       "set config file",
 	Destination: &flags.Config,
@@ -82,7 +82,7 @@ var configFlag = cli.StringFlag{
 var prefixFlag = cli.StringFlag{
 	Name:        "prefix",
 	Aliases:     []string{"p", "ap", "aws-prefix"},
-	EnvVars:     []string{common.AwsPrefixEnv, common.PrefixEnv},
+	Sources:     cli.EnvVars(common.AwsPrefixEnv, common.PrefixEnv),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "prefix used when creating cloud resources",
@@ -93,7 +93,7 @@ var prefixFlag = cli.StringFlag{
 var awsRoleArnFlag = cli.StringFlag{
 	Name:        "role-arn",
 	Aliases:     []string{"ra"},
-	EnvVars:     []string{"ROLE_ARN"},
+	Sources:     cli.EnvVars("ROLE_ARN"),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "role arn for assume role, used when creating aws resources in external account",
@@ -104,7 +104,7 @@ var awsRoleArnFlag = cli.StringFlag{
 var projectIdFlag = cli.StringFlag{
 	Name:        "project-id",
 	Aliases:     []string{"pid"},
-	EnvVars:     []string{common.GCloudProjectIdEnv},
+	Sources:     cli.EnvVars(common.GCloudProjectIdEnv),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "project id used when creating gcloud resources",
@@ -115,7 +115,7 @@ var projectIdFlag = cli.StringFlag{
 var locationFlag = cli.StringFlag{
 	Name:        "location",
 	Aliases:     []string{"loc"},
-	EnvVars:     []string{common.GCloudLocationEnv},
+	Sources:     cli.EnvVars(common.GCloudLocationEnv),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "location used when creating gcloud resources",
@@ -125,7 +125,7 @@ var locationFlag = cli.StringFlag{
 var zoneFlag = cli.StringFlag{
 	Name:        "zone",
 	Aliases:     []string{"z"},
-	EnvVars:     []string{common.GCloudZoneEnv},
+	Sources:     cli.EnvVars(common.GCloudZoneEnv),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "zone used in run jobs",
@@ -135,7 +135,7 @@ var zoneFlag = cli.StringFlag{
 var allowParallelFlag = cli.BoolFlag{
 	Name:        "allow-parallel",
 	Aliases:     []string{"apl"},
-	EnvVars:     []string{"ALLOW_PARALLEL"},
+	Sources:     cli.EnvVars("ALLOW_PARALLEL"),
 	Value:       true,
 	Usage:       "allow running steps in parallel on first execution cycle",
 	Destination: &flags.Pipeline.AllowParallel,
@@ -144,7 +144,7 @@ var allowParallelFlag = cli.BoolFlag{
 var yesFlag = cli.BoolFlag{
 	Name:        "yes",
 	Aliases:     []string{"y"},
-	EnvVars:     []string{"YES"},
+	Sources:     cli.EnvVars("YES"),
 	Usage:       "skip confirmation prompt",
 	DefaultText: "false",
 	Value:       false,
@@ -154,7 +154,7 @@ var yesFlag = cli.BoolFlag{
 var skipBucketDelayFlag = cli.BoolFlag{
 	Name:        "skip-bucket-creation-delay",
 	Aliases:     []string{"sb"},
-	EnvVars:     []string{"SKIP_BUCKET_CREATION_DELAY"},
+	Sources:     cli.EnvVars("SKIP_BUCKET_CREATION_DELAY"),
 	Usage:       "skip bucket creation delay",
 	DefaultText: "false",
 	Value:       false,
@@ -164,7 +164,7 @@ var skipBucketDelayFlag = cli.BoolFlag{
 var deleteBucketFlag = cli.BoolFlag{
 	Name:        "delete-bucket",
 	Aliases:     []string{"db"},
-	EnvVars:     []string{"DELETE_BUCKET"},
+	Sources:     cli.EnvVars("DELETE_BUCKET"),
 	Usage:       "delete the bucket used by terraform state",
 	Destination: &flags.Delete.DeleteBucket,
 }
@@ -172,7 +172,7 @@ var deleteBucketFlag = cli.BoolFlag{
 var deleteSAFlag = cli.BoolFlag{
 	Name:        "delete-service-account",
 	Aliases:     []string{"dsa"},
-	EnvVars:     []string{"DELETE_SERVICE_ACCOUNT"},
+	Sources:     cli.EnvVars("DELETE_SERVICE_ACCOUNT"),
 	Usage:       "delete the service account created by service-account command",
 	Destination: &flags.Delete.DeleteServiceAccount,
 }
@@ -180,7 +180,7 @@ var deleteSAFlag = cli.BoolFlag{
 var stepsFlag = cli.StringSliceFlag{
 	Name:        "steps",
 	Aliases:     []string{"s"},
-	EnvVars:     []string{"STEPS"},
+	Sources:     cli.EnvVars("STEPS"),
 	Usage:       "steps to run",
 	Destination: &flags.Steps,
 }
@@ -188,7 +188,7 @@ var stepsFlag = cli.StringSliceFlag{
 var pipelineTypeFlag = cli.StringFlag{
 	Name:        "pipeline-type",
 	Aliases:     []string{"pt"},
-	EnvVars:     []string{"PIPELINE_TYPE"},
+	Sources:     cli.EnvVars("PIPELINE_TYPE"),
 	DefaultText: string(common.PipelineTypeCloud),
 	Value:       string(common.PipelineTypeCloud),
 	Usage:       "pipeline type (local | cloud)",
@@ -199,7 +199,7 @@ var pipelineTypeFlag = cli.StringFlag{
 var logsPathFlag = cli.StringFlag{
 	Name:        "logs-path",
 	Aliases:     []string{"lp"},
-	EnvVars:     []string{"LOGS_PATH"},
+	Sources:     cli.EnvVars("LOGS_PATH"),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "path for storing logs when running local pipelines",
@@ -210,7 +210,7 @@ var logsPathFlag = cli.StringFlag{
 var printLogsFlag = cli.BoolFlag{
 	Name:        "print-logs",
 	Aliases:     []string{"pl"},
-	EnvVars:     []string{"PRINT_LOGS"},
+	Sources:     cli.EnvVars("PRINT_LOGS"),
 	Usage:       "print terraform/helm logs to stdout when using local pipelines",
 	Value:       true,
 	DefaultText: "true",
@@ -221,18 +221,17 @@ var printLogsFlag = cli.BoolFlag{
 var terraformCacheFlag = cli.GenericFlag{
 	Name:        "terraform-cache",
 	Aliases:     []string{"tc"},
-	EnvVars:     []string{"TERRAFORM_CACHE"},
+	Sources:     cli.EnvVars("TERRAFORM_CACHE"),
 	Usage:       "use terraform caching",
 	DefaultText: "true",
 	Value:       &flags.Pipeline.TerraformCache,
-	Destination: &flags.Pipeline.TerraformCache,
 	Required:    false,
 }
 
 var forceFlag = cli.BoolFlag{
 	Name:        "force",
 	Aliases:     []string{"f"},
-	EnvVars:     []string{"FORCE"},
+	Sources:     cli.EnvVars("FORCE"),
 	Usage:       "force",
 	Value:       false,
 	Destination: &flags.Force,
@@ -242,7 +241,7 @@ var forceFlag = cli.BoolFlag{
 var keyFlag = cli.StringFlag{
 	Name:        "key",
 	Aliases:     []string{"k"},
-	EnvVars:     []string{"KEY"},
+	Sources:     cli.EnvVars("KEY"),
 	Usage:       "parameter key",
 	Value:       "",
 	Destination: &flags.Params.Key,
@@ -252,7 +251,7 @@ var keyFlag = cli.StringFlag{
 var valueFlag = cli.StringFlag{
 	Name:        "value",
 	Aliases:     []string{"v"},
-	EnvVars:     []string{"VALUE"},
+	Sources:     cli.EnvVars("VALUE"),
 	Usage:       "parameter value",
 	Value:       "",
 	Destination: &flags.Params.Value,
@@ -262,7 +261,7 @@ var valueFlag = cli.StringFlag{
 var overwriteFlag = cli.BoolFlag{
 	Name:        "overwrite",
 	Aliases:     []string{"o"},
-	EnvVars:     []string{"OVERWRITE"},
+	Sources:     cli.EnvVars("OVERWRITE"),
 	Usage:       "overwrite existing parameter",
 	Value:       false,
 	Destination: &flags.Params.Overwrite,
@@ -272,7 +271,7 @@ var overwriteFlag = cli.BoolFlag{
 var stateFileFlag = cli.StringFlag{
 	Name:        "state-file",
 	Aliases:     []string{"sf"},
-	EnvVars:     []string{"STATE_FILE"},
+	Sources:     cli.EnvVars("STATE_FILE"),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "path for terraform state file",
@@ -283,7 +282,7 @@ var stateFileFlag = cli.StringFlag{
 var importFileFlag = cli.StringFlag{
 	Name:        "import-file",
 	Aliases:     []string{"if"},
-	EnvVars:     []string{"IMPORT_FILE"},
+	Sources:     cli.EnvVars("IMPORT_FILE"),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "path for import file",
@@ -294,7 +293,7 @@ var importFileFlag = cli.StringFlag{
 var planFileFlag = cli.StringFlag{
 	Name:        "plan-file",
 	Aliases:     []string{"pl"},
-	EnvVars:     []string{"PLAN_FILE"},
+	Sources:     cli.EnvVars("PLAN_FILE"),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "path for terraform plan file",
@@ -305,7 +304,7 @@ var planFileFlag = cli.StringFlag{
 var typesFileFlag = cli.StringFlag{
 	Name:        "types-file",
 	Aliases:     []string{"tf"},
-	EnvVars:     []string{"TYPES_FILE"},
+	Sources:     cli.EnvVars("TYPES_FILE"),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "path for type identifications file",

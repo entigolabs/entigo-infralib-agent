@@ -1,26 +1,26 @@
 package cli
 
 import (
+	"context"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 	"log"
 	"os"
 )
 
 var flags = new(common.Flags)
 
-func Run() {
-	app := &cli.App{Commands: cliCommands()}
+func Run(ctx context.Context) {
+	app := &cli.Command{Commands: cliCommands()}
 	addAppInfo(app)
-	err := app.Run(os.Args)
+	err := app.Run(ctx, os.Args)
 	if err != nil {
 		log.Fatal(&common.PrefixedError{Reason: err})
 	}
 }
 
-func addAppInfo(app *cli.App) {
+func addAppInfo(app *cli.Command) {
 	const agent = "ei-agent"
 	app.Name = agent
-	app.HelpName = agent
 	app.Usage = "entigo infralib agent"
 }

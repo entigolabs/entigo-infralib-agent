@@ -14,7 +14,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/urfave/cli/v2"
 	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
@@ -110,12 +109,12 @@ func getLatestState(bucket model.Bucket) (*model.State, error) {
 	return &state, nil
 }
 
-func getRunnableSteps(config model.Config, stepsFlag cli.StringSlice) ([]model.Step, error) {
-	if len(stepsFlag.Value()) == 0 {
+func getRunnableSteps(config model.Config, stepsFlag []string) ([]model.Step, error) {
+	if len(stepsFlag) == 0 {
 		return config.Steps, nil
 	}
 	steps := model.NewSet[string]()
-	for _, step := range stepsFlag.Value() {
+	for _, step := range stepsFlag {
 		steps.Add(step)
 	}
 	runnableSteps := make([]model.Step, 0)

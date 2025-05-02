@@ -13,18 +13,18 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/commands/sa"
 	"github.com/entigolabs/entigo-infralib-agent/commands/update"
 	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 )
 
-func action(cmd common.Command) func(c *cli.Context) error {
-	return func(c *cli.Context) error {
+func action(cmd common.Command) cli.ActionFunc {
+	return func(ctx context.Context, _ *cli.Command) error {
 		if err := flags.Setup(cmd); err != nil {
 			return err
 		}
 		if err := common.ChooseLogger(flags.LogLevel); err != nil {
 			return err
 		}
-		return run(c.Context, cmd)
+		return run(ctx, cmd)
 	}
 }
 
