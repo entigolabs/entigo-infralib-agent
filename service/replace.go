@@ -286,6 +286,8 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 		return u.getReplacementConfigValue(replaceKey[strings.Index(replaceKey, ".")+1:])
 	case string(model.ReplaceTypeAgent):
 		return u.getReplacementAgentValue(replaceKey[strings.Index(replaceKey, ".")+1:], index)
+	case string(model.ReplaceTypeStep):
+		return getStepName(step, replaceKey)
 	case string(model.ReplaceTypeModuleType):
 		return u.getTypedModuleName(step, replaceKey)
 	case string(model.ReplaceTypeStepModule):
@@ -492,6 +494,18 @@ func getSSMParameterValueFromList(match []string, values []string, replaceKey st
 	return strings.Join(values[start:end+1], ","), nil
 }
 
+func getStepName(step model.Step, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("failed to parse step key %s for step %s, got %d split parts instead of 2",
+			replaceKey, step.Name, len(parts))
+	}
+	if parts[1] == "name" {
+		return step.Name, nil
+	}
+	return "", fmt.Errorf("unknown step replace type %s in tag %s", parts[1], replaceKey)
+}
+
 func (u *updater) getTypedModuleName(step model.Step, replaceKey string) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) != 2 {
@@ -639,7 +653,7 @@ func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) (mod
 	if err != nil {
 		return config, err
 	}
-	steps, err = replaceConfigStepsValues(prefix, steps)
+	steps, err = replaceConfigStepsValues(prefix, steps, config)
 	if err != nil {
 		return config, err
 	}
@@ -671,7 +685,7 @@ func replaceConfigRootValues(ssm model.SSM, prefix string, config model.Config) 
 	return config, nil
 }
 
-func replaceConfigStepsValues(prefix string, steps []model.Step) ([]model.Step, error) {
+func replaceConfigStepsValues(prefix string, steps []model.Step, config model.Config) ([]model.Step, error) {
 	stepsYaml, err := yaml.Marshal(steps)
 	if err != nil {
 		return nil, err
@@ -680,7 +694,7 @@ func replaceConfigStepsValues(prefix string, steps []model.Step) ([]model.Step, 
 	if len(matches) == 0 {
 		return steps, nil
 	}
-	modifiedStepsYaml, err := replaceConfigTags(prefix, model.Config{}, string(stepsYaml), matches)
+	modifiedStepsYaml, err := replaceConfigTags(prefix, config, string(stepsYaml), matches)
 	if err != nil {
 		return nil, fmt.Errorf("failed to replace config tags in steps, error: %s", err.Error())
 	}
@@ -757,6 +771,7 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 	return content, nil
 }
 
+// This exists because current replace logic isn't aware of modules
 func replaceModuleValues(module model.Module, inputs map[string]interface{}) (map[string]interface{}, error) {
 	if inputs == nil {
 		return nil, nil

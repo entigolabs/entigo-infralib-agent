@@ -199,6 +199,7 @@ const (
 	ReplaceTypeTOutputOptional ReplaceType = "toptout"
 	ReplaceTypeConfig          ReplaceType = "config"
 	ReplaceTypeAgent           ReplaceType = "agent"
+	ReplaceTypeStep            ReplaceType = "step"
 	ReplaceTypeModuleType      ReplaceType = "tmodule"
 	ReplaceTypeStepModule      ReplaceType = "tsmodule"
 	ReplaceTypeModule          ReplaceType = "module"
