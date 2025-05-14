@@ -327,7 +327,7 @@ func (u *updater) getReplacementAgentValue(key string, index int) (string, error
 	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
 		return u.resources.(aws.Resources).AccountId, nil
 	} else if parts[0] == string(model.AgentReplaceTypeRegion) {
-		return u.resources.(aws.Resources).Region, nil
+		return u.resources.GetRegion(), nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }
