@@ -212,6 +212,7 @@ type AgentReplaceType string
 const (
 	AgentReplaceTypeVersion   AgentReplaceType = "version"
 	AgentReplaceTypeAccountId AgentReplaceType = "accountId"
+	AgentReplaceTypeRegion    AgentReplaceType = "region"
 )
 
 type Approve string

@@ -523,7 +523,7 @@ Config example `{{ .config.prefix }}` will be overwritten by the value of the co
 
 #### Overriding with agent logic
 
-Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports AWS account id using key accountId.
+Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports AWS account id using key `accountId` and region using key `region`.
 
 #### Overriding with module properties
 
