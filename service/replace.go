@@ -29,6 +29,8 @@ type keyType struct {
 
 const (
 	terraformOutput = "terraform-output.json"
+
+	skipReplace = "SKIP_REPLACE"
 )
 
 var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*[^{}\n]*?(?:}}\x60)*)}}`)
@@ -175,6 +177,7 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			}
 			if keyType.ReplaceType == string(model.ReplaceTypeAgent) {
 				delayedKeyTypes[replaceTag] = keyType
+				replacement = skipReplace
 				continue
 			}
 			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
@@ -184,6 +187,9 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 			if replacement != "" {
 				break
 			}
+		}
+		if replacement == skipReplace {
+			continue
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
