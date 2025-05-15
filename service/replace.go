@@ -27,6 +27,11 @@ type keyType struct {
 	ReplaceType string
 }
 
+type delayedKeyType struct {
+	keyType
+	ReplaceTag string
+}
+
 const (
 	terraformOutput = "terraform-output.json"
 
@@ -152,12 +157,12 @@ func validateStepFile(file string, content []byte) error {
 	return nil
 }
 
-func (u *updater) replaceStringValues(step model.Step, content string, index int, cache paramCache) (string, map[string]keyType, error) {
+func (u *updater) replaceStringValues(step model.Step, content string, index int, cache paramCache) (string, []delayedKeyType, error) {
 	matches := replaceRegex.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
 		return content, nil, nil
 	}
-	delayedKeyTypes := make(map[string]keyType) // Delay replace tags that dynamically change, e.g. module version
+	var delayedKeyTypes []delayedKeyType // Delay replace tags that dynamically change, e.g. module version
 	for _, match := range matches {
 		replaceTag := match[0]
 		replaceKey := match[1]
@@ -176,9 +181,9 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 				break
 			}
 			if keyType.ReplaceType == string(model.ReplaceTypeAgent) {
-				delayedKeyTypes[replaceTag] = keyType
+				delayedKeyTypes = append(delayedKeyTypes, delayedKeyType{keyType: keyType, ReplaceTag: replaceTag})
 				replacement = skipReplace
-				continue
+				break
 			}
 			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
 			if err != nil {
@@ -199,13 +204,13 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 	return content, delayedKeyTypes, nil
 }
 
-func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes map[string]keyType) (string, error) {
-	for replaceTag, keyType := range delayedKeyTypes {
-		replacement, err := u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
+func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes []delayedKeyType) (string, error) {
+	for _, key := range delayedKeyTypes {
+		replacement, err := u.getReplacementValue(step, index, key.ReplaceKey, key.ReplaceType, cache)
 		if err != nil {
 			return "", err
 		}
-		content = strings.Replace(content, replaceTag, replacement, 1)
+		content = strings.Replace(content, key.ReplaceTag, replacement, 1)
 	}
 	return content, nil
 }
