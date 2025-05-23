@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"time"
@@ -23,6 +24,10 @@ func CreateDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 		AttributeDefinitions: []types.AttributeDefinition{{
 			AttributeName: aws.String("LockID"),
 			AttributeType: types.ScalarAttributeTypeS,
+		}},
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
 		}},
 	})
 	if err != nil {

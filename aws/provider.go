@@ -20,7 +20,7 @@ func NewAWSProvider(ctx context.Context, awsFlags common.AWS) (model.ResourcePro
 	if err != nil {
 		return nil, err
 	}
-	accountId, err := getAccountId(awsConfig)
+	accountId, err := getAccountId(ctx, awsConfig)
 	if err != nil {
 		return nil, err
 	}

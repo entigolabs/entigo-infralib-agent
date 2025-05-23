@@ -143,6 +143,7 @@ func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collect
 				ExecutionTimeout: &durationpb.Duration{Seconds: 86400},
 				ServiceAccount:   serviceAccount,
 			}},
+			Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
 	if err != nil {
@@ -261,6 +262,7 @@ func (p *Pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 		Parent:             fmt.Sprintf("projects/%s/locations/%s", p.projectId, p.location),
 		DeliveryPipelineId: pipelineName,
 		DeliveryPipeline: &deploypb.DeliveryPipeline{
+			Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 			Pipeline: &deploypb.DeliveryPipeline_SerialPipeline{
 				SerialPipeline: &deploypb.SerialPipeline{
 					Stages: []*deploypb.Stage{
@@ -446,7 +448,10 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, execu
 	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
 }
 
-func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string) error {
+func (p *Pipeline) CreateAgentPipelines(_ string, pipelineName string, _ string, run bool) error {
+	if !run {
+		return nil
+	}
 	job := fmt.Sprintf("%s-%s", pipelineName, common.RunCommand)
 	_, err := p.builder.executeJob(job, false)
 	return err

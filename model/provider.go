@@ -77,7 +77,7 @@ type Bucket interface {
 
 type Pipeline interface {
 	CreatePipeline(projectName, stepName string, step Step, bucket Bucket, authSources map[string]SourceAuth) (*string, error)
-	CreateAgentPipelines(prefix, projectName, bucket string) error
+	CreateAgentPipelines(prefix, projectName, bucket string, run bool) error
 	UpdatePipeline(pipelineName, stepName string, step Step, bucket string, authSources map[string]SourceAuth) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)

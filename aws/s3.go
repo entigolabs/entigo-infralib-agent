@@ -62,6 +62,10 @@ func (s *S3) CreateBucket() (string, bool, error) {
 		}
 	}
 	log.Printf("Created S3 Bucket %s\n", s.bucket)
+	err = s.putBucketTags()
+	if err != nil {
+		return "", false, err
+	}
 	err = s.putBucketVersioning()
 	if err != nil {
 		return "", false, err
@@ -368,6 +372,19 @@ func (s *S3) truncateDeleteMarkers() error {
 		}
 	}
 	return nil
+}
+
+func (s *S3) putBucketTags() error {
+	_, err := s.awsS3.PutBucketTagging(s.ctx, &awsS3.PutBucketTaggingInput{
+		Bucket: aws.String(s.bucket),
+		Tagging: &types.Tagging{
+			TagSet: []types.Tag{{
+				Key:   aws.String(model.ResourceTagKey),
+				Value: aws.String(model.ResourceTagValue),
+			}},
+		},
+	})
+	return err
 }
 
 func (s *S3) putBucketVersioning() error {

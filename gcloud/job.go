@@ -104,6 +104,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 			Annotations: map[string]string{
 				"run.googleapis.com/launch-stage": "BETA",
 			},
+			Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 		Spec: &runv1.JobSpec{
 			Template: &runv1.ExecutionTemplateSpec{
@@ -176,6 +177,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 		JobId:  projectName,
 		Job: &runpb.Job{
 			LaunchStage: api.LaunchStage_BETA,
+			Labels:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 			Template: &runpb.ExecutionTemplate{
 				Template: &runpb.TaskTemplate{
 					Retries:        &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
@@ -241,6 +243,7 @@ func (b *Builder) CreateAgentProject(projectName string, awsPrefix string, image
 				},
 			},
 			LaunchStage: api.LaunchStage_BETA,
+			Labels:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 		JobId: projectName,
 	})

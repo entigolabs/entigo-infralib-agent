@@ -196,6 +196,10 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 			},
 			},
 		},
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	if err != nil {
 		return nil, err
@@ -324,6 +328,10 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 			},
 			},
 		},
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	if err != nil {
 		return err
@@ -345,7 +353,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	return p.stopLatestPipelineExecutions(pipelineName, 1)
 }
 
-func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string) error {
+func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
 	updatePipeline := fmt.Sprintf("%s-%s", projectName, common.UpdateCommand)
 	pipe, err := p.getPipeline(updatePipeline)
 	if err != nil {
@@ -369,10 +377,18 @@ func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucke
 		return err
 	}
 	if pipe != nil {
+		if !run {
+			return nil
+		}
 		_, err = p.StartPipelineExecution(runPipeline, "", model.Step{}, "")
 		return err
 	}
-	return p.createAgentPipeline(prefix, runPipeline, bucket)
+	err = p.createAgentPipeline(prefix, runPipeline, bucket)
+	if err != nil || run {
+		return err
+	}
+	time.Sleep(5 * time.Second)
+	return p.stopLatestPipelineExecutions(runPipeline, 1)
 }
 
 func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket string) error {
@@ -424,6 +440,10 @@ func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket
 			},
 			},
 		},
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	if err == nil {
 		log.Printf("Created CodePipeline %s\n", projectName)

@@ -28,7 +28,7 @@ func Bootstrap(ctx context.Context, flags *common.Flags) error {
 
 	log.Printf("Agent version: %s\n", config.AgentVersion)
 	agent := service.NewAgent(resources, getTerraformCache(flags.Pipeline))
-	return agent.CreatePipeline(config.AgentVersion)
+	return agent.CreatePipeline(config.AgentVersion, flags.Start)
 }
 
 func getTerraformCache(pipeline common.Pipeline) bool {

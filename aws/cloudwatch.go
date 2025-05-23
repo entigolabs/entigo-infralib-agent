@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
 )
@@ -57,6 +58,7 @@ func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
 func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
 	_, err := c.cloudwatchlogs.CreateLogGroup(c.ctx, &cloudwatchlogs.CreateLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
+		Tags:         map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		var awsError *types.ResourceAlreadyExistsException
@@ -118,12 +120,15 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(logStreamName),
 	})
-	var awsError *types.ResourceAlreadyExistsException
-	if err != nil && errors.As(err, &awsError) {
-		return nil
+	if err != nil {
+		var awsError *types.ResourceAlreadyExistsException
+		if errors.As(err, &awsError) {
+			return nil
+		}
+		return err
 	}
 	log.Printf("Created log stream %s\n", logStreamName)
-	return err
+	return nil
 }
 
 func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string) ([]string, error) {

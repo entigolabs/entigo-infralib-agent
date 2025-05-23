@@ -99,6 +99,7 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
+* start - start pipeline execution after creating (default: **true**) [$START]
 
 Example
 ```bash

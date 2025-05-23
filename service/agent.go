@@ -9,7 +9,7 @@ import (
 )
 
 type Agent interface {
-	CreatePipeline(version string) error
+	CreatePipeline(version string, start bool) error
 	UpdateProjectImage(version string, cmd common.Command, local bool) error
 }
 
@@ -29,7 +29,7 @@ func NewAgent(resources model.Resources, terraformCache bool) Agent {
 	}
 }
 
-func (a *agent) CreatePipeline(version string) error {
+func (a *agent) CreatePipeline(version string, start bool) error {
 	err := a.createCodeBuild(version, common.RunCommand)
 	if err != nil {
 		return err
@@ -38,11 +38,15 @@ func (a *agent) CreatePipeline(version string) error {
 	if err != nil {
 		return err
 	}
-	err = a.resources.GetPipeline().CreateAgentPipelines(a.cloudPrefix, a.name, a.resources.GetBucketName())
+	err = a.resources.GetPipeline().CreateAgentPipelines(a.cloudPrefix, a.name, a.resources.GetBucketName(), start)
 	if err != nil {
 		return err
 	}
-	log.Println("Agent run pipeline execution started")
+	if start {
+		log.Println("Agent run pipeline execution started")
+	} else {
+		log.Println("Agent run pipeline execution not started")
+	}
 	return nil
 }
 

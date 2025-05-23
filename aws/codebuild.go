@@ -101,6 +101,10 @@ func (b *builder) CreateProject(projectName string, bucket string, stepName stri
 			Buildspec: b.buildSpec,
 		},
 		VpcConfig: getAwsVpcConfig(vpcConfig),
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	var awsError *types.ResourceAlreadyExistsException
 	if err != nil && errors.As(err, &awsError) {
@@ -161,6 +165,10 @@ func (b *builder) CreateAgentProject(projectName string, awsPrefix string, image
 			Type:      types.SourceTypeNoSource,
 			Buildspec: spec,
 		},
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	if err == nil {
 		log.Printf("Created CodeBuild project %s\n", projectName)

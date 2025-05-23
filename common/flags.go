@@ -18,6 +18,7 @@ type Flags struct {
 	Prefix                  string
 	Force                   bool
 	SkipBucketCreationDelay bool
+	Start                   bool
 	Steps                   []string
 	Pipeline                Pipeline
 	GCloud                  GCloud

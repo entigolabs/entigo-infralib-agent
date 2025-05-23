@@ -62,6 +62,7 @@ func (g *GStorage) CreateBucket(skipDelay bool) error {
 				Condition: storage.LifecycleCondition{NumNewerVersions: 5},
 			}},
 		},
+		Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err == nil {
 		log.Printf("Created GCloud Storage Bucket %s\n", g.bucket)

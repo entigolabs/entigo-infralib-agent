@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"net/url"
 	"strings"
@@ -70,6 +71,10 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*ty
 	result, err := i.iamClient.CreateRole(i.ctx, &iam.CreateRoleInput{
 		AssumeRolePolicyDocument: policy,
 		RoleName:                 aws.String(roleName),
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
@@ -102,6 +107,10 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 	result, err := i.iamClient.CreatePolicy(i.ctx, &iam.CreatePolicyInput{
 		PolicyDocument: policy,
 		PolicyName:     aws.String(policyName),
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
 	})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
@@ -314,7 +323,13 @@ func (i *identity) GetUser(username string) (*types.User, error) {
 }
 
 func (i *identity) CreateUser(username string) (*types.User, error) {
-	user, err := i.iamClient.CreateUser(i.ctx, &iam.CreateUserInput{UserName: aws.String(username)})
+	user, err := i.iamClient.CreateUser(i.ctx, &iam.CreateUserInput{
+		UserName: aws.String(username),
+		Tags: []types.Tag{{
+			Key:   aws.String(model.ResourceTagKey),
+			Value: aws.String(model.ResourceTagValue),
+		}},
+	})
 	if err != nil {
 		var awsError *types.EntityAlreadyExistsException
 		if errors.As(err, &awsError) {
@@ -509,6 +524,7 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"codepipeline:StopPipelineExecution",
 				"codepipeline:GetPipeline",
 				"codepipeline:GetPipelineState",
+				"codepipeline:TagResource",
 				"dynamodb:DescribeTable",
 				"logs:DescribeLogGroups",
 				"logs:DescribeLogStreams",
@@ -528,6 +544,7 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 				"secretsmanager:DescribeSecret",
 				"secretsmanager:TagResource",
 				"tag:GetResources",
+				"tag:TagResources",
 				"kms:GenerateDataKey",
 				"kms:Decrypt",
 			},

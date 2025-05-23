@@ -50,7 +50,7 @@ func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeli
 	if err != nil {
 		return nil, err
 	}
-	accountId, err := getAccountId(awsConfig)
+	accountId, err := getAccountId(ctx, awsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +252,8 @@ func (a *awsService) IsRunningLocally() bool {
 	return os.Getenv("CODEBUILD_BUILD_ID") == ""
 }
 
-func getAccountId(awsConfig aws.Config) (string, error) {
-	stsService := NewSTS(awsConfig)
+func getAccountId(ctx context.Context, awsConfig aws.Config) (string, error) {
+	stsService := NewSTS(ctx, awsConfig)
 	return stsService.GetAccountID()
 }
 
