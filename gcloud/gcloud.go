@@ -138,8 +138,8 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager) (model
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
-	resources.CloudResources.CodeBuild = builder
-	resources.CloudResources.Pipeline = pipeline
+	resources.CodeBuild = builder
+	resources.Pipeline = pipeline
 	return resources, nil
 }
 

@@ -428,7 +428,7 @@ func getVPCMeta(vpcConfig *model.VpcConfig) (*runv1.ObjectMeta, error) {
 	}
 	return &runv1.ObjectMeta{
 		Annotations: map[string]string{
-			"run.googleapis.com/vpc-access-egress":  strings.Replace(strings.ToLower(vpcAccess.Egress.String()), "_", "-", -1),
+			"run.googleapis.com/vpc-access-egress":  strings.ReplaceAll(strings.ToLower(vpcAccess.Egress.String()), "_", "-"),
 			"run.googleapis.com/network-interfaces": string(interfacesJson),
 		},
 	}, nil

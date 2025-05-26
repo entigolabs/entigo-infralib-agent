@@ -1354,11 +1354,12 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		return moduleSource.ForcedVersion, true, nil
 	}
 	var moduleSemver *version.Version
-	if moduleVersion == "" {
+	switch moduleVersion {
+	case "":
 		moduleSemver = moduleSource.Version
-	} else if moduleVersion == StableVersion {
+	case StableVersion:
 		moduleSemver = moduleSource.NewestVersion
-	} else {
+	default:
 		moduleSemver, err = version.NewVersion(moduleVersion)
 		if err != nil {
 			moduleSemver = moduleSource.NewestVersion

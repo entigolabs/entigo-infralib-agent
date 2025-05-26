@@ -244,18 +244,19 @@ func DelayBucketCreation(bucket string, skipDelay bool) {
 }
 
 func AskForConfirmation() error {
+	reader := bufio.NewReader(os.Stdin)
 	for {
-		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
 		}
 		response = strings.ToLower(strings.TrimSpace(response))
-		if response == "y" || response == "yes" {
+		switch response {
+		case "y", "yes":
 			return nil
-		} else if response == "n" || response == "no" {
+		case "n", "no":
 			return fmt.Errorf("operation cancelled")
-		} else {
+		default:
 			slog.Warn(common.PrefixWarning("Invalid input. Please enter Y or N."))
 		}
 	}

@@ -37,7 +37,7 @@ func (s *sm) AddEncryptionKeyId(_ string) {
 }
 
 func (s *sm) GetParameter(name string) (*model.Parameter, error) {
-	name = strings.Replace(strings.TrimLeft(name, "/"), "/", "-", -1)
+	name = strings.ReplaceAll(strings.TrimLeft(name, "/"), "/", "-")
 	result, err := s.client.AccessSecretVersion(s.ctx, &secretmanagerpb.AccessSecretVersionRequest{
 		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/latest", s.projectId, name),
 	})

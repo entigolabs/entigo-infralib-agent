@@ -101,7 +101,9 @@ func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionC
 	}
 	file := l.getLogFileWriter(prefix, command)
 	if file != nil {
-		defer file.Close()
+		defer func(file *os.File) {
+			_ = file.Close()
+		}(file)
 		writers = append(writers, file)
 	}
 	stdout := io.MultiWriter(writers...)
@@ -223,19 +225,11 @@ func (l *LocalPipeline) getManualApproval(pipelineName string, changes *model.Pi
 	time.Sleep(1 * time.Second) // Wait for output to be redirected
 	l.manager.ManualApproval(pipelineName, *changes, "")
 
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Printf("Pipeline %s changes: %d to change, %d to destroy. Approve changes? (yes/no)", pipelineName,
-			changes.Changed, changes.Destroyed)
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			return false, err
-		}
-		response = strings.ToLower(strings.TrimSpace(response))
-		if response == "y" || response == "yes" {
-			return true, nil
-		} else if response == "n" || response == "no" {
-			return false, fmt.Errorf("changes not approved")
-		}
+	fmt.Printf("Pipeline %s changes: %d to change, %d to destroy. Approve changes? (yes/no)", pipelineName,
+		changes.Changed, changes.Destroyed)
+	err := util.AskForConfirmation()
+	if err != nil {
+		return false, fmt.Errorf("manual approval failed: %v", err)
 	}
+	return true, nil
 }

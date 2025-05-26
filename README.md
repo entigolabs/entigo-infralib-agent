@@ -1,6 +1,6 @@
 # Entigo Infralib Agent
 
-Entigo infralib agent prepares an AWS Account or Google Cloud Project for [Entigo infralib terraform modules](https://github.com/entigolabs/entigo-infralib).
+Entigo infralib agent prepares an AWS Account or Google Cloud Project for [Entigo Infralib modules](https://github.com/entigolabs/entigo-infralib).
 Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
 Executes pipelines which apply the configured modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 

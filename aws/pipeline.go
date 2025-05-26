@@ -172,7 +172,8 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 						Provider: aws.String("Manual"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: aws.Int32(3),
+					RunOrder:         aws.Int32(3),
+					TimeoutInMinutes: aws.Int32(60),
 				}},
 			}, {
 				Name: aws.String(applyName),
@@ -304,7 +305,8 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 						Provider: aws.String("Manual"),
 						Version:  aws.String("1"),
 					},
-					RunOrder: aws.Int32(3),
+					RunOrder:         aws.Int32(3),
+					TimeoutInMinutes: aws.Int32(60),
 				}},
 			}, {
 				Name: aws.String(applyDestroyName),
@@ -723,13 +725,15 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		if action.Status != types.ActionExecutionStatusInProgress {
 			return status, nil
 		}
-		if status == approvalStatusWaiting {
+		switch status {
+		case approvalStatusWaiting:
 			log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 			return status, nil
-		} else if status == approvalStatusApprove {
+		case approvalStatusApprove:
 			return p.approveStage(pipelineName)
+		default:
+			return p.processChanges(pipelineName, executionId, actions, step, autoApprove, approve)
 		}
-		return p.processChanges(pipelineName, executionId, actions, step, autoApprove, approve)
 	}
 	return status, nil
 }

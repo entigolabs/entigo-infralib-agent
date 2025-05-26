@@ -26,6 +26,7 @@ import (
 )
 
 const (
+	pollingDelay     = 10
 	bucketFileFormat = "%s.tar.gz"
 	linkFormat       = "https://console.cloud.google.com/deploy/delivery-pipelines/%s/%s?project=%s"
 )
@@ -323,92 +324,6 @@ func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) e
 	}
 }
 
-func (p *Pipeline) waitForRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, jobName string, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges, approve model.ManualApprove) error {
-	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Hour)
-	defer cancel()
-	rollout, err := rolloutOp.Wait(ctx)
-	if err != nil {
-		return err
-	}
-	approved := false
-	notified := false
-	delay := 1
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for rollout to finish: %w", ctx.Err())
-		default:
-			rollout, err = p.client.GetRollout(p.ctx, &deploypb.GetRolloutRequest{
-				Name: rollout.GetName(),
-			})
-			if err != nil {
-				return err
-			}
-			if rollout.GetState() == deploypb.Rollout_PENDING_APPROVAL {
-				if approved {
-					time.Sleep(time.Duration(delay) * time.Second)
-					delay = util.MinInt(delay*2, 30)
-					continue
-				}
-				if executionName == "" {
-					log.Println("Execution name not found, please approve manually")
-					time.Sleep(time.Duration(delay) * time.Second)
-					delay = util.MinInt(delay*2, 30)
-					continue
-				}
-				pipeChanges, err = p.getChanges(pipelineName, pipeChanges, step.Type, jobName, executionName)
-				if err != nil {
-					return err
-				}
-				if pipeChanges != nil && util.ShouldStopPipeline(*pipeChanges, step.Approve, approve) {
-					log.Printf("Stopping rollout for %s", pipelineName)
-					_, _ = p.client.CancelRollout(p.ctx, &deploypb.CancelRolloutRequest{
-						Name: rollout.GetName(),
-					})
-					if step.Approve == model.ApproveReject || approve == model.ManualApproveReject {
-						return fmt.Errorf("stopped because step approve type is 'reject'")
-					}
-					return nil
-				}
-				if pipeChanges != nil && util.ShouldApprovePipeline(*pipeChanges, step.Approve, autoApprove, approve) {
-					_, err = p.client.ApproveRollout(p.ctx, &deploypb.ApproveRolloutRequest{
-						Name:     rollout.GetName(),
-						Approved: true,
-					})
-					if err != nil {
-						log.Printf("Failed to approve rollout, please approve manually: %s", err)
-					} else {
-						log.Printf("Approved %s\n", pipelineName)
-						approved = true
-					}
-				} else {
-					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
-					if !notified && p.manager != nil {
-						p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
-						notified = true
-					}
-				}
-				time.Sleep(time.Duration(delay) * time.Second)
-				delay = util.MinInt(delay*2, 30)
-				continue
-			}
-			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
-				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
-				notified = false
-			}
-			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
-				time.Sleep(time.Duration(delay) * time.Second)
-				delay = util.MinInt(delay*2, 30)
-				continue
-			}
-			if rollout.GetState() != deploypb.Rollout_SUCCEEDED {
-				return fmt.Errorf("rollout failed: %s", rollout.GetState())
-			}
-			return nil
-		}
-	}
-}
-
 func (p *Pipeline) getLink(pipelineName string) string {
 	return fmt.Sprintf(linkFormat, p.location, pipelineName, p.projectId)
 }
@@ -522,8 +437,8 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, step, "", "", autoApprove, nil, approve)
+	slog.Debug(fmt.Sprintf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId))
+	err = p.waitForPlanRollout(rollout)
 	if err != nil {
 		return err
 	}
@@ -537,13 +452,17 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	if pipeChanges != nil && pipeChanges.NoChanges {
+	if pipeChanges != nil && util.ShouldStopPipeline(*pipeChanges, step.Approve, approve) {
 		log.Printf("Stopping pipeline %s\n", pipelineName)
 		_, err = p.client.AbandonRelease(p.ctx, &deploypb.AbandonReleaseRequest{
-			Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
+			Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId,
+				p.location, pipelineName, *releaseId),
 		})
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't stop pipeline %s, please stop manually: %s", pipelineName, err.Error())))
+		}
+		if step.Approve == model.ApproveReject || approve == model.ManualApproveReject {
+			return fmt.Errorf("stopped because step approve type is 'reject'")
 		}
 		return nil
 	}
@@ -558,8 +477,8 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	log.Printf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId)
-	err = p.waitForRollout(rollout, pipelineName, step, planJob, executionName, autoApprove, pipeChanges, approve)
+	slog.Debug(fmt.Sprintf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId))
+	err = p.waitForApplyRollout(rollout, pipelineName, step, executionName, autoApprove, pipeChanges, approve)
 	if err != nil {
 		return err
 	}
@@ -574,4 +493,110 @@ func (p *Pipeline) StartDestroyExecution(projectName string, _ model.Step) error
 	}
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-apply-destroy", projectName), true)
 	return err
+}
+
+func (p *Pipeline) waitForPlanRollout(rolloutOp *deploy.CreateRolloutOperation) error {
+	ctx, cancel := context.WithTimeout(p.ctx, 10*time.Minute)
+	defer cancel()
+	rollout, err := rolloutOp.Wait(ctx)
+	if err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			_, _ = p.client.CancelRollout(ctx, &deploypb.CancelRolloutRequest{
+				Name: rollout.GetName(),
+			})
+			return fmt.Errorf("timed out waiting for rollout to finish: %w", ctx.Err())
+		default:
+			rollout, err = p.client.GetRollout(ctx, &deploypb.GetRolloutRequest{
+				Name: rollout.GetName(),
+			})
+			if err != nil {
+				return err
+			}
+			switch rollout.GetState() {
+			case deploypb.Rollout_PENDING_APPROVAL:
+				return fmt.Errorf("plan rollout shouldn't have approval")
+			case deploypb.Rollout_STATE_UNSPECIFIED, deploypb.Rollout_IN_PROGRESS:
+				time.Sleep(pollingDelay * time.Second)
+				continue
+			case deploypb.Rollout_SUCCEEDED:
+				return nil
+			default:
+				return fmt.Errorf("rollout failed: %s", rollout.GetState())
+			}
+		}
+	}
+}
+
+func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges, approve model.ManualApprove) error {
+	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Hour)
+	defer cancel()
+	rollout, err := rolloutOp.Wait(ctx)
+	if err != nil {
+		return err
+	}
+	approved := false
+	notified := false
+	for {
+		select {
+		case <-ctx.Done():
+			_, _ = p.client.CancelRollout(ctx, &deploypb.CancelRolloutRequest{
+				Name: rollout.GetName(),
+			})
+			return fmt.Errorf("timed out waiting for rollout to finish: %w", ctx.Err())
+		default:
+			rollout, err = p.client.GetRollout(p.ctx, &deploypb.GetRolloutRequest{
+				Name: rollout.GetName(),
+			})
+			if err != nil {
+				return err
+			}
+			if rollout.GetState() == deploypb.Rollout_PENDING_APPROVAL {
+				if pipeChanges == nil {
+					return fmt.Errorf("pipeline changes are nil, cannot approve rollout")
+				}
+				if approved {
+					time.Sleep(pollingDelay * time.Second)
+					continue
+				}
+				if executionName == "" {
+					log.Println("Execution name not found, please approve manually")
+				} else if util.ShouldApprovePipeline(*pipeChanges, step.Approve, autoApprove, approve) {
+					_, err = p.client.ApproveRollout(p.ctx, &deploypb.ApproveRolloutRequest{
+						Name:     rollout.GetName(),
+						Approved: true,
+					})
+					if err != nil {
+						log.Printf("Failed to approve rollout, please approve manually: %s", err)
+					} else {
+						log.Printf("Approved %s\n", pipelineName)
+						approved = true
+					}
+				} else {
+					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+					if !notified && p.manager != nil {
+						p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+						notified = true
+					}
+				}
+				time.Sleep(pollingDelay * time.Second)
+				continue
+			}
+			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
+				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+				notified = false
+			}
+			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
+				time.Sleep(pollingDelay * time.Second)
+				continue
+			}
+			if rollout.GetState() != deploypb.Rollout_SUCCEEDED {
+				return fmt.Errorf("rollout failed: %s", rollout.GetState())
+			}
+			return nil
+		}
+	}
 }

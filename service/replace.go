@@ -399,7 +399,7 @@ func (u *updater) getParameter(match []string, replaceKey string, step, foundSte
 		return "", err
 	}
 	if len(outputs) > 0 {
-		key := fmt.Sprintf("%s__%s", module.Name, strings.Replace(match[1], "/", "_", -1))
+		key := fmt.Sprintf("%s__%s", module.Name, strings.ReplaceAll(match[1], "/", "_"))
 		output, found := outputs[key]
 		if found {
 			return getOutputValue(output, replaceKey, match)
@@ -605,7 +605,7 @@ func (u *updater) getModuleSelfOutputValue(step model.Step, module model.Module,
 	if err != nil {
 		return "", err
 	}
-	key := fmt.Sprintf("%s__%s", module.Name, strings.Replace(match[1], "/", "_", -1))
+	key := fmt.Sprintf("%s__%s", module.Name, strings.ReplaceAll(match[1], "/", "_"))
 	output, found := outputs[key]
 	if !found {
 		slog.Warn(fmt.Sprintf("step %s key %s not found in tf output", step.Name, key))
@@ -849,12 +849,14 @@ func getReplacementModuleValue(replaceKey string, module model.Module) (string, 
 		return "", fmt.Errorf("failed to parse module key %s for module %s, got %d split parts instead of 2",
 			replaceKey, module.Name, len(parts))
 	}
-	if parts[1] == "name" {
+	switch parts[1] {
+	case "name":
 		return module.Name, nil
-	} else if parts[1] == "source" {
+	case "source":
 		return module.Source, nil
+	default:
+		return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
 	}
-	return "", fmt.Errorf("unknown module replace type %s in tag %s", parts[1], replaceKey)
 }
 
 func parseReplaceTag(match []string) ([]keyType, error) {
