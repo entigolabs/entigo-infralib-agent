@@ -33,12 +33,15 @@ func (b *BaseNotifier) ManualApproval(pipelineName string, changes model.Pipelin
 	return b.MessageFunc(message)
 }
 
-func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step) error {
+func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step, err error) error {
 	var buffer bytes.Buffer
 	if b.Context != "" {
 		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
 	}
 	buffer.WriteString(fmt.Sprintf("Step '%s' status: %s", stepState.Name, status))
+	if err != nil {
+		buffer.WriteString(fmt.Sprintf(", error: %s", err.Error()))
+	}
 	for _, module := range stepState.Modules {
 		buffer.WriteString(fmt.Sprintf("\nModule '%s' version: %s", module.Name, module.Version))
 		if module.AppliedVersion != nil {

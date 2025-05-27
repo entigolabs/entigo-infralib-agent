@@ -52,12 +52,12 @@ func (a *API) ManualApproval(pipelineName string, changes model.PipelineChanges,
 	return err
 }
 
-func (a *API) StepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step) error {
+func (a *API) StepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step, stepErr error) error {
 	fullUrl, err := url.JoinPath(a.url, "steps", "status")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, a.getHeaders(), toModulesRequest(status, stepState, step))
+	_, err = a.client.Post(a.ctx, fullUrl, a.getHeaders(), toModulesRequest(status, stepState, step, stepErr))
 	return err
 }
 
@@ -68,7 +68,7 @@ func (a *API) getHeaders() http.Header {
 	}
 }
 
-func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step *model.Step) model.ModulesRequest {
+func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step *model.Step, err error) model.ModulesRequest {
 	modules := make([]model.ModuleEntity, 0)
 	for _, module := range stepState.Modules {
 		var metadata map[string]string
@@ -91,6 +91,7 @@ func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step 
 		Status:    status,
 		StatusAt:  time.Now().UTC(),
 		Step:      stepState.Name,
+		Error:     err.Error(),
 		AppliedAt: stepState.AppliedAt,
 		Modules:   modules,
 	}

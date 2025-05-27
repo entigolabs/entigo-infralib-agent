@@ -122,9 +122,9 @@ func (n *NotificationManager) ManualApproval(pipelineName string, changes model.
 	})
 }
 
-func (n *NotificationManager) StepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step) {
+func (n *NotificationManager) StepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step, err error) {
 	n.notify(model.MessageTypeProgress, func(notifier model.Notifier) error {
-		return notifier.StepState(status, stepState, step)
+		return notifier.StepState(status, stepState, step, err)
 	})
 }
 

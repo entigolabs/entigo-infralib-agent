@@ -564,6 +564,7 @@ Payload example:
 * status - possible values `failure | skipped | starting | success`
 * status_at - timestamp when the status was set
 * step - name of the step
+* error - error message if the status is failure
 * applied_at - timestamp when the step was applied
 * modules - list of modules
   * name - name of the module

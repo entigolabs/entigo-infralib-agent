@@ -6,7 +6,7 @@ type NotificationManager interface {
 	HasNotifier(messageType MessageType) bool
 	Message(messageType MessageType, message string)
 	ManualApproval(pipelineName string, changes PipelineChanges, link string)
-	StepState(status ApplyStatus, stepState StateStep, step *Step)
+	StepState(status ApplyStatus, stepState StateStep, step *Step, err error)
 }
 
 type MessageType string
@@ -30,7 +30,7 @@ type Notifier interface {
 	Includes(messageType MessageType) bool
 	Message(messageType MessageType, message string) error
 	ManualApproval(pipelineName string, changes PipelineChanges, link string) error
-	StepState(status ApplyStatus, stepState StateStep, step *Step) error
+	StepState(status ApplyStatus, stepState StateStep, step *Step, err error) error
 }
 
 func (n BaseNotifier) GetName() string {
@@ -58,6 +58,7 @@ type ModulesRequest struct {
 	Status    ApplyStatus    `json:"status"`
 	StatusAt  time.Time      `json:"status_at"`
 	Step      string         `json:"step"`
+	Error     string         `json:"error,omitempty"`
 	AppliedAt time.Time      `json:"applied_at"`
 	Modules   []ModuleEntity `json:"modules"`
 }

@@ -438,17 +438,17 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	}
 	moduleVersions, err := u.updateModuleVersions(step, stepState, index)
 	if err != nil {
-		u.postCallback(model.ApplyStatusFailure, *stepState)
+		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		return false, err
 	}
 	step, err = u.processModules(step, moduleVersions)
 	if err != nil {
-		u.postCallback(model.ApplyStatusFailure, *stepState)
+		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		return false, err
 	}
 	step, err = u.replaceConfigStepValues(step, index)
 	if err != nil {
-		u.postCallback(model.ApplyStatusFailure, *stepState)
+		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		var parameterError *model.ParameterNotFoundError
 		if wg.HasCount() && errors.As(err, &parameterError) {
 			slog.Warn(common.PrefixWarning(err.Error()))
@@ -460,13 +460,13 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	if !u.firstRunDone[step.Name] {
 		err = u.updateCertFiles(step.Name)
 		if err != nil {
-			u.postCallback(model.ApplyStatusFailure, *stepState)
+			u.postCallback(model.ApplyStatusFailure, *stepState, err)
 			return false, err
 		}
 	}
 	executePipelines, providers, files, err := u.updateStepFiles(step, moduleVersions, index)
 	if err != nil {
-		u.postCallback(model.ApplyStatusFailure, *stepState)
+		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		return false, err
 	}
 	u.updateStepChecksums(step, files)
@@ -741,7 +741,7 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 		err = u.executeStepPipelines(step, autoApprove, index)
 	}
 	if err != nil {
-		u.postCallback(model.ApplyStatusFailure, *stepState)
+		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		return err
 	}
 	log.Printf("release applied successfully for step %s\n", step.Name)
@@ -1250,23 +1250,23 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 	}
 	modifiedStep, err := u.replaceStepMetadataValues(step, index)
 	if err == nil {
-		u.postCallbackWithStep(status, *stepState, &modifiedStep)
+		u.postCallbackWithStep(status, *stepState, &modifiedStep, nil)
 	} else {
 		slog.Error(common.PrefixError(fmt.Errorf("error replacing step %s metadata values: %v", step.Name, err)))
 	}
 	return u.putStateFile()
 }
 
-func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep) {
-	u.postCallbackWithStep(status, stepState, nil)
+func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep, err error) {
+	u.postCallbackWithStep(status, stepState, nil, err)
 }
 
-func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model.StateStep, step *model.Step) {
+func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model.StateStep, step *model.Step, err error) {
 	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return
 	}
 	log.Printf("Notifying step %s status '%s'", stepState.Name, status)
-	u.manager.StepState(status, stepState, step)
+	u.manager.StepState(status, stepState, step, err)
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {
@@ -1329,7 +1329,7 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return nil, err
 	}
-	u.postCallback(model.ApplyStatusStarting, *stepState)
+	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	return moduleVersions, nil
 }
 
