@@ -87,11 +87,15 @@ func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step 
 			Metadata:       metadata,
 		})
 	}
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
 	return model.ModulesRequest{
 		Status:    status,
 		StatusAt:  time.Now().UTC(),
 		Step:      stepState.Name,
-		Error:     err.Error(),
+		Error:     errMsg,
 		AppliedAt: stepState.AppliedAt,
 		Modules:   modules,
 	}
