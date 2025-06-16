@@ -10,6 +10,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
 * [Docker](#docker)
     * [Building a local Docker image](#building-a-local-docker-image)
     * [Running the Docker image](#running-the-docker-image)
+    * [Using with AWS Profile](#using-with-aws-profile)
 * [Commands](#commands)
     * [Bootstrap](#bootstrap)
     * [Run](#run)
@@ -26,12 +27,9 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
   * [Auto approval logic](#auto-approval-logic)
   * [Overriding config values](#overriding-config-values)
     * [List indexes](#list-indexes)
-    * [Optional replacement tags](#optional-replacement-tags)
     * [Escaping replacement tags](#escaping-replacement-tags)
-    * [Overriding with custom parameters](#overriding-with-custom-parameters)
+    * [Optional replacement tags](#optional-replacement-tags)
     * [Overriding with config values](#overriding-with-config-values)
-    * [Overriding with agent logic](#overriding-with-agent-logic)
-    * [Overriding with module properties](#overriding-with-module-properties)
   * [Including files in steps](#including-files-in-steps)
   * [Including CA certificates](#including-ca-certificates)
   * [Notification API requests](#notification-api-requests)
@@ -82,6 +80,32 @@ By default, the docker image executes the [Run](#run) command. Config.yaml needs
 To execute the [bootstrap](#bootstrap), override the default command.
 
 ```docker run --pull always -it --rm -v "$(pwd)/config.yaml":"/etc/ei-agent/config.yaml" -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY -e AWS_REGION=$AWS_REGION -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN -e CONFIG=/etc/ei-agent/config.yaml entigolabs/entigo-infralib-agent ei-agent bootstrap```
+
+### Using with AWS Profile
+
+Example shell script that checks if the AWS SSO login is valid and runs the agent with the specified profile. Make sure to replace the value of `AWS_PROFILE` with your chosen AWS profile name. Initialize the AWS profile with `aws configure sso --profile profile-name` if it doesn't exist.
+
+```shell
+#!/bin/bash
+
+AWS_REGION="eu-north-1"
+AWS_PROFILE="profile-name"
+
+echo "Checking SSO login..."
+aws sts get-caller-identity --profile "${AWS_PROFILE}" || {
+    echo "SSO login required. Running: aws sso login --profile ${AWS_PROFILE}"
+    aws sso login --profile "${AWS_PROFILE}"
+}
+
+docker run --pull always -it --rm \
+    -v "$(pwd)/config":"/etc/ei-agent/config" \
+    -v "$(pwd)/config.yaml":"/etc/ei-agent/config.yaml" \
+    -v "$HOME/.aws:/root/.aws:ro" \
+    -e AWS_REGION="${AWS_REGION}" \
+    -e AWS_PROFILE="${AWS_PROFILE}" \
+    -e CONFIG=/etc/ei-agent/config.yaml \
+    entigolabs/entigo-infralib-agent ei-agent run
+```
 
 ## Commands
 
@@ -488,9 +512,26 @@ When using the `approve` property, auto approve type is only considered when res
 
 ### Overriding config values
 
-Step, module and input field values can be overwritten by using replacement tags `{{ }}`.
+Step, module and input field values can be overwritten by using replacement tags `{{ .type.key }}`. Possible replacement tags are:
 
-Replacement tags can be overwritten by values from terraform output, config itself or custom agent logic. If the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager. For output values it's possible to use the keywords `ssm`, `gcsm` and `output`. There's also a special type based keyword `toutput` that uses the output from a module with the specified type instead of a name.
+| Type            | Key / Format                | Example                         | Description                                                                               |
+|-----------------|-----------------------------|---------------------------------|-------------------------------------------------------------------------------------------|
+| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`      | Configured version of the specified module.                                               |
+|                 | accountId                   | `.agent.accountId`              | Configured AWS account ID.                                                                |
+|                 | region                      | `.agent.region`                 | Configured cloud provider region.                                                         |
+| `config`        | fieldName                   | `.config.prefix`                | Value from the provided config field.                                                     |
+| `module`        | name                        | `.module.name`                  | Name of the module itself (for module inputs and input files only).                       |
+|                 | source                      | `.module.source`                | Source of the module itself (for module inputs and input files only).                     |
+| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn` | Optional value from Terraform output from specific step/module. Defaults to empty string. |
+| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn` | Value from Terraform output from specific step/module.                                    |
+| `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter or GCloud SM.                                                |
+| `step`          | name                        | `.step.name`                    | Name of the step includes .                                                               |
+| `tmodule`       | type                        | `.tmodule.eks`                  | Name of the module with a specified type.                                                 |
+| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`      | Optional value from Terraform output based on module type. Defaults to empty string.      |
+| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`      | Value from Terraform output based on module type.                                         |
+| `tsmodule`      | type                        | `.tsmodule.eks`                 | Name of the typed module in the current step.                                             |
+
+For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager.
 
 For example, `{{ .output.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
 
@@ -505,30 +546,17 @@ inputs:
 
 If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
 
-#### Optional replacement tags
-
-If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
-
 #### Escaping replacement tags
 
 Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, ``{{`{{ .dbupdate }}`}}`` will be replaced with `{{ .dbupdate }}`. This can be used to pass helm template values through the agent.
 
-#### Overriding with custom parameters
+#### Optional replacement tags
 
-Custom SSM parameter example `{{ .ssm-custom.key }}` will be overwritten by the value of the custom SSM parameter `key`.
-For custom GCloud SM, replace the ssm with gcsm. For universal output, replace the ssm with output `output-custom`.
+If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
 
 #### Overriding with config values
 
 Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
-
-#### Overriding with agent logic
-
-Agent example `{{ .agent.version.step.module }}` will be overwritten by the value of the specified module version that's currently being applied or a set version, e.g `v0.8.4`. Agent replacement also supports AWS account id using key `accountId` and region using key `region`.
-
-#### Overriding with module properties
-
-Infralib modules may use `{{ .tmodule.type }}` in their default input files to replace it with the name of the module used in the config. Alternatively, modules may use `{{ .tsmodule.type }}` to replace it with the name of the typed module used in the active step. It's also possible to use `{{ .module.name  }}` and `{{ .module.source }}` to replace them with module name and source, but those tags only exclusively apply for module inputs, including all input files. There's also `{{ .step.name }}` for replacing with the name of the module step.
 
 ### Including files in steps
 
