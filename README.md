@@ -29,7 +29,6 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [List indexes](#list-indexes)
     * [Escaping replacement tags](#escaping-replacement-tags)
     * [Optional replacement tags](#optional-replacement-tags)
-    * [Overriding with config values](#overriding-with-config-values)
   * [Including files in steps](#including-files-in-steps)
   * [Including CA certificates](#including-ca-certificates)
   * [Notification API requests](#notification-api-requests)
@@ -83,7 +82,7 @@ To execute the [bootstrap](#bootstrap), override the default command.
 
 ### Using with AWS Profile
 
-Example shell script that checks if the AWS SSO login is valid and runs the agent with the specified profile. Make sure to replace the value of `AWS_PROFILE` with your chosen AWS profile name. Initialize the AWS profile with `aws configure sso --profile profile-name` if it doesn't exist.
+Example shell script that checks if the AWS SSO login is valid and runs the agent with the specified profile. Make sure to replace the value of `AWS_PROFILE` with your chosen AWS profile name. Initialize the AWS profile with `aws configure sso --profile profile-name` if it doesn't exist. Alternatively to SSO, you can manually edit the `~/.aws/credentials` file to add the profile with access key and secret key with token if using temporary credentials. In that case, you can remove the SSO login check from the script.
 
 ```shell
 #!/bin/bash
@@ -444,7 +443,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
     * channel_id - slack channel id
   * teams - send notifications to teams
-    * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify github](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
+    * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify GitHub](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
@@ -519,7 +518,7 @@ Step, module and input field values can be overwritten by using replacement tags
 | `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`      | Configured version of the specified module.                                               |
 |                 | accountId                   | `.agent.accountId`              | Configured AWS account ID.                                                                |
 |                 | region                      | `.agent.region`                 | Configured cloud provider region.                                                         |
-| `config`        | fieldName                   | `.config.prefix`                | Value from the provided config field.                                                     |
+| `config`        | fieldName                   | `.config.prefix`                | Value from the provided config field. Config replacement does not support indexed paths.  |
 | `module`        | name                        | `.module.name`                  | Name of the module itself (for module inputs and input files only).                       |
 |                 | source                      | `.module.source`                | Source of the module itself (for module inputs and input files only).                     |
 | `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn` | Optional value from Terraform output from specific step/module. Defaults to empty string. |
@@ -553,10 +552,6 @@ Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, 
 #### Optional replacement tags
 
 If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
-
-#### Overriding with config values
-
-Config example `{{ .config.prefix }}` will be overwritten by the value of the config field `prefix`. Config replacement does not support indexed paths.
 
 ### Including files in steps
 
