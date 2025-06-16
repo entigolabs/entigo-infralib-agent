@@ -524,7 +524,7 @@ Step, module and input field values can be overwritten by using replacement tags
 | `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn` | Optional value from Terraform output from specific step/module. Defaults to empty string. |
 | `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn` | Value from Terraform output from specific step/module.                                    |
 | `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter or GCloud SM.                                                |
-| `step`          | name                        | `.step.name`                    | Name of the step includes .                                                               |
+| `step`          | name                        | `.step.name`                    | Name of the step containing the module.                                                   |
 | `tmodule`       | type                        | `.tmodule.eks`                  | Name of the module with a specified type.                                                 |
 | `toptout`       | type.key                    | `.toptout.eks.cluster_arn`      | Optional value from Terraform output based on module type. Defaults to empty string.      |
 | `toutput`       | type.key                    | `.toutput.eks.cluster_arn`      | Value from Terraform output based on module type.                                         |
