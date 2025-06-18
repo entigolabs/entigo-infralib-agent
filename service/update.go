@@ -133,35 +133,23 @@ func getRunnableSteps(config model.Config, stepsFlag []string) ([]model.Step, er
 func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string, error) {
 	sources := make(map[string]*model.Source)
 	for _, source := range config.Sources {
-		var stableVersion *version.Version
-		var storage model.Storage
-		if util.IsLocalSource(source.URL) {
-			storage = git.NewLocalPath(source.URL)
-		} else {
-			CABundle, err := getCABundle(source.CAFile, config.Certs)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
-			}
-			sourceClient, err := git.NewSourceClient(ctx, source, CABundle)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
-			}
-			storage = sourceClient
-			if !source.ForceVersion {
-				stableVersion, err = sourceClient.GetLatestReleaseTag()
-				if err != nil {
-					return nil, nil, fmt.Errorf("failed to get latest release for %s: %s", source.URL, err)
-				}
-			}
+		storage, stableVersion, err := getSourceStorage(ctx, source, config.Certs)
+		if err != nil {
+			return nil, nil, err
 		}
 		if source.Username != "" {
 			if err := upsertSourceCredentials(source, ssm); err != nil {
 				return nil, nil, err
 			}
 		}
+		var forcedVersion string
+		if source.ForceVersion {
+			forcedVersion = source.Version
+		}
 		sources[source.URL] = &model.Source{
 			URL:           source.URL,
 			StableVersion: stableVersion,
+			ForcedVersion: forcedVersion,
 			Modules:       model.NewSet[string](),
 			Includes:      model.ToSet(source.Include),
 			Excludes:      model.ToSet(source.Exclude),
@@ -175,6 +163,28 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 	}
 	err = addSourceReleases(steps, config.Sources, state, sources)
 	return sources, moduleSources, err
+}
+
+func getSourceStorage(ctx context.Context, source model.ConfigSource, certs []model.File) (model.Storage, *version.Version, error) {
+	if util.IsLocalSource(source.URL) {
+		return git.NewLocalPath(source.URL), nil, nil
+	}
+	CABundle, err := getCABundle(source.CAFile, certs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
+	}
+	sourceClient, err := git.NewSourceClient(ctx, source, CABundle)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create source client %s: %v", source.URL, err)
+	}
+	if !source.ForceVersion {
+		stableVersion, err := sourceClient.GetLatestReleaseTag()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get latest release for %s: %s", source.URL, err)
+		}
+		return sourceClient, stableVersion, nil
+	}
+	return sourceClient, nil, nil
 }
 
 func getCABundle(file string, certs []model.File) ([]byte, error) {
@@ -218,7 +228,7 @@ func addSourceModules(steps []model.Step, configSources []model.ConfigSource, so
 			}
 			moduleSource, err := getModuleSource(configSources, step, module, sources)
 			if err != nil {
-				return nil, fmt.Errorf("module %s in step %s is not included in any Source", module.Name, step.Name)
+				return nil, fmt.Errorf("module %s in step %s source not found: %v", module.Name, step.Name, err)
 			}
 			moduleSources[module.Source] = moduleSource
 		}
@@ -250,19 +260,22 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 		} else if source.StableVersion != nil {
 			release = source.StableVersion.Original()
 		}
-		if source.Storage.PathExists(moduleKey, release) {
+		exists, err := source.Storage.PathExists(moduleKey, release)
+		if err != nil {
+			return "", fmt.Errorf("failed to check if module %s exists in source %s with release %s: %v", module.Name, source.URL, release, err)
+		}
+		if exists {
 			sources[source.URL].Modules.Add(module.Source)
 			return source.URL, nil
 		}
 	}
-	return "", fmt.Errorf("module %s source not found", module.Name)
+	return "", fmt.Errorf("no source contains module")
 }
 
 func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) error {
 	for _, cSource := range configSources {
 		source := sources[cSource.URL]
 		if cSource.ForceVersion {
-			source.ForcedVersion = cSource.Version
 			continue
 		}
 		upperVersion := source.StableVersion

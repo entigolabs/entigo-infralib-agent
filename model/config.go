@@ -285,7 +285,7 @@ type SourceAuth struct {
 type Storage interface {
 	GetFile(path, release string) ([]byte, error)
 	FileExists(path, release string) bool
-	PathExists(path, release string) bool
+	PathExists(path, release string) (bool, error)
 	CalculateChecksums(release string) (map[string][]byte, error)
 }
 

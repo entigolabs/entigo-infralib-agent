@@ -8,6 +8,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -117,6 +118,7 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 	defer repoMutex.Unlock()
 	repo, err := openSourceRepo(ctx, auth, source, repoPath, CABundle)
 	if err == nil {
+		slog.Debug(fmt.Sprintf("Repository path %s", repoPath))
 		return repo, nil
 	}
 	if !errors.Is(err, git.ErrRepositoryNotExists) {
@@ -242,6 +244,12 @@ func (s *SourceClient) checkoutClean(release string) error {
 		branch = plumbing.NewTagReferenceName(release)
 	} else {
 		branch = plumbing.NewBranchReferenceName(release)
+		if !s.pulled.Contains(release) {
+			err := s.fetchBranch(branch, release)
+			if err != nil {
+				return fmt.Errorf("failed to fetch branch %s: %v", release, err)
+			}
+		}
 	}
 	err := s.worktree.Checkout(&git.CheckoutOptions{
 		Branch: branch,
@@ -268,6 +276,30 @@ func (s *SourceClient) checkoutClean(release string) error {
 	return nil
 }
 
+func (s *SourceClient) fetchBranch(branch plumbing.ReferenceName, release string) error {
+	err := s.repo.Fetch(&git.FetchOptions{
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("refs/heads/%[1]s:refs/remotes/origin/%[1]s", release)),
+		},
+		Auth:            s.auth,
+		InsecureSkipTLS: s.insecure,
+		CABundle:        s.CABundle,
+		Force:           true,
+	})
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return err
+	}
+	_, err = s.repo.Reference(branch, true)
+	if err != nil {
+		ref, err := s.repo.Reference(plumbing.NewRemoteReferenceName(git.DefaultRemoteName, release), true)
+		if err != nil {
+			return err
+		}
+		return s.repo.Storer.SetReference(plumbing.NewHashReference(branch, ref.Hash()))
+	}
+	return nil
+}
+
 func (s *SourceClient) FileExists(path string, release string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,17 +313,23 @@ func (s *SourceClient) FileExists(path string, release string) bool {
 	return err == nil && !file.IsDir()
 }
 
-func (s *SourceClient) PathExists(path string, release string) bool {
+func (s *SourceClient) PathExists(path string, release string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	err := s.checkoutClean(release)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	file, err := s.worktree.Filesystem.Stat(path)
-	return err == nil && file.IsDir()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return file.IsDir(), nil
 }
 
 func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, error) {

@@ -30,13 +30,16 @@ func (l *local) FileExists(path, _ string) bool {
 	return util.FileExists(l.source, path)
 }
 
-func (l *local) PathExists(path, _ string) bool {
+func (l *local) PathExists(path, _ string) (bool, error) {
 	fullPath := filepath.Join(l.source, path)
 	info, err := os.Stat(fullPath)
 	if os.IsNotExist(err) {
-		return false
+		return false, nil
 	}
-	return info.IsDir()
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 func (l *local) CalculateChecksums(_ string) (map[string][]byte, error) {
