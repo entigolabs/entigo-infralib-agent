@@ -33,6 +33,13 @@ type ConfigSource struct {
 	CAFile       string   `yaml:"ca_file,omitempty"`
 }
 
+func (s ConfigSource) GetSourceKey() SourceKey {
+	if s.ForceVersion {
+		return SourceKey{URL: s.URL, ForcedVersion: s.Version}
+	}
+	return SourceKey{URL: s.URL}
+}
+
 type ConfigDestination struct {
 	Name string `yaml:"name,omitempty"`
 	Git  *Git   `yaml:"git,omitempty"`
@@ -261,6 +268,22 @@ const (
 	ModuleTypeCustom ModuleType = "custom"
 )
 
+type SourceKey struct {
+	URL           string
+	ForcedVersion string
+}
+
+func (s SourceKey) String() string {
+	if s.ForcedVersion != "" {
+		return fmt.Sprintf("%s@%s", s.URL, s.ForcedVersion)
+	}
+	return s.URL
+}
+
+func (s SourceKey) IsEmpty() bool {
+	return s.URL == "" && s.ForcedVersion == ""
+}
+
 type Source struct {
 	URL               string
 	Version           *version.Version
@@ -290,9 +313,9 @@ type Storage interface {
 }
 
 type ModuleVersion struct {
-	Version   string
-	Changed   bool
-	SourceURL string
+	Version string
+	Changed bool
+	Source  SourceKey
 }
 
 type V1Agent struct {

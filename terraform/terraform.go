@@ -32,17 +32,17 @@ const (
 var planRegex = regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
 
 type Terraform interface {
-	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[string]string) ([]byte, map[string]model.Set[string], error)
+	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[model.SourceKey]string) ([]byte, map[model.SourceKey]model.Set[string], error)
 	AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion) error
 }
 
 type terraform struct {
 	providerType  model.ProviderType
 	configSources []model.ConfigSource
-	sources       map[string]*model.Source
+	sources       map[model.SourceKey]*model.Source
 }
 
-func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[string]*model.Source) Terraform {
+func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[model.SourceKey]*model.Source) Terraform {
 	return &terraform{
 		providerType:  providerType,
 		configSources: configSources,
@@ -50,7 +50,7 @@ func NewTerraform(providerType model.ProviderType, configSources []model.ConfigS
 	}
 }
 
-func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[string]string) ([]byte, map[string]model.Set[string], error) {
+func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[model.SourceKey]string) ([]byte, map[model.SourceKey]model.Set[string], error) {
 	file, baseSource, err := t.findProviderFile(providerPath, baseFile, sourceVersions)
 	if err != nil {
 		return nil, nil, err
@@ -65,7 +65,7 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 		return nil, nil, err
 	}
 	baseBody := file.Body()
-	providers := make(map[string]model.Set[string])
+	providers := make(map[model.SourceKey]model.Set[string])
 	providers[baseSource] = model.ToSet([]string{base})
 	attrProviders, err := t.addProviderAttributes(baseBody, providersBlock, providersAttributes, step, sourceVersions)
 	if err != nil {
@@ -103,7 +103,7 @@ func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[s
 			continue
 		}
 		providerAttributes, err := t.getProviderAttributes(module, moduleVersions[module.Name].Version,
-			moduleVersions[module.Name].SourceURL)
+			moduleVersions[module.Name].Source)
 		if err != nil {
 			return nil, err
 		}
@@ -114,37 +114,38 @@ func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[s
 	return providersAttributes, nil
 }
 
-func (t *terraform) findProviderFile(path string, fileName string, sourceVersions map[string]string) (*hclwrite.File, string, error) {
-	sourceURL := ""
+func (t *terraform) findProviderFile(path string, fileName string, sourceVersions map[model.SourceKey]string) (*hclwrite.File, model.SourceKey, error) {
+	var sourceKey model.SourceKey
 	release := ""
 	for _, configSource := range t.configSources {
-		source := t.sources[configSource.URL]
+		key := configSource.GetSourceKey()
+		source := t.sources[key]
 		if util.IsLocalSource(configSource.URL) && source.Storage.FileExists(filepath.Join(path, fileName), "") {
-			sourceURL = source.URL
+			sourceKey = key
 			release = source.ForcedVersion
 			break
 		}
-		sourceVersion := sourceVersions[source.URL]
+		sourceVersion := sourceVersions[key]
 		if sourceVersion == "" {
 			continue
 		}
 		if !source.Storage.FileExists(filepath.Join(path, fileName), sourceVersion) {
 			continue
 		}
-		sourceURL = source.URL
+		sourceKey = key
 		release = sourceVersion
 	}
-	if sourceURL == "" {
-		return nil, "", model.NewFileNotFoundError(fileName)
+	if sourceKey.IsEmpty() {
+		return nil, model.SourceKey{}, model.NewFileNotFoundError(fileName)
 	}
-	file, err := t.getTerraformFile(sourceURL, path, fileName, release)
+	file, err := t.getTerraformFile(sourceKey, path, fileName, release)
 	if err != nil {
-		return nil, "", err
+		return nil, model.SourceKey{}, err
 	}
-	return file, sourceURL, nil
+	return file, sourceKey, nil
 }
 
-func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release string) (*hclwrite.File, error) {
+func (t *terraform) getTerraformFile(sourceURL model.SourceKey, filePath, fileName, release string) (*hclwrite.File, error) {
 	source := t.sources[sourceURL]
 	if source == nil {
 		return nil, fmt.Errorf("tf source %s not found", sourceURL)
@@ -160,8 +161,8 @@ func (t *terraform) getTerraformFile(sourceURL, filePath, fileName, release stri
 	return file, nil
 }
 
-func (t *terraform) getProviderAttributes(module model.Module, version, sourceURL string) (map[string]*hclwrite.Attribute, error) {
-	file, err := t.getTerraformFile(sourceURL, fmt.Sprintf(moduleTemplate, module.Source), versionsFile, version)
+func (t *terraform) getProviderAttributes(module model.Module, version string, source model.SourceKey) (map[string]*hclwrite.Attribute, error) {
+	file, err := t.getTerraformFile(source, fmt.Sprintf(moduleTemplate, module.Source), versionsFile, version)
 	if err != nil {
 		return nil, err
 	}
@@ -184,25 +185,25 @@ func getRequiredProvidersBlock(file *hclwrite.File) (*hclwrite.Block, error) {
 	return providersBlock, nil
 }
 
-func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[string]string) ([]*hclwrite.Block, string) {
+func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[model.SourceKey]string) ([]*hclwrite.Block, model.SourceKey) {
 	providerFile, providerSource, err := t.findProviderFile(providerPath, fmt.Sprintf("%s.tf", providerName), sourceVersions)
 	if err != nil {
 		var fileNotFoundError model.FileNotFoundError
 		if errors.As(err, &fileNotFoundError) {
 			slog.Debug(fmt.Sprintf("Provider file not found for %s\n", providerName))
-			return []*hclwrite.Block{}, ""
+			return []*hclwrite.Block{}, providerSource
 		}
-		return nil, ""
+		return nil, providerSource
 	}
 	return providerFile.Body().Blocks(), providerSource
 }
 
-func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, step model.Step, sourceVersions map[string]string) (map[string]string, error) {
+func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, step model.Step, sourceVersions map[model.SourceKey]string) (map[string]model.SourceKey, error) {
 	providerInputs := step.Provider.Inputs
 	if providerInputs == nil {
 		providerInputs = make(map[string]interface{})
 	}
-	providers := make(map[string]string)
+	providers := make(map[string]model.SourceKey)
 	keys := make([]string, 0, len(providersAttributes))
 	for key := range providersAttributes {
 		keys = append(keys, key)
@@ -368,17 +369,17 @@ func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Ste
 	if util.IsClientModule(module) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion.Version)))
-	} else if util.IsLocalSource(moduleVersion.SourceURL) {
+	} else if util.IsLocalSource(moduleVersion.Source.URL) {
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("%s/modules/%s", moduleVersion.SourceURL, module.Source)))
+			cty.StringVal(fmt.Sprintf("%s/modules/%s", moduleVersion.Source.URL, module.Source)))
 	} else {
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.SourceURL, module.Source,
+			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.Source.URL, module.Source,
 				moduleVersion.Version)))
 	}
 	moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", prefix, step.Name, module.Name)))
 	addInputs(module.Inputs, moduleBody)
-	return t.addOutputs(body, step.Type, module, moduleVersion.SourceURL, moduleVersion.Version)
+	return t.addOutputs(body, step.Type, module, moduleVersion.Version, moduleVersion.Source)
 }
 
 func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
@@ -409,7 +410,7 @@ func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
 	}
 }
 
-func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, module model.Module, sourceURL, release string) error {
+func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, module model.Module, release string, source model.SourceKey) error {
 	if util.IsClientModule(module) {
 		return nil
 	}
@@ -418,7 +419,7 @@ func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, mod
 		moduleSource = fmt.Sprintf("k8s/%s", module.Source)
 	}
 	filePath := fmt.Sprintf("modules/%s", moduleSource)
-	file, err := t.getTerraformFile(sourceURL, filePath, "outputs.tf", release)
+	file, err := t.getTerraformFile(source, filePath, "outputs.tf", release)
 	if err != nil {
 		var fileError model.FileNotFoundError
 		if errors.As(err, &fileError) {

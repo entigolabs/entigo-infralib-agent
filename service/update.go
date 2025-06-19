@@ -45,8 +45,8 @@ type updater struct {
 	pipelineFlags common.Pipeline
 	localPipeline *LocalPipeline
 	manager       model.NotificationManager
-	moduleSources map[string]string
-	sources       map[string]*model.Source
+	moduleSources map[string]model.SourceKey
+	sources       map[model.SourceKey]*model.Source
 	firstRunDone  map[string]bool
 }
 
@@ -130,8 +130,8 @@ func getRunnableSteps(config model.Config, stepsFlag []string) ([]model.Step, er
 	return runnableSteps, nil
 }
 
-func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[string]*model.Source, map[string]string, error) {
-	sources := make(map[string]*model.Source)
+func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[model.SourceKey]*model.Source, map[string]model.SourceKey, error) {
+	sources := make(map[model.SourceKey]*model.Source)
 	for _, source := range config.Sources {
 		storage, stableVersion, err := getSourceStorage(ctx, source, config.Certs)
 		if err != nil {
@@ -146,7 +146,7 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 		if source.ForceVersion {
 			forcedVersion = source.Version
 		}
-		sources[source.URL] = &model.Source{
+		sources[model.SourceKey{URL: source.URL, ForcedVersion: forcedVersion}] = &model.Source{
 			URL:           source.URL,
 			StableVersion: stableVersion,
 			ForcedVersion: forcedVersion,
@@ -216,14 +216,14 @@ func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) error {
 	return nil
 }
 
-func addSourceModules(steps []model.Step, configSources []model.ConfigSource, sources map[string]*model.Source) (map[string]string, error) {
-	moduleSources := make(map[string]string)
+func addSourceModules(steps []model.Step, configSources []model.ConfigSource, sources map[model.SourceKey]*model.Source) (map[string]model.SourceKey, error) {
+	moduleSources := make(map[string]model.SourceKey)
 	for _, step := range steps {
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				continue
 			}
-			if moduleSources[module.Source] != "" {
+			if !moduleSources[module.Source].IsEmpty() {
 				continue
 			}
 			moduleSource, err := getModuleSource(configSources, step, module, sources)
@@ -236,14 +236,15 @@ func addSourceModules(steps []model.Step, configSources []model.ConfigSource, so
 	return moduleSources, nil
 }
 
-func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
+func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[model.SourceKey]*model.Source) (model.SourceKey, error) {
 	for _, configSource := range configSources {
-		source := sources[configSource.URL]
+		sourceKey := configSource.GetSourceKey()
+		source := sources[sourceKey]
 		moduleSource := module.Source
 		if len(source.Includes) > 0 {
 			if source.Includes.Contains(module.Source) {
-				sources[source.URL].Modules.Add(module.Source)
-				return source.URL, nil
+				sources[sourceKey].Modules.Add(module.Source)
+				return sourceKey, nil
 			}
 			continue
 		}
@@ -262,33 +263,33 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 		}
 		exists, err := source.Storage.PathExists(moduleKey, release)
 		if err != nil {
-			return "", fmt.Errorf("failed to check if module %s exists in source %s with release %s: %v", module.Name, source.URL, release, err)
+			return model.SourceKey{}, fmt.Errorf("failed to check if module %s exists in source %s with release %s: %v", module.Name, source.URL, release, err)
 		}
 		if exists {
-			sources[source.URL].Modules.Add(module.Source)
-			return source.URL, nil
+			sources[sourceKey].Modules.Add(module.Source)
+			return sourceKey, nil
 		}
 	}
-	return "", fmt.Errorf("no source contains module")
+	return model.SourceKey{}, fmt.Errorf("no source contains module")
 }
 
-func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) error {
-	for _, cSource := range configSources {
-		source := sources[cSource.URL]
-		if cSource.ForceVersion {
+func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[model.SourceKey]*model.Source) error {
+	for _, configSource := range configSources {
+		if configSource.ForceVersion {
 			continue
 		}
+		source := sources[configSource.GetSourceKey()]
 		upperVersion := source.StableVersion
-		if cSource.Version != "" && cSource.Version != StableVersion {
+		if configSource.Version != "" && configSource.Version != StableVersion {
 			var err error
-			upperVersion, err = version.NewVersion(cSource.Version)
+			upperVersion, err = version.NewVersion(configSource.Version)
 			if err != nil {
-				return fmt.Errorf("failed to parse version %s: %s", cSource.Version, err)
+				return fmt.Errorf("failed to parse version %s: %s", configSource.Version, err)
 			}
 		}
 		source.Version = upperVersion
 		if len(source.Modules) == 0 {
-			log.Printf("No modules found for Source %s\n", cSource.URL)
+			log.Printf("No modules found for Source %s\n", configSource.URL)
 		}
 		newestVersion, releases, err := getSourceReleases(steps, source, state)
 		if err != nil {
@@ -411,14 +412,14 @@ func (u *updater) getMostReleases() int {
 
 func (u *updater) logReleases(index int) {
 	var sourceReleases []string
-	for url, source := range u.sources {
+	for _, source := range u.sources {
 		if source.ForcedVersion != "" {
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, source.ForcedVersion))
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", source.URL, source.ForcedVersion))
 			continue
 		}
 		if index < len(source.Releases) {
 			release := source.Releases[index]
-			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", url, release.Original()))
+			sourceReleases = append(sourceReleases, fmt.Sprintf("%s %s", source.URL, release.Original()))
 		}
 	}
 	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
@@ -528,7 +529,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 	}
 }
 
-func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[string]model.Set[string], wg *model.SafeCounter, errChan chan<- string, files map[string]model.File) error {
+func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[model.SourceKey]model.Set[string], wg *model.SafeCounter, errChan chan<- string, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
 		return nil
@@ -556,7 +557,7 @@ func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.
 	return nil
 }
 
-func (u *updater) hasChanged(step model.Step, providers map[string]model.Set[string]) bool {
+func (u *updater) hasChanged(step model.Step, providers map[model.SourceKey]model.Set[string]) bool {
 	changed := u.getChangedProviders(providers)
 	if len(changed) > 0 {
 		log.Printf("Step %s providers have changed: %s\n", step.Name, strings.Join(changed, ", "))
@@ -580,13 +581,13 @@ func (u *updater) hasChanged(step model.Step, providers map[string]model.Set[str
 	return false
 }
 
-func (u *updater) getChangedProviders(repoProviders map[string]model.Set[string]) []string {
+func (u *updater) getChangedProviders(repoProviders map[model.SourceKey]model.Set[string]) []string {
 	changed := make([]string, 0)
 	if repoProviders == nil {
 		return changed
 	}
-	for repoURL, providers := range repoProviders {
-		providerSource := u.sources[repoURL]
+	for sourceKey, providers := range repoProviders {
+		providerSource := u.sources[sourceKey]
 		for provider := range providers {
 			providerKey := fmt.Sprintf("providers/%s.tf", provider)
 			previousChecksum, ok := providerSource.PreviousChecksums[providerKey]
@@ -829,7 +830,7 @@ func (u *updater) updateStepChecksums(step model.Step, files map[string]model.Fi
 	u.stepChecksums.CurrentChecksums[step.Name] = stepChecksum
 }
 
-func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
+func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[model.SourceKey]model.Set[string], map[string]model.File, error) {
 	switch step.Type {
 	case model.StepTypeTerraform:
 		return u.updateTerraformFiles(step, moduleVersions, index)
@@ -1097,7 +1098,7 @@ func getNewerVersion(newestVersion string, moduleVersion string) (string, error)
 	}
 }
 
-func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[string]model.Set[string], map[string]model.File, error) {
+func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (bool, map[model.SourceKey]model.Set[string], map[string]model.File, error) {
 	files := make(map[string]model.File)
 	mainPath, mainFile, err := u.createBackendConf(fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name), u.resources.GetBucket())
 	if err != nil {
@@ -1139,13 +1140,13 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	return changed || len(step.Files) > 0, providers, files, err
 }
 
-func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (map[string]string, error) {
-	sourceVersions := make(map[string]string)
+func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]model.ModuleVersion, index int) (map[model.SourceKey]string, error) {
+	sourceVersions := make(map[model.SourceKey]string)
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			continue
 		}
-		source := moduleVersions[module.Name].SourceURL
+		source := moduleVersions[module.Name].Source
 		moduleVersion, err := version.NewVersion(moduleVersions[module.Name].Version)
 		if err != nil {
 			continue
@@ -1161,16 +1162,16 @@ func (u *updater) getSourceVersions(step model.Step, moduleVersions map[string]m
 			sourceVersions[source] = moduleVersion.Original()
 		}
 	}
-	for sourceURL, source := range u.sources {
+	for key, source := range u.sources {
 		if source.ForcedVersion != "" {
-			sourceVersions[sourceURL] = source.ForcedVersion
+			sourceVersions[key] = source.ForcedVersion
 			continue
 		}
-		_, exists := sourceVersions[sourceURL]
+		_, exists := sourceVersions[key]
 		if exists {
 			continue
 		}
-		sourceVersions[sourceURL] = source.Releases[util.MinInt(index, len(source.Releases)-1)].Original()
+		sourceVersions[key] = source.Releases[util.MinInt(index, len(source.Releases)-1)].Original()
 	}
 	return sourceVersions, nil
 }
@@ -1333,9 +1334,9 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 			return nil, err
 		}
 		moduleVersions[module.Name] = model.ModuleVersion{
-			Version:   moduleVersion,
-			Changed:   changed,
-			SourceURL: u.moduleSources[module.Source],
+			Version: moduleVersion,
+			Changed: changed,
+			Source:  u.moduleSources[module.Source],
 		}
 	}
 	err := u.putStateFile()
@@ -1439,8 +1440,8 @@ func getModuleAutoApprove(moduleVersion *version.Version, releaseTag *version.Ve
 }
 
 func (u *updater) getModuleSource(moduleSource string) *model.Source {
-	sourceUrl := u.moduleSources[moduleSource]
-	return u.sources[sourceUrl]
+	sourceKey := u.moduleSources[moduleSource]
+	return u.sources[sourceKey]
 }
 
 func (u *updater) updatePipelines(projectName string, step model.Step, bucket string) error {
@@ -1486,7 +1487,7 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 }
 
 func (u *updater) updateChecksums(index int) error {
-	for url, source := range u.sources {
+	for key, source := range u.sources {
 		if index != 1 && len(source.Releases)-1 < index {
 			continue
 		}
@@ -1500,10 +1501,10 @@ func (u *updater) updateChecksums(index int) error {
 		}
 		checksums, err := source.Storage.CalculateChecksums(release)
 		if err != nil {
-			return fmt.Errorf("failed to get checksums for %s: %s", url, err)
+			return fmt.Errorf("failed to get checksums for %s: %s", source.URL, err)
 		}
 		source.CurrentChecksums = checksums
-		u.sources[url] = source
+		u.sources[key] = source
 	}
 	return nil
 }
