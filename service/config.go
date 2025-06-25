@@ -480,11 +480,11 @@ func processSteps(config *model.Config, providerType model.ProviderType) {
 }
 
 func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
+	if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
+		step.KubernetesClusterName = getKubernetesClusterName(providerType)
+	}
 	if step.Vpc.Attach == nil {
 		attach := step.Type == model.StepTypeArgoCD
-		if step.Type == model.StepTypeArgoCD && step.KubernetesClusterName == "" {
-			step.KubernetesClusterName = getKubernetesClusterName(providerType)
-		}
 		step.Vpc.Attach = &attach
 	}
 }
@@ -497,16 +497,26 @@ func getKubernetesClusterName(providerType model.ProviderType) string {
 }
 
 func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
-	if !*step.Vpc.Attach || step.Vpc.Id != "" {
+	if !*step.Vpc.Attach {
 		return
 	}
 	if providerType == model.AWS {
-		step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
-		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
-		step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+		if step.Vpc.Id == "" {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+		}
+		if step.Vpc.SubnetIds == "" {
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+		}
+		if step.Vpc.SecurityGroupIds == "" {
+			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
+		}
 	} else if providerType == model.GCLOUD {
-		step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
-		step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		if step.Vpc.Id == "" {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
+		}
+		if step.Vpc.SubnetIds == "" {
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		}
 	}
 }
 
