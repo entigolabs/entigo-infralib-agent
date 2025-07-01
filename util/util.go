@@ -311,8 +311,12 @@ func GetOutputValue(outputs map[string]model.TFOutput, key string) (*string, err
 	if !found {
 		return nil, nil
 	}
+	return GetInterfaceValue(output.Value, output.Type)
+}
+
+func GetInterfaceValue(output interface{}, outputType interface{}) (*string, error) {
 	var value string
-	switch v := output.Value.(type) {
+	switch v := output.(type) {
 	case string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
 		value = strings.Trim(GetStringValue(v), "\"")
 	case []interface{}:
@@ -322,14 +326,14 @@ func GetOutputValue(outputs map[string]model.TFOutput, key string) (*string, err
 		}
 		value = strings.Join(values, ",")
 	case map[string]interface{}:
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", output.Type)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", outputType)))
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
 			return nil, err
 		}
 		value = string(jsonBytes)
 	default:
-		return nil, fmt.Errorf("unsupported type: %s", reflect.TypeOf(output.Value))
+		return nil, fmt.Errorf("unsupported type: %s", reflect.TypeOf(output))
 	}
 	return &value, nil
 }

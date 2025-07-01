@@ -543,7 +543,7 @@ inputs:
 
 #### List indexes
 
-If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
+If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`. In case of terraform output, it's also possible to use a map key as the index, e.g. `{{ .output.stepName.moduleName.key-1[key-2] }}`.
 
 #### Escaping replacement tags
 
