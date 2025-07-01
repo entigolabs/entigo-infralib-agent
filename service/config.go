@@ -505,7 +505,7 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
 		}
 		if step.Vpc.SubnetIds == "" {
-			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+			step.Vpc.SubnetIds = "[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]"
 		}
 		if step.Vpc.SecurityGroupIds == "" {
 			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
