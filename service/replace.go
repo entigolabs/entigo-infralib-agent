@@ -39,7 +39,7 @@ const (
 )
 
 var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*[^{}\n]*?(?:}}\x60)*)}}`)
-var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[(\d+)(-(\d+))?])?`)
+var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[([A-Za-z0-9.]+)(-([A-Za-z0-9.]+))?])?`)
 
 func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Step, error) {
 	stepYaml, err := yaml.Marshal(step)
@@ -439,14 +439,31 @@ func getOutputValue(output model.TFOutput, replaceKey string, match []string) (s
 		}
 		return getSSMParameterValueFromList(match, values, replaceKey, match[1])
 	case map[string]interface{}:
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", replaceKey)))
-		bytes, err := json.Marshal(v)
-		if err != nil {
-			return "", err
-		}
-		return string(bytes), nil
+		return getOutputMapValue(v, output, replaceKey, match)
 	}
 	return "", fmt.Errorf("unsupported type: %s", reflect.TypeOf(output.Value))
+}
+
+func getOutputMapValue(v map[string]interface{}, output model.TFOutput, replaceKey string, match []string) (string, error) {
+	if match[3] != "" {
+		innerValue, found := v[match[3]]
+		if !found {
+			return "", fmt.Errorf("output %s failed to get value for key %s with index %s: key not found",
+				replaceKey, match[1], match[2])
+		}
+		value, err := util.GetInterfaceValue(innerValue, output.Type)
+		if err != nil {
+			return "", fmt.Errorf("output %s failed to get value for key %s with index %s: %v",
+				replaceKey, match[1], match[2], err)
+		}
+		return strings.Trim(*value, `"`), nil
+	}
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", replaceKey)))
+	bytes, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
 }
 
 func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[string]model.TFOutput, error) {

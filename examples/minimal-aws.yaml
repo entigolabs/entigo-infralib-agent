@@ -4,7 +4,6 @@ prefix: dev
 steps:
   - name: net
     type: terraform
-    approve: major
     modules:
       - name: main
         source: aws/vpc
@@ -24,7 +23,6 @@ steps:
           public_subdomain_name: "{{ .config.prefix }}"
   - name: infra
     type: terraform
-    approve: major
     vpc:
       attach: true
     modules:
@@ -43,7 +41,6 @@ steps:
         source: aws/crossplane
   - name: apps
     type: argocd-apps
-    approve: major
     modules:
       - name: argocd
         source: argocd
