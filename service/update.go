@@ -239,30 +239,23 @@ func addSourceModules(steps []model.Step, configSources []model.ConfigSource, so
 func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[string]*model.Source) (string, error) {
 	for _, configSource := range configSources {
 		source := sources[configSource.URL]
-		moduleSource := module.Source
 		if len(source.Includes) > 0 {
-			if source.Includes.Contains(module.Source) {
-				sources[source.URL].Modules.Add(module.Source)
-				return source.URL, nil
+			if !source.Includes.Contains(module.Source) {
+				continue
 			}
+			err := moduleMustExist(source, step.Type, module)
+			if err != nil {
+				return "", err
+			}
+			sources[source.URL].Modules.Add(module.Source)
+			return source.URL, nil
+		}
+		if source.Excludes.Contains(module.Source) {
 			continue
 		}
-		if source.Excludes.Contains(moduleSource) {
-			continue
-		}
-		if step.Type == model.StepTypeArgoCD {
-			moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
-		}
-		moduleKey := fmt.Sprintf("modules/%s", moduleSource)
-		var release string
-		if source.ForcedVersion != "" {
-			release = source.ForcedVersion
-		} else if source.StableVersion != nil {
-			release = source.StableVersion.Original()
-		}
-		exists, err := source.Storage.PathExists(moduleKey, release)
+		exists, err := moduleExists(source, step.Type, module)
 		if err != nil {
-			return "", fmt.Errorf("failed to check if module %s exists in source %s with release %s: %v", module.Name, source.URL, release, err)
+			return "", err
 		}
 		if exists {
 			sources[source.URL].Modules.Add(module.Source)
@@ -270,6 +263,38 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 		}
 	}
 	return "", fmt.Errorf("no source contains module")
+}
+
+func moduleMustExist(source *model.Source, stepType model.StepType, module model.Module) error {
+	exists, err := moduleExists(source, stepType, module)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	return fmt.Errorf("source %s config includes module %s, but module path not found",
+		source.URL, module.Source)
+}
+
+func moduleExists(source *model.Source, stepType model.StepType, module model.Module) (bool, error) {
+	moduleSource := module.Source
+	if stepType == model.StepTypeArgoCD {
+		moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
+	}
+	moduleKey := fmt.Sprintf("modules/%s", moduleSource)
+	var release string
+	if source.ForcedVersion != "" {
+		release = source.ForcedVersion
+	} else if source.StableVersion != nil {
+		release = source.StableVersion.Original()
+	}
+	exists, err := source.Storage.PathExists(moduleKey, release)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if module %s exists in source %s with release %s: %v",
+			module.Name, source.URL, release, err)
+	}
+	return exists, nil
 }
 
 func addSourceReleases(steps []model.Step, configSources []model.ConfigSource, state *model.State, sources map[string]*model.Source) error {
