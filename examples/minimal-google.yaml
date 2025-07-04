@@ -4,14 +4,12 @@ prefix: dev
 steps:
   - name: net
     type: terraform
-    approve: minor
     modules:
       - name: main
         source: google/vpc
         version: stable
   - name: infra
     type: terraform
-    approve: minor
     vpc:
       attach: true
     modules:

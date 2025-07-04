@@ -162,16 +162,34 @@ func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model
 	if err != nil {
 		return nil, err
 	}
-	err = worktree.PullContext(ctx, &git.PullOptions{
-		Force:           true,
-		Auth:            auth,
-		InsecureSkipTLS: source.Insecure,
-		CABundle:        CABundle,
+	ref, err := getDefaultBranchRef(repo)
+	if err != nil {
+		return nil, err
+	}
+	err = worktree.Reset(&git.ResetOptions{
+		Commit: ref.Hash(),
+		Mode:   git.HardReset,
 	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+	if err != nil {
 		return nil, err
 	}
 	return repo, nil
+}
+
+func getDefaultBranchRef(repo *git.Repository) (*plumbing.Reference, error) {
+	ref, err := repo.Reference(plumbing.NewRemoteReferenceName(git.DefaultRemoteName, "HEAD"), true)
+	if err == nil {
+		return ref, nil
+	}
+	ref, err = repo.Reference(plumbing.NewRemoteReferenceName(git.DefaultRemoteName, "main"), true)
+	if err == nil {
+		return ref, nil
+	}
+	ref, err = repo.Reference(plumbing.NewRemoteReferenceName(git.DefaultRemoteName, "master"), true)
+	if err == nil {
+		return ref, nil
+	}
+	return nil, fmt.Errorf("failed to find default branch (HEAD, main, or master): %w", err)
 }
 
 func (s *SourceClient) GetLatestReleaseTag() (*version.Version, error) {
@@ -229,65 +247,42 @@ func (s *SourceClient) checkoutClean(release string) error {
 	if s.currentRelease == release {
 		return nil
 	}
-	var branch plumbing.ReferenceName
+	var checkoutRef plumbing.ReferenceName
 	isTag := s.releasesSet.Contains(release)
 	if isTag {
-		branch = plumbing.NewTagReferenceName(release)
+		checkoutRef = plumbing.NewTagReferenceName(release)
 	} else {
-		branch = plumbing.NewBranchReferenceName(release)
 		if !s.pulled.Contains(release) {
-			err := s.fetchBranch(branch, release)
-			if err != nil {
-				return fmt.Errorf("failed to fetch branch %s: %v", release, err)
+			if err := s.fetchBranch(release); err != nil {
+				return err
 			}
 		}
+		checkoutRef = plumbing.NewRemoteReferenceName(git.DefaultRemoteName, release)
 	}
 	err := s.worktree.Checkout(&git.CheckoutOptions{
-		Branch: branch,
+		Branch: checkoutRef,
 		Force:  true,
 	})
 	if err != nil {
 		return err
 	}
 	s.currentRelease = release
-	if isTag || s.pulled.Contains(release) {
-		return nil
-	}
-	err = s.worktree.PullContext(s.ctx, &git.PullOptions{
-		Force:           true,
-		SingleBranch:    true,
-		Auth:            s.auth,
-		InsecureSkipTLS: s.insecure,
-		CABundle:        s.CABundle,
-	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return err
-	}
-	s.pulled.Add(release)
 	return nil
 }
 
-func (s *SourceClient) fetchBranch(branch plumbing.ReferenceName, release string) error {
+func (s *SourceClient) fetchBranch(release string) error {
 	err := s.repo.Fetch(&git.FetchOptions{
 		RefSpecs: []config.RefSpec{
-			config.RefSpec(fmt.Sprintf("refs/heads/%[1]s:refs/remotes/origin/%[1]s", release)),
+			config.RefSpec(fmt.Sprintf("+refs/heads/%[1]s:refs/remotes/origin/%[1]s", release)),
 		},
 		Auth:            s.auth,
 		InsecureSkipTLS: s.insecure,
 		CABundle:        s.CABundle,
-		Force:           true,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return err
+		return fmt.Errorf("failed to fetch branch %s: %w", release, err)
 	}
-	_, err = s.repo.Reference(branch, true)
-	if err != nil {
-		ref, err := s.repo.Reference(plumbing.NewRemoteReferenceName(git.DefaultRemoteName, release), true)
-		if err != nil {
-			return err
-		}
-		return s.repo.Storer.SetReference(plumbing.NewHashReference(branch, ref.Hash()))
-	}
+	s.pulled.Add(release)
 	return nil
 }
 

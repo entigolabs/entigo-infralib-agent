@@ -505,7 +505,7 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
 		}
 		if step.Vpc.SubnetIds == "" {
-			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets }}]"
+			step.Vpc.SubnetIds = "[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]"
 		}
 		if step.Vpc.SecurityGroupIds == "" {
 			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
@@ -613,12 +613,6 @@ func validateStep(step model.Step) error {
 	}
 	if step.Type == "" {
 		return fmt.Errorf("step type is not set for step %s", step.Name)
-	}
-	if step.Vpc.Id != "" && step.Vpc.SubnetIds == "" {
-		return fmt.Errorf("VPC ID is set for step %s but subnet IDs are not", step.Name)
-	}
-	if (step.Vpc.SubnetIds != "" || step.Vpc.SecurityGroupIds != "") && step.Vpc.Id == "" {
-		return fmt.Errorf("VPC ID is not set for step %s", step.Name)
 	}
 	if step.Approve != "" {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s uses deprecated 'approve' property, use 'manual_approve_run' and 'manual_approve_update'", step.Name)))

@@ -458,7 +458,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * vpc - vpc values to add
     * attach - attach vpc to code build/cloud run job, if other fields are empty then uses default vpc based on typed output of a vpc module, default **nil**. When nil, the value will be set based on the step type, for `argocd-apps` steps the value will be set to `true`
     * id - vpc id for code build/cloud run job, gcloud default `{{ .toutput.vpc.vpc_name }}`, aws default `{{ .toutput.vpc.vpc_id }}`
-    * subnet_ids - vpc subnet ids for code build/cloud run job, gcloud default `[{{ .toutput.vpc.private_subnets[0] }}]`, aws default `[{{ .toutput.vpc.private_subnets }}]`
+    * subnet_ids - vpc subnet ids for code build/cloud run job, gcloud default `[{{ .toutput.vpc.private_subnets[0] }}]`, aws default `[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]`
     * security_group_ids - vpc security group ids for code build/cloud run job, gcloud no default, aws default `[{{ .toutput.vpc.pipeline_security_group }}]`
   * kubernetes_cluster_name - kubernetes cluster name for argocd-apps steps, gcloud default `{{ .toutput.gke.cluster_name }}`, aws default `{{ .toutput.eks.cluster_name }}`
   * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
@@ -543,7 +543,7 @@ inputs:
 
 #### List indexes
 
-If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`.
+If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`. In case of terraform output, it's also possible to use a map key as the index, e.g. `{{ .output.stepName.moduleName.key-1[key-2] }}`.
 
 #### Escaping replacement tags
 
