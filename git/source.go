@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -16,7 +17,6 @@ import (
 	"io"
 	"log"
 	"log/slog"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,7 +43,7 @@ type SourceClient struct {
 }
 
 func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []byte) (*SourceClient, error) {
-	log.Printf("Initializing repository for %s", source.URL)
+	log.Printf("Initializing repository for %s", source.GetSourceKey())
 	auth := getSourceAuth(source)
 	repo, err := getSourceRepo(ctx, auth, source, CABundle)
 	if err != nil {
@@ -137,16 +137,7 @@ func getRepoPath(source model.ConfigSource) (string, error) {
 	if source.RepoPath != "" {
 		return source.RepoPath, nil
 	}
-	parsedURL, err := url.Parse(source.URL)
-	if err != nil {
-		return "", err
-	}
-	host := parsedURL.Host
-	path := strings.Trim(parsedURL.Path, "/")
-	path = strings.TrimSuffix(path, ".git")
-	fullPath := host + "-" + path
-	fullPath = invalidChars.ReplaceAllString(fullPath, "-")
-	return filepath.Join(os.TempDir(), fullPath), nil
+	return filepath.Join(os.TempDir(), util.HashCode(source.GetSourceKey().String())), nil
 }
 
 func openSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.ConfigSource, path string, CABundle []byte) (*git.Repository, error) {
