@@ -7,7 +7,6 @@ steps:
     modules:
       - name: main
         source: google/vpc
-        version: stable
   - name: infra
     type: terraform
     vpc:
@@ -15,17 +14,14 @@ steps:
     modules:
       - name: dns
         source: google/dns
-        version: stable
         inputs:
           parent_zone_id: REPLACE_ME
           public_subdomain_name: dev
           private_subdomain_name: dev-int
       - name: crossplane
         source: google/crossplane
-        version: stable
       - name: gke
         source: google/gke
-        version: stable
         inputs:
           gke_main_max_size: 3
           gke_main_min_size: 1
@@ -46,7 +42,6 @@ steps:
     modules:
       - name: argocd
         source: argocd
-        version: stable
         inputs:
           global:
             google:
@@ -59,25 +54,17 @@ steps:
                 argocd.{{ .toutput.dns.pub_domain }}
       - name: crossplane-system
         source: crossplane-core
-        version: stable
       - name: crossplane-k8s
         source: crossplane-k8s
-        version: stable
       - name: crossplane-google
         source: crossplane-google
-        version: stable
       - name: external-dns
         source: external-dns
-        version: stable
       - name: google-gateway
         source: google-gateway
-        version: stable
       - name: istio-base
         source: istio-base
-        version: stable
       - name: istio-system
         source: istio-istiod
-        version: stable
       - name: istio-gateway
         source: istio-gateway
-        version: stable
