@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -354,15 +355,20 @@ func (g *DestClient) updateFiles(folder string, files map[string]model.File) err
 }
 
 func updateFile(worktree *git.Worktree, path string, content []byte) error {
-	file, err := worktree.Filesystem.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+	dir := filepath.Dir(path)
+	if dir != "." {
+		if err := worktree.Filesystem.MkdirAll(dir, os.ModePerm); err != nil {
+			return err
+		}
+	}
+	file, err := worktree.Filesystem.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
+	defer func(file billy.File) {
+		_ = file.Close()
+	}(file)
 	_, err = file.Write(content)
-	if err != nil {
-		return err
-	}
-	err = file.Close()
 	if err != nil {
 		return err
 	}
