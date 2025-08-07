@@ -617,6 +617,7 @@ import:
   - type: string
     name: string
     module: string
+    index_keys: []int | []string
     source:
       module: string
       name: string
@@ -632,6 +633,7 @@ import:
 * type - type of the resource to import
 * name - optional, overwrites source and destination names
 * module - optional, overwrites source and destination modules
+* index_keys - optional, overwrites source and destination index_keys
 * source - source is a resource from the previous state file
 * destination - destination is a resource from the plan file
     * module - optional, module name of the resource

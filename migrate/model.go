@@ -176,11 +176,12 @@ type importConfig struct {
 }
 
 type importItem struct {
-	Type        string `yaml:"type"`
-	Name        string `yaml:"name"`
-	Module      string `yaml:"module"`
-	Source      module `yaml:"source"`
-	Destination module `yaml:"destination"`
+	Type        string        `yaml:"type"`
+	Name        string        `yaml:"name"`
+	Module      string        `yaml:"module"`
+	IndexKeys   []interface{} `yaml:"index_keys,omitempty"`
+	Source      module        `yaml:"source"`
+	Destination module        `yaml:"destination"`
 }
 
 type module struct {

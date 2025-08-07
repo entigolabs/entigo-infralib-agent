@@ -5,14 +5,15 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed types.yaml
@@ -150,20 +151,7 @@ func (p *planner) Plan() {
 }
 
 func (p *planner) planItem(item importItem) ([]string, []string, error) {
-	if item.Name != "" {
-		item.Source.Name = item.Name
-		item.Destination.Name = item.Name
-	}
-	if item.Module != "" {
-		item.Source.Module = item.Module
-		item.Destination.Module = item.Module
-	}
-	var err error
-	item.Source, err = parseNameIndex(item.Source)
-	if err != nil {
-		return nil, nil, err
-	}
-	item.Destination, err = parseNameIndex(item.Destination)
+	err := processItem(&item)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -193,6 +181,28 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 		return nil, nil, fmt.Errorf("item type '%s' %s", item.Type, err)
 	}
 	return imports, removes, nil
+}
+
+func processItem(item *importItem) error {
+	if item.Name != "" {
+		item.Source.Name = item.Name
+		item.Destination.Name = item.Name
+	}
+	if item.Module != "" {
+		item.Source.Module = item.Module
+		item.Destination.Module = item.Module
+	}
+	if len(item.IndexKeys) > 0 {
+		item.Source.IndexKeys = item.IndexKeys
+		item.Destination.IndexKeys = item.IndexKeys
+	}
+	var err error
+	item.Source, err = parseNameIndex(item.Source)
+	if err != nil {
+		return err
+	}
+	item.Destination, err = parseNameIndex(item.Destination)
+	return err
 }
 
 func getDestination(item importItem, rootModule modulePlan) (string, string, interface{}, error) {
