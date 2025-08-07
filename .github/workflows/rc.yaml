@@ -8,16 +8,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  pre-flight:
-    name: Pre-flight Checks
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    outputs:
-      new_version: ${{ steps.get_latest_release.outputs.new_version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -39,11 +35,13 @@ jobs:
           gcloud auth list
           gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
           go test -timeout 25m -v ./...
-      - name: Calculate new version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Get latest release
         id: get_latest_release
         uses: actions/github-script@v7
-        env:
-          RELEASE_VERSION: ${{ vars.RELEASE_VERSION }}
         with:
           script: |
             const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
@@ -56,29 +54,12 @@ jobs:
             const new_version = `v${major}.${minor}.${patch}`
             core.setOutput('new_version',  new_version);
 
-  build:
-    name: Build & Push Image
-    needs: pre-flight
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-          - platform: linux/arm64
-            runner: ubuntu-latest-arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Login to Public ECR
         uses: docker/login-action@v3
         with:
@@ -87,45 +68,42 @@ jobs:
           password: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         env:
           AWS_REGION: us-east-1
+
       - name: Login to Google AR
         uses: docker/login-action@v3
         with:
           registry: europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent
           username: _json_key
           password: ${{ secrets.GCLOUDAR_JSON_KEY }}
+
       - name: Build and push image
         run: |
           docker buildx build --push \
-          --platform ${{ matrix.platform }} \
+          --platform linux/arm64/v8,linux/amd64 \
           --build-arg GITHUB_SHA=${GITHUB_SHA} \
-          --build-arg VERSION=${{ needs.pre-flight.outputs.new_version }}-rc${{ github.run_number }} \
-          -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ needs.pre-flight.outputs.new_version }}-rc${{ github.run_number }} \
-          -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ needs.pre-flight.outputs.new_version }}-rc${{ github.run_number }} \
-          -t entigolabs/entigo-infralib-agent:${{ needs.pre-flight.outputs.new_version }}-rc${{ github.run_number }} .
+          --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} .
 
-  create-release:
-    name: Create GitHub Release
-    needs: [pre-flight, build]
-    if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Create Git Tag and Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_VERSION: ${{ needs.pre-flight.outputs.new_version }}
+      - name: Authenticate with GitHub CLI
+        run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event_name == 'push' }}
+
+      - name: Create Release
+        id: create_release
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git tag -a $NEW_VERSION-rc${{ github.run_number }} -m "Release $NEW_VERSION-rc${{ github.run_number }}"
-          git push origin $NEW_VERSION-rc${{ github.run_number }}
-          RELEASE_URL=$(gh release create $NEW_VERSION-rc${{ github.run_number }} \
-          --title "Release $NEW_VERSION-rc${{ github.run_number }}" \
+          git tag -a ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} -m "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}"
+          git push origin ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          RELEASE_URL=$(gh release create ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          --title "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}" \
           --generate-notes \
           --draft=false \
           --latest=false \
           --prerelease=true)
           echo "RELEASE_URL=$RELEASE_URL" >> $GITHUB_ENV
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event_name == 'push' }}
