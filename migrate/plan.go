@@ -242,8 +242,8 @@ func getDestination(item importItem, rootModule modulePlan, rsName string) (stri
 			item.Type, dstModule, name)
 	}
 	if len(names) > 1 {
-		return "", "", nil, fmt.Errorf("multiple planned resources of type '%s' found: %s", item.Type,
-			strings.Join(names, ", "))
+		return "", "", nil, fmt.Errorf("multiple plan resources of type '%s' module '%s' found: %s", item.Type,
+			dstModule, strings.Join(names, ", "))
 	}
 	name = plannedResource.Name
 	typeIndex := strings.Index(plannedResource.Address, item.Type)
