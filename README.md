@@ -172,7 +172,7 @@ OPTIONS:
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
-* logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
+* logs-path - **optional** path for storing terraform/helm logs when running local pipelines [$LOGS_PATH]
 * terraform-cache - use terraform caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
 
 Example

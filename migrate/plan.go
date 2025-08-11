@@ -159,28 +159,46 @@ func (p *planner) planItem(item importItem) ([]string, []string, error) {
 	if !found {
 		return nil, nil, fmt.Errorf("type %s not found in typeIdentifications", item.Type)
 	}
-	resource, err := p.getResource(item.Type, item.Source)
+	resources, err := p.getResources(item.Type, item.Source)
 	if err != nil {
 		return nil, nil, err
-	}
-	if len(resource.Instances) == 0 {
-		return nil, nil, fmt.Errorf("no instances found for type %s", item.Type)
 	}
 	indexKeys, err := getIndexKeys(item)
 	if err != nil {
 		return nil, nil, err
 	}
-	source := getReference(item.Type, item.Source, resource.Name, resource.Module)
-	name, dstModule, index, err := getDestination(item, p.plan.PlannedValues.RootModule)
-	if err != nil {
-		return nil, nil, err
-	}
-	dest := getReference(item.Type, item.Destination, name, dstModule)
-	imports, removes, err := p.planItemKeys(indexKeys, resource, identification, index, dest, source)
-	if err != nil {
-		return nil, nil, fmt.Errorf("item type '%s' %s", item.Type, err)
-	}
+	imports, removes := p.planResources(item, resources, identification, indexKeys)
 	return imports, removes, nil
+}
+
+func (p *planner) planResources(item importItem, resources []resourceStateV4, identification typeIdentification, indexKeys []KeyPair) ([]string, []string) {
+	var imports, removes []string
+	for _, resource := range resources {
+		if len(resource.Instances) == 0 {
+			slog.Warn(fmt.Sprintf("no instances found for type '%s' resource '%s'", item.Type, resource.Name))
+			continue
+		}
+		name := ""
+		if len(resources) > 1 {
+			name = resource.Name
+		}
+		source := getReference(item.Type, item.Source, resource.Name, resource.Module)
+		name, dstModule, index, err := getDestination(item, p.plan.PlannedValues.RootModule, name)
+		if err != nil {
+			slog.Error(fmt.Sprintf("item type '%s' resource '%s' %s", item.Type, resource.Name, err))
+			continue
+		}
+		dest := getReference(item.Type, item.Destination, name, dstModule)
+		indexes := getResourceIndexes(indexKeys, resource)
+		rsImports, rsRemoves, err := p.planItemKeys(indexes, resource, identification, index, dest, source)
+		if err != nil {
+			slog.Error(fmt.Sprintf("item type '%s' resource '%s' %s", item.Type, resource.Name, err))
+			continue
+		}
+		imports = append(imports, rsImports...)
+		removes = append(removes, rsRemoves...)
+	}
+	return imports, removes
 }
 
 func processItem(item *importItem) error {
@@ -205,19 +223,27 @@ func processItem(item *importItem) error {
 	return err
 }
 
-func getDestination(item importItem, rootModule modulePlan) (string, string, interface{}, error) {
+func getDestination(item importItem, rootModule modulePlan, rsName string) (string, string, interface{}, error) {
 	name := item.Destination.Name
+	if name == "" {
+		name = rsName
+		item.Destination.Name = rsName
+	}
 	dstModule := item.Destination.Module
 	if name != "" && dstModule != "" {
 		return name, dstModule, nil, nil
 	}
-	plannedResource, err := getPlannedResource(item, rootModule)
+	plannedResource, names, err := getPlannedResource(item, rootModule)
 	if err != nil {
 		return "", "", nil, err
 	}
 	if plannedResource == nil {
 		return "", "", nil, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in plan file",
 			item.Type, dstModule, name)
+	}
+	if len(names) > 1 {
+		return "", "", nil, fmt.Errorf("multiple planned resources of type '%s' found: %s", item.Type,
+			strings.Join(names, ", "))
 	}
 	name = plannedResource.Name
 	typeIndex := strings.Index(plannedResource.Address, item.Type)
@@ -284,7 +310,10 @@ func (p *planner) planItemKeys(indexKeys []KeyPair, resource resourceStateV4, id
 
 func getIndexKeys(item importItem) ([]KeyPair, error) {
 	if len(item.Source.IndexKeys) == 0 {
-		return []KeyPair{newKeyPair(item.Source.IndexKey, item.Destination.IndexKey)}, nil
+		if item.Source.IndexKey != nil || item.Destination.IndexKey != nil {
+			return []KeyPair{newKeyPair(item.Source.IndexKey, item.Destination.IndexKey)}, nil
+		}
+		return nil, nil
 	}
 	if len(item.Source.IndexKeys) != len(item.Destination.IndexKeys) {
 		return nil, fmt.Errorf("source and destination index keys must have the same length for type %s", item.Type)
@@ -296,8 +325,9 @@ func getIndexKeys(item importItem) ([]KeyPair, error) {
 	return keys, nil
 }
 
-func (p *planner) getResource(rsType string, module module) (resourceStateV4, error) {
-	var found *resourceStateV4
+func (p *planner) getResources(rsType string, module module) ([]resourceStateV4, error) {
+	var matching []resourceStateV4
+	var names []string
 	for _, resource := range p.state.Resources {
 		if resource.Mode != "managed" {
 			continue
@@ -310,24 +340,25 @@ func (p *planner) getResource(rsType string, module module) (resourceStateV4, er
 		}
 		if module.Name != "" {
 			if resource.Name == module.Name {
-				return resource, nil
+				return append(matching, resource), nil
 			}
 			continue
 		}
-		if found != nil {
-			return resourceStateV4{}, fmt.Errorf("multiple state resources of type %s found, name is required", rsType)
-		}
-		found = &resource
+		matching = append(matching, resource)
+		names = append(names, resource.Name)
 	}
-	if found == nil {
-		return resourceStateV4{}, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in state file",
+	if len(matching) == 0 {
+		return nil, fmt.Errorf("resource of type '%s' module '%s' name '%s' not found in state file",
 			rsType, module.Module, module.Name)
+	} else if len(matching) > 1 {
+		slog.Warn(fmt.Sprintf("multiple state resources of type '%s' found, no name was given: %s", rsType, strings.Join(names, ", ")))
 	}
-	return *found, nil
+	return matching, nil
 }
 
-func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, error) {
+func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, []string, error) {
 	var found *resourcePlan
+	var names []string
 	for _, resource := range module.Resources {
 		if resource.Mode != "managed" {
 			continue
@@ -335,38 +366,35 @@ func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, erro
 		if resource.Type != item.Type {
 			continue
 		}
-		if item.Type == "aws_db_subnet_group" {
-			fmt.Println("here")
-		}
 		if item.Destination.Module != "" && !strings.HasPrefix(resource.Address, item.Destination.Module) {
 			continue
 		}
 		if item.Destination.Name != "" {
 			if resource.Name == item.Destination.Name {
-				return &resource, nil
+				return &resource, nil, nil
 			} else {
 				continue
 			}
 		}
-		if found != nil {
-			return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
+		if found == nil {
+			found = &resource
 		}
-		found = &resource
+		names = append(names, resource.Name)
 	}
 	for _, childModule := range module.ChildModules {
-		child, err := getPlannedResource(item, childModule)
+		child, childNames, err := getPlannedResource(item, childModule)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if child == nil {
 			continue
 		}
-		if found != nil {
-			return nil, fmt.Errorf("multiple plan resources of type %s found, name is required", item.Type)
+		names = append(names, childNames...)
+		if found == nil {
+			found = child
 		}
-		found = child
 	}
-	return found, nil
+	return found, names, nil
 }
 
 func getReference(rsType string, module module, name, resourceModule string) string {
@@ -383,6 +411,23 @@ func getReference(rsType string, module module, name, resourceModule string) str
 		parts = append(parts, name)
 	}
 	return strings.Join(parts, ".")
+}
+
+func getResourceIndexes(indexKeys []KeyPair, resource resourceStateV4) []KeyPair {
+	if len(indexKeys) != 0 {
+		return indexKeys
+	}
+	var indexes []KeyPair
+	for _, instance := range resource.Instances {
+		if instance.IndexKey == nil {
+			continue
+		}
+		indexes = append(indexes, newKeyPair(instance.IndexKey, instance.IndexKey))
+	}
+	if len(indexes) == 0 {
+		indexes = append(indexes, newKeyPair(nil, nil))
+	}
+	return indexes
 }
 
 func getResourceInstance(resource resourceStateV4, key interface{}) (instanceObjectStateV4, error) {
