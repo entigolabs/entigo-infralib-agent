@@ -172,7 +172,7 @@ OPTIONS:
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
 * print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
-* logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
+* logs-path - **optional** path for storing terraform/helm logs when running local pipelines [$LOGS_PATH]
 * terraform-cache - use terraform caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
 
 Example
@@ -641,9 +641,9 @@ import:
     * index_key - optional, index key of the resource instance
     * index_keys - optional, index keys of the resource instance
 
-If module and name are empty then agent will try to find the resource from the state/plan file based on the type. If there are more than 1 resource with that type then a warning is printed.
+If module and name are empty then agent will try to find the resource from the state/plan file based on the type. If there are more than 1 resource with that type then a warning is printed. Agent will generate import commands for all resources of that type.
 
-Index key and index keys are mutually exclusive. Index keys can be used to map instances in different order to the new state.
+Index key and index keys are mutually exclusive. Index keys can be used to map instances in different order to the new state. If index hasn't been set, then agent will use keys from state resource instances.
 
 Plan command generates import commands for the destination resources and rm commands for the source resources.
 
