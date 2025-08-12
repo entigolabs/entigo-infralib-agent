@@ -641,9 +641,9 @@ import:
     * index_key - optional, index key of the resource instance
     * index_keys - optional, index keys of the resource instance
 
-If module and name are empty then agent will try to find the resource from the state/plan file based on the type. If there are more than 1 resource with that type then a warning is printed.
+If module and name are empty then agent will try to find the resource from the state/plan file based on the type. If there are more than 1 resource with that type then a warning is printed. Agent will generate import commands for all resources of that type.
 
-Index key and index keys are mutually exclusive. Index keys can be used to map instances in different order to the new state.
+Index key and index keys are mutually exclusive. Index keys can be used to map instances in different order to the new state. If index hasn't been set, then agent will use keys from state resource instances.
 
 Plan command generates import commands for the destination resources and rm commands for the source resources.
 
