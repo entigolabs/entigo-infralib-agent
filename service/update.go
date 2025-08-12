@@ -3,9 +3,16 @@ package service
 import (
 	"bytes"
 	"context"
-	"dario.cat/mergo"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"dario.cat/mergo"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/git"
@@ -15,12 +22,6 @@ import (
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
-	"log"
-	"log/slog"
-	"path/filepath"
-	"strings"
-	"sync"
-	"time"
 )
 
 const (
@@ -1135,7 +1136,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 		return false, nil, nil, err
 	}
 	files[mainPath] = model.File{Content: mainBytes}
-	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.ToSet([]string{terraformCache, certsFolder}), files)
+	err = u.updateIncludedStepFiles(step, ReservedTFFiles, model.NewSet(terraformCache, certsFolder), files)
 	if err != nil {
 		return false, nil, nil, err
 	}
@@ -1229,7 +1230,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		}
 		files[filePath] = model.File{Content: file}
 	}
-	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.ToSet([]string{certsFolder}), files)
+	err := u.updateIncludedStepFiles(step, ReservedAppsFiles, model.NewSet(certsFolder), files)
 	return executePipeline, files, err
 }
 
@@ -1601,9 +1602,10 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 	}
 
 	providerType := u.resources.GetProviderType()
-	if providerType == model.AWS {
+	switch providerType {
+	case model.AWS:
 		providerType = "aws"
-	} else if providerType == model.GCLOUD {
+	case model.GCLOUD:
 		providerType = "google"
 	}
 	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)

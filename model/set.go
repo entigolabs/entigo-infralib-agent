@@ -7,19 +7,16 @@ import (
 
 type Set[T comparable] map[T]bool
 
-func NewSet[T comparable]() Set[T] {
-	return make(Set[T])
-}
-
-func ToSet[T comparable](items []T) Set[T] {
-	if len(items) == 0 {
-		return NewSet[T]()
-	}
-	set := NewSet[T]()
+func NewSet[T comparable](items ...T) Set[T] {
+	set := make(Set[T])
 	for _, item := range items {
 		set[item] = true
 	}
 	return set
+}
+
+func ToSet[T comparable](items []T) Set[T] {
+	return NewSet(items...)
 }
 
 func (s Set[T]) Add(item T) {

@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 type Validator interface {
@@ -62,7 +63,7 @@ func (v *validator) validatePlanState() {
 		}
 		resources.Add(fmt.Sprintf("%s.%s", resource.Type, resource.Name))
 	}
-	actionTypes := model.ToSet[string]([]string{"create", "delete", "replace"})
+	actionTypes := model.NewSet[string]("create", "delete", "replace")
 	fmt.Println("State resources:")
 	validateChangeState(resources, actionTypes, v.plan.ResourceChanges)
 	validateChangeState(resources, actionTypes, v.plan.ResourceDrifts)
@@ -95,7 +96,7 @@ func (v *validator) validateConfigTypes() {
 	for _, item := range v.config.Import {
 		types.Add(item.Type)
 	}
-	actionTypes := model.ToSet[string]([]string{"create", "delete", "replace"})
+	actionTypes := model.NewSet[string]("create", "delete", "replace")
 	fmt.Println("Import config types:")
 	validateConfigTypes(types, actionTypes, v.plan.ResourceChanges)
 	validateConfigTypes(types, actionTypes, v.plan.ResourceDrifts)
@@ -124,7 +125,7 @@ func validateConfigTypes(types, actionTypes model.Set[string], changes []resourc
 }
 
 func (v *validator) validateChangedValues() {
-	actionTypes := model.ToSet[string]([]string{"update", "replace"})
+	actionTypes := model.NewSet[string]("update", "replace")
 	fmt.Println("Changed values:")
 	validateChangedResourceValues(actionTypes, v.plan.ResourceDrifts)
 	validateChangedResourceValues(actionTypes, v.plan.ResourceChanges)

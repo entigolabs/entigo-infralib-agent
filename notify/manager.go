@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"log/slog"
-	"sync"
 )
 
 type NotificationManager struct {
@@ -53,7 +54,7 @@ func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotifica
 func createNotifier(ctx context.Context, configNotifier model.ConfigNotification) (model.Notifier, error) {
 	var messageTypes model.Set[model.MessageType]
 	if len(configNotifier.MessageTypes) == 0 {
-		messageTypes = model.ToSet([]model.MessageType{model.MessageTypeApprovals, model.MessageTypeFailure})
+		messageTypes = model.NewSet(model.MessageTypeApprovals, model.MessageTypeFailure)
 	} else {
 		messageTypes = model.ToSet(configNotifier.MessageTypes)
 	}

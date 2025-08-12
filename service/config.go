@@ -3,16 +3,17 @@ package service
 import (
 	"errors"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/util"
-	"github.com/hashicorp/go-version"
-	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/hashicorp/go-version"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -25,8 +26,8 @@ const (
 	terraformCache = ".terraform"
 )
 
-var ReservedTFFiles = model.ToSet([]string{"main.tf", "provider.tf", "backend.conf"})
-var ReservedAppsFiles = model.ToSet([]string{"argocd.yaml"})
+var ReservedTFFiles = model.NewSet("main.tf", "provider.tf", "backend.conf")
+var ReservedAppsFiles = model.NewSet("argocd.yaml")
 
 func GetProviderPrefix(flags *common.Flags) (string, error) {
 	prefix := flags.Prefix
@@ -500,7 +501,8 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 	if !*step.Vpc.Attach {
 		return
 	}
-	if providerType == model.AWS {
+	switch providerType {
+	case model.AWS:
 		if step.Vpc.Id == "" {
 			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
 		}
@@ -510,7 +512,7 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 		if step.Vpc.SecurityGroupIds == "" {
 			step.Vpc.SecurityGroupIds = "[{{ .toutput.vpc.pipeline_security_group }}]"
 		}
-	} else if providerType == model.GCLOUD {
+	case model.GCLOUD:
 		if step.Vpc.Id == "" {
 			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
 		}

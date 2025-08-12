@@ -1,16 +1,17 @@
 package argocd
 
 import (
-	"dario.cat/mergo"
 	_ "embed"
 	"errors"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	"log"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"dario.cat/mergo"
+	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 //go:embed app.yaml
@@ -97,7 +98,7 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	err = mergo.Merge(&baseFile, moduleFile)
+	err = mergo.Merge(&baseFile, moduleFile, mergo.WithAppendSlice)
 	if err != nil {
 		return nil, err
 	}

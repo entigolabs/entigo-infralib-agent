@@ -4,6 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -11,12 +18,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
-	"log"
-	"log/slog"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
 )
 
 const (
@@ -66,7 +67,7 @@ func (t *terraform) GetTerraformProvider(step model.Step, moduleVersions map[str
 	}
 	baseBody := file.Body()
 	providers := make(map[model.SourceKey]model.Set[string])
-	providers[baseSource] = model.ToSet([]string{base})
+	providers[baseSource] = model.NewSet(base)
 	attrProviders, err := t.addProviderAttributes(baseBody, providersBlock, providersAttributes, step, sourceVersions)
 	if err != nil {
 		return nil, nil, err
@@ -89,9 +90,10 @@ func (t *terraform) modifyBackendType(body *hclwrite.Body) {
 	if backendBlock == nil {
 		return
 	}
-	if t.providerType == model.AWS {
+	switch t.providerType {
+	case model.AWS:
 		backendBlock.SetLabels([]string{"s3"})
-	} else if t.providerType == model.GCLOUD {
+	case model.GCLOUD:
 		backendBlock.SetLabels([]string{"gcs"})
 	}
 }

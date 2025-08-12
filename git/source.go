@@ -5,6 +5,15 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/go-git/go-billy/v5"
@@ -14,18 +23,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/hashicorp/go-version"
-	"io"
-	"log"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
-	"sync"
 )
 
-var invalidChars = regexp.MustCompile(`[\\/:*?"<>|.]`)
 var repoMutex = sync.Mutex{}
 
 type SourceClient struct {
