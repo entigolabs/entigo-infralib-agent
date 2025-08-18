@@ -1,12 +1,17 @@
 package gcloud
 
 import (
-	run "cloud.google.com/go/run/apiv2"
-	"cloud.google.com/go/run/apiv2/runpb"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
+	"os"
+	"strings"
+
+	run "cloud.google.com/go/run/apiv2"
+	"cloud.google.com/go/run/apiv2/runpb"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -15,10 +20,6 @@ import (
 	"google.golang.org/genproto/googleapis/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"io/fs"
-	"log"
-	"os"
-	"strings"
 )
 
 var tempFolder = os.TempDir()
@@ -134,7 +135,7 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 							Volumes: []*runv1.Volume{{
 								Name: "project",
 								EmptyDir: &runv1.EmptyDirVolumeSource{
-									SizeLimit: "4Gi",
+									SizeLimit: "8Gi",
 								},
 							}},
 						},
@@ -202,7 +203,7 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 					Volumes: []*runpb.Volume{{
 						Name: "project",
 						VolumeType: &runpb.Volume_EmptyDir{
-							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "4Gi"},
+							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "8Gi"},
 						},
 					}},
 				},
@@ -369,6 +370,14 @@ func (b *Builder) updateJob(projectName string, stepName string, step model.Step
 	job.Template.Template.Containers[0].Image = image
 	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command, authSources)
 	job.Template.Template.VpcAccess = getGCloudVpcAccess(vpcConfig)
+	for _, volume := range job.Template.Template.Volumes {
+		if volume.Name == "project" {
+			volume.VolumeType = &runpb.Volume_EmptyDir{
+				EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "8Gi"},
+			}
+			break
+		}
+	}
 	_, err = b.client.UpdateJob(b.ctx, &runpb.UpdateJobRequest{Job: job})
 	return err
 }
