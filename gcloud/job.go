@@ -127,15 +127,15 @@ func (b *Builder) GetJobManifest(projectName string, command model.ActionCommand
 								}},
 								Resources: &runv1.ResourceRequirements{
 									Limits: map[string]string{
-										"memory": "5Gi",
-										"cpu":    "6",
+										"memory": "8Gi",
+										"cpu":    "8",
 									},
 								},
 							}},
 							Volumes: []*runv1.Volume{{
 								Name: "project",
 								EmptyDir: &runv1.EmptyDirVolumeSource{
-									SizeLimit: "8Gi",
+									SizeLimit: "6Gi",
 								},
 							}},
 						},
@@ -195,15 +195,15 @@ func (b *Builder) createJob(projectName string, bucket string, stepName string, 
 						}},
 						Resources: &runpb.ResourceRequirements{
 							Limits: map[string]string{
-								"memory": "5Gi",
-								"cpu":    "6",
+								"memory": "8Gi",
+								"cpu":    "8",
 							},
 						},
 					}},
 					Volumes: []*runpb.Volume{{
 						Name: "project",
 						VolumeType: &runpb.Volume_EmptyDir{
-							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "8Gi"},
+							EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "6Gi"},
 						},
 					}},
 				},
@@ -370,10 +370,12 @@ func (b *Builder) updateJob(projectName string, stepName string, step model.Step
 	job.Template.Template.Containers[0].Image = image
 	job.Template.Template.Containers[0].Env = b.getJobEnvironmentVariables(projectName, stepName, step, bucket, command, authSources)
 	job.Template.Template.VpcAccess = getGCloudVpcAccess(vpcConfig)
+	job.Template.Template.Containers[0].Resources.Limits["memory"] = "8Gi"
+	job.Template.Template.Containers[0].Resources.Limits["cpu"] = "8"
 	for _, volume := range job.Template.Template.Volumes {
 		if volume.Name == "project" {
 			volume.VolumeType = &runpb.Volume_EmptyDir{
-				EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "8Gi"},
+				EmptyDir: &runpb.EmptyDirVolumeSource{SizeLimit: "6Gi"},
 			}
 			break
 		}
