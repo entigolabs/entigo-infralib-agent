@@ -419,14 +419,16 @@ func (s *SourceClient) directoryChecksum(dir string) ([]byte, error) {
 		return nil, err
 	}
 	for _, info := range infos {
-		if info.IsDir() {
-			continue
-		}
 		lowered := strings.ToLower(info.Name())
 		if strings.HasPrefix(lowered, "test") || strings.HasPrefix(lowered, "readme") || strings.HasPrefix(lowered, "go.") {
 			continue
 		}
-		sum, err := fileChecksum(s.worktree, filepath.Join(dir, info.Name()))
+		var sum []byte
+		if info.IsDir() {
+			sum, err = s.directoryChecksum(filepath.Join(dir, info.Name()))
+		} else {
+			sum, err = fileChecksum(s.worktree, filepath.Join(dir, info.Name()))
+		}
 		if err != nil {
 			return nil, err
 		}
