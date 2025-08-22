@@ -116,6 +116,9 @@ func getPlan(planFile string) (plan, error) {
 }
 
 func getConfig(stateFile string) (importConfig, error) {
+	if stateFile == "" {
+		return importConfig{}, nil
+	}
 	fileBytes, err := os.ReadFile(stateFile)
 	if err != nil {
 		return importConfig{}, err
@@ -189,7 +192,7 @@ func (p *planner) planResources(item importItem, resources []resourceStateV4, id
 			continue
 		}
 		dest := getReference(item.Type, item.Destination, name, dstModule)
-		indexes := getResourceIndexes(indexKeys, resource)
+		indexes := getPlannedIndexes(indexKeys, resource)
 		rsImports, rsRemoves, err := p.planItemKeys(indexes, resource, identification, index, dest, source)
 		if err != nil {
 			slog.Error(fmt.Sprintf("item type '%s' resource '%s' %s", item.Type, resource.Name, err))
@@ -413,7 +416,7 @@ func getReference(rsType string, module module, name, resourceModule string) str
 	return strings.Join(parts, ".")
 }
 
-func getResourceIndexes(indexKeys []KeyPair, resource resourceStateV4) []KeyPair {
+func getPlannedIndexes(indexKeys []KeyPair, resource resourceStateV4) []KeyPair {
 	if len(indexKeys) != 0 {
 		return indexKeys
 	}

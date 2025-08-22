@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
 	"github.com/entigolabs/entigo-infralib-agent/commands/delete"
 	"github.com/entigolabs/entigo-infralib-agent/commands/destroy"
@@ -51,6 +52,8 @@ func run(ctx context.Context, cmd common.Command) error {
 		return migrate.Plan(ctx, flags)
 	case common.MigrateValidateCommand:
 		return migrate.Validate(ctx, flags)
+	case common.MigrateUnmatchedCommand:
+		return migrate.Unmatched(ctx, flags)
 	default:
 		return errors.New("unsupported command")
 	}

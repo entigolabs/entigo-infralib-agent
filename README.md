@@ -305,7 +305,21 @@ OPTIONS:
 
 Example
 ```bash
-bin/ei-agent migrate-plan --state-file=state-file.json --import-file=import-file.yaml
+bin/ei-agent migrate-plan --state-file=state-file.json --plan-file=plan.json --import-file=import-file.yaml
+```
+
+### migrate-unmatched
+
+Outputs a list of resources with instance indexes that are not matched by the provided import file.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the previous terraform state file [$STATE_FILE]
+* import-file - **optional**, path to the import file [$IMPORT_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-unmatched --state-file=state-file.json --import-file=import-file.yaml
 ```
 
 ### migrate-validate
@@ -602,11 +616,11 @@ Currently, infralib only supports customer provided encryption in AWS with KMS. 
 
 ## Migration Helper
 
-Agent includes 2 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
+Agent includes 3 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-plan](#migrate-plan), [migrate-unmatched](#migrate-unmatched) and [migrate-validate](#migrate-validate).
 
 Both commands require a terraform plan and v4 state files. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine auto-approve type `reject` and `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
 
-First generate terraform import commands with the `migrate-plan` command, then after executing them, run the pipelines with the auto-approve `reject` type to generate a new plan. Use the `migrate-validate` command to validate the new plan along with the new state.
+First generate terraform import commands with the `migrate-plan` command, then after executing them, run the pipelines with the auto-approve `reject` type to generate a new plan. Use the `migrate-unmatched` to list any resources that are in the state file, but didn't match with any items from the import file. Use the `migrate-validate` command to validate the new plan along with the new state.
 
 ### Import File
 
