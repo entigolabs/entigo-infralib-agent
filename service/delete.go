@@ -3,16 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
+	"log/slog"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"log"
-	"log/slog"
 )
 
 type Deleter interface {
 	Delete() error
-	Destroy()
+	Destroy() error
 }
 
 type deleter struct {
@@ -117,7 +118,7 @@ func (d *deleter) deleteSourceSecret(secret string) {
 	}
 }
 
-func (d *deleter) Destroy() {
+func (d *deleter) Destroy() error {
 	for i := len(d.steps) - 1; i >= 0; i-- {
 		step := d.steps[i]
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
@@ -130,10 +131,11 @@ func (d *deleter) Destroy() {
 			err = d.resources.GetPipeline().StartDestroyExecution(projectName, step)
 		}
 		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to run destroy pipeline %s: %s", projectName, err)))
+			return fmt.Errorf("failed to run destroy pipeline %s: %s", projectName, err)
 		}
 		log.Printf("Successfully executed destroy pipeline for step %s\n", step.Name)
 	}
+	return nil
 }
 
 func (d *deleter) getSourceAuths() map[string]model.SourceAuth {
