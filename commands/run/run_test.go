@@ -2,11 +2,12 @@ package run
 
 import (
 	"context"
+	"os"
+	"testing"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 	"github.com/entigolabs/entigo-infralib-agent/test"
-	"os"
-	"testing"
 )
 
 func TestRunAWS(t *testing.T) {
@@ -37,7 +38,9 @@ func TestRunAWS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create deleter: %v", err)
 	}
-	deleter.Destroy()
+	if err := deleter.Destroy(); err != nil {
+		t.Fatalf("failed to destroy: %v", err)
+	}
 	if err := deleter.Delete(); err != nil {
 		t.Fatalf("failed to delete: %v", err)
 	}
@@ -79,7 +82,9 @@ func TestRunGCloud(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create deleter: %v", err)
 	}
-	deleter.Destroy()
+	if err := deleter.Destroy(); err != nil {
+		t.Fatalf("failed to destroy: %v", err)
+	}
 	if err := deleter.Delete(); err != nil {
 		t.Fatalf("failed to delete: %v", err)
 	}

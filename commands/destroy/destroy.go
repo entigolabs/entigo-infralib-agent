@@ -3,10 +3,11 @@ package destroy
 import (
 	"context"
 	"fmt"
+	"log/slog"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"log/slog"
 )
 
 func Destroy(ctx context.Context, flags *common.Flags) error {
@@ -23,6 +24,5 @@ This will remove the resources provisioned by the step pipelines.`))
 	if err != nil {
 		return err
 	}
-	deleter.Destroy()
-	return nil
+	return deleter.Destroy()
 }
