@@ -20,7 +20,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Service Account](#service-account)
     * [Pull](#pull)
     * [Custom Parameters](#custom-parameters)
-    * [Migrate Unmatched](#migrate-unmatched)
+    * [Migrate Config](#migrate-config)
     * [Migrate Plan](#migrate-plan)
     * [Migrate Validate](#migrate-validate)
 * [Config](#config)
@@ -293,6 +293,20 @@ Example
 bin/ei-agent add-custom --key=custom-key --value=custom-value
 ```
 
+### migrate-config
+
+Outputs a list of resources with instance indexes based on the state file that are not matched by the provided import file.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the previous terraform state file [$STATE_FILE]
+* import-file - **optional**, path to the import file [$IMPORT_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-config --state-file=state-file.json --import-file=import-file.yaml
+```
+
 ### migrate-plan
 
 Generates import and rm terraform commands based on the input files. **Warning!** Always check the import and rm commands before executing them. More info in [Migration Helper](#migration-helper).
@@ -307,20 +321,6 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent migrate-plan --state-file=state-file.json --plan-file=plan.json --import-file=import-file.yaml
-```
-
-### migrate-unmatched
-
-Outputs a list of resources with instance indexes that are not matched by the provided import file.
-
-OPTIONS:
-* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the previous terraform state file [$STATE_FILE]
-* import-file - **optional**, path to the import file [$IMPORT_FILE]
-
-Example
-```bash
-bin/ei-agent migrate-unmatched --state-file=state-file.json --import-file=import-file.yaml
 ```
 
 ### migrate-validate
@@ -617,11 +617,11 @@ Currently, infralib only supports customer provided encryption in AWS with KMS. 
 
 ## Migration Helper
 
-Agent includes 3 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-unmatched](#migrate-unmatched), [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
+Agent includes 3 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-config](#migrate-config), [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
 
-Unmatched command requires a terraform v4 state file. Plan and validate commands require the state file and a terraform plan file. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine approval type `reject` with `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
+Config command requires a terraform v4 state file. Plan and validate commands require the state file and a terraform plan file. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine the approval type `reject` with `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
 
-First generate an import config with `migrate-unmatched`. Modify the generated lines to remove any resources that don't need migrating. If needed, split any config items into source and destination blocks. That's only necessary if source and destination don't have any matching fields of name, module or indexes.
+First generate an import configuration with `migrate-config`. Modify the generated lines to remove any resources that don't need migrating. If needed, split any config items into source and destination blocks. That's only necessary if source and destination don't have any matching fields from name, module and indexes.
 
 Using the import config, generate terraform import commands with the `migrate-plan` command. After executing the commands, run the pipelines with the approval type `reject` to generate a new plan. Optionally, use the `migrate-validate` command to validate the new plan along with the new state.
 

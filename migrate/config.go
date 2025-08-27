@@ -11,17 +11,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type UnmatchedFinder interface {
-	Find()
+type ConfigGenerator interface {
+	Generate()
 }
 
-type unmatchedFinder struct {
+type configGenerator struct {
 	ctx    context.Context
 	state  stateV4
 	config importConfig
 }
 
-func NewUnmatchedFinder(ctx context.Context, flags common.Migrate) (UnmatchedFinder, error) {
+func NewConfigGenerator(ctx context.Context, flags common.Migrate) (ConfigGenerator, error) {
 	state, err := getState(flags.StateFile)
 	if err != nil {
 		return nil, err
@@ -33,15 +33,15 @@ func NewUnmatchedFinder(ctx context.Context, flags common.Migrate) (UnmatchedFin
 	if err != nil {
 		return nil, err
 	}
-	return &unmatchedFinder{
+	return &configGenerator{
 		ctx:    ctx,
 		state:  state,
 		config: config,
 	}, nil
 }
 
-func (u *unmatchedFinder) Find() {
-	log.Println("Finding unmatched resources...")
+func (u *configGenerator) Generate() {
+	log.Println("Generating config based on the state file")
 	resourcesWithIndexes := make(map[ResourceKey][]interface{})
 	for _, item := range u.config.Import {
 		itemResources, err := u.processItem(item)
@@ -61,12 +61,12 @@ func (u *unmatchedFinder) Find() {
 		log.Println("No unmatched resources found.")
 		return
 	}
-	log.Printf("%d unmatched resources found\n", len(missingResources))
+	log.Printf("%d resources found\n", len(missingResources))
 	importYaml, err := yaml.Marshal(importConfig{Import: missingResources})
 	if err == nil {
 		fmt.Println(string(importYaml))
 	} else {
-		slog.Error("Failed to marshal unmatched resources to YAML", "error", err)
+		slog.Error("Failed to marshal resources to YAML", "error", err)
 		for _, item := range missingResources {
 			log.Printf("Type: %s, Name: %s, Module: %s, IndexKeys: %v\n",
 				item.Type, item.Name, item.Module, formatIndexKeys(item.IndexKeys))
@@ -74,7 +74,7 @@ func (u *unmatchedFinder) Find() {
 	}
 }
 
-func (u *unmatchedFinder) processItem(item importItem) (map[ResourceKey][]interface{}, error) {
+func (u *configGenerator) processItem(item importItem) (map[ResourceKey][]interface{}, error) {
 	err := processItem(&item)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (u *unmatchedFinder) processItem(item importItem) (map[ResourceKey][]interf
 	return resourceWithIndexes, nil
 }
 
-func (u *unmatchedFinder) findMissingResources(resources map[ResourceKey][]interface{}) []importItem {
+func (u *configGenerator) findMissingResources(resources map[ResourceKey][]interface{}) []importItem {
 	missingResources := make([]importItem, 0)
 	for _, resource := range u.state.Resources {
 		if resource.Mode != "managed" {
@@ -120,7 +120,7 @@ func (u *unmatchedFinder) findMissingResources(resources map[ResourceKey][]inter
 	return missingResources
 }
 
-func (u *unmatchedFinder) getMissingResource(resources map[ResourceKey][]interface{}, resourceKey ResourceKey, resource resourceStateV4) *importItem {
+func (u *configGenerator) getMissingResource(resources map[ResourceKey][]interface{}, resourceKey ResourceKey, resource resourceStateV4) *importItem {
 	item := &importItem{
 		Type:   resource.Type,
 		Name:   resource.Name,
@@ -159,7 +159,7 @@ func (u *unmatchedFinder) getMissingResource(resources map[ResourceKey][]interfa
 	return item
 }
 
-func (u *unmatchedFinder) getResources(rsType string, module module) ([]resourceStateV4, error) {
+func (u *configGenerator) getResources(rsType string, module module) ([]resourceStateV4, error) {
 	var matching []resourceStateV4
 	for _, resource := range u.state.Resources {
 		if resource.Mode != "managed" {

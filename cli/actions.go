@@ -48,12 +48,12 @@ func run(ctx context.Context, cmd common.Command) error {
 		return pull.Run(ctx, flags)
 	case common.AddCustomCommand, common.DeleteCustomCommand, common.GetCustomCommand, common.ListCustomCommand:
 		return params.Custom(ctx, flags, cmd)
+	case common.MigrateConfigCommand:
+		return migrate.Config(ctx, flags)
 	case common.MigratePlanCommand:
 		return migrate.Plan(ctx, flags)
 	case common.MigrateValidateCommand:
 		return migrate.Validate(ctx, flags)
-	case common.MigrateUnmatchedCommand:
-		return migrate.Unmatched(ctx, flags)
 	default:
 		return errors.New("unsupported command")
 	}

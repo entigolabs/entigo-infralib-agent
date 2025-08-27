@@ -1,56 +1,66 @@
 typeIdentifications:
   - identification: "{id}"
     types:
-      - aws_vpc
-      - aws_subnet
-      - aws_route_table
-      - aws_internet_gateway
-      - aws_nat_gateway
-      - aws_security_group
-      - aws_network_acl
-      - aws_vpc_peering_connection
-      - aws_vpn_gateway
-      - aws_vpn_connection
-      - aws_customer_gateway
-      - aws_dhcp_options
-      - aws_vpc_endpoint
-      - aws_vpc_endpoint_service
-      - aws_vpc_endpoint_connection_notification
-      - aws_vpc_ipv4_cidr_block_association
-      - aws_vpc_ipv6_cidr_block_association
-      - aws_eip
-      - aws_default_network_acl
-      - aws_default_security_group
-      - aws_route53_zone
-      - aws_route53_health_check
-      - aws_route53_delegation_set
-      - aws_route53_resolver_rule_association
-      - aws_eks_cluster
-      - aws_eks_addon
-      - aws_iam_user
-      - aws_key_pair
-      - aws_iam_access_key
-      - aws_secretsmanager_secret_version
-      - aws_eks_node_group
-      - aws_eks_access_entry
-      - aws_eks_access_policy_association
-      - aws_instance
-      - aws_iam_role
-      - aws_iam_policy
-      - aws_launch_template
+      - aws_backup_plan
+      - aws_backup_vault
+      - aws_cloudfront_distribution
+      - aws_cloudfront_origin_access_identity
       - aws_cloudwatch_log_group
       - aws_cloudwatch_metric_alarm
-      - aws_iam_instance_profile
-      - aws_kms_key
-      - aws_kms_alias
+      - aws_customer_gateway
+      - aws_default_network_acl
+      - aws_default_security_group
+      - aws_dhcp_options
+      - aws_dlm_lifecycle_policy
+      - aws_ecr_lifecycle_policy
+      - aws_ecr_repository
+      - aws_ecr_repository_policy
+      - aws_efs_file_system
+      - aws_efs_mount_target
+      - aws_eip
+      - aws_eks_access_entry
+      - aws_eks_access_policy_association
+      - aws_eks_addon
+      - aws_eks_cluster
+      - aws_eks_node_group
+      - aws_iam_access_key
       - aws_iam_group
       - aws_iam_group_policy_attachment
-      - aws_efs_mount_target
-      - aws_efs_file_system
-      - aws_dlm_lifecycle_policy
-      - aws_backup_vault
-      - aws_backup_plan
+      - aws_iam_instance_profile
+      - aws_iam_policy
+      - aws_iam_role
+      - aws_iam_user
+      - aws_instance
+      - aws_internet_gateway
+      - aws_key_pair
+      - aws_kms_alias
+      - aws_kms_key
+      - aws_launch_template
+      - aws_nat_gateway
+      - aws_network_acl
+      - aws_route53_delegation_set
+      - aws_route53_health_check
       - aws_route53_record
+      - aws_route53_resolver_rule_association
+      - aws_route53_zone
+      - aws_route_table
+      - aws_s3_bucket_policy
+      - aws_s3_bucket_public_access_block
+      - aws_s3_bucket_server_side_encryption_configuration
+      - aws_s3_bucket_versioning
+      - aws_secretsmanager_secret_version
+      - aws_security_group
+      - aws_subnet
+      - aws_vpc
+      - aws_vpc_endpoint
+      - aws_vpc_endpoint_connection_notification
+      - aws_vpc_endpoint_service
+      - aws_vpc_ipv4_cidr_block_association
+      - aws_vpc_ipv6_cidr_block_association
+      - aws_vpc_peering_connection
+      - aws_vpn_connection
+      - aws_vpn_gateway
+
   - identification: "{identifier}"
     types:
       - aws_db_instance
@@ -73,25 +83,67 @@ typeIdentifications:
     types:
       - aws_acm_certificate
       - aws_secretsmanager_secret
+      - aws_sns_topic
+      - aws_sns_topic_subscription
+
   - identification: "{role}:{name}"
     types:
       - aws_iam_role_policy
   - identification: "{role}:{policy_arn}"
     types:
       - aws_iam_role_policy_attachment
+
+  - identification: "{user}/{policy_arn}"
+    types:
+      - aws_iam_user_policy_attachment
+
   - identification: "{name}"
     types:
-      - aws_db_subnet_group
       - aws_elasticache_subnet_group
+      - aws_db_subnet_group
+
   - identification: "{replication_group_id}"
     types:
       - aws_elasticache_replication_group
   - identification: "{bucket}"
     types:
       - aws_s3_bucket
+      - aws_s3_bucket_lifecycle_configuration
+      - aws_s3_bucket_ownership_controls
+      - aws_s3_bucket_policy
+      - aws_s3_bucket_public_access_block
+      - aws_s3_bucket_server_side_encryption_configuration
+      - aws_s3_bucket_versioning
+
+  - identification: "{bucket},{acl}"
+    types:
+      - aws_s3_bucket_acl
+  - identification: "{id}/{name}/{scope}"
+    types:
+      - aws_wafv2_ip_set
+      - aws_wafv2_regex_pattern_set
+      - aws_wafv2_web_acl
+  - identification: "{result}"
+    types:
+      - random_password
+  - identification: "{url}"
+    types:
+      - aws_sqs_queue
+  - identification: "{user}/{policy_arn}"
+    types:
+      - aws_iam_user_policy_attachment
   - identification: "{user}/{groups}"
     types:
       - aws_iam_user_group_membership
   - identification: "{plan_id}|{id}"
     types:
       - aws_backup_selection
+
+  - identification: "{cluster_id}"
+    types:
+      - aws_elasticache_cluster
+
+  - identification: "{security_group_id}_{type}_{protocol}_{from_port}_{to_port}_{cidr_blocks}"
+    listSeparator: "_"
+    types:
+      - aws_security_group_rule

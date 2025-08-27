@@ -18,9 +18,9 @@ func cliCommands() []*cli.Command {
 		&deleteCustomCommand,
 		&getCustomCommand,
 		&listCustomCommand,
+		&migrateConfigCommand,
 		&migratePlanCommand,
 		&migrateValidateCommand,
-		&migrateUnmatchedCommand,
 	}
 }
 
@@ -112,6 +112,14 @@ var listCustomCommand = cli.Command{
 	Flags:   cliFlags(common.ListCustomCommand),
 }
 
+var migrateConfigCommand = cli.Command{
+	Name:    string(common.MigrateConfigCommand),
+	Aliases: []string{"mc"},
+	Usage:   "Outputs a list of resources with instance indexes that are not matched by the current import file",
+	Action:  action(common.MigrateConfigCommand),
+	Flags:   cliFlags(common.MigrateConfigCommand),
+}
+
 var migratePlanCommand = cli.Command{
 	Name:    string(common.MigratePlanCommand),
 	Aliases: []string{"mp"},
@@ -126,12 +134,4 @@ var migrateValidateCommand = cli.Command{
 	Usage:   "validate a terraform plan file based on the import config",
 	Action:  action(common.MigrateValidateCommand),
 	Flags:   cliFlags(common.MigrateValidateCommand),
-}
-
-var migrateUnmatchedCommand = cli.Command{
-	Name:    string(common.MigrateUnmatchedCommand),
-	Aliases: []string{"mv"},
-	Usage:   "Outputs a list of resources with instance indexes that are not matched by the current import file",
-	Action:  action(common.MigrateUnmatchedCommand),
-	Flags:   cliFlags(common.MigrateUnmatchedCommand),
 }
