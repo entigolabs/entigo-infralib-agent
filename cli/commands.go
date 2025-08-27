@@ -18,6 +18,7 @@ func cliCommands() []*cli.Command {
 		&deleteCustomCommand,
 		&getCustomCommand,
 		&listCustomCommand,
+		&migrateConfigCommand,
 		&migratePlanCommand,
 		&migrateValidateCommand,
 	}
@@ -109,6 +110,14 @@ var listCustomCommand = cli.Command{
 	Usage:   "list custom parameters",
 	Action:  action(common.ListCustomCommand),
 	Flags:   cliFlags(common.ListCustomCommand),
+}
+
+var migrateConfigCommand = cli.Command{
+	Name:    string(common.MigrateConfigCommand),
+	Aliases: []string{"mc"},
+	Usage:   "Outputs a list of resources with instance indexes that are not matched by the current import file",
+	Action:  action(common.MigrateConfigCommand),
+	Flags:   cliFlags(common.MigrateConfigCommand),
 }
 
 var migratePlanCommand = cli.Command{

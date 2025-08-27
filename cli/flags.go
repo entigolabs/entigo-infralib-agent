@@ -40,9 +40,11 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.DeleteCustomCommand, common.GetCustomCommand:
 		return append(append(baseFlags, getProviderFlags()...), &keyFlag)
 	case common.MigratePlanCommand:
-		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag, &typesFileFlag)
+		return append(baseFlags, &stateFileFlag, importFileFlag(true), &planFileFlag, &typesFileFlag)
 	case common.MigrateValidateCommand:
-		return append(baseFlags, &stateFileFlag, &importFileFlag, &planFileFlag)
+		return append(baseFlags, &stateFileFlag, importFileFlag(true), &planFileFlag)
+	case common.MigrateConfigCommand:
+		return append(baseFlags, &stateFileFlag, importFileFlag(false))
 	default:
 		return baseFlags
 	}
@@ -289,15 +291,17 @@ var stateFileFlag = cli.StringFlag{
 	Required:    true,
 }
 
-var importFileFlag = cli.StringFlag{
-	Name:        "import-file",
-	Aliases:     []string{"if"},
-	Sources:     cli.EnvVars("IMPORT_FILE"),
-	DefaultText: "",
-	Value:       "",
-	Usage:       "path for import file",
-	Destination: &flags.Migrate.ImportFile,
-	Required:    true,
+func importFileFlag(required bool) *cli.StringFlag {
+	return &cli.StringFlag{
+		Name:        "import-file",
+		Aliases:     []string{"if"},
+		Sources:     cli.EnvVars("IMPORT_FILE"),
+		DefaultText: "",
+		Value:       "",
+		Usage:       "path for import file",
+		Destination: &flags.Migrate.ImportFile,
+		Required:    required,
+	}
 }
 
 var planFileFlag = cli.StringFlag{

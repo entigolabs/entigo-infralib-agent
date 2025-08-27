@@ -178,14 +178,14 @@ type importConfig struct {
 type importItem struct {
 	Type        string        `yaml:"type"`
 	Name        string        `yaml:"name"`
-	Module      string        `yaml:"module"`
+	Module      string        `yaml:"module,omitempty"`
 	IndexKeys   []interface{} `yaml:"index_keys,omitempty"`
-	Source      module        `yaml:"source"`
-	Destination module        `yaml:"destination"`
+	Source      module        `yaml:"source,omitempty"`
+	Destination module        `yaml:"destination,omitempty"`
 }
 
 type module struct {
-	Module    string        `yaml:"module"`
+	Module    string        `yaml:"module,omitempty"`
 	Name      string        `yaml:"name,omitempty"`
 	IndexKey  interface{}   `yaml:"index_key,omitempty"`
 	IndexKeys []interface{} `yaml:"index_keys,omitempty"`
@@ -198,4 +198,10 @@ type KeyPair struct {
 
 func newKeyPair(key1, key2 interface{}) KeyPair {
 	return KeyPair{Key1: key1, Key2: key2}
+}
+
+type ResourceKey struct {
+	Type   string
+	Module string
+	Name   string
 }

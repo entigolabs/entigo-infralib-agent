@@ -14,6 +14,7 @@ const (
 	DeleteCustomCommand    Command = "delete-custom"
 	GetCustomCommand       Command = "get-custom"
 	ListCustomCommand      Command = "list-custom"
+	MigrateConfigCommand   Command = "migrate-config"
 	MigratePlanCommand     Command = "migrate-plan"
 	MigrateValidateCommand Command = "migrate-validate"
 )

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+
 	"github.com/entigolabs/entigo-infralib-agent/commands/bootstrap"
 	"github.com/entigolabs/entigo-infralib-agent/commands/delete"
 	"github.com/entigolabs/entigo-infralib-agent/commands/destroy"
@@ -47,6 +48,8 @@ func run(ctx context.Context, cmd common.Command) error {
 		return pull.Run(ctx, flags)
 	case common.AddCustomCommand, common.DeleteCustomCommand, common.GetCustomCommand, common.ListCustomCommand:
 		return params.Custom(ctx, flags, cmd)
+	case common.MigrateConfigCommand:
+		return migrate.Config(ctx, flags)
 	case common.MigratePlanCommand:
 		return migrate.Plan(ctx, flags)
 	case common.MigrateValidateCommand:
