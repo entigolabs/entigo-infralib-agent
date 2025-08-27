@@ -456,6 +456,9 @@ func getResourceInstance(resource resourceStateV4, key interface{}) (instanceObj
 }
 
 func compareValues(a, b interface{}) (bool, error) {
+	if a == nil && b == nil {
+		return true, nil
+	}
 	switch a := a.(type) {
 	case string:
 		if b, ok := b.(string); ok {

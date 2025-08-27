@@ -20,6 +20,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Service Account](#service-account)
     * [Pull](#pull)
     * [Custom Parameters](#custom-parameters)
+    * [Migrate Unmatched](#migrate-unmatched)
     * [Migrate Plan](#migrate-plan)
     * [Migrate Validate](#migrate-validate)
 * [Config](#config)
@@ -616,11 +617,13 @@ Currently, infralib only supports customer provided encryption in AWS with KMS. 
 
 ## Migration Helper
 
-Agent includes 3 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-plan](#migrate-plan), [migrate-unmatched](#migrate-unmatched) and [migrate-validate](#migrate-validate).
+Agent includes 3 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-unmatched](#migrate-unmatched), [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
 
-Both commands require a terraform plan and v4 state files. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine auto-approve type `reject` and `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
+Unmatched command requires a terraform v4 state file. Plan and validate commands require the state file and a terraform plan file. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine approval type `reject` with `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
 
-First generate terraform import commands with the `migrate-plan` command, then after executing them, run the pipelines with the auto-approve `reject` type to generate a new plan. Use the `migrate-unmatched` to list any resources that are in the state file, but didn't match with any items from the import file. Use the `migrate-validate` command to validate the new plan along with the new state.
+First generate an import config with `migrate-unmatched`. Modify the generated lines to remove any resources that don't need migrating. If needed, split any config items into source and destination blocks. That's only necessary if source and destination don't have any matching fields of name, module or indexes.
+
+Using the import config, generate terraform import commands with the `migrate-plan` command. After executing the commands, run the pipelines with the approval type `reject` to generate a new plan. Optionally, use the `migrate-validate` command to validate the new plan along with the new state.
 
 ### Import File
 

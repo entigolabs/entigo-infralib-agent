@@ -128,7 +128,10 @@ func (u *unmatchedFinder) getMissingResource(resources map[ResourceKey][]interfa
 	}
 	indexes, ok := resources[resourceKey]
 	if !ok {
-		item.IndexKeys = getResourceIndexes(nil, resource)
+		indexes = getResourceIndexes(nil, resource)
+		if len(indexes) > 0 && indexes[0] != nil {
+			item.IndexKeys = getResourceIndexes(nil, resource)
+		}
 		return item
 	}
 	var missingIndexes []interface{}
@@ -145,7 +148,7 @@ func (u *unmatchedFinder) getMissingResource(resources map[ResourceKey][]interfa
 				break
 			}
 		}
-		if !found {
+		if !found && instance.IndexKey != nil {
 			missingIndexes = append(missingIndexes, instance.IndexKey)
 		}
 	}
@@ -192,9 +195,6 @@ func getResourceIndexes(indexKeys []KeyPair, resource resourceStateV4) []interfa
 		return indexes
 	}
 	for _, instance := range resource.Instances {
-		if instance.IndexKey == nil {
-			continue
-		}
 		indexes = append(indexes, instance.IndexKey)
 	}
 	if len(indexes) == 0 {
