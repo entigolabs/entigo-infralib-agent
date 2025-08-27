@@ -20,9 +20,6 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Service Account](#service-account)
     * [Pull](#pull)
     * [Custom Parameters](#custom-parameters)
-    * [Migrate Config](#migrate-config)
-    * [Migrate Plan](#migrate-plan)
-    * [Migrate Validate](#migrate-validate)
 * [Config](#config)
   * [Including and excluding modules in sources](#including-and-excluding-modules-in-sources)
   * [Auto approval logic](#auto-approval-logic)
@@ -35,6 +32,10 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
   * [Notification API requests](#notification-api-requests)
   * [Encryption](#encryption)
 * [Migration Helper](#migration-helper)
+  * [Commands](#migration-commands)
+      * [Migrate Config](#migrate-config)
+      * [Migrate Plan](#migrate-plan)
+      * [Migrate Validate](#migrate-validate)
   * [Import File](#import-file)
   * [Type Identifications File](#type-identifications-file)
 
@@ -291,56 +292,6 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent add-custom --key=custom-key --value=custom-value
-```
-
-### migrate-config
-
-Outputs a list of resources with instance indexes based on the state file that are not matched by the provided import file.
-
-OPTIONS:
-* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the previous terraform state file [$STATE_FILE]
-* import-file - **optional**, path to the import file [$IMPORT_FILE]
-
-Example
-```bash
-bin/ei-agent migrate-config --state-file=state-file.json --import-file=import-file.yaml
-```
-
-### migrate-plan
-
-Generates import and rm terraform commands based on the input files. **Warning!** Always check the import and rm commands before executing them. More info in [Migration Helper](#migration-helper).
-
-OPTIONS:
-* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the previous terraform state file [$STATE_FILE]
-* plan-file - path to the terraform plan file [$PLAN_FILE]
-* import-file - path to the import file [$IMPORT_FILE]
-* types-file - **optional**, path for type identifications file [$TYPES_FILE]
-
-Example
-```bash
-bin/ei-agent migrate-plan --state-file=state-file.json --plan-file=plan.json --import-file=import-file.yaml
-```
-
-### migrate-validate
-
-Validate a terraform plan file based on the import config and infralib terraform state. Outputs 3 types of warnings:
-1. If plan wants to create or remove a resource that should be in the infralib state file.
-2. If plan wants to create or remove a resource that has the same type as the type in the import file.
-3. If plan wants to change a value of a resource.
-
-More info in [Migration Helper](#migration-helper).
-
-OPTIONS:
-* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the new terraform state file [$STATE_FILE]
-* plan-file - path to the terraform plan file [$PLAN_FILE]
-* import-file - path to the import file [$IMPORT_FILE]
-
-Example
-```bash
-bin/ei-agent migrate-plan --state-file=state-file.json --import-file=import-file.yaml
 ```
 
 ## Config
@@ -624,6 +575,58 @@ Config command requires a terraform v4 state file. Plan and validate commands re
 First generate an import configuration with `migrate-config`. Modify the generated lines to remove any resources that don't need migrating. If needed, split any config items into source and destination blocks. That's only necessary if source and destination don't have any matching fields from name, module and indexes.
 
 Using the import config, generate terraform import commands with the `migrate-plan` command. After executing the commands, run the pipelines with the approval type `reject` to generate a new plan. Optionally, use the `migrate-validate` command to validate the new plan along with the new state.
+
+### Migration Commands
+
+#### migrate-config
+
+Outputs a list of resources with instance indexes based on the state file that are not matched by the provided import file. More info in [Migration Helper](#migration-helper).
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the previous terraform state file [$STATE_FILE]
+* import-file - **optional**, path to the import file [$IMPORT_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-config --state-file=state-file.json
+```
+
+#### migrate-plan
+
+Generates import and rm terraform commands based on the input files. **Warning!** Always check the import and rm commands before executing them. More info in [Migration Helper](#migration-helper).
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the previous terraform state file [$STATE_FILE]
+* plan-file - path to the terraform plan file [$PLAN_FILE]
+* import-file - path to the import file [$IMPORT_FILE]
+* types-file - **optional**, path for type identifications file [$TYPES_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-plan --state-file=state-file.json --plan-file=plan.json --import-file=import-file.yaml
+```
+
+#### migrate-validate
+
+Validate a terraform plan file based on the import config and infralib terraform state. Outputs 3 types of warnings:
+1. If plan wants to create or remove a resource that should be in the infralib state file.
+2. If plan wants to create or remove a resource that has the same type as the type in the import file.
+3. If plan wants to change a value of a resource.
+
+More info in [Migration Helper](#migration-helper).
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* state-file - path to the new terraform state file [$STATE_FILE]
+* plan-file - path to the terraform plan file [$PLAN_FILE]
+* import-file - path to the import file [$IMPORT_FILE]
+
+Example
+```bash
+bin/ei-agent migrate-plan --state-file=state-file.json --import-file=import-file.yaml
+```
 
 ### Import File
 
