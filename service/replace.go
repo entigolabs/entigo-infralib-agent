@@ -4,6 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/entigolabs/entigo-infralib-agent/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -12,12 +19,6 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
-	"log"
-	"log/slog"
-	"reflect"
-	"regexp"
-	"strconv"
-	"strings"
 )
 
 type paramCache map[string]map[string]model.TFOutput
@@ -300,7 +301,9 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 	case string(model.ReplaceTypeStep):
 		return getStepName(step, replaceKey)
 	case string(model.ReplaceTypeModuleType):
-		return u.getTypedModuleName(step, replaceKey)
+		return u.getTypedModuleName(step, replaceKey, false)
+	case string(model.ReplaceTypeModuleOptional):
+		return u.getTypedModuleName(step, replaceKey, true)
 	case string(model.ReplaceTypeStepModule):
 		return getTypedStepModuleName(step, replaceKey)
 	case string(model.ReplaceTypeModule):
@@ -536,15 +539,22 @@ func getStepName(step model.Step, replaceKey string) (string, error) {
 	return "", fmt.Errorf("unknown step replace type %s in tag %s", parts[1], replaceKey)
 }
 
-func (u *updater) getTypedModuleName(step model.Step, replaceKey string) (string, error) {
+func (u *updater) getTypedModuleName(step model.Step, replaceKey string, optional bool) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) != 2 {
 		return "", fmt.Errorf("failed to parse tmodule key %s for step %s, got %d split parts instead of 2",
 			replaceKey, step.Name, len(parts))
 	}
 	_, module, err := u.findStepModuleByType(parts[1])
-	if err != nil || module == nil {
-		return "", fmt.Errorf("failed to find step and module for tmodule key %s: %v", replaceKey, err)
+	if err != nil {
+		return "", fmt.Errorf("failed to find module with type %s for toutput key %s: %v", parts[1], replaceKey, err)
+	}
+	if module == nil {
+		if optional {
+			return "", nil
+		} else {
+			return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
+		}
 	}
 	return module.Name, nil
 }

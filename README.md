@@ -492,6 +492,7 @@ Step, module and input field values can be overwritten by using replacement tags
 | `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter or GCloud SM.                                                |
 | `step`          | name                        | `.step.name`                    | Name of the step containing the module.                                                   |
 | `tmodule`       | type                        | `.tmodule.eks`                  | Name of the module with a specified type.                                                 |
+| `toptmodule`    | type                        | `.tmodule.eks`                  | Optional name of the module with a specified type.                                        |
 | `toptout`       | type.key                    | `.toptout.eks.cluster_arn`      | Optional value from Terraform output based on module type. Defaults to empty string.      |
 | `toutput`       | type.key                    | `.toutput.eks.cluster_arn`      | Value from Terraform output based on module type.                                         |
 | `tsmodule`      | type                        | `.tsmodule.eks`                 | Name of the typed module in the current step.                                             |

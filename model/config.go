@@ -2,10 +2,11 @@ package model
 
 import (
 	"fmt"
-	"github.com/hashicorp/go-version"
-	"gopkg.in/yaml.v3"
 	"log/slog"
 	"time"
+
+	"github.com/hashicorp/go-version"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -208,6 +209,7 @@ const (
 	ReplaceTypeAgent           ReplaceType = "agent"
 	ReplaceTypeStep            ReplaceType = "step"
 	ReplaceTypeModuleType      ReplaceType = "tmodule"
+	ReplaceTypeModuleOptional  ReplaceType = "toptmodule"
 	ReplaceTypeStepModule      ReplaceType = "tsmodule"
 	ReplaceTypeModule          ReplaceType = "module"
 	ReplaceTypeInput           ReplaceType = "input"
