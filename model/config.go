@@ -179,6 +179,7 @@ type Module struct {
 	HttpUsername   string                 `yaml:"http_username,omitempty"`
 	HttpPassword   string                 `yaml:"http_password,omitempty"`
 	Version        string                 `yaml:"version,omitempty"`
+	DefaultModule  bool                   `yaml:"default_module,omitempty"`
 	Inputs         map[string]interface{} `yaml:"inputs,omitempty"`
 	InputsChecksum []byte                 `yaml:"-"`
 	InputsFile     string                 `yaml:"-"`
