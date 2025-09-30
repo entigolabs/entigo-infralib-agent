@@ -391,7 +391,7 @@ func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
 		return "", err
 	}
 	if job == nil {
-		return "", fmt.Errorf("job %s not found", projectName)
+		return "", model.NewNotFoundError(fmt.Sprintf("job %s", projectName))
 	}
 	jobOp, err := b.client.RunJob(b.ctx, &runpb.RunJobRequest{Name: job.Name})
 	if err != nil {

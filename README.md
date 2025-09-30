@@ -357,6 +357,7 @@ steps:
         version: stable | semver
         http_username: string
         http_password: string
+        default_module: bool
         inputs: map[string]interface{}
     provider:
       inputs: map[string]string
@@ -434,6 +435,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * version - highest version of the module to use
     * http_username - username for external repository authentication
     * http_password - password for external repository authentication
+    * default_module - when using `tmodule` replacement, default module will be used if multiple modules of the same type exist, default **false**
     * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the `./config/<stepName>` directory with a name `<moduleName>.yaml`
   * provider - provider values to add
     * inputs - variables for provider tf file

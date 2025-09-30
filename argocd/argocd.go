@@ -81,7 +81,7 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 func getModuleApplicationFile(storage model.Storage, release, moduleSource string) (map[string]interface{}, error) {
 	bytes, err := storage.GetFile(fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
-		var fileError model.FileNotFoundError
+		var fileError model.NotFoundError
 		if errors.As(err, &fileError) {
 			return nil, nil
 		}

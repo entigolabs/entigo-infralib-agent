@@ -565,19 +565,9 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 		return "", fmt.Errorf("failed to parse tsmodule key %s for step %s, got %d split parts instead of 2",
 			replaceKey, step.Name, len(parts))
 	}
-	var module *model.Module
-	for _, stepModule := range step.Modules {
-		moduleType := getModuleType(stepModule)
-		if moduleType != parts[1] {
-			continue
-		}
-		if module != nil {
-			return "", fmt.Errorf("found multiple step modules with type %s for tsmodule key %s", parts[1], replaceKey)
-		}
-		module = &stepModule
-	}
-	if module == nil {
-		return "", fmt.Errorf("failed to find step module for tsmodule key %s", replaceKey)
+	module, err := findModuleByType(step.Modules, parts[1])
+	if err != nil || module == nil {
+		return "", fmt.Errorf("failed to find step module with type %s for tsmodule key %s: %v", parts[1], replaceKey, err)
 	}
 	return module.Name, nil
 }
@@ -657,21 +647,48 @@ func (u *updater) findStepModuleByName(stepName, moduleName string) (*model.Step
 
 func (u *updater) findStepModuleByType(moduleType string) (*model.Step, *model.Module, error) {
 	var foundStep *model.Step
-	var foundModule *model.Module
+	var foundModules []model.Module
 	for _, step := range u.config.Steps {
 		for _, module := range step.Modules {
 			currentType := getModuleType(module)
 			if currentType != moduleType {
 				continue
 			}
-			if foundStep != nil {
-				return nil, nil, fmt.Errorf("found multiple modules with type %s", moduleType)
+			if module.DefaultModule {
+				return &step, &module, nil
 			}
 			foundStep = &step
-			foundModule = &module
+			foundModules = append(foundModules, module)
 		}
 	}
-	return foundStep, foundModule, nil
+	if len(foundModules) == 1 {
+		return foundStep, &foundModules[0], nil
+	}
+	if len(foundModules) > 1 {
+		return nil, nil, fmt.Errorf("found multiple modules with type %s and no default", moduleType)
+	}
+	return nil, nil, nil
+}
+
+func findModuleByType(modules []model.Module, moduleType string) (*model.Module, error) {
+	var foundModules []model.Module
+	for _, module := range modules {
+		currentType := getModuleType(module)
+		if currentType != moduleType {
+			continue
+		}
+		if module.DefaultModule {
+			return &module, nil
+		}
+		foundModules = append(foundModules, module)
+	}
+	if len(foundModules) == 1 {
+		return &foundModules[0], nil
+	}
+	if len(foundModules) > 1 {
+		return nil, fmt.Errorf("found multiple modules with type %s and no default", moduleType)
+	}
+	return nil, nil
 }
 
 func getModuleType(module model.Module) string {

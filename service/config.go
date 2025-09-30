@@ -541,18 +541,9 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		}
 		destinations.Add(destination.Name)
 	}
-	stepNames := model.NewSet[string]()
-	for _, step := range config.Steps {
-		if err := validateStep(step); err != nil {
-			return err
-		}
-		if stepNames.Contains(step.Name) {
-			return fmt.Errorf("step name %s is not unique", step.Name)
-		}
-		stepNames.Add(step.Name)
-		if err := validateConfigModules(step, state); err != nil {
-			return err
-		}
+	err := validateSteps(config, state)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -605,6 +596,34 @@ func validateDestination(index int, destination model.ConfigDestination) error {
 	}
 	if destination.Git.Password != "" && destination.Git.Username == "" {
 		return fmt.Errorf("%d. destination git username is required when using basic auth", index+1)
+	}
+	return nil
+}
+
+func validateSteps(config model.Config, state *model.State) error {
+	stepNames := model.NewSet[string]()
+	defaultModules := model.NewSet[string]()
+	for _, step := range config.Steps {
+		if err := validateStep(step); err != nil {
+			return err
+		}
+		if stepNames.Contains(step.Name) {
+			return fmt.Errorf("step name %s is not unique", step.Name)
+		}
+		stepNames.Add(step.Name)
+		if err := validateConfigModules(step, state); err != nil {
+			return err
+		}
+		for _, module := range step.Modules {
+			if !module.DefaultModule {
+				continue
+			}
+			moduleType := getModuleType(module)
+			if defaultModules.Contains(moduleType) {
+				return fmt.Errorf("multiple default modules found with type %s", moduleType)
+			}
+			defaultModules.Add(moduleType)
+		}
 	}
 	return nil
 }

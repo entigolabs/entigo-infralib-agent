@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -131,6 +132,11 @@ func (d *deleter) Destroy() error {
 			err = d.resources.GetPipeline().StartDestroyExecution(projectName, step)
 		}
 		if err != nil {
+			var notFoundErr model.NotFoundError
+			if errors.As(err, &notFoundErr) {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s %s, skipping", step.Name, notFoundErr.Error())))
+				continue
+			}
 			return fmt.Errorf("failed to run destroy pipeline %s: %s", projectName, err)
 		}
 		log.Printf("Successfully executed destroy pipeline for step %s\n", step.Name)

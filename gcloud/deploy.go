@@ -1,11 +1,17 @@
 package gcloud
 
 import (
-	deploy "cloud.google.com/go/deploy/apiv1"
-	"cloud.google.com/go/deploy/apiv1/deploypb"
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+	"os"
+	"strings"
+	"time"
+
+	deploy "cloud.google.com/go/deploy/apiv1"
+	"cloud.google.com/go/deploy/apiv1/deploypb"
 	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -18,11 +24,6 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"gopkg.in/yaml.v3"
-	"log"
-	"log/slog"
-	"os"
-	"strings"
-	"time"
 )
 
 const (
