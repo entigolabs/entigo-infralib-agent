@@ -230,7 +230,7 @@ func (s *SourceClient) GetFile(path string, release string) ([]byte, error) {
 
 	file, err := s.worktree.Filesystem.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, model.NewFileNotFoundError(path)
+		return nil, model.NewNotFoundError(path)
 	}
 	if err != nil {
 		return nil, err

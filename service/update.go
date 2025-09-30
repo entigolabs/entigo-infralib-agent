@@ -1628,7 +1628,7 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
 	defaultInputsRaw, err := moduleSource.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
-		var fileError model.FileNotFoundError
+		var fileError model.NotFoundError
 		if errors.As(err, &fileError) {
 			return nil, nil
 		}
@@ -1649,7 +1649,7 @@ func (u *updater) getModuleMetadata(module model.Module, moduleSource string, so
 	filePath := fmt.Sprintf("modules/%s/agent.yaml", moduleSource)
 	metadataRaw, err := source.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
-		var fileError model.FileNotFoundError
+		var fileError model.NotFoundError
 		if errors.As(err, &fileError) {
 			slog.Debug(fmt.Sprintf("Module %s agent file not found", module.Name))
 			return nil, nil

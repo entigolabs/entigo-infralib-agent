@@ -138,7 +138,7 @@ func (t *terraform) findProviderFile(path string, fileName string, sourceVersion
 		release = sourceVersion
 	}
 	if sourceKey.IsEmpty() {
-		return nil, model.SourceKey{}, model.NewFileNotFoundError(fileName)
+		return nil, model.SourceKey{}, model.NewNotFoundError(fileName)
 	}
 	file, err := t.getTerraformFile(sourceKey, path, fileName, release)
 	if err != nil {
@@ -190,7 +190,7 @@ func getRequiredProvidersBlock(file *hclwrite.File) (*hclwrite.Block, error) {
 func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[model.SourceKey]string) ([]*hclwrite.Block, model.SourceKey) {
 	providerFile, providerSource, err := t.findProviderFile(providerPath, fmt.Sprintf("%s.tf", providerName), sourceVersions)
 	if err != nil {
-		var fileNotFoundError model.FileNotFoundError
+		var fileNotFoundError model.NotFoundError
 		if errors.As(err, &fileNotFoundError) {
 			slog.Debug(fmt.Sprintf("Provider file not found for %s\n", providerName))
 			return []*hclwrite.Block{}, providerSource
@@ -423,7 +423,7 @@ func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, mod
 	filePath := fmt.Sprintf("modules/%s", moduleSource)
 	file, err := t.getTerraformFile(source, filePath, "outputs.tf", release)
 	if err != nil {
-		var fileError model.FileNotFoundError
+		var fileError model.NotFoundError
 		if errors.As(err, &fileError) {
 			return nil
 		}

@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
@@ -13,10 +18,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
-	"log"
-	"log/slog"
-	"strings"
-	"time"
 )
 
 const (
@@ -998,7 +999,14 @@ func (p *Pipeline) getApprovalToken(pipelineName string) *string {
 
 func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) error {
 	pipelineName := fmt.Sprintf("%s-destroy", projectName)
-	err := p.enableAllStageTransitions(pipelineName)
+	pipeline, err := p.getPipeline(pipelineName)
+	if err != nil {
+		return err
+	}
+	if pipeline == nil {
+		return model.NewNotFoundError(fmt.Sprintf("pipeline %s", pipelineName))
+	}
+	err = p.enableAllStageTransitions(pipelineName)
 	if err != nil {
 		return err
 	}

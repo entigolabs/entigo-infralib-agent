@@ -21,7 +21,7 @@ func (l *local) GetFile(path, _ string) ([]byte, error) {
 	fullPath := filepath.Join(l.source, path)
 	file, err := os.ReadFile(fullPath)
 	if os.IsNotExist(err) {
-		return nil, model.NewFileNotFoundError(path)
+		return nil, model.NewNotFoundError(path)
 	}
 	return file, nil
 }

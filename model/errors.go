@@ -15,18 +15,18 @@ func (e *ParameterNotFoundError) Unwrap() error {
 	return e.Err
 }
 
-type FileNotFoundError struct {
-	fileName string
+type NotFoundError struct {
+	name string
 }
 
-func NewFileNotFoundError(fileName string) FileNotFoundError {
-	return FileNotFoundError{fileName: fileName}
+func NewNotFoundError(name string) NotFoundError {
+	return NotFoundError{name: name}
 }
 
-func (e FileNotFoundError) Error() string {
-	return fmt.Sprintf("file %s not found", e.fileName)
+func (e NotFoundError) Error() string {
+	return fmt.Sprintf("%s not found", e.name)
 }
 
-func (e FileNotFoundError) Unwrap() error {
+func (e NotFoundError) Unwrap() error {
 	return nil
 }
