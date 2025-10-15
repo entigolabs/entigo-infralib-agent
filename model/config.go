@@ -17,6 +17,7 @@ type Config struct {
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
+	Provider         Provider             `yaml:"provider,omitempty"`
 	Steps            []Step               `yaml:"steps,omitempty"`
 	Certs            []File               `yaml:"-"`
 }
@@ -124,8 +125,8 @@ type VPC struct {
 
 type Provider struct {
 	Inputs     map[string]interface{} `yaml:"inputs,omitempty"`
-	Aws        AwsProvider            `yaml:"aws"`
-	Kubernetes KubernetesProvider     `yaml:"kubernetes"`
+	Aws        AwsProvider            `yaml:"aws,omitempty"`
+	Kubernetes KubernetesProvider     `yaml:"kubernetes,omitempty"`
 }
 
 type AwsProvider struct {

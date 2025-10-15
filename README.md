@@ -337,6 +337,17 @@ notifications:
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
+provider:
+  inputs: map[string]string
+  aws:
+    ignore_tags:
+      key_prefixes: []string
+      keys: []string
+    default_tags:
+      tags: map[string]string
+  kubernetes:
+    ignore_annotations: []string
+    ignore_labels: []string
 steps:
   - name: string
     type: terraform | argocd-apps
@@ -414,6 +425,10 @@ Source version is overwritten by module version. Default version is **stable** w
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
+* provider - provider values to add for all terraform steps
+  * inputs - variables for provider tf file
+  * aws - aws provider default and ignore tags to add
+  * kubernetes - kubernetes provider ignore annotations and labels to add
 * steps - list of steps to execute
   * name - name of the step
   * type - type of the step

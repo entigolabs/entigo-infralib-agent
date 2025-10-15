@@ -82,7 +82,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		steps:         steps,
 		stepChecksums: model.NewStepsChecksums(),
 		resources:     resources,
-		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources),
+		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,

@@ -41,13 +41,15 @@ type terraform struct {
 	providerType  model.ProviderType
 	configSources []model.ConfigSource
 	sources       map[model.SourceKey]*model.Source
+	provider      model.Provider
 }
 
-func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[model.SourceKey]*model.Source) Terraform {
+func NewTerraform(providerType model.ProviderType, configSources []model.ConfigSource, sources map[model.SourceKey]*model.Source, provider model.Provider) Terraform {
 	return &terraform{
 		providerType:  providerType,
 		configSources: configSources,
 		sources:       sources,
+		provider:      provider,
 	}
 }
 
@@ -203,6 +205,9 @@ func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[mo
 func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBlock *hclwrite.Block, providersAttributes map[string]*hclwrite.Attribute, step model.Step, sourceVersions map[model.SourceKey]string) (map[string]model.SourceKey, error) {
 	providerInputs := step.Provider.Inputs
 	if providerInputs == nil {
+		providerInputs = t.provider.Inputs
+	}
+	if providerInputs == nil {
 		providerInputs = make(map[string]interface{})
 	}
 	providers := make(map[string]model.SourceKey)
@@ -219,7 +224,7 @@ func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBloc
 			providers[name] = providerSource
 		}
 		for _, providerBlock := range providerBlocks {
-			err := addProviderValues(name, providerBlock.Body(), step.Provider)
+			err := t.addProviderValues(name, providerBlock.Body(), step.Provider)
 			if err != nil {
 				return nil, err
 			}
@@ -234,28 +239,30 @@ func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBloc
 	return providers, nil
 }
 
-func addProviderValues(providerType string, body *hclwrite.Body, stepProvider model.Provider) error {
-	if stepProvider.IsEmpty() {
-		return nil
-	}
+func (t *terraform) addProviderValues(providerType string, body *hclwrite.Body, stepProvider model.Provider) error {
 	switch providerType {
 	case "aws":
-		return addAwsProviderValues(body, stepProvider.Aws)
+		return t.addAwsProviderValues(body, stepProvider.Aws)
 	case "kubernetes":
-		return addKubernetesProviderValues(body, stepProvider.Kubernetes)
+		return t.addKubernetesProviderValues(body, stepProvider.Kubernetes)
 	}
 	return nil
 }
 
-func addAwsProviderValues(body *hclwrite.Body, awsProvider model.AwsProvider) error {
-	if awsProvider.IsEmpty() {
-		return nil
+func (t *terraform) addAwsProviderValues(body *hclwrite.Body, awsProvider model.AwsProvider) error {
+	ignoreTags := awsProvider.IgnoreTags
+	if ignoreTags.IsEmpty() {
+		ignoreTags = t.provider.Aws.IgnoreTags
 	}
-	err := addAwsProviderIgnoreTags(body, awsProvider.IgnoreTags)
+	err := addAwsProviderIgnoreTags(body, ignoreTags)
 	if err != nil {
 		return err
 	}
-	return addAwsProviderDefaultTags(body, awsProvider.DefaultTags)
+	defaultTags := awsProvider.DefaultTags
+	if defaultTags.IsEmpty() {
+		defaultTags = t.provider.Aws.DefaultTags
+	}
+	return addAwsProviderDefaultTags(body, defaultTags)
 }
 
 func addAwsProviderIgnoreTags(body *hclwrite.Body, ignoreTags model.AwsIgnoreTags) error {
@@ -316,10 +323,18 @@ func addAwsProviderDefaultTags(body *hclwrite.Body, defaultTags model.AwsDefault
 	return nil
 }
 
-func addKubernetesProviderValues(body *hclwrite.Body, kubernetes model.KubernetesProvider) error {
+func (t *terraform) addKubernetesProviderValues(body *hclwrite.Body, kubernetes model.KubernetesProvider) error {
+	ignoreAnnotations := kubernetes.IgnoreAnnotations
+	if len(ignoreAnnotations) == 0 {
+		ignoreAnnotations = t.provider.Kubernetes.IgnoreAnnotations
+	}
 	err := addProviderBodyArray(body, "ignore_annotations", kubernetes.IgnoreAnnotations)
 	if err != nil {
 		return err
+	}
+	ignoreLabels := kubernetes.IgnoreLabels
+	if len(ignoreLabels) == 0 {
+		ignoreLabels = t.provider.Kubernetes.IgnoreLabels
 	}
 	return addProviderBodyArray(body, "ignore_labels", kubernetes.IgnoreLabels)
 }
