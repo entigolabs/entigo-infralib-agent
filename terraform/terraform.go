@@ -328,7 +328,7 @@ func (t *terraform) addKubernetesProviderValues(body *hclwrite.Body, kubernetes 
 	if len(ignoreAnnotations) == 0 {
 		ignoreAnnotations = t.provider.Kubernetes.IgnoreAnnotations
 	}
-	err := addProviderBodyArray(body, "ignore_annotations", kubernetes.IgnoreAnnotations)
+	err := addProviderBodyArray(body, "ignore_annotations", ignoreAnnotations)
 	if err != nil {
 		return err
 	}
@@ -336,7 +336,7 @@ func (t *terraform) addKubernetesProviderValues(body *hclwrite.Body, kubernetes 
 	if len(ignoreLabels) == 0 {
 		ignoreLabels = t.provider.Kubernetes.IgnoreLabels
 	}
-	return addProviderBodyArray(body, "ignore_labels", kubernetes.IgnoreLabels)
+	return addProviderBodyArray(body, "ignore_labels", ignoreLabels)
 }
 
 func addProviderBodyArray(body *hclwrite.Body, attributeName string, values []string) error {
