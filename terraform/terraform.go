@@ -451,6 +451,9 @@ func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, mod
 		outputBody := body.AppendNewBlock(outputType, []string{fmt.Sprintf("%s__%s", module.Name, block.Labels()[0])})
 		value := fmt.Sprintf("module.%s.%s", module.Name, block.Labels()[0])
 		outputBody.Body().SetAttributeRaw("value", getTokens(value))
+		if sensitiveAttr, ok := block.Body().Attributes()["sensitive"]; ok {
+			outputBody.Body().SetAttributeRaw("sensitive", sensitiveAttr.Expr().BuildTokens(nil))
+		}
 	}
 	return nil
 }
