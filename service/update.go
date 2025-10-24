@@ -1329,13 +1329,8 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 	}
 	filePath := fmt.Sprintf("steps/%s-%s/main.tf", u.resources.GetCloudPrefix(), step.Name)
 	fileBytes := file.Bytes()
-	if changed {
-		err := u.resources.GetBucket().PutFile(filePath, fileBytes)
-		if err != nil {
-			return false, "", nil, err
-		}
-	}
-	return changed, filePath, fileBytes, nil
+	err := u.resources.GetBucket().PutFile(filePath, fileBytes)
+	return changed, filePath, fileBytes, err
 }
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
