@@ -213,6 +213,7 @@ type Parameter struct {
 }
 
 type PipelineChanges struct {
+	Imported  int
 	Added     int
 	Changed   int
 	Destroyed int

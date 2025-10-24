@@ -3,11 +3,12 @@ package notify
 import (
 	"context"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 const urlErrorFormat = "error joining url: %v"
@@ -105,6 +106,7 @@ func toPipelineRequest(pipelineName string, changes model.PipelineChanges, link 
 	return model.PipelineRequest{
 		Name: pipelineName,
 		Plan: model.PlanEntity{
+			Import:  changes.Imported,
 			Add:     changes.Added,
 			Change:  changes.Changed,
 			Destroy: changes.Destroyed,

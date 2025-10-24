@@ -82,6 +82,7 @@ type PipelineRequest struct {
 }
 
 type PlanEntity struct {
+	Import  int `json:"imported,omitempty"`
 	Add     int `json:"added,omitempty"`
 	Change  int `json:"changed,omitempty"`
 	Destroy int `json:"removed,omitempty"`

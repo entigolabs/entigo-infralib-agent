@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
@@ -22,7 +23,11 @@ func (b *BaseNotifier) Message(messageType model.MessageType, message string) er
 }
 
 func (b *BaseNotifier) ManualApproval(pipelineName string, changes model.PipelineChanges, link string) error {
-	formattedChanges := fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy.", changes.Added, changes.Changed, changes.Destroyed)
+	imported := ""
+	if changes.Imported != 0 {
+		imported = fmt.Sprintf(" %d to import, ", changes.Imported)
+	}
+	formattedChanges := fmt.Sprintf("Plan: %s%d to add, %d to change, %d to destroy.", imported, changes.Added, changes.Changed, changes.Destroyed)
 	message := fmt.Sprintf("Waiting for manual approval of pipeline %s\n%s", pipelineName, formattedChanges)
 	if link != "" {
 		message += fmt.Sprintf("\nPipeline: %s", link)

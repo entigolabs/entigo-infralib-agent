@@ -30,7 +30,7 @@ const (
 	outputType     = "output"
 )
 
-var planRegex = regexp.MustCompile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy`)
+var planRegex = regexp.MustCompile(`Plan: (?:(?P<import>\d+) to import, )?(?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[model.SourceKey]string) ([]byte, map[model.SourceKey]model.Set[string], error)
@@ -494,5 +494,5 @@ func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, erro
 	if matches == nil {
 		return nil, nil
 	}
-	return util.GetChangesFromMatches(pipelineName, message, matches)
+	return util.GetChangesFromMatches(pipelineName, message, matches, planRegex.SubexpNames())
 }
