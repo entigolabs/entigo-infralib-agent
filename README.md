@@ -334,6 +334,8 @@ notifications:
     api:
       url: string
       key: string
+schedule:
+  update_cron: string
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
@@ -422,6 +424,8 @@ Source version is overwritten by module version. Default version is **stable** w
     * channel_id - slack channel id
   * teams - send notifications to teams
     * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify GitHub](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
+* schedule - allows scheduling CodePipeline/Cloud Run Job executions. Note, bootstrap command must be run initially to create the required AWS IAM role with permissions to start the executions.
+  * update_cron - cron expression for scheduling agent update executions. Note, the cron format must follow the standard of the used cloud provider ([AWS EventBridge Scheduler](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-scheduled-rule-pattern.html) or [Google Cloud Scheduler](https://docs.cloud.google.com/scheduler/docs/configuring/cron-job-schedules)). Removing this value will also remove the scheduled execution.
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step

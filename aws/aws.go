@@ -3,6 +3,11 @@ package aws
 import (
 	"context"
 	"fmt"
+	"log"
+	"log/slog"
+	"os"
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -12,10 +17,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"log"
-	"log/slog"
-	"os"
-	"time"
 )
 
 type awsService struct {
@@ -127,7 +128,7 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 	return a.resources, nil
 }
 
-func (a *awsService) SetupResources(manager model.NotificationManager) (model.Resources, error) {
+func (a *awsService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
 	bucket := a.getBucketName()
 	s3, s3Arn, err := a.createBucket(bucket)
 	if err != nil {
@@ -175,6 +176,10 @@ func (a *awsService) SetupResources(manager model.NotificationManager) (model.Re
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
 		*a.pipeline.TerraformCache.Value, manager)
+	err = a.createSchedule(config.Schedule, iam)
+	if err != nil {
+		return nil, err
+	}
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -208,8 +213,14 @@ func (a *awsService) GetResources() (model.Resources, error) {
 }
 
 func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
+	scheduler := NewScheduler(a.ctx, a.awsConfig, a.cloudPrefix)
+	err := scheduler.deleteUpdateSchedule()
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete EventBridge schedule %s: %s",
+			getScheduleName(a.cloudPrefix, common.UpdateCommand), err)))
+	}
 	agentProjectName := fmt.Sprintf("%s-agent-%s", a.cloudPrefix, common.RunCommand)
-	err := a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
+	err = a.resources.GetPipeline().(*Pipeline).deletePipeline(agentProjectName)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent run pipeline: %s", err)))
 	}
@@ -421,6 +432,70 @@ func (a *awsService) getBuildRoleName() string {
 	return fmt.Sprintf("%s-build-%s", a.cloudPrefix, a.awsConfig.Region)
 }
 
+func (a *awsService) createSchedule(schedule model.Schedule, iam IAM) error {
+	pipelineArn := fmt.Sprintf("arn:aws:codepipeline:%s:%s:%s", a.awsConfig.Region, a.accountId,
+		model.GetAgentProjectName(model.GetAgentPrefix(a.cloudPrefix), common.UpdateCommand))
+	scheduler := NewScheduler(a.ctx, a.awsConfig, a.cloudPrefix)
+	updateSchedule, err := scheduler.getUpdateSchedule()
+	if err != nil {
+		if schedule.UpdateCron == "" {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get EventBridge schedule %s: %s",
+				getScheduleName(a.cloudPrefix, common.UpdateCommand), err)))
+			return nil
+		}
+		return err
+	}
+	if schedule.UpdateCron == "" {
+		if updateSchedule != nil {
+			return scheduler.deleteUpdateSchedule()
+		}
+		return nil
+	}
+	roleArn, err := a.createScheduleRole(iam, pipelineArn)
+	if err != nil {
+		return err
+	}
+	if updateSchedule == nil {
+		return scheduler.createUpdateSchedule(schedule.UpdateCron, pipelineArn, roleArn)
+	}
+	if *updateSchedule.ScheduleExpression != getCronExpression(schedule.UpdateCron) {
+		return scheduler.updateUpdateSchedule(schedule.UpdateCron, pipelineArn, roleArn)
+	}
+	return nil
+}
+
+func (a *awsService) createScheduleRole(iam IAM, pipelineArn string) (string, error) {
+	name := a.getScheduleRoleName()
+	role, err := iam.GetRole(name)
+	if err != nil {
+		return "", err
+	}
+	if role != nil {
+		return *role.Arn, nil
+	}
+	role, err = iam.CreateRole(name, []PolicyStatement{{
+		Effect:    "Allow",
+		Action:    []string{"sts:AssumeRole"},
+		Principal: map[string]string{"Service": "scheduler.amazonaws.com"},
+	}})
+	if err != nil {
+		return "", err
+	}
+	schedulePolicy, err := iam.CreatePolicy(name, SchedulePolicy(pipelineArn))
+	if err != nil {
+		return "", err
+	}
+	err = iam.AttachRolePolicy(*schedulePolicy.Arn, *role.RoleName)
+	if err != nil {
+		return "", fmt.Errorf("failed to attach schedule policy to role %s: %s", *role.RoleName, err)
+	}
+	return *role.Arn, nil
+}
+
+func (a *awsService) getScheduleRoleName() string {
+	return fmt.Sprintf("%s-schedule-%s", model.GetAgentPrefix(a.cloudPrefix), a.awsConfig.Region)
+}
+
 func (a *awsService) deleteCloudWatchLogs() {
 	cloudwatch := NewCloudWatch(a.ctx, a.awsConfig)
 	logGroup := a.getLogGroup()
@@ -462,13 +537,27 @@ func (a *awsService) deleteIAMRoles() {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", pipelineRole, err)))
 	}
+	scheduleRole := a.getScheduleRoleName()
+	err = a.resources.IAM.DeleteRolePolicyAttachments(scheduleRole)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", scheduleRole, err)))
+	}
+	err = a.resources.IAM.DeleteRole(scheduleRole)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", scheduleRole, err)))
+	}
+	err = a.resources.IAM.DeletePolicy(scheduleRole, a.accountId)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", scheduleRole, err)))
+	}
 }
 
 func (a *awsService) CreateServiceAccount() error {
 	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
-	policyStatement := ServiceAccountPolicy(bucketArn, a.accountId, a.getBuildRoleName(), a.getPipelineRoleName())
+	scheduleName := getScheduleName(a.cloudPrefix, common.UpdateCommand)
+	policyStatement := ServiceAccountPolicy(bucketArn, a.accountId, a.awsConfig.Region, a.getBuildRoleName(), a.getPipelineRoleName(), a.getScheduleRoleName(), scheduleName)
 
 	user, err := a.resources.IAM.GetUser(username)
 	if err != nil {

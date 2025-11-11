@@ -79,7 +79,17 @@ func getTypes(typesFile string) (map[string]typeIdentification, error) {
 	}
 	typeMap := make(map[string]typeIdentification)
 	for _, typeIdentification := range types.TypeIdentifications {
+		if typeIdentification.Identification == "" {
+			return nil, fmt.Errorf("type identification is empty for types: %s", strings.Join(typeIdentification.Types, ", "))
+		}
+		if len(typeIdentification.Types) == 0 {
+			slog.Warn("no types defined", "identification", typeIdentification.Identification)
+		}
 		for _, typeName := range typeIdentification.Types {
+			if typeName == "" {
+				slog.Warn("empty type value", "identification", typeIdentification.Identification)
+				continue
+			}
 			if id, found := typeMap[typeName]; found {
 				return nil, fmt.Errorf("type %s identification already exists in map: %s", typeName, id)
 			}

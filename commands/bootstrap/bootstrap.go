@@ -3,10 +3,11 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"log"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/service"
-	"log"
 )
 
 func Bootstrap(ctx context.Context, flags *common.Flags) error {
@@ -14,21 +15,26 @@ func Bootstrap(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
-	resources, err := provider.SetupResources(nil)
+	resources, err := provider.SetupMinimalResources()
 	if err != nil {
-		return fmt.Errorf("failed to setup resources: %v", err)
+		return err
 	}
 	config, err := service.GetBaseConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return err
 	}
-	if config.AgentVersion == "" {
-		config.AgentVersion = model.LatestImageVersion
+	resources, err = provider.SetupResources(nil, config)
+	if err != nil {
+		return fmt.Errorf("failed to setup resources: %v", err)
+	}
+	agentVersion := model.LatestImageVersion
+	if config.AgentVersion != "" {
+		agentVersion = config.AgentVersion
 	}
 
-	log.Printf("Agent version: %s\n", config.AgentVersion)
+	log.Printf("Agent version: %s\n", agentVersion)
 	agent := service.NewAgent(resources, getTerraformCache(flags.Pipeline))
-	return agent.CreatePipeline(config.AgentVersion, flags.Start)
+	return agent.CreatePipeline(agentVersion, flags.Start)
 }
 
 func getTerraformCache(pipeline common.Pipeline) bool {

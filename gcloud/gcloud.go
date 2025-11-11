@@ -3,13 +3,14 @@ package gcloud
 import (
 	"context"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 type gcloudService struct {
@@ -82,11 +83,11 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	}, nil
 }
 
-func (g *gcloudService) SetupResources(manager model.NotificationManager) (model.Resources, error) {
+func (g *gcloudService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	err := g.enableApiServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
-		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com"})
+		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com", "cloudscheduler.googleapis.com"})
 	if err != nil {
 		return nil, err
 	}

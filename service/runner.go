@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify"
@@ -27,7 +28,7 @@ func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags
 		return err
 	}
 	manager.Message(model.MessageTypeStarted, fmt.Sprintf("Agent %s started: %s", command, provider.GetIdentifier()))
-	resources, err = provider.SetupResources(manager)
+	resources, err = provider.SetupResources(manager, config)
 	if err != nil {
 		return notifyError(manager, fmt.Sprintf("Failed to setup resources: %s", err))
 	}
