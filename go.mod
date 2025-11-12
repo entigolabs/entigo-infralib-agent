@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/deploy v1.27.3
 	cloud.google.com/go/logging v1.13.1
 	cloud.google.com/go/run v1.12.1
+	cloud.google.com/go/scheduler v1.11.8
 	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/storage v1.57.1
 	dario.cat/mergo v1.0.2
@@ -40,6 +41,7 @@ require (
 	golang.org/x/crypto v0.43.0
 	golang.org/x/text v0.30.0
 	google.golang.org/api v0.255.0
+	google.golang.org/genproto v0.0.0-20251110190251-83f479183930
 	google.golang.org/genproto/googleapis/api v0.0.0-20251110190251-83f479183930
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10
@@ -118,7 +120,6 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
-	google.golang.org/genproto v0.0.0-20251110190251-83f479183930 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251110190251-83f479183930 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )

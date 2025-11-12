@@ -141,6 +141,10 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	}
 	resources.CodeBuild = builder
 	resources.Pipeline = pipeline
+	err = g.createSchedule(config.Schedule, serviceAccount)
+	if err != nil {
+		return nil, err
+	}
 	return resources, nil
 }
 
@@ -179,12 +183,22 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 }
 
 func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
-	agentJob := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.RunCommand)
-	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
+	scheduler, err := NewScheduler(g.ctx, g.projectId, g.location, g.cloudPrefix)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to create scheduler service: %s", err)))
+	} else {
+		err = scheduler.deleteUpdateSchedule()
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete update schedule: %s", err)))
+		}
+	}
+	agentPrefix := model.GetAgentPrefix(g.cloudPrefix)
+	agentJob := model.GetAgentProjectName(agentPrefix, common.RunCommand)
+	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err)))
 	}
-	agentJob = fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.UpdateCommand)
+	agentJob = model.GetAgentProjectName(agentPrefix, common.UpdateCommand)
 	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err)))
@@ -262,6 +276,36 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1], nil
+}
+
+func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string) error {
+	scheduler, err := NewScheduler(g.ctx, g.projectId, g.location, g.cloudPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to create scheduler service: %s", err)
+	}
+	updateSchedule, err := scheduler.getUpdateSchedule()
+	if err != nil {
+		if schedule.UpdateCron == "" {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get schedule %s: %s",
+				getScheduleName(g.cloudPrefix, common.UpdateCommand), err)))
+			return nil
+		}
+		return err
+	}
+	if schedule.UpdateCron == "" {
+		if updateSchedule != nil {
+			return scheduler.deleteUpdateSchedule()
+		}
+		return nil
+	}
+	agentJob := model.GetAgentProjectName(model.GetAgentPrefix(g.cloudPrefix), common.UpdateCommand)
+	if updateSchedule == nil {
+		return scheduler.createUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+	}
+	if updateSchedule.Schedule != schedule.UpdateCron {
+		return scheduler.updateUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+	}
+	return nil
 }
 
 func (g *gcloudService) getBucketName() string {

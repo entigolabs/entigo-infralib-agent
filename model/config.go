@@ -48,8 +48,8 @@ func GetAgentPrefix(prefix string) string {
 	return prefix + "-agent"
 }
 
-func GetAgentProjectName(prefix string, cmd common.Command) string {
-	return fmt.Sprintf("%s-%s", prefix, cmd)
+func GetAgentProjectName(agentPrefix string, cmd common.Command) string {
+	return fmt.Sprintf("%s-%s", agentPrefix, cmd)
 }
 
 type ConfigDestination struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
@@ -501,7 +502,7 @@ func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 	}
 }
 
-func ServiceAccountPolicy(s3Arn, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName, scheduleName string) []PolicyStatement {
+func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{"arn:aws:s3:::*"},
@@ -567,8 +568,11 @@ func ServiceAccountPolicy(s3Arn, accountId, region, buildRoleName, pipelineRoleN
 			},
 		},
 		{
-			Effect:   "Allow",
-			Resource: []string{fmt.Sprintf("arn:aws:scheduler:%s:%s:schedule/default/%s", region, accountId, scheduleName)},
+			Effect: "Allow",
+			Resource: []string{
+				fmt.Sprintf("arn:aws:scheduler:%s:%s:schedule/default/%s", region, accountId, getScheduleName(prefix, common.UpdateCommand)),
+				fmt.Sprintf("arn:aws:scheduler:%s:%s:schedule/default/%s", region, accountId, getScheduleName(prefix, common.RunCommand)),
+			},
 			Action: []string{
 				"scheduler:GetSchedule",
 				"scheduler:CreateSchedule",
@@ -589,10 +593,10 @@ func CodePipelineS3Policy(s3Arn string) PolicyStatement {
 	}
 }
 
-func SchedulePolicy(pipelineArn string) []PolicyStatement {
+func SchedulePolicy(runArn, updateArn string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
-		Resource: []string{pipelineArn},
+		Resource: []string{runArn, updateArn},
 		Action: []string{
 			"codepipeline:StartPipelineExecution",
 		},

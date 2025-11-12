@@ -62,7 +62,7 @@ func (s Scheduler) createUpdateSchedule(cron, pipelineArn, roleArn string) error
 		},
 	})
 	if err == nil {
-		log.Printf("Created EventBridge update schedule: %s\n", s.updateSchedule)
+		log.Printf("Created EventBridge schedule: %s\n", s.updateSchedule)
 	}
 	return err
 }
@@ -76,7 +76,7 @@ func (s Scheduler) deleteUpdateSchedule() error {
 		}
 	}
 	if err == nil {
-		log.Printf("Deleted EventBridge update schedule: %s\n", s.updateSchedule)
+		log.Printf("Deleted EventBridge schedule: %s\n", s.updateSchedule)
 	}
 	return err
 }
@@ -96,7 +96,7 @@ func (s Scheduler) updateUpdateSchedule(cron, pipelineArn, roleArn string) error
 		},
 	})
 	if err == nil {
-		log.Printf("Updated EventBridge update schedule: %s\n", s.updateSchedule)
+		log.Printf("Updated EventBridge schedule: %s\n", s.updateSchedule)
 	}
 	return err
 }

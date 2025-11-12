@@ -31,6 +31,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
   * [Including CA certificates](#including-ca-certificates)
   * [Notification API requests](#notification-api-requests)
   * [Encryption](#encryption)
+  * [Scheduling](#scheduling)
 * [Migration Helper](#migration-helper)
   * [Commands](#migration-commands)
       * [Migrate Config](#migrate-config)
@@ -424,8 +425,8 @@ Source version is overwritten by module version. Default version is **stable** w
     * channel_id - slack channel id
   * teams - send notifications to teams
     * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify GitHub](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
-* schedule - allows scheduling CodePipeline/Cloud Run Job executions. Note, bootstrap command must be run initially to create the required AWS IAM role with permissions to start the executions.
-  * update_cron - cron expression for scheduling agent update executions. Note, the cron format must follow the standard of the used cloud provider ([AWS EventBridge Scheduler](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-scheduled-rule-pattern.html) or [Google Cloud Scheduler](https://docs.cloud.google.com/scheduler/docs/configuring/cron-job-schedules)). Removing this value will also remove the scheduled execution.
+* schedule - allows scheduling CodePipeline/Cloud Run Job executions. More info in [Scheduling](#scheduling)
+  * update_cron - cron expression in UTC for scheduling agent update executions.
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
@@ -587,6 +588,39 @@ Payload example:
 Agent uses default cloud provider encryption settings if no encryption module is present in config.
 
 Currently, infralib only supports customer provided encryption in AWS with KMS. When KMS module is present in the config file, agent will use the KMS arn from the module terraform output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets. Agent applies those changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in S3 after the KMS module was applied will be encrypted with it.
+
+### Scheduling
+
+Agent supports scheduling agent CodePipeline/Cloud Run Job executions by configuring the `schedule` section in the config file.
+[bootstrap](#bootstrap) command must be executed initially to create the required agent jobs.
+
+Cron expressions must be in UTC timezone and valid according to the selected cloud provider. Removing the expression will also remove the scheduled execution.
+
+#### AWS
+
+Uses EventBridge Scheduler. [Cron expression format](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-scheduled-rule-pattern.html) is `Minutes Hours Day-of-month Month Day-of-week Year`.
+
+Initial creation of schedule requires admin privileges to create the required role that can start the CodePipeline execution.
+Subsequent updates can be also be done with a generated [service account](#service-account).
+
+#### GCloud
+
+Uses Google Cloud Scheduler. [Uses unix-cron format](https://cloud.google.com/scheduler/docs/configuring/cron-job-schedules) `Minutes Hours Day-of-month Month Day-of-week`.
+
+Scheduler doesn't support all Cloud locations. Agent will try to use the configured location. If not supported, agent will use a fallback location based on the region:
+
+| Region Prefix | Fallback Location       |
+|---------------|-------------------------|
+| africa-       | europe-west1            |
+| asia-         | asia-east1              |
+| australia-    | australia-southeast1    |
+| europe-       | europe-west1            |
+| me-           | me-central2             |
+| northamerica- | northamerica-northeast1 |
+| southamerica- | southamerica-east1      |
+| us-           | us-central1             |
+
+Supported locations can change in the future. If configured location starts supporting scheduler then agent will create a new schedule in that location. Older schedule must be manually removed, otherwise both schedules will start Job executions.
 
 ## Migration Helper
 
