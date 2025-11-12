@@ -2,10 +2,11 @@ package service
 
 import (
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"strconv"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 type Agent interface {
@@ -22,7 +23,7 @@ type agent struct {
 
 func NewAgent(resources model.Resources, terraformCache bool) Agent {
 	return &agent{
-		name:           resources.GetCloudPrefix() + "-agent",
+		name:           model.GetAgentPrefix(resources.GetCloudPrefix()),
 		cloudPrefix:    resources.GetCloudPrefix(),
 		resources:      resources,
 		terraformCache: terraformCache,
@@ -51,7 +52,7 @@ func (a *agent) CreatePipeline(version string, start bool) error {
 }
 
 func (a *agent) createCodeBuild(version string, cmd common.Command) error {
-	projectName := fmt.Sprintf("%s-%s", a.name, cmd)
+	projectName := model.GetAgentProjectName(a.name, cmd)
 	project, err := a.resources.GetBuilder().GetProject(projectName)
 	if err != nil {
 		return err
@@ -64,7 +65,7 @@ func (a *agent) createCodeBuild(version string, cmd common.Command) error {
 }
 
 func (a *agent) UpdateProjectImage(version string, cmd common.Command, local bool) error {
-	projectName := fmt.Sprintf("%s-%s", a.name, cmd)
+	projectName := model.GetAgentProjectName(a.name, cmd)
 	project, err := a.resources.GetBuilder().GetProject(projectName)
 	if err != nil {
 		return err

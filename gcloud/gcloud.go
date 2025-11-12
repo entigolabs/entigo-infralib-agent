@@ -3,13 +3,14 @@ package gcloud
 import (
 	"context"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 type gcloudService struct {
@@ -82,11 +83,11 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	}, nil
 }
 
-func (g *gcloudService) SetupResources(manager model.NotificationManager) (model.Resources, error) {
+func (g *gcloudService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
 	// TODO Default clients use gRPC, connections must be closed before exiting
 	err := g.enableApiServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
-		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com"})
+		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com", "cloudscheduler.googleapis.com"})
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +141,10 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager) (model
 	}
 	resources.CodeBuild = builder
 	resources.Pipeline = pipeline
+	err = g.createSchedule(config.Schedule, serviceAccount)
+	if err != nil {
+		return nil, err
+	}
 	return resources, nil
 }
 
@@ -178,12 +183,22 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 }
 
 func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
-	agentJob := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.RunCommand)
-	err := g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
+	scheduler, err := NewScheduler(g.ctx, g.projectId, g.location, g.cloudPrefix)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to create scheduler service: %s", err)))
+	} else {
+		err = scheduler.deleteUpdateSchedule()
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete update schedule: %s", err)))
+		}
+	}
+	agentPrefix := model.GetAgentPrefix(g.cloudPrefix)
+	agentJob := model.GetAgentProjectName(agentPrefix, common.RunCommand)
+	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err)))
 	}
-	agentJob = fmt.Sprintf("%s-agent-%s", g.cloudPrefix, common.UpdateCommand)
+	agentJob = model.GetAgentProjectName(agentPrefix, common.UpdateCommand)
 	err = g.resources.GetBuilder().(*Builder).deleteJob(agentJob)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete agent job %s: %s", agentJob, err)))
@@ -261,6 +276,36 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1], nil
+}
+
+func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string) error {
+	scheduler, err := NewScheduler(g.ctx, g.projectId, g.location, g.cloudPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to create scheduler service: %s", err)
+	}
+	updateSchedule, err := scheduler.getUpdateSchedule()
+	if err != nil {
+		if schedule.UpdateCron == "" {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get schedule %s: %s",
+				getScheduleName(g.cloudPrefix, common.UpdateCommand), err)))
+			return nil
+		}
+		return err
+	}
+	if schedule.UpdateCron == "" {
+		if updateSchedule != nil {
+			return scheduler.deleteUpdateSchedule()
+		}
+		return nil
+	}
+	agentJob := model.GetAgentProjectName(model.GetAgentPrefix(g.cloudPrefix), common.UpdateCommand)
+	if updateSchedule == nil {
+		return scheduler.createUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+	}
+	if updateSchedule.Schedule != schedule.UpdateCron {
+		return scheduler.updateUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+	}
+	return nil
 }
 
 func (g *gcloudService) getBucketName() string {

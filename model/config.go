@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,7 @@ type Config struct {
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
+	Schedule         Schedule             `yaml:"schedule,omitempty"`
 	Provider         Provider             `yaml:"provider,omitempty"`
 	Steps            []Step               `yaml:"steps,omitempty"`
 	Certs            []File               `yaml:"-"`
@@ -40,6 +42,14 @@ func (s ConfigSource) GetSourceKey() SourceKey {
 		return SourceKey{URL: s.URL, ForcedVersion: s.Version}
 	}
 	return SourceKey{URL: s.URL}
+}
+
+func GetAgentPrefix(prefix string) string {
+	return prefix + "-agent"
+}
+
+func GetAgentProjectName(agentPrefix string, cmd common.Command) string {
+	return fmt.Sprintf("%s-%s", agentPrefix, cmd)
 }
 
 type ConfigDestination struct {
@@ -81,6 +91,10 @@ type Teams struct {
 type NotificationApi struct {
 	URL string `yaml:"url,omitempty"`
 	Key string `yaml:"key,omitempty"`
+}
+
+type Schedule struct {
+	UpdateCron string `yaml:"update_cron,omitempty"`
 }
 
 type Step struct {

@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/aws/aws-sdk-go-v2/service/iam/types"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"net/url"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 const policyArnFormat = "arn:aws:iam::%s:policy/%s"
@@ -500,7 +502,7 @@ func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 	}
 }
 
-func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName string) []PolicyStatement {
+func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName string) []PolicyStatement {
 	return []PolicyStatement{{
 		Effect:   "Allow",
 		Resource: []string{"arn:aws:s3:::*"},
@@ -559,9 +561,23 @@ func ServiceAccountPolicy(s3Arn, accountId, buildRoleName, pipelineRoleName stri
 			Resource: []string{
 				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, buildRoleName),
 				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, pipelineRoleName),
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, scheduleRoleName),
 			},
 			Action: []string{
 				"iam:PassRole",
+			},
+		},
+		{
+			Effect: "Allow",
+			Resource: []string{
+				fmt.Sprintf("arn:aws:scheduler:%s:%s:schedule/default/%s", region, accountId, getScheduleName(prefix, common.UpdateCommand)),
+				fmt.Sprintf("arn:aws:scheduler:%s:%s:schedule/default/%s", region, accountId, getScheduleName(prefix, common.RunCommand)),
+			},
+			Action: []string{
+				"scheduler:GetSchedule",
+				"scheduler:CreateSchedule",
+				"scheduler:DeleteSchedule",
+				"scheduler:UpdateSchedule",
 			},
 		},
 	}
@@ -574,5 +590,16 @@ func CodePipelineS3Policy(s3Arn string) PolicyStatement {
 		Action: []string{
 			"s3:*",
 		},
+	}
+}
+
+func SchedulePolicy(runArn, updateArn string) []PolicyStatement {
+	return []PolicyStatement{{
+		Effect:   "Allow",
+		Resource: []string{runArn, updateArn},
+		Action: []string{
+			"codepipeline:StartPipelineExecution",
+		},
+	},
 	}
 }
