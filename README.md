@@ -611,14 +611,14 @@ Scheduler doesn't support all Cloud locations. Agent will try to use the configu
 
 | Region Prefix | Fallback Location       |
 |---------------|-------------------------|
-| africa-       | europe-west1            |
-| asia-         | asia-east1              |
-| australia-    | australia-southeast1    |
-| europe-       | europe-west1            |
-| me-           | me-central2             |
-| northamerica- | northamerica-northeast1 |
-| southamerica- | southamerica-east1      |
-| us-           | us-central1             |
+| africa        | europe-west1            |
+| asia          | asia-east1              |
+| australia     | australia-southeast1    |
+| europe        | europe-west1            |
+| me            | me-central2             |
+| northamerica  | northamerica-northeast1 |
+| southamerica  | southamerica-east1      |
+| us            | us-central1             |
 
 Supported locations can change in the future. If configured location starts supporting scheduler then agent will create a new schedule in that location. Older schedule must be manually removed, otherwise both schedules will start Job executions.
 
