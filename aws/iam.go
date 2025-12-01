@@ -41,14 +41,21 @@ type IAM interface {
 
 type PolicyDocument struct {
 	Version   string
+	Id        string `json:",omitempty"`
 	Statement []PolicyStatement
 }
 
 type PolicyStatement struct {
+	Sid       string `json:",omitempty"`
 	Effect    string
-	Action    []string
-	Principal map[string]string `json:",omitempty"`
-	Resource  []string          `json:",omitempty"`
+	Action    interface{}
+	Principal interface{}      `json:",omitempty"`
+	Resource  interface{}      `json:",omitempty"`
+	Condition *PolicyCondition `json:",omitempty"`
+}
+
+type PolicyCondition struct {
+	Bool map[string]string `json:"Bool,omitempty"`
 }
 
 type identity struct {

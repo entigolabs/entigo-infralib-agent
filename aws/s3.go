@@ -4,20 +4,25 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"strings"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"io"
-	"log"
-	"strings"
 )
 
-const bucketArnFormat = "arn:aws:s3:::%s"
+const (
+	bucketArnFormat  = "arn:aws:s3:::%s"
+	allowSSLPolicyId = "AllowSSLRequestsOnly"
+)
 
 type S3 struct {
 	ctx          context.Context
@@ -56,10 +61,13 @@ func (s *S3) CreateBucket() (string, bool, error) {
 			if err != nil {
 				return "", false, err
 			}
+			err = s.ensureAllowSSLRequestsOnlyPolicy()
+			if err != nil {
+				return "", false, err
+			}
 			return fmt.Sprintf(bucketArnFormat, s.bucket), false, nil
-		} else {
-			return "", false, err
 		}
+		return "", false, err
 	}
 	log.Printf("Created S3 Bucket %s\n", s.bucket)
 	err = s.putBucketTags()
@@ -71,6 +79,10 @@ func (s *S3) CreateBucket() (string, bool, error) {
 		return "", false, err
 	}
 	err = s.putBucketLifecycle()
+	if err != nil {
+		return "", false, err
+	}
+	err = s.putAllowSSLRequestsOnlyPolicy()
 	if err != nil {
 		return "", false, err
 	}
@@ -286,7 +298,11 @@ func (s *S3) BucketExists() (bool, error) {
 		Bucket: aws.String(s.bucket),
 	})
 	if err == nil {
-		return true, s.checkLifecycle()
+		err = s.checkLifecycle()
+		if err != nil {
+			return false, err
+		}
+		return true, s.ensureAllowSSLRequestsOnlyPolicy()
 	}
 	return false, checkNotFoundError(err)
 }
@@ -438,6 +454,83 @@ func (s *S3) putBucketLifecycle() error {
 		log.Printf("Enabled lifecycle rule DeleteOlderVersions for bucket %s\n", s.bucket)
 	}
 	return err
+}
+
+func (s *S3) newAllowSSLStatement() PolicyStatement {
+	bucketArn := fmt.Sprintf(bucketArnFormat, s.bucket)
+	return PolicyStatement{
+		Sid:       allowSSLPolicyId,
+		Effect:    "Deny",
+		Principal: "*",
+		Action:    []string{"s3:*"},
+		Resource: []string{
+			bucketArn,
+			bucketArn + "/*",
+		},
+		Condition: &PolicyCondition{
+			Bool: map[string]string{
+				"aws:SecureTransport": "false",
+			},
+		},
+	}
+}
+
+func (s *S3) putAllowSSLRequestsOnlyPolicy() error {
+	policy := PolicyDocument{
+		Version: "2012-10-17",
+		Id:      allowSSLPolicyId,
+		Statement: []PolicyStatement{
+			s.newAllowSSLStatement(),
+		},
+	}
+	return s.putBucketPolicy(policy)
+}
+
+func (s *S3) ensureAllowSSLRequestsOnlyPolicy() error {
+	output, err := s.awsS3.GetBucketPolicy(s.ctx, &awsS3.GetBucketPolicyInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucketPolicy" {
+			return s.putAllowSSLRequestsOnlyPolicy()
+		}
+		return err
+	}
+
+	var currentPolicy PolicyDocument
+	err = json.Unmarshal([]byte(*output.Policy), &currentPolicy)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal existing bucket policy: %w", err)
+	}
+
+	for _, statement := range currentPolicy.Statement {
+		if statement.Sid == allowSSLPolicyId {
+			return nil
+		}
+	}
+	currentPolicy.Statement = append(currentPolicy.Statement, s.newAllowSSLStatement())
+	return s.putBucketPolicy(currentPolicy)
+}
+
+func (s *S3) putBucketPolicy(policy PolicyDocument) error {
+	policyBytes, err := json.MarshalIndent(policy, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal bucket policy: %w", err)
+	}
+
+	policyStr := string(policyBytes)
+
+	_, err = s.awsS3.PutBucketPolicy(s.ctx, &awsS3.PutBucketPolicyInput{
+		Bucket: aws.String(s.bucket),
+		Policy: aws.String(policyStr),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to put bucket policy: %w", err)
+	}
+
+	log.Printf("Successfully updated S3 Bucket Policy for %s with AllowSSLRequestsOnly rule.\n", s.bucket)
+	return nil
 }
 
 func (s *S3) addDummyZip() error {
