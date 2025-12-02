@@ -144,8 +144,9 @@ type Provider struct {
 }
 
 type AwsProvider struct {
-	IgnoreTags  AwsIgnoreTags  `yaml:"ignore_tags,omitempty"`
-	DefaultTags AwsDefaultTags `yaml:"default_tags,omitempty"`
+	IgnoreTags  AwsIgnoreTags     `yaml:"ignore_tags,omitempty"`
+	DefaultTags AwsDefaultTags    `yaml:"default_tags,omitempty"`
+	Endpoints   map[string]string `yaml:"endpoints,omitempty"`
 }
 
 type AwsIgnoreTags struct {
@@ -173,7 +174,7 @@ func (p Provider) IsEmpty() bool {
 }
 
 func (a AwsProvider) IsEmpty() bool {
-	return a.IgnoreTags.IsEmpty() && a.DefaultTags.IsEmpty()
+	return a.IgnoreTags.IsEmpty() && a.DefaultTags.IsEmpty() && len(a.Endpoints) == 0
 }
 
 func (i AwsIgnoreTags) IsEmpty() bool {

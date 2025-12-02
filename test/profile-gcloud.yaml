@@ -8,4 +8,3 @@ steps:
     modules:
       - name: main
         source: google/vpc
-        version: stable

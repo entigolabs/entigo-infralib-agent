@@ -343,11 +343,12 @@ base_image_version: stable | semver
 provider:
   inputs: map[string]string
   aws:
+    default_tags:
+      tags: map[string]string
+    endpoints: map[string]string
     ignore_tags:
       key_prefixes: []string
       keys: []string
-    default_tags:
-      tags: map[string]string
   kubernetes:
     ignore_annotations: []string
     ignore_labels: []string
@@ -376,11 +377,12 @@ steps:
     provider:
       inputs: map[string]string
       aws:
+        default_tags:
+          tags: map[string]string
+        endpoints: map[string]string
         ignore_tags:
           key_prefixes: []string
           keys: []string
-        default_tags:
-          tags: map[string]string
       kubernetes:
         ignore_annotations: []string
         ignore_labels: []string
@@ -432,7 +434,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
 * provider - provider values to add for all terraform steps
   * inputs - variables for provider tf file
-  * aws - aws provider default and ignore tags to add
+  * aws - aws provider default, ignore tags and endpoints to add
   * kubernetes - kubernetes provider ignore annotations and labels to add
 * steps - list of steps to execute
   * name - name of the step
@@ -459,7 +461,7 @@ Source version is overwritten by module version. Default version is **stable** w
     * inputs - **optional**, map of inputs for the module, string values need to be quoted. If missing, inputs are optionally read from a yaml file that must be located in the `./config/<stepName>` directory with a name `<moduleName>.yaml`
   * provider - provider values to add
     * inputs - variables for provider tf file
-    * aws - aws provider default and ignore tags to add
+    * aws - aws provider default, ignore tags and endpoints to add
     * kubernetes - kubernetes provider ignore annotations and labels to add
 
 ### Including and excluding modules in sources

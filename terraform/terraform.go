@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -262,7 +263,23 @@ func (t *terraform) addAwsProviderValues(body *hclwrite.Body, awsProvider model.
 	if defaultTags.IsEmpty() {
 		defaultTags = t.provider.Aws.DefaultTags
 	}
-	return addAwsProviderDefaultTags(body, defaultTags)
+	err = addAwsProviderDefaultTags(body, defaultTags)
+	if err != nil {
+		return err
+	}
+	regionAttr, found := body.Attributes()["region"]
+	if found {
+		tokens := regionAttr.Expr().BuildTokens(nil)
+		regionValue := strings.Trim(strings.TrimSpace(string(tokens.Bytes())), "\"")
+		if regionValue == "us-east-1" {
+			return nil
+		}
+	}
+	endpoints := awsProvider.Endpoints
+	if len(endpoints) == 0 {
+		endpoints = t.provider.Aws.Endpoints
+	}
+	return addAwsProviderEndpoints(body, endpoints)
 }
 
 func addAwsProviderIgnoreTags(body *hclwrite.Body, ignoreTags model.AwsIgnoreTags) error {
@@ -320,6 +337,32 @@ func addAwsProviderDefaultTags(body *hclwrite.Body, defaultTags model.AwsDefault
 	}
 	defaultTagsBody.SetAttributeRaw("tags", getBytesTokens(pairs))
 	body.AppendBlock(defaultTagsBlock)
+	return nil
+}
+
+func addAwsProviderEndpoints(body *hclwrite.Body, newEndpoints map[string]string) error {
+	if len(newEndpoints) == 0 {
+		return nil
+	}
+	endpointsBlock := body.FirstMatchingBlock("endpoints", []string{})
+	mergedEndpoints := make(map[string]string)
+	if endpointsBlock != nil {
+		endpointsBody := endpointsBlock.Body()
+		for service, attr := range endpointsBody.Attributes() {
+			tokens := attr.Expr().BuildTokens(nil)
+			mergedEndpoints[service] = strings.Trim(strings.TrimSpace(string(tokens.Bytes())), "\"")
+		}
+		body.RemoveBlock(endpointsBlock)
+	}
+	maps.Copy(mergedEndpoints, newEndpoints)
+	if endpointsBlock == nil {
+		endpointsBlock = hclwrite.NewBlock("endpoints", []string{})
+	}
+	endpointsBody := endpointsBlock.Body()
+	for service, url := range mergedEndpoints {
+		endpointsBody.SetAttributeValue(service, cty.StringVal(url))
+	}
+	body.AppendBlock(endpointsBlock)
 	return nil
 }
 

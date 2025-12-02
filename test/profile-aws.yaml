@@ -9,12 +9,10 @@ steps:
         default_tags:
           tags:
             team: infrastructure
-    version: stable
     manual_approve_run: never
     modules:
       - name: dns
         source: aws/route53
-        version: stable
         inputs:
           parent_zone_id: "Z07983041XRLSLZUTHHDY"
           public_subdomain_name: "agenttest"
