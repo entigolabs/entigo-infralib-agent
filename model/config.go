@@ -89,8 +89,16 @@ type Teams struct {
 }
 
 type NotificationApi struct {
-	URL string `yaml:"url,omitempty"`
-	Key string `yaml:"key,omitempty"`
+	URL   string    `yaml:"url,omitempty"`
+	Key   string    `yaml:"key,omitempty"`
+	OAuth *ApiOauth `yaml:"oauth,omitempty"`
+}
+
+type ApiOauth struct {
+	ClientId     string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	TokenURL     string   `yaml:"token_url"`
+	Scopes       []string `yaml:"scopes,omitempty"`
 }
 
 type Schedule struct {

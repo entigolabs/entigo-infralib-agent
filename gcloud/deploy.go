@@ -244,7 +244,7 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 func (p *Pipeline) createSkaffoldManifest(name, projectName, folder string, firstCommand, secondCommand model.ActionCommand) error {
 	skaffoldManifest := skaffold{
 		APIVersion: "skaffold/v4beta11",
-		Kind:       "Config",
+		Kind:       "Steps",
 		Metadata:   metadata{Name: name},
 		Deploy:     runDeploy{},
 		Profiles: []profile{

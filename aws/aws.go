@@ -33,7 +33,6 @@ type Resources struct {
 	model.CloudResources
 	IAM           IAM
 	DynamoDBTable string
-	AccountId     string
 	CloudWatch    CloudWatch
 }
 
@@ -122,8 +121,8 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			Region:       a.awsConfig.Region,
+			Account:      a.accountId,
 		},
-		AccountId: a.accountId,
 	}
 	return a.resources, nil
 }
@@ -152,9 +151,9 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			Region:       a.awsConfig.Region,
+			Account:      a.accountId,
 		},
 		DynamoDBTable: *dynamoDBTable.TableName,
-		AccountId:     a.accountId,
 		IAM:           iam,
 	}
 	if a.pipeline.Type == string(common.PipelineTypeLocal) {
@@ -204,9 +203,9 @@ func (a *awsService) GetResources() (model.Resources, error) {
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),
 			Region:       a.awsConfig.Region,
+			Account:      a.accountId,
 		},
 		IAM:        NewIAM(a.ctx, a.awsConfig, a.accountId),
-		AccountId:  a.accountId,
 		CloudWatch: cloudwatch,
 	}
 	return a.resources, nil

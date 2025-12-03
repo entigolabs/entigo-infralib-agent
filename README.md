@@ -335,6 +335,11 @@ notifications:
     api:
       url: string
       key: string
+      oauth:
+        client_id: string
+        client_secret: string
+        token_url: string
+        scopes: []string
 schedule:
   update_cron: string
 agent_version: latest | semver
@@ -422,6 +427,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * api - send notifications to a custom API
     * url - url for the api
     * key - unique identifier for the api
+    * oauth - optional oauth2 configuration for the api
   * slack - send notifications to slack
     * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
     * channel_id - slack channel id

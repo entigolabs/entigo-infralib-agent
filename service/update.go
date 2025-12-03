@@ -377,6 +377,7 @@ func (u *updater) Process(command common.Command) error {
 func (u *updater) processRelease(index int, command common.Command) error {
 	u.logReleases(index)
 	u.updateState()
+	u.postCallbackWithModules()
 	if command == common.UpdateCommand {
 		if err := u.updateChecksums(index); err != nil {
 			return err
@@ -1307,6 +1308,14 @@ func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model
 	}
 	log.Printf("Notifying step %s status '%s'", stepState.Name, status)
 	u.manager.StepState(status, stepState, step, err)
+}
+
+func (u *updater) postCallbackWithModules() {
+	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeModules) {
+		return
+	}
+	log.Println("Notifying module sources")
+	u.manager.Modules(u.resources.GetAccount(), u.resources.GetRegion(), u.config)
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {

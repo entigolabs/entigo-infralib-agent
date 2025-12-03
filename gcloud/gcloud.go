@@ -26,7 +26,6 @@ type gcloudService struct {
 
 type Resources struct {
 	model.CloudResources
-	ProjectId string
 }
 
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
@@ -78,8 +77,8 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 			BucketName:   bucket,
 			CloudPrefix:  g.cloudPrefix,
 			Region:       g.location,
+			Account:      g.projectId,
 		},
-		ProjectId: g.projectId,
 	}, nil
 }
 
@@ -112,8 +111,8 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 			BucketName:   bucket,
 			CloudPrefix:  g.cloudPrefix,
 			Region:       g.location,
+			Account:      g.projectId,
 		},
-		ProjectId: g.projectId,
 	}
 	if g.pipeline.Type == string(common.PipelineTypeLocal) {
 		return resources, nil
@@ -176,8 +175,8 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 			BucketName:   bucket,
 			SSM:          sm,
 			Region:       g.location,
+			Account:      g.projectId,
 		},
-		ProjectId: g.projectId,
 	}
 	return g.resources, nil
 }

@@ -55,3 +55,18 @@ func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.State
 	}
 	return b.MessageFunc(buffer.String())
 }
+
+func (b *BaseNotifier) Modules(accountId string, region string, config model.Config) error {
+	var buffer bytes.Buffer
+	if b.Context != "" {
+		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
+	}
+	buffer.WriteString(fmt.Sprintf("Steps for account %s in region %s", accountId, region))
+	for _, step := range config.Steps {
+		buffer.WriteString(fmt.Sprintf("\nStep '%s':", step.Name))
+		for _, module := range step.Modules {
+			buffer.WriteString(fmt.Sprintf("\n- Module '%s' source: %s", module.Name, module.Source))
+		}
+	}
+	return b.MessageFunc(buffer.String())
+}

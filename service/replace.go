@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
-	"github.com/entigolabs/entigo-infralib-agent/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -339,7 +338,7 @@ func (u *updater) getReplacementAgentValue(key string, index int) (string, error
 		moduleVersion, _, err := u.getModuleVersion(*referencedModule, stepState, index, model.ApproveNever)
 		return moduleVersion, err
 	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
-		return u.resources.(aws.Resources).AccountId, nil
+		return u.resources.GetAccount(), nil
 	} else if parts[0] == string(model.AgentReplaceTypeRegion) {
 		return u.resources.GetRegion(), nil
 	}

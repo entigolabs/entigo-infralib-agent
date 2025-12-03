@@ -96,10 +96,18 @@ func createApiNotifier(ctx context.Context, baseNotifier model.BaseNotifier, not
 	if notificationApi.URL == "" {
 		return nil, errors.New("api url is empty")
 	}
-	if notificationApi.Key == "" {
-		return nil, errors.New("api key is empty")
+	if notificationApi.OAuth != nil {
+		if notificationApi.OAuth.ClientId == "" {
+			return nil, errors.New("api oauth client id is empty")
+		}
+		if notificationApi.OAuth.ClientSecret == "" {
+			return nil, errors.New("api oauth client secret is empty")
+		}
+		if notificationApi.OAuth.TokenURL == "" {
+			return nil, errors.New("api oauth token url is empty")
+		}
 	}
-	return newApi(ctx, baseNotifier, notificationApi), nil
+	return newApi(ctx, baseNotifier, notificationApi)
 }
 
 func (n *NotificationManager) HasNotifier(messageType model.MessageType) bool {
@@ -126,6 +134,12 @@ func (n *NotificationManager) ManualApproval(pipelineName string, changes model.
 func (n *NotificationManager) StepState(status model.ApplyStatus, stepState model.StateStep, step *model.Step, err error) {
 	n.notify(model.MessageTypeProgress, func(notifier model.Notifier) error {
 		return notifier.StepState(status, stepState, step, err)
+	})
+}
+
+func (n *NotificationManager) Modules(accountId, region string, config model.Config) {
+	n.notify(model.MessageTypeModules, func(notifier model.Notifier) error {
+		return notifier.Modules(accountId, region, config)
 	})
 }
 
