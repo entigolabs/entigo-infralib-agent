@@ -397,7 +397,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
-  * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. **Warning!** Before changing from true to false, force a version that follows semver.
+  * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. Modules with forced version always allow running in parallel during executions. **Warning!** Before changing from true to false, force a version that follows semver.
   * username - username for git authentication
   * password - password for git authentication, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-password}}"`
   * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
