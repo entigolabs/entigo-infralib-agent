@@ -907,6 +907,12 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		if replacement == "" {
 			continue
 		}
+		if strings.Contains(replacement, "\n") {
+			replacement, err = getMultilineReplacement(replaceTag, content, replacement)
+			if err != nil {
+				return "", fmt.Errorf("failed to compile indent regex for module %s: %v", module.Name, err)
+			}
+		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 	}
 	return content, nil

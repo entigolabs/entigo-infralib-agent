@@ -759,7 +759,7 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 		module := getModule(moduleState.Name, step.Modules)
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.ForcedVersion != "" {
-			return moduleSource.ForcedVersion == *moduleState.AppliedVersion
+			return true // Always allow parallel execution for forced versions
 		}
 		release := moduleSource.Releases[util.MinInt(index, len(moduleSource.Releases)-1)].Original()
 		if *moduleState.AppliedVersion != release {
