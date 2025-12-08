@@ -197,12 +197,37 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		if replacement == skipReplace {
 			continue
 		}
+		if strings.Contains(replacement, "\n") {
+			replacement, err = getMultilineReplacement(replaceTag, content, replacement)
+			if err != nil {
+				return "", nil, fmt.Errorf("failed to compile indent regex for step %s: %v", step.Name, err)
+			}
+		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
 			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
 		}
 	}
 	return content, delayedKeyTypes, nil
+}
+
+func getMultilineReplacement(replaceTag, content, replacement string) (string, error) {
+	indentRegex, err := regexp.Compile(fmt.Sprintf(`(?m)^([ \t]*)%s`, regexp.QuoteMeta(replaceTag)))
+	if err != nil {
+		return "", err
+	}
+	indent := ""
+	if indentMatch := indentRegex.FindStringSubmatch(content); len(indentMatch) > 1 {
+		indent = indentMatch[1]
+	}
+	if indent == "" {
+		return replacement, nil
+	}
+	lines := strings.Split(replacement, "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = indent + lines[i]
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes []delayedKeyType) (string, error) {
@@ -881,6 +906,12 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		}
 		if replacement == "" {
 			continue
+		}
+		if strings.Contains(replacement, "\n") {
+			replacement, err = getMultilineReplacement(replaceTag, content, replacement)
+			if err != nil {
+				return "", fmt.Errorf("failed to compile indent regex for module %s: %v", module.Name, err)
+			}
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 	}
