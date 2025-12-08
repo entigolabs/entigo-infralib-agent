@@ -20,7 +20,7 @@ type API struct {
 	ctx         context.Context
 	client      *common.HttpClient
 	url         string
-	key         string
+	headers     http.Header
 	tokenSource oauth2.TokenSource
 }
 
@@ -34,9 +34,19 @@ func newApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi mode
 		ctx:          ctx,
 		client:       common.NewHttpClient(30*time.Second, 2),
 		url:          configApi.URL,
-		key:          configApi.Key,
+		headers:      getHeaders(configApi.Headers),
 		tokenSource:  tokenSource,
 	}, nil
+}
+
+func getHeaders(additionalHeaders map[string]string) http.Header {
+	headers := http.Header{
+		"Content-Type": []string{"application/json"},
+	}
+	for k, v := range additionalHeaders {
+		headers.Add(k, v)
+	}
+	return headers
 }
 
 func getTokenSource(ctx context.Context, auth *model.ApiOauth) (oauth2.TokenSource, error) {
@@ -114,19 +124,15 @@ func (a *API) Modules(accountId string, region string, config model.Config) erro
 }
 
 func (a *API) getHeaders() (http.Header, error) {
-	headers := http.Header{
-		"Content-Type": []string{"application/json"},
+	headers := a.headers.Clone()
+	if a.tokenSource == nil {
+		return headers, nil
 	}
-	if a.key != "" {
-		headers.Add("Api-Key", a.key)
+	token, err := a.tokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token: %v", err)
 	}
-	if a.tokenSource != nil {
-		token, err := a.tokenSource.Token()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get token: %v", err)
-		}
-		headers.Add("Authorization", token.Type()+" "+token.AccessToken)
-	}
+	headers.Set("Authorization", token.Type()+" "+token.AccessToken)
 	return headers, nil
 }
 

@@ -89,9 +89,9 @@ type Teams struct {
 }
 
 type NotificationApi struct {
-	URL   string    `yaml:"url,omitempty"`
-	Key   string    `yaml:"key,omitempty"`
-	OAuth *ApiOauth `yaml:"oauth,omitempty"`
+	URL     string            `yaml:"url,omitempty"`
+	Headers map[string]string `yaml:"key,omitempty"`
+	OAuth   *ApiOauth         `yaml:"oauth,omitempty"`
 }
 
 type ApiOauth struct {

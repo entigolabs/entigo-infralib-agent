@@ -334,7 +334,7 @@ notifications:
       webhook_url: string
     api:
       url: string
-      key: string
+      headers: map[string]string
       oauth:
         client_id: string
         client_secret: string
@@ -426,7 +426,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * message_types - list of types of messages to send, possible values `started | approvals | progress | success | failure`, default **`[approvals, failure]`**
   * api - send notifications to a custom API
     * url - url for the api
-    * key - unique identifier for the api
+    * headers - key-value pair of headers to add to the request
     * oauth - optional oauth2 configuration for the api
   * slack - send notifications to slack
     * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
