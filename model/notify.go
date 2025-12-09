@@ -103,7 +103,6 @@ type StepEntity struct {
 }
 
 type ModuleEntity struct {
-	Name   string                 `json:"name"`
-	Source string                 `json:"source"`
-	Inputs map[string]interface{} `json:"inputs,omitempty"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
 }
