@@ -1315,7 +1315,7 @@ func (u *updater) postCallbackWithModules() {
 		return
 	}
 	log.Println("Notifying module sources")
-	u.manager.Modules(u.resources.GetAccount(), u.resources.GetRegion(), u.config)
+	u.manager.Modules(u.resources.GetAccount(), u.resources.GetRegion(), u.resources.GetProviderType(), u.config)
 }
 
 func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string]model.ModuleVersion) (bool, string, []byte, error) {

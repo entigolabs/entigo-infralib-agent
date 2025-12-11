@@ -7,7 +7,7 @@ type NotificationManager interface {
 	Message(messageType MessageType, message string)
 	ManualApproval(pipelineName string, changes PipelineChanges, link string)
 	StepState(status ApplyStatus, stepState StateStep, step *Step, err error)
-	Modules(accountId, region string, config Config)
+	Modules(accountId, region string, provider ProviderType, config Config)
 }
 
 type MessageType string
@@ -33,7 +33,7 @@ type Notifier interface {
 	Message(messageType MessageType, message string) error
 	ManualApproval(pipelineName string, changes PipelineChanges, link string) error
 	StepState(status ApplyStatus, stepState StateStep, step *Step, err error) error
-	Modules(accountId string, region string, config Config) error
+	Modules(accountId string, region string, provider ProviderType, config Config) error
 }
 
 func (n BaseNotifier) GetName() string {
@@ -92,9 +92,10 @@ type PlanEntity struct {
 }
 
 type ModulesRequest struct {
-	AccountId string       `json:"accountId"`
-	Region    string       `json:"region"`
-	Steps     []StepEntity `json:"steps"`
+	Id       string       `json:"id"`
+	Region   string       `json:"region"`
+	Provider ProviderType `json:"provider"`
+	Steps    []StepEntity `json:"steps"`
 }
 
 type StepEntity struct {

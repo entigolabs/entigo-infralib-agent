@@ -56,7 +56,7 @@ func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.State
 	return b.MessageFunc(buffer.String())
 }
 
-func (b *BaseNotifier) Modules(accountId string, region string, config model.Config) error {
+func (b *BaseNotifier) Modules(accountId string, region string, _ model.ProviderType, config model.Config) error {
 	var buffer bytes.Buffer
 	if b.Context != "" {
 		buffer.WriteString(fmt.Sprintf("%s ", b.Context))

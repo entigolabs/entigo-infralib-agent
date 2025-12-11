@@ -137,9 +137,9 @@ func (n *NotificationManager) StepState(status model.ApplyStatus, stepState mode
 	})
 }
 
-func (n *NotificationManager) Modules(accountId, region string, config model.Config) {
+func (n *NotificationManager) Modules(accountId, region string, provider model.ProviderType, config model.Config) {
 	n.notify(model.MessageTypeModules, func(notifier model.Notifier) error {
-		return notifier.Modules(accountId, region, config)
+		return notifier.Modules(accountId, region, provider, config)
 	})
 }
 

@@ -110,7 +110,7 @@ func (a *API) StepState(status model.ApplyStatus, stepState model.StateStep, ste
 	return err
 }
 
-func (a *API) Modules(accountId string, region string, config model.Config) error {
+func (a *API) Modules(accountId string, region string, provider model.ProviderType, config model.Config) error {
 	fullUrl, err := url.JoinPath(a.url, "steps", "modules")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
@@ -119,7 +119,7 @@ func (a *API) Modules(accountId string, region string, config model.Config) erro
 	if err != nil {
 		return err
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, headers, toModulesRequest(accountId, region, config))
+	_, err = a.client.Post(a.ctx, fullUrl, headers, toModulesRequest(accountId, region, provider, config))
 	return err
 }
 
@@ -182,7 +182,7 @@ func toPipelineRequest(pipelineName string, changes model.PipelineChanges, link 
 	}
 }
 
-func toModulesRequest(accountId string, region string, config model.Config) model.ModulesRequest {
+func toModulesRequest(accountId string, region string, provider model.ProviderType, config model.Config) model.ModulesRequest {
 	var steps []model.StepEntity
 	for _, step := range config.Steps {
 		var modules []model.ModuleEntity
@@ -198,8 +198,9 @@ func toModulesRequest(accountId string, region string, config model.Config) mode
 		})
 	}
 	return model.ModulesRequest{
-		AccountId: accountId,
-		Region:    region,
-		Steps:     steps,
+		Id:       accountId,
+		Region:   region,
+		Provider: provider,
+		Steps:    steps,
 	}
 }
