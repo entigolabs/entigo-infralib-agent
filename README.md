@@ -560,36 +560,7 @@ It's possible to include CA certificates by adding the files into a `./ca-certif
 
 ### Notification API requests
 
-When configuring api notifications, agent will send requests to the specified URL.
-
-#### POST `/steps/status`
-
-Status of step pipelines.
-Required configured message type: `progress`
-Payload example:
-```json
-{
-  "status": "success",
-  "status_at": "2021-08-31T12:00:00Z",
-  "step": "net",
-  "applied_at": "2021-08-31T12:00:00Z",
-  "modules": [{
-    "name": "net",
-    "applied_version": "v1.4.2",
-    "version": "v1.4.2"
-  }]
-}
-```
-
-* status - possible values `failure | skipped | starting | success`
-* status_at - timestamp when the status was set
-* step - name of the step
-* error - error message if the status is failure
-* applied_at - timestamp when the step was applied
-* modules - list of modules
-  * name - name of the module
-  * applied_version - version of the module that was successfully applied previously
-  * version - version of the module that was or will be applied
+When configuring api notifications, agent will send requests to the specified URL. OpenApi specification for the endpoints is in the `notification-api.yaml` file.
 
 ### Encryption
 

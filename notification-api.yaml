@@ -1,0 +1,166 @@
+openapi: 3.0.3
+info:
+  title: Entigo Infralib Operator API
+  version: 1.0.0
+paths:
+  /agent/status:
+    post:
+      summary: Update agent status
+      operationId: postAgentStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentStatusRequest'
+      parameters:
+        - $ref: '#/components/parameters/OrgHeader'
+        - $ref: '#/components/parameters/WorkspaceHeader'
+      responses:
+        '200':
+          description: Status updated successfully
+  /steps/status:
+    post:
+      summary: Update step module statuses
+      operationId: postStepStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusResponse'
+      parameters:
+        - $ref: '#/components/parameters/OrgHeader'
+        - $ref: '#/components/parameters/WorkspaceHeader'
+      responses:
+        '200':
+          description: Status updated successfully
+  /steps/modules:
+    post:
+      summary: Submit step modules
+      operationId: postStepsModules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModulesRequest'
+      parameters:
+        - $ref: '#/components/parameters/OrgHeader'
+        - $ref: '#/components/parameters/WorkspaceHeader'
+      responses:
+        '200':
+          description: Steps and modules received successfully
+components:
+  parameters:
+    OrgHeader:
+      name: Entigo-Org
+      in: header
+      description: Organization name
+      required: true
+      schema:
+        type: string
+    WorkspaceHeader:
+      name: Entigo-Workspace
+      in: header
+      description: Workspace name
+      required: true
+      schema:
+        type: string
+  schemas:
+    AgentStatusRequest:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [started, success, failure, approvals]
+        message:
+          type: string
+    ModulesRequest:
+      type: object
+      required:
+        - id
+        - region
+        - provider
+        - steps
+      properties:
+        id:
+          type: string
+        region:
+          type: string
+        provider:
+          $ref: '#/components/schemas/ProviderType'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepEntity'
+    StepEntity:
+      type: object
+      required:
+        - name
+        - modules
+      properties:
+        name:
+          type: string
+        modules:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModuleEntity'
+    ModuleEntity:
+      type: object
+      required:
+        - name
+        - source
+      properties:
+        name:
+          type: string
+        source:
+          type: string
+    StatusResponse:
+      type: object
+      required:
+        - status
+        - status_at
+        - step
+        - modules
+      properties:
+        status:
+          $ref: '#/components/schemas/ApplyStatus'
+        status_at:
+          type: string
+          format: date-time
+        step:
+          type: string
+        error:
+          type: string
+        applied_at:
+          type: string
+          format: date-time
+        modules:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModuleResponse'
+    ApplyStatus:
+      type: string
+      enum: [ success, failure, skipped, starting ]
+    ProviderType:
+      type: string
+      enum: [ AWS, GCLOUD ]
+    ModuleResponse:
+      type: object
+      required:
+        - name
+        - version
+      properties:
+        name:
+          type: string
+        applied_version:
+          type: string
+        version:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string

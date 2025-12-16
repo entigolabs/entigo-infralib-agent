@@ -68,19 +68,15 @@ func getTokenSource(ctx context.Context, auth *model.ApiOauth) (oauth2.TokenSour
 }
 
 func (a *API) Message(messageType model.MessageType, message string) error {
-	fullUrl, err := url.JoinPath(a.url, "message")
+	fullUrl, err := url.JoinPath(a.url, "agent", "status")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
-	}
-	requestType := "INFO"
-	if messageType == model.MessageTypeFailure {
-		requestType = "ERROR"
 	}
 	headers, err := a.getHeaders()
 	if err != nil {
 		return err
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, headers, model.MessageRequest{Type: requestType, Message: message})
+	_, err = a.client.Post(a.ctx, fullUrl, headers, model.MessageRequest{Type: string(messageType), Message: message})
 	return err
 }
 
