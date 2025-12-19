@@ -60,6 +60,7 @@ type Resources interface {
 	GetBucketName() string
 	GetBackendConfigVars(string) map[string]string
 	GetRegion() string
+	GetAccount() string
 }
 
 type Bucket interface {
@@ -119,6 +120,7 @@ type CloudResources struct {
 	CloudPrefix  string
 	BucketName   string
 	Region       string
+	Account      string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -151,6 +153,10 @@ func (c CloudResources) GetBucketName() string {
 
 func (c CloudResources) GetRegion() string {
 	return c.Region
+}
+
+func (c CloudResources) GetAccount() string {
+	return c.Account
 }
 
 type RepositoryMetadata struct {

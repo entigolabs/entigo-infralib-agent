@@ -334,7 +334,12 @@ notifications:
       webhook_url: string
     api:
       url: string
-      key: string
+      headers: map[string]string
+      oauth:
+        client_id: string
+        client_secret: string
+        token_url: string
+        scopes: []string
 schedule:
   update_cron: string
 agent_version: latest | semver
@@ -421,7 +426,8 @@ Source version is overwritten by module version. Default version is **stable** w
   * message_types - list of types of messages to send, possible values `started | approvals | progress | success | failure`, default **`[approvals, failure]`**
   * api - send notifications to a custom API
     * url - url for the api
-    * key - unique identifier for the api
+    * headers - key-value pair of headers to add to the request
+    * oauth - optional oauth2 configuration for the api
   * slack - send notifications to slack
     * token - slack access token, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.slack-token }}"`
     * channel_id - slack channel id
@@ -554,36 +560,7 @@ It's possible to include CA certificates by adding the files into a `./ca-certif
 
 ### Notification API requests
 
-When configuring api notifications, agent will send requests to the specified URL.
-
-#### POST `/steps/status`
-
-Status of step pipelines.
-Required configured message type: `progress`
-Payload example:
-```json
-{
-  "status": "success",
-  "status_at": "2021-08-31T12:00:00Z",
-  "step": "net",
-  "applied_at": "2021-08-31T12:00:00Z",
-  "modules": [{
-    "name": "net",
-    "applied_version": "v1.4.2",
-    "version": "v1.4.2"
-  }]
-}
-```
-
-* status - possible values `failure | skipped | starting | success`
-* status_at - timestamp when the status was set
-* step - name of the step
-* error - error message if the status is failure
-* applied_at - timestamp when the step was applied
-* modules - list of modules
-  * name - name of the module
-  * applied_version - version of the module that was successfully applied previously
-  * version - version of the module that was or will be applied
+When configuring api notifications, agent will send requests to the specified URL. OpenApi specification for the endpoints is in the `notification-api.yaml` file.
 
 ### Encryption
 

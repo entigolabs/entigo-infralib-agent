@@ -129,7 +129,7 @@ func writeConfigFiles(conf model.Config, config string, basePath string) error {
 			}
 		}
 	}
-	log.Println("Config files written successfully")
+	log.Println("Steps files written successfully")
 	return nil
 }
 

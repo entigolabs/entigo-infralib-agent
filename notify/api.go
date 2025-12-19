@@ -9,38 +9,74 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 const urlErrorFormat = "error joining url: %v"
 
 type API struct {
 	model.BaseNotifier
-	ctx    context.Context
-	client *common.HttpClient
-	url    string
-	key    string
+	ctx         context.Context
+	client      *common.HttpClient
+	url         string
+	headers     http.Header
+	tokenSource oauth2.TokenSource
 }
 
-func newApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi model.NotificationApi) *API {
+func newApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi model.NotificationApi) (*API, error) {
+	tokenSource, err := getTokenSource(ctx, configApi.OAuth)
+	if err != nil {
+		return nil, err
+	}
 	return &API{
 		BaseNotifier: baseNotifier,
 		ctx:          ctx,
 		client:       common.NewHttpClient(30*time.Second, 2),
 		url:          configApi.URL,
-		key:          configApi.Key,
+		headers:      getHeaders(configApi.Headers),
+		tokenSource:  tokenSource,
+	}, nil
+}
+
+func getHeaders(additionalHeaders map[string]string) http.Header {
+	headers := http.Header{
+		"Content-Type": []string{"application/json"},
 	}
+	for k, v := range additionalHeaders {
+		headers.Add(k, v)
+	}
+	return headers
+}
+
+func getTokenSource(ctx context.Context, auth *model.ApiOauth) (oauth2.TokenSource, error) {
+	if auth == nil {
+		return nil, nil
+	}
+	config := clientcredentials.Config{
+		ClientID:     auth.ClientId,
+		ClientSecret: auth.ClientSecret,
+		TokenURL:     auth.TokenURL,
+		Scopes:       auth.Scopes,
+	}
+	tokenSource := oauth2.ReuseTokenSourceWithExpiry(nil, config.TokenSource(ctx), 5*time.Minute)
+	_, err := tokenSource.Token() // Validate token source
+	if err != nil {
+		return nil, fmt.Errorf("failed to get oauth2 token: %v", err)
+	}
+	return tokenSource, nil
 }
 
 func (a *API) Message(messageType model.MessageType, message string) error {
-	fullUrl, err := url.JoinPath(a.url, "message")
+	fullUrl, err := url.JoinPath(a.url, "agent", "status")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
 	}
-	requestType := "INFO"
-	if messageType == model.MessageTypeFailure {
-		requestType = "ERROR"
+	headers, err := a.getHeaders()
+	if err != nil {
+		return err
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, a.getHeaders(), model.MessageRequest{Type: requestType, Message: message})
+	_, err = a.client.Post(a.ctx, fullUrl, headers, model.MessageRequest{Type: string(messageType), Message: message})
 	return err
 }
 
@@ -49,7 +85,11 @@ func (a *API) ManualApproval(pipelineName string, changes model.PipelineChanges,
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, a.getHeaders(), toPipelineRequest(pipelineName, changes, link))
+	headers, err := a.getHeaders()
+	if err != nil {
+		return err
+	}
+	_, err = a.client.Post(a.ctx, fullUrl, headers, toPipelineRequest(pipelineName, changes, link))
 	return err
 }
 
@@ -58,19 +98,42 @@ func (a *API) StepState(status model.ApplyStatus, stepState model.StateStep, ste
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, a.getHeaders(), toModulesRequest(status, stepState, step, stepErr))
+	headers, err := a.getHeaders()
+	if err != nil {
+		return err
+	}
+	_, err = a.client.Post(a.ctx, fullUrl, headers, toStatusRequest(status, stepState, step, stepErr))
 	return err
 }
 
-func (a *API) getHeaders() http.Header {
-	return http.Header{
-		"Api-Key":      []string{a.key},
-		"Content-Type": []string{"application/json"},
+func (a *API) Modules(accountId string, region string, provider model.ProviderType, config model.Config) error {
+	fullUrl, err := url.JoinPath(a.url, "steps", "modules")
+	if err != nil {
+		return fmt.Errorf(urlErrorFormat, err)
 	}
+	headers, err := a.getHeaders()
+	if err != nil {
+		return err
+	}
+	_, err = a.client.Post(a.ctx, fullUrl, headers, toModulesRequest(accountId, region, provider, config))
+	return err
 }
 
-func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step *model.Step, err error) model.ModulesRequest {
-	modules := make([]model.ModuleEntity, 0)
+func (a *API) getHeaders() (http.Header, error) {
+	headers := a.headers.Clone()
+	if a.tokenSource == nil {
+		return headers, nil
+	}
+	token, err := a.tokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token: %v", err)
+	}
+	headers.Set("Authorization", token.Type()+" "+token.AccessToken)
+	return headers, nil
+}
+
+func toStatusRequest(status model.ApplyStatus, stepState model.StateStep, step *model.Step, err error) model.StepStatusRequest {
+	modules := make([]model.ModuleStatusEntity, 0)
 	for _, module := range stepState.Modules {
 		var metadata map[string]string
 		if step != nil {
@@ -81,7 +144,7 @@ func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step 
 				}
 			}
 		}
-		modules = append(modules, model.ModuleEntity{
+		modules = append(modules, model.ModuleStatusEntity{
 			Name:           module.Name,
 			AppliedVersion: module.AppliedVersion,
 			Version:        module.Version,
@@ -92,7 +155,7 @@ func toModulesRequest(status model.ApplyStatus, stepState model.StateStep, step 
 	if err != nil {
 		errMsg = err.Error()
 	}
-	return model.ModulesRequest{
+	return model.StepStatusRequest{
 		Status:    status,
 		StatusAt:  time.Now().UTC(),
 		Step:      stepState.Name,
@@ -112,5 +175,28 @@ func toPipelineRequest(pipelineName string, changes model.PipelineChanges, link 
 			Destroy: changes.Destroyed,
 		},
 		Link: link,
+	}
+}
+
+func toModulesRequest(accountId string, region string, provider model.ProviderType, config model.Config) model.ModulesRequest {
+	var steps []model.StepEntity
+	for _, step := range config.Steps {
+		var modules []model.ModuleEntity
+		for _, module := range step.Modules {
+			modules = append(modules, model.ModuleEntity{
+				Name:   module.Name,
+				Source: module.Source,
+			})
+		}
+		steps = append(steps, model.StepEntity{
+			Name:    step.Name,
+			Modules: modules,
+		})
+	}
+	return model.ModulesRequest{
+		Id:       accountId,
+		Region:   region,
+		Provider: provider,
+		Steps:    steps,
 	}
 }
