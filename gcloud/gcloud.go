@@ -258,7 +258,6 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create service account: %s", err)
 	}
-	time.Sleep(5 * time.Second) // Adding roles immediately after account creation may fail with SA does not exist
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
 		"roles/iam.serviceAccountAdmin"})
 	if err != nil {
@@ -271,7 +270,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	}
 	if created {
 		log.Println("Waiting 60 seconds for service account permissions to be applied...")
-		time.Sleep(55 * time.Second)
+		time.Sleep(60 * time.Second)
 	}
 	nameParts := strings.Split(account.Name, "/")
 	return nameParts[len(nameParts)-1], nil
@@ -340,11 +339,6 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create service account: %s", err)
 	}
-	if !created {
-		log.Printf("Service account %s already exists\n", account.Name)
-		return nil
-	}
-	time.Sleep(5 * time.Second) // Adding roles immediately after account creation may fail with SA does not exist
 	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
 	if err != nil {
 		return fmt.Errorf("failed to add roles to service account: %s", err)
@@ -354,13 +348,20 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
 	}
+
+	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
+	if !created {
+		_, err = secrets.GetParameter(keyParam)
+		if err == nil {
+			log.Printf("Service account secret %s stored in SM", keyParam)
+			return nil
+		}
+	}
 	time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
 	key, err := iam.CreateServiceAccountKey(account.Name)
 	if err != nil {
 		return fmt.Errorf("failed to create service account key: %v", err)
 	}
-
-	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	err = secrets.PutParameter(keyParam, key.PrivateKeyData)
 	if err != nil {
 		return fmt.Errorf("failed to create secret %s: %v", keyParam, err)

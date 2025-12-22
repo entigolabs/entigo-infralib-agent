@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"google.golang.org/api/cloudresourcemanager/v1"
-	"google.golang.org/api/googleapi"
-	iamv1 "google.golang.org/api/iam/v1"
 	"log"
 	"net/http"
 	"strings"
+	"time"
+
+	"google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/googleapi"
+	iamv1 "google.golang.org/api/iam/v1"
 )
 
 type IAM struct {
@@ -72,28 +74,71 @@ func (iam *IAM) GetOrCreateServiceAccount(name, displayName string) (*iamv1.Serv
 }
 
 func (iam *IAM) AddRolesToServiceAccount(serviceAccountName string, roles []string) error {
-	policy, err := iam.service.Projects.ServiceAccounts.GetIamPolicy(serviceAccountName).Do()
-	if err != nil {
-		return fmt.Errorf("failed to get IAM policy: %v", err)
-	}
 	parts := strings.Split(serviceAccountName, "/")
 	if len(parts) < 4 {
 		return fmt.Errorf("invalid service account name format")
 	}
 	account := parts[len(parts)-1]
-	for _, role := range roles {
-		policy.Bindings = append(policy.Bindings, &iamv1.Binding{
-			Role:    role,
-			Members: []string{"serviceAccount:" + account},
-		})
+	maxRetries := 6
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		err := iam.tryAddRoles(serviceAccountName, account, roles)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		var gErr *googleapi.Error
+		if !errors.As(err, &gErr) || (gErr.Code != http.StatusBadRequest && gErr.Code != http.StatusNotFound) {
+			return fmt.Errorf("failed to set IAM policy: %v", err)
+		}
+		wait := time.Duration(1<<i) * time.Second //  2 to the power of i seconds
+		log.Printf("Service Account not yet propagated, retrying in %v... (Attempt %d/%d)", wait, i+1, maxRetries)
+		time.Sleep(wait)
 	}
-	_, err = iam.service.Projects.ServiceAccounts.SetIamPolicy(serviceAccountName, &iamv1.SetIamPolicyRequest{
+	return fmt.Errorf("failed to set IAM policy: %v", lastErr)
+}
+
+func (iam *IAM) tryAddRoles(accountName, accountEmail string, roles []string) error {
+	policy, err := iam.service.Projects.ServiceAccounts.GetIamPolicy(accountName).Do()
+	if err != nil {
+		return err
+	}
+	updateIAMPolicy(policy, accountEmail, roles)
+	_, err = iam.service.Projects.ServiceAccounts.SetIamPolicy(accountName, &iamv1.SetIamPolicyRequest{
 		Policy: policy,
 	}).Do()
-	if err != nil {
-		return fmt.Errorf("failed to set IAM policy: %v", err)
+	return err
+}
+
+func updateIAMPolicy(policy *iamv1.Policy, accountEmail string, roles []string) {
+	memberString := "serviceAccount:" + accountEmail
+	for _, role := range roles {
+		foundRole := false
+		for _, binding := range policy.Bindings {
+			if binding.Role != role {
+				continue
+			}
+			foundRole = true
+			foundMember := false
+			for _, member := range binding.Members {
+				if member != memberString {
+					continue
+				}
+				foundMember = true
+				break
+			}
+			if !foundMember {
+				binding.Members = append(binding.Members, memberString)
+			}
+			break
+		}
+		if !foundRole {
+			policy.Bindings = append(policy.Bindings, &iamv1.Binding{
+				Role:    role,
+				Members: []string{memberString},
+			})
+		}
 	}
-	return nil
 }
 
 func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) error {
@@ -107,12 +152,7 @@ func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) err
 	if err != nil {
 		return fmt.Errorf("failed to get IAM policy: %w", err)
 	}
-	for _, role := range roles {
-		policy.Bindings = append(policy.Bindings, &cloudresourcemanager.Binding{
-			Role:    role,
-			Members: []string{"serviceAccount:" + account},
-		})
-	}
+	updateResourcePolicy(policy, account, roles)
 	_, err = iam.resourceManager.Projects.SetIamPolicy(iam.projectId, &cloudresourcemanager.SetIamPolicyRequest{
 		Policy: policy,
 	}).Do()
@@ -120,6 +160,37 @@ func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) err
 		return fmt.Errorf("failed to set IAM policy: %w", err)
 	}
 	return nil
+}
+
+func updateResourcePolicy(policy *cloudresourcemanager.Policy, accountEmail string, roles []string) {
+	memberString := "serviceAccount:" + accountEmail
+	for _, role := range roles {
+		foundRole := false
+		for _, binding := range policy.Bindings {
+			if binding.Role != role {
+				continue
+			}
+			foundRole = true
+			foundMember := false
+			for _, member := range binding.Members {
+				if member != memberString {
+					continue
+				}
+				foundMember = true
+				break
+			}
+			if !foundMember {
+				binding.Members = append(binding.Members, memberString)
+			}
+			break
+		}
+		if !foundRole {
+			policy.Bindings = append(policy.Bindings, &cloudresourcemanager.Binding{
+				Role:    role,
+				Members: []string{memberString},
+			})
+		}
+	}
 }
 
 func (iam *IAM) DeleteServiceAccount(name string) error {
