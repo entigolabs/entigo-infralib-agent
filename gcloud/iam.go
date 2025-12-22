@@ -79,26 +79,16 @@ func (iam *IAM) AddRolesToServiceAccount(serviceAccountName string, roles []stri
 		return fmt.Errorf("invalid service account name format")
 	}
 	account := parts[len(parts)-1]
-	maxRetries := 6
-	var lastErr error
-	for i := 0; i < maxRetries; i++ {
-		err := iam.tryAddRoles(serviceAccountName, account, roles)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		var gErr *googleapi.Error
-		if !errors.As(err, &gErr) || (gErr.Code != http.StatusBadRequest && gErr.Code != http.StatusNotFound) {
-			return fmt.Errorf("failed to set IAM policy: %v", err)
-		}
-		wait := time.Duration(1<<i) * time.Second //  2 to the power of i seconds
-		log.Printf("Service Account not yet propagated, retrying in %v... (Attempt %d/%d)", wait, i+1, maxRetries)
-		time.Sleep(wait)
+	err := retry(func() error {
+		return iam.tryAddIAMRoles(serviceAccountName, account, roles)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to add roles to service account: %w", err)
 	}
-	return fmt.Errorf("failed to set IAM policy: %v", lastErr)
+	return nil
 }
 
-func (iam *IAM) tryAddRoles(accountName, accountEmail string, roles []string) error {
+func (iam *IAM) tryAddIAMRoles(accountName, accountEmail string, roles []string) error {
 	policy, err := iam.service.Projects.ServiceAccounts.GetIamPolicy(accountName).Do()
 	if err != nil {
 		return err
@@ -147,7 +137,16 @@ func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) err
 		return fmt.Errorf("invalid service account name format")
 	}
 	account := parts[len(parts)-1]
+	err := retry(func() error {
+		return iam.tryAddProjectRoles(account, roles)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to add roles to project: %w", err)
+	}
+	return nil
+}
 
+func (iam *IAM) tryAddProjectRoles(account string, roles []string) error {
 	policy, err := iam.resourceManager.Projects.GetIamPolicy(iam.projectId, &cloudresourcemanager.GetIamPolicyRequest{}).Do()
 	if err != nil {
 		return fmt.Errorf("failed to get IAM policy: %w", err)
@@ -156,10 +155,7 @@ func (iam *IAM) AddRolesToProject(serviceAccountName string, roles []string) err
 	_, err = iam.resourceManager.Projects.SetIamPolicy(iam.projectId, &cloudresourcemanager.SetIamPolicyRequest{
 		Policy: policy,
 	}).Do()
-	if err != nil {
-		return fmt.Errorf("failed to set IAM policy: %w", err)
-	}
-	return nil
+	return err
 }
 
 func updateResourcePolicy(policy *cloudresourcemanager.Policy, accountEmail string, roles []string) {
@@ -209,4 +205,24 @@ func (iam *IAM) DeleteServiceAccount(name string) error {
 
 func (iam *IAM) CreateServiceAccountKey(serviceAccountName string) (*iamv1.ServiceAccountKey, error) {
 	return iam.service.Projects.ServiceAccounts.Keys.Create(serviceAccountName, &iamv1.CreateServiceAccountKeyRequest{}).Do()
+}
+
+func retry(execute func() error) error {
+	maxRetries := 6
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		err := execute()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		var gErr *googleapi.Error
+		if !errors.As(err, &gErr) || (gErr.Code != http.StatusBadRequest && gErr.Code != http.StatusNotFound) {
+			return err
+		}
+		wait := time.Duration(1<<i) * time.Second //  2 to the power of i seconds
+		log.Printf("Service Account not yet propagated, retrying in %v... (Attempt %d/%d)", wait, i+1, maxRetries)
+		time.Sleep(wait)
+	}
+	return lastErr
 }
