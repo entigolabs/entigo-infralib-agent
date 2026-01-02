@@ -22,6 +22,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/hashicorp/go-version"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
@@ -436,4 +437,14 @@ func BoolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// IsVersionOlder compares any string version with semantic version
+func IsVersionOlder(currentVersion, oldVersion string) bool {
+	oldVer, _ := version.NewSemver(oldVersion)
+	semver, err := version.NewSemver(currentVersion)
+	if err != nil {
+		return false
+	}
+	return semver.LessThan(oldVer)
 }

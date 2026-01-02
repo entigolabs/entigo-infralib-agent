@@ -51,15 +51,23 @@ func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount s
 }
 
 func (b *Builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
-	if imageSource == "" {
-		imageSource = model.ProjectImageDocker
-	}
-	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
+	image := getImage(imageVersion, imageSource)
 	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig, authSources)
 	if err != nil {
 		return err
 	}
 	return b.createDestroyJobs(projectName, bucket, stepName, step, image, vpcConfig, authSources)
+}
+
+func getImage(imageVersion, imageSource string) string {
+	if imageSource == "" {
+		if util.IsVersionOlder(imageVersion, "v1.16") {
+			imageSource = model.ProjectImageDocker
+		} else {
+			imageSource = model.ProjectImageGCloud
+		}
+	}
+	return fmt.Sprintf("%s:%s", imageSource, imageVersion)
 }
 
 func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
@@ -311,10 +319,7 @@ func (b *Builder) UpdateAgentProject(projectName string, version string, cloudPr
 }
 
 func (b *Builder) UpdateProject(projectName, bucket, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
-	if imageSource == "" {
-		imageSource = model.ProjectImageDocker
-	}
-	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
+	image := getImage(imageVersion, imageSource)
 	err := b.createJobManifests(projectName, bucket, stepName, step, image, vpcConfig, authSources)
 	if err != nil {
 		return err

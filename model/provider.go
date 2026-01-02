@@ -3,7 +3,9 @@ package model
 import "github.com/entigolabs/entigo-infralib-agent/common"
 
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
+const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
+const ProjectImageGCloud = "docker.io/entigolabs/entigo-infralib-google"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 
 // const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"

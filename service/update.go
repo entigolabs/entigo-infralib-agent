@@ -1485,6 +1485,17 @@ func (u *updater) updatePipelines(projectName string, step model.Step, bucket st
 }
 
 func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
+	release := u.getBaseImageVersion(step, index)
+	imageSource := ""
+	if step.BaseImageSource != "" {
+		imageSource = step.BaseImageSource
+	} else if u.config.BaseImageSource != "" {
+		imageSource = u.config.BaseImageSource
+	}
+	return release, imageSource
+}
+
+func (u *updater) getBaseImageVersion(step model.Step, index int) string {
 	release := model.LatestImageVersion
 	if step.BaseImageVersion != "" {
 		release = step.BaseImageVersion
@@ -1507,13 +1518,7 @@ func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
 			}
 		}
 	}
-	imageSource := ""
-	if step.BaseImageSource != "" {
-		imageSource = step.BaseImageSource
-	} else if u.config.BaseImageSource != "" {
-		imageSource = u.config.BaseImageSource
-	}
-	return release, imageSource
+	return release
 }
 
 func (u *updater) updateChecksums(index int) error {
