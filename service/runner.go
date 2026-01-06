@@ -27,6 +27,7 @@ func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags
 	if err != nil {
 		return err
 	}
+	manager.Modules(resources.GetAccount(), resources.GetRegion(), resources.GetProviderType(), config)
 	manager.Message(model.MessageTypeStarted, fmt.Sprintf("Agent %s started: %s", command, provider.GetIdentifier()))
 	resources, err = provider.SetupResources(manager, config)
 	if err != nil {
