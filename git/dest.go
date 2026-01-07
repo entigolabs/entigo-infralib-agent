@@ -4,6 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
@@ -14,12 +21,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitSSH "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
-	"log"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
 )
 
 const (
@@ -37,6 +38,7 @@ Changes are pushed to the plan and apply branches.`
 type DestClient struct {
 	ctx      context.Context
 	auth     transport.AuthMethod
+	url      string
 	author   *object.Signature
 	name     string
 	worktree *git.Worktree
@@ -52,6 +54,8 @@ func NewDestClient(ctx context.Context, name string, config model.Git, CABundle 
 	if err != nil {
 		return nil, err
 	}
+	enableAzureCompatibility(config.URL)
+	defer disableAzureCompatibility(config.URL)
 	worktree, repo, err := getRepo(ctx, auth, config, name, CABundle)
 	if err != nil {
 		return nil, err
@@ -59,6 +63,7 @@ func NewDestClient(ctx context.Context, name string, config model.Git, CABundle 
 	return &DestClient{
 		ctx:      ctx,
 		auth:     auth,
+		url:      config.URL,
 		author:   getAuthor(config),
 		name:     name,
 		worktree: worktree,
@@ -315,6 +320,8 @@ func (g *DestClient) UpdateFiles(branch, folder string, files map[string]model.F
 }
 
 func (g *DestClient) checkoutCleanBranch(branch string) error {
+	enableAzureCompatibility(g.url)
+	defer disableAzureCompatibility(g.url)
 	branchName := plumbing.NewBranchReferenceName(branch)
 	err := g.worktree.Checkout(&git.CheckoutOptions{
 		Branch: branchName,

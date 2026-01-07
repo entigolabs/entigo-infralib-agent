@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -20,17 +21,23 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/hashicorp/go-version"
 )
 
-var repoMutex = sync.Mutex{}
+var (
+	repoMutex         = sync.Mutex{}
+	azureHTTPSPattern = regexp.MustCompile(`^https://(?:[^@]+@)?dev\.azure\.com/[^/]+/[^/]+/_git/[^/]+`)
+	azureSSHPattern   = regexp.MustCompile(`^git@ssh\.dev\.azure\.com:v3/[^/]+/[^/]+/[^/]+`)
+)
 
 type SourceClient struct {
 	ctx            context.Context
 	auth           transport.AuthMethod
 	insecure       bool
+	url            string
 	repo           *git.Repository
 	worktree       *git.Worktree
 	releases       []*version.Version
@@ -44,6 +51,8 @@ type SourceClient struct {
 func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []byte) (*SourceClient, error) {
 	log.Printf("Initializing repository for %s", source.GetSourceKey())
 	auth := getSourceAuth(source)
+	enableAzureCompatibility(source.URL)
+	defer disableAzureCompatibility(source.URL)
 	repo, err := getSourceRepo(ctx, auth, source, CABundle)
 	if err != nil {
 		return nil, err
@@ -60,6 +69,7 @@ func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []
 		ctx:         ctx,
 		auth:        auth,
 		insecure:    source.Insecure,
+		url:         source.URL,
 		repo:        repo,
 		worktree:    worktree,
 		releases:    releases,
@@ -130,6 +140,35 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 		InsecureSkipTLS: source.Insecure,
 		CABundle:        CABundle,
 	})
+}
+
+func enableAzureCompatibility(repo string) {
+	if !isAzureDevOps(repo) {
+		return
+	}
+	// Azure DevOps requires capabilities multi_ack / multi_ack_detailed which go-git does not support by default.
+	// We need to set UnsupportedCapabilities to avoid errors when dealing with Azure DevOps.
+	// See: https://github.com/go-git/go-git/blob/master/_examples/azure_devops/main.go
+	log.Println("Detected Azure DevOps repository, disabling unsupported capabilities")
+	transport.UnsupportedCapabilities = []capability.Capability{
+		capability.ThinPack,
+	}
+}
+
+func disableAzureCompatibility(repo string) {
+	if !isAzureDevOps(repo) {
+		return
+	}
+	// To support processes with multiple repositories, re-enable the default capabilities
+	transport.UnsupportedCapabilities = []capability.Capability{
+		capability.MultiACK,
+		capability.MultiACKDetailed,
+		capability.ThinPack,
+	}
+}
+
+func isAzureDevOps(url string) bool {
+	return azureHTTPSPattern.MatchString(url) || azureSSHPattern.MatchString(url)
 }
 
 func getRepoPath(source model.ConfigSource) (string, error) {
@@ -246,6 +285,8 @@ func (s *SourceClient) checkoutClean(release string) error {
 	if s.currentRelease == release {
 		return nil
 	}
+	enableAzureCompatibility(s.url)
+	defer disableAzureCompatibility(s.url)
 	var checkoutRef plumbing.ReferenceName
 	isTag := s.releasesSet.Contains(release)
 	if isTag {
