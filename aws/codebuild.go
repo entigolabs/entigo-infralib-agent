@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strings"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild/types"
@@ -11,8 +14,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"gopkg.in/yaml.v3"
-	"log"
-	"strings"
 )
 
 type BuildSpec struct {
@@ -69,10 +70,6 @@ func NewBuilder(ctx context.Context, awsConfig aws.Config, buildRoleArn string, 
 }
 
 func (b *builder) CreateProject(projectName string, bucket string, stepName string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
-	if imageSource == "" {
-		imageSource = model.ProjectImage
-	}
-	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
 	_, err := b.codeBuild.CreateProject(b.ctx, &codebuild.CreateProjectInput{
 		Name:             aws.String(projectName),
 		TimeoutInMinutes: aws.Int32(480),
@@ -80,7 +77,7 @@ func (b *builder) CreateProject(projectName string, bucket string, stepName stri
 		Artifacts:        &types.ProjectArtifacts{Type: types.ArtifactsTypeNoArtifacts},
 		Environment: &types.ProjectEnvironment{
 			ComputeType:              types.ComputeTypeBuildGeneral1Medium,
-			Image:                    aws.String(image),
+			Image:                    getImage(imageVersion, imageSource),
 			Type:                     types.EnvironmentTypeLinuxContainer,
 			ImagePullCredentialsType: types.ImagePullCredentialsTypeCodebuild,
 			EnvironmentVariables:     b.getEnvironmentVariables(projectName, stepName, bucket),
@@ -112,6 +109,17 @@ func (b *builder) CreateProject(projectName string, bucket string, stepName stri
 	}
 	log.Printf("Created CodeBuild project %s\n", projectName)
 	return err
+}
+
+func getImage(imageVersion, imageSource string) *string {
+	if imageSource == "" {
+		if util.IsVersionOlder(imageVersion, "v1.16") {
+			imageSource = model.ProjectImage
+		} else {
+			imageSource = model.ProjectImageAWS
+		}
+	}
+	return aws.String(fmt.Sprintf("%s:%s", imageSource, imageVersion))
 }
 
 func (b *builder) getEnvironmentVariables(projectName, stepName, bucket string) []types.EnvironmentVariable {
@@ -256,12 +264,8 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		!util.EqualLists(project.VpcConfig.Subnets, awsVpcConfig.Subnets) ||
 		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))
 
-	if imageSource == "" {
-		imageSource = model.ProjectImage
-	}
-	image := fmt.Sprintf("%s:%s", imageSource, imageVersion)
-	imageChanged := image != "" && project.Environment != nil && project.Environment.Image != nil &&
-		*project.Environment.Image != image
+	image := getImage(imageVersion, imageSource)
+	imageChanged := project.Environment != nil && project.Environment.Image != nil && *project.Environment.Image != *image
 
 	if !vpcChanged && !imageChanged {
 		return nil
@@ -271,7 +275,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		awsVpcConfig = project.VpcConfig
 	}
 	if imageChanged {
-		project.Environment.Image = aws.String(image)
+		project.Environment.Image = image
 	}
 
 	_, err = b.codeBuild.UpdateProject(b.ctx, &codebuild.UpdateProjectInput{
@@ -287,7 +291,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("updated CodeBuild project %s", projectName))
 	if imageChanged {
-		sb.WriteString(fmt.Sprintf(" image to %s", image))
+		sb.WriteString(fmt.Sprintf(" image to %s", *image))
 	}
 	if vpcChanged {
 		if awsVpcConfig.VpcId != nil {
