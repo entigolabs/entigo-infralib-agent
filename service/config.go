@@ -436,7 +436,8 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 		if err == nil && bytes != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("module %s/%s has inputs, ignoring file %s", stepName, module.Name, yamlFile)))
 		}
-		return nil
+		module.ConfigInputs, err = util.DeepCopyYAML(module.Inputs) // Make a copy for merging base inputs later
+		return err
 	}
 	if bytes == nil && (err == nil || errors.Is(err, os.ErrNotExist)) {
 		return nil
@@ -450,6 +451,10 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 		return nil
 	}
 	err = yaml.Unmarshal(bytes, &module.Inputs)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal input file %s: %v", yamlFile, err)
+	}
+	err = yaml.Unmarshal(bytes, &module.ConfigInputs)
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal input file %s: %v", yamlFile, err)
 	}

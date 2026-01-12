@@ -205,6 +205,7 @@ type Module struct {
 	Version        string                 `yaml:"version,omitempty"`
 	DefaultModule  bool                   `yaml:"default_module,omitempty"`
 	Inputs         map[string]interface{} `yaml:"inputs,omitempty"`
+	ConfigInputs   map[string]interface{} `yaml:"-"`
 	InputsChecksum []byte                 `yaml:"-"`
 	InputsFile     string                 `yaml:"-"`
 	FileContent    []byte                 `yaml:"-"`

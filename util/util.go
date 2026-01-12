@@ -448,3 +448,16 @@ func IsVersionOlder(currentVersion, oldVersion string) bool {
 	}
 	return semver.LessThan(oldVer)
 }
+
+func DeepCopyYAML(src map[string]interface{}) (map[string]interface{}, error) {
+	content, err := yaml.Marshal(src)
+	if err != nil {
+		return nil, err
+	}
+	var dst map[string]interface{}
+	err = yaml.Unmarshal(content, &dst)
+	if err != nil {
+		return nil, err
+	}
+	return dst, nil
+}
