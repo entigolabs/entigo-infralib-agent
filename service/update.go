@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -630,7 +631,7 @@ func (u *updater) getChangedProviders(repoProviders map[model.SourceKey]model.Se
 			}
 			if !bytes.Equal(previousChecksum, currentChecksum) {
 				slog.Debug(fmt.Sprintf("Provider %s has changed, previous %s, current %s", provider,
-					string(previousChecksum), string(currentChecksum)))
+					hex.EncodeToString(previousChecksum), hex.EncodeToString(currentChecksum)))
 				changed = append(changed, provider)
 			}
 		}
@@ -672,7 +673,7 @@ func (u *updater) getChangedModules(step model.Step) []string {
 		}
 		if !bytes.Equal(previousChecksum, currentChecksum) {
 			slog.Debug(fmt.Sprintf("Module %s has changed, previous %s, current %s", module.Name,
-				string(previousChecksum), string(currentChecksum)))
+				hex.EncodeToString(previousChecksum), hex.EncodeToString(currentChecksum)))
 			changed = append(changed, module.Name)
 		}
 	}
@@ -709,7 +710,7 @@ func (u *updater) getChangedStepModules(step model.Step) []string {
 		if !bytes.Equal(previous, current) {
 			changed = append(changed, module.Name)
 			slog.Debug(fmt.Sprintf("Module %s inputs have changed, previous %s, current %s", module.Name,
-				string(previous), string(current)))
+				hex.EncodeToString(previous), hex.EncodeToString(current)))
 
 		}
 	}
@@ -1618,7 +1619,7 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %v", err)
 	}
-	inputs, err = mergeInputs(inputs, module.Inputs)
+	inputs, err = mergeInputs(inputs, module.ConfigInputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %v", err)
 	}
