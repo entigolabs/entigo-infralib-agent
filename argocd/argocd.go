@@ -102,7 +102,46 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 	if err != nil {
 		return nil, err
 	}
+	deduplicateSyncOptions(baseFile)
 	return util.MapToYamlBytes(baseFile)
+}
+
+func deduplicateSyncOptions(app map[string]interface{}) {
+	spec, ok := app["spec"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	policy, ok := spec["syncPolicy"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	optionsRaw, ok := policy["syncOptions"]
+	if !ok {
+		return
+	}
+	optionsSlice, ok := optionsRaw.([]interface{})
+	if !ok {
+		return
+	}
+	dedupedMap := make(map[string]string)
+	var orderedKeys []string
+	for _, item := range optionsSlice {
+		str, ok := item.(string)
+		if !ok {
+			continue
+		}
+		parts := strings.SplitN(str, "=", 2)
+		key := parts[0]
+		if _, exists := dedupedMap[key]; !exists {
+			orderedKeys = append(orderedKeys, key)
+		}
+		dedupedMap[key] = str
+	}
+	newOptions := make([]string, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		newOptions = append(newOptions, dedupedMap[key])
+	}
+	policy["syncOptions"] = newOptions
 }
 
 func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, error) {
