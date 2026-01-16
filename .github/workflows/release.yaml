@@ -118,6 +118,8 @@ jobs:
             --platform linux/arm64/v8,linux/amd64 \
             --build-arg GITHUB_SHA=${GITHUB_SHA} \
             --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }} \
+            --sbom=true \
+            --provenance=mode=max \
             -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }} \
             -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.major_version }} \
             -t public.ecr.aws/entigolabs/entigo-infralib-agent:latest \

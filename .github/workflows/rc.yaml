@@ -82,6 +82,8 @@ jobs:
           --platform linux/arm64/v8,linux/amd64 \
           --build-arg GITHUB_SHA=${GITHUB_SHA} \
           --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
+          --sbom=true \
+          --provenance=mode=max \
           -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} .
