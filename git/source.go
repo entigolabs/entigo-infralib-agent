@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -28,9 +27,7 @@ import (
 )
 
 var (
-	repoMutex         = sync.Mutex{}
-	azureHTTPSPattern = regexp.MustCompile(`^https://(?:[^@]+@)?dev\.azure\.com/[^/]+/[^/]+/_git/[^/]+`)
-	azureSSHPattern   = regexp.MustCompile(`^git@ssh\.dev\.azure\.com:v3/[^/]+/[^/]+/[^/]+`)
+	repoMutex = sync.Mutex{}
 )
 
 type SourceClient struct {
@@ -143,20 +140,20 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 }
 
 func enableAzureCompatibility(repo string) {
-	if !isAzureDevOps(repo) {
+	if !util.IsAzureDevOps(repo) {
 		return
 	}
 	// Azure DevOps requires capabilities multi_ack / multi_ack_detailed which go-git does not support by default.
 	// We need to set UnsupportedCapabilities to avoid errors when dealing with Azure DevOps.
 	// See: https://github.com/go-git/go-git/blob/master/_examples/azure_devops/main.go
-	log.Println("Detected Azure DevOps repository, disabling unsupported capabilities")
+	slog.Debug("Detected Azure DevOps repository, disabling unsupported capabilities")
 	transport.UnsupportedCapabilities = []capability.Capability{
 		capability.ThinPack,
 	}
 }
 
 func disableAzureCompatibility(repo string) {
-	if !isAzureDevOps(repo) {
+	if !util.IsAzureDevOps(repo) {
 		return
 	}
 	// To support processes with multiple repositories, re-enable the default capabilities
@@ -165,10 +162,6 @@ func disableAzureCompatibility(repo string) {
 		capability.MultiACKDetailed,
 		capability.ThinPack,
 	}
-}
-
-func isAzureDevOps(url string) bool {
-	return azureHTTPSPattern.MatchString(url) || azureSSHPattern.MatchString(url)
 }
 
 func getRepoPath(source model.ConfigSource) (string, error) {

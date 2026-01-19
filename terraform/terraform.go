@@ -432,6 +432,10 @@ func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Ste
 	} else if util.IsLocalSource(moduleVersion.Source.URL) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("%s/modules/%s", moduleVersion.Source.URL, module.Source)))
+	} else if util.IsAzureDevOps(moduleVersion.Source.URL) {
+		moduleBody.SetAttributeValue("source",
+			cty.StringVal(fmt.Sprintf("git::%s//modules/%s?ref=%s", moduleVersion.Source.URL, module.Source,
+				moduleVersion.Version)))
 	} else {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.Source.URL, module.Source,

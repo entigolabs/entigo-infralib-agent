@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,11 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	azureHTTPSPattern = regexp.MustCompile(`^https://(?:[^@]+@)?dev\.azure\.com/[^/]+/[^/]+/_git/[^/]+`)
+	azureSSHPattern   = regexp.MustCompile(`^git@ssh\.dev\.azure\.com:v3/[^/]+/[^/]+/[^/]+`)
 )
 
 func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]byte, error) {
@@ -124,6 +130,10 @@ func IsClientModule(module model.Module) bool {
 
 func IsLocalSource(source string) bool {
 	return !strings.HasPrefix(source, "http:") && !strings.HasPrefix(source, "https:")
+}
+
+func IsAzureDevOps(url string) bool {
+	return azureHTTPSPattern.MatchString(url) || azureSSHPattern.MatchString(url)
 }
 
 func FileExists(source, path string) bool {
