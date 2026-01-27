@@ -1,17 +1,19 @@
 package gcloud
 
 import (
-	secretmanager "cloud.google.com/go/secretmanager/apiv1"
-	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+
+	secretmanager "cloud.google.com/go/secretmanager/apiv1"
+	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
-	"log/slog"
-	"strings"
 )
 
 type sm struct {
@@ -20,8 +22,8 @@ type sm struct {
 	projectId string
 }
 
-func NewSM(ctx context.Context, projectId string) (model.SSM, error) {
-	client, err := secretmanager.NewClient(ctx)
+func NewSM(ctx context.Context, options []option.ClientOption, projectId string) (model.SSM, error) {
+	client, err := secretmanager.NewClient(ctx, options...)
 	if err != nil {
 		return nil, err
 	}

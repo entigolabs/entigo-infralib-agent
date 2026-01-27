@@ -25,6 +25,10 @@ func (f *Flags) validate(cmd Command) error {
 			if f.GCloud.Location == "" || f.GCloud.Zone == "" {
 				return fmt.Errorf("gcloud location and zone must be set")
 			}
+		} else {
+			if f.GCloud.CredentialsJson != "" {
+				return fmt.Errorf("gcloud project ID must be set when credentials JSON is provided")
+			}
 		}
 		return nil
 	default:

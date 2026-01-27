@@ -1,16 +1,18 @@
 package gcloud
 
 import (
-	"cloud.google.com/go/storage"
 	"context"
 	"errors"
+	"io"
+	"log"
+	"strings"
+
+	"cloud.google.com/go/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"google.golang.org/api/iterator"
-	"io"
-	"log"
-	"strings"
+	"google.golang.org/api/option"
 )
 
 type GStorage struct {
@@ -24,8 +26,8 @@ type GStorage struct {
 	repoMetadata  *model.RepositoryMetadata
 }
 
-func NewStorage(ctx context.Context, projectId string, location string, bucket string) (*GStorage, error) {
-	client, err := storage.NewClient(ctx)
+func NewStorage(ctx context.Context, options []option.ClientOption, projectId string, location string, bucket string) (*GStorage, error) {
+	client, err := storage.NewClient(ctx, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -50,12 +52,11 @@ func (g *GStorage) CreateBucket(skipDelay bool) error {
 	}
 	util.DelayBucketCreation(g.bucket, skipDelay)
 	err = g.bucketHandle.Create(g.ctx, g.projectId, &storage.BucketAttrs{
-		Location:                   g.location,
-		PredefinedACL:              "projectPrivate",
-		PredefinedDefaultObjectACL: "projectPrivate",
-		PublicAccessPrevention:     storage.PublicAccessPreventionEnforced,
-		VersioningEnabled:          true,
-		SoftDeletePolicy:           &storage.SoftDeletePolicy{RetentionDuration: 0},
+		Location:                 g.location,
+		PublicAccessPrevention:   storage.PublicAccessPreventionEnforced,
+		VersioningEnabled:        true,
+		SoftDeletePolicy:         &storage.SoftDeletePolicy{RetentionDuration: 0},
+		UniformBucketLevelAccess: storage.UniformBucketLevelAccess{Enabled: true},
 		Lifecycle: storage.Lifecycle{
 			Rules: []storage.LifecycleRule{{
 				Action:    storage.LifecycleAction{Type: storage.DeleteAction},

@@ -1,18 +1,20 @@
 package gcloud
 
 import (
-	logging "cloud.google.com/go/logging/apiv2"
-	"cloud.google.com/go/logging/apiv2/loggingpb"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/util"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"log"
 	"log/slog"
 	"time"
+
+	logging "cloud.google.com/go/logging/apiv2"
+	"cloud.google.com/go/logging/apiv2/loggingpb"
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/util"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Logging struct {
@@ -21,8 +23,8 @@ type Logging struct {
 	resource string
 }
 
-func NewLogging(ctx context.Context, projectId string) (*Logging, error) {
-	client, err := logging.NewClient(ctx)
+func NewLogging(ctx context.Context, options []option.ClientOption, projectId string) (*Logging, error) {
+	client, err := logging.NewClient(ctx, options...)
 	if err != nil {
 		return nil, err
 	}

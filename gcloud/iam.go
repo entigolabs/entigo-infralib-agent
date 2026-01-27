@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	iamv1 "google.golang.org/api/iam/v1"
+	"google.golang.org/api/option"
 )
 
 type IAM struct {
@@ -21,8 +22,8 @@ type IAM struct {
 	projectId       string
 }
 
-func NewIAM(ctx context.Context, projectId string) (*IAM, error) {
-	service, err := iamv1.NewService(ctx)
+func NewIAM(ctx context.Context, options []option.ClientOption, projectId string) (*IAM, error) {
+	service, err := iamv1.NewService(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize IAM service: %w", err)
 	}

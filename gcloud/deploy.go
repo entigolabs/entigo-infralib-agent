@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
@@ -70,8 +71,8 @@ type Pipeline struct {
 	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
-	client, err := deploy.NewCloudDeployClient(ctx)
+func NewPipeline(ctx context.Context, options []option.ClientOption, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
+	client, err := deploy.NewCloudDeployClient(ctx, options...)
 	if err != nil {
 		return nil, err
 	}

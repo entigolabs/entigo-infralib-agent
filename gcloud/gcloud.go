@@ -2,6 +2,7 @@ package gcloud
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"google.golang.org/api/option"
 )
 
 type gcloudService struct {
@@ -22,6 +24,7 @@ type gcloudService struct {
 	resources   Resources
 	pipeline    common.Pipeline
 	skipDelay   bool
+	options     []option.ClientOption
 }
 
 type Resources struct {
@@ -35,7 +38,11 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipeline common.Pipeline, skipBucketDelay bool) model.CloudProvider {
+func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pipeline common.Pipeline, skipBucketDelay bool) (model.CloudProvider, error) {
+	options, err := getClientOptions(gCloud)
+	if err != nil {
+		return nil, err
+	}
 	return &gcloudService{
 		ctx:         ctx,
 		cloudPrefix: cloudPrefix,
@@ -44,7 +51,38 @@ func NewGCloud(ctx context.Context, cloudPrefix string, gCloud common.GCloud, pi
 		zone:        gCloud.Zone,
 		pipeline:    pipeline,
 		skipDelay:   skipBucketDelay,
+		options:     options,
+	}, nil
+}
+
+func getClientOptions(gCloud common.GCloud) ([]option.ClientOption, error) {
+	if gCloud.CredentialsJson == "" {
+		return nil, nil
 	}
+	err := validateServiceAccountJSON([]byte(gCloud.CredentialsJson))
+	if err != nil {
+		return nil, fmt.Errorf("invalid service account JSON: %v", err)
+	}
+	return []option.ClientOption{
+		option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(gCloud.CredentialsJson)),
+	}, nil
+}
+
+func validateServiceAccountJSON(credJSON []byte) error {
+	var cred struct {
+		Type     string `json:"type"`
+		TokenURI string `json:"token_uri"`
+	}
+	if err := json.Unmarshal(credJSON, &cred); err != nil {
+		return err
+	}
+	if cred.Type != string(option.ServiceAccount) {
+		return fmt.Errorf("only service_account type is allowed, got %q", cred.Type)
+	}
+	if cred.TokenURI != "" && cred.TokenURI != "https://oauth2.googleapis.com/token" {
+		return fmt.Errorf("invalid token_uri")
+	}
+	return nil
 }
 
 func (g *gcloudService) GetIdentifier() string {
@@ -57,7 +95,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 		return nil, err
 	}
 	bucket := g.getBucketName()
-	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
+	storage, err := NewStorage(g.ctx, g.options, g.projectId, g.location, bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage service: %s", err)
 	}
@@ -65,7 +103,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage bucket: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -91,7 +129,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 		return nil, err
 	}
 	bucket := g.getBucketName()
-	storage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
+	storage, err := NewStorage(g.ctx, g.options, g.projectId, g.location, bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage service: %s", err)
 	}
@@ -99,7 +137,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage bucket: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -118,11 +156,11 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 		return resources, nil
 	}
 
-	logging, err := NewLogging(g.ctx, g.projectId)
+	logging, err := NewLogging(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logging client: %s", err)
 	}
-	iam, err := NewIAM(g.ctx, g.projectId)
+	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IAM service: %s", err)
 	}
@@ -130,11 +168,11 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, err
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, serviceAccount, storage, builder, logging, manager)
+	pipeline, err := NewPipeline(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix, serviceAccount, storage, builder, logging, manager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
@@ -149,19 +187,19 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 
 func (g *gcloudService) GetResources() (model.Resources, error) {
 	bucket := g.getBucketName()
-	codeStorage, err := NewStorage(g.ctx, g.projectId, g.location, bucket)
+	codeStorage, err := NewStorage(g.ctx, g.options, g.projectId, g.location, bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage service: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.projectId, g.location, g.zone, "", true)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, "", true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
-	pipeline, err := NewPipeline(g.ctx, g.projectId, g.location, g.cloudPrefix, "", codeStorage, builder, nil, nil)
+	pipeline, err := NewPipeline(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix, "", codeStorage, builder, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -182,7 +220,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 }
 
 func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
-	scheduler, err := NewScheduler(g.ctx, g.projectId, g.location, g.cloudPrefix)
+	scheduler, err := NewScheduler(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to create scheduler service: %s", err)))
 	} else {
@@ -206,7 +244,7 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete pipeline targets: %s", err)))
 	}
-	iam, err := NewIAM(g.ctx, g.projectId)
+	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
 	}
@@ -238,7 +276,7 @@ func (g *gcloudService) IsRunningLocally() bool {
 }
 
 func (g *gcloudService) enableApiServices(services []string) error {
-	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
+	apiUsage, err := NewApiUsage(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create API usage service: %s", err)
 	}
@@ -264,7 +302,8 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 		return "", fmt.Errorf("failed to add roles to service account: %s", err)
 	}
 	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
-		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor"})
+		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor",
+		"roles/iam.roleAdmin", "roles/servicenetworking.networksAdmin"})
 	if err != nil {
 		return "", fmt.Errorf("failed to add roles to project: %s", err)
 	}
@@ -277,7 +316,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 }
 
 func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string) error {
-	scheduler, err := NewScheduler(g.ctx, g.projectId, g.location, g.cloudPrefix)
+	scheduler, err := NewScheduler(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create scheduler service: %s", err)
 	}
@@ -319,15 +358,15 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)
 	}
-	iam, err := NewIAM(g.ctx, g.projectId)
+	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
 	}
-	secrets, err := NewSM(g.ctx, g.projectId)
+	secrets, err := NewSM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create secret manager: %s", err)
 	}
-	apiUsage, err := NewApiUsage(g.ctx, g.projectId)
+	apiUsage, err := NewApiUsage(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create API usage service: %s", err)
 	}

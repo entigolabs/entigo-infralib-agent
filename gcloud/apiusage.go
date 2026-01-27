@@ -3,9 +3,11 @@ package gcloud
 import (
 	"context"
 	"fmt"
-	"google.golang.org/api/serviceusage/v1"
 	"log"
 	"strings"
+
+	"google.golang.org/api/option"
+	"google.golang.org/api/serviceusage/v1"
 )
 
 type ApiUsage struct {
@@ -14,8 +16,8 @@ type ApiUsage struct {
 	service   *serviceusage.Service
 }
 
-func NewApiUsage(ctx context.Context, projectId string) (*ApiUsage, error) {
-	service, err := serviceusage.NewService(ctx)
+func NewApiUsage(ctx context.Context, options []option.ClientOption, projectId string) (*ApiUsage, error) {
+	service, err := serviceusage.NewService(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize service usage: %v", err)
 	}

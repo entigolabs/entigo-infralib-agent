@@ -57,6 +57,7 @@ func getProviderFlags() []cli.Flag {
 		&projectIdFlag,
 		&locationFlag,
 		&zoneFlag,
+		&gcloudCredentialsJsonFlag,
 		&awsRoleArnFlag,
 	}
 }
@@ -132,6 +133,16 @@ var zoneFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "zone used in run jobs",
 	Destination: &flags.GCloud.Zone,
+}
+
+var gcloudCredentialsJsonFlag = cli.StringFlag{
+	Name:        "google-application-credentials-json",
+	Aliases:     []string{"gcj"},
+	Sources:     cli.EnvVars("GOOGLE_APPLICATION_CREDENTIALS_JSON"),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "gcloud credentials json content",
+	Destination: &flags.GCloud.CredentialsJson,
 }
 
 var allowParallelFlag = cli.BoolFlag{

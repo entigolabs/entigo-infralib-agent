@@ -33,9 +33,10 @@ func (f *Flags) Setup(cmd Command) error {
 }
 
 type GCloud struct {
-	ProjectId string
-	Location  string
-	Zone      string
+	ProjectId       string
+	Location        string
+	Zone            string
+	CredentialsJson string
 }
 
 type AWS struct {

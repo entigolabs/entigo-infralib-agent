@@ -16,6 +16,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/googleapis/gax-go/v2/apierror"
+	"google.golang.org/api/option"
 	runv1 "google.golang.org/api/run/v1"
 	"google.golang.org/genproto/googleapis/api"
 	"google.golang.org/grpc/codes"
@@ -34,8 +35,8 @@ type Builder struct {
 	terraformCache bool
 }
 
-func NewBuilder(ctx context.Context, projectId, location, zone, serviceAccount string, terraformCache bool) (*Builder, error) {
-	client, err := run.NewJobsClient(ctx)
+func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache bool) (*Builder, error) {
+	client, err := run.NewJobsClient(ctx, options...)
 	if err != nil {
 		return nil, err
 	}

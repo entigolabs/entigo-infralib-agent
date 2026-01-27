@@ -13,6 +13,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 	locationpb "google.golang.org/genproto/googleapis/cloud/location"
 	"google.golang.org/grpc/codes"
 )
@@ -39,8 +40,8 @@ type Scheduler struct {
 	schedulerLocation  string
 }
 
-func NewScheduler(ctx context.Context, project, location, prefix string) (*Scheduler, error) {
-	client, err := scheduler.NewCloudSchedulerClient(ctx)
+func NewScheduler(ctx context.Context, options []option.ClientOption, project, location, prefix string) (*Scheduler, error) {
+	client, err := scheduler.NewCloudSchedulerClient(ctx, options...)
 	if err != nil {
 		return nil, err
 	}
