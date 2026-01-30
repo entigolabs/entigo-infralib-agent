@@ -23,35 +23,42 @@ import (
 const executeScript = "entrypoint.sh"
 
 type LocalPipeline struct {
-	prefix    string
-	regionKey string
-	region    string
-	project   string
-	zone      string
-	bucket    string
-	pipeline  common.Pipeline
-	inputLock sync.Mutex
-	manager   model.NotificationManager
+	prefix       string
+	regionKey    string
+	region       string
+	project      string
+	zone         string
+	bucket       string
+	pipeline     common.Pipeline
+	inputLock    sync.Mutex
+	manager      model.NotificationManager
+	azureFlags   common.Azure
+	providerType model.ProviderType
 }
 
-func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
+func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, azureFlags common.Azure, manager model.NotificationManager) *LocalPipeline {
 	regionKey := "AWS_REGION"
 	project := ""
 	zone := ""
-	if resources.GetProviderType() == model.GCLOUD {
+	switch resources.GetProviderType() {
+	case model.GCLOUD:
 		regionKey = "GOOGLE_REGION"
 		project = gcloudFlags.ProjectId
 		zone = gcloudFlags.Zone
+	case model.AZURE:
+		regionKey = "ARM_LOCATION"
 	}
 	return &LocalPipeline{
-		prefix:    resources.GetCloudPrefix(),
-		regionKey: regionKey,
-		region:    resources.GetRegion(),
-		project:   project,
-		zone:      zone,
-		bucket:    resources.GetBucketName(),
-		pipeline:  pipeline,
-		manager:   manager,
+		prefix:       resources.GetCloudPrefix(),
+		regionKey:    regionKey,
+		region:       resources.GetRegion(),
+		project:      project,
+		zone:         zone,
+		bucket:       resources.GetBucketName(),
+		pipeline:     pipeline,
+		manager:      manager,
+		azureFlags:   azureFlags,
+		providerType: resources.GetProviderType(),
 	}
 }
 
@@ -128,6 +135,10 @@ func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step 
 	}
 	if l.project != "" {
 		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project), fmt.Sprintf("GOOGLE_ZONE=%s", l.zone))
+	}
+	if l.providerType == model.AZURE {
+		env = append(env, fmt.Sprintf("ARM_SUBSCRIPTION_ID=%s", l.azureFlags.SubscriptionId),
+			fmt.Sprintf("ARM_RESOURCE_GROUP=%s", l.azureFlags.ResourceGroup))
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {

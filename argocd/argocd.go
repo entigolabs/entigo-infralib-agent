@@ -42,9 +42,12 @@ func getBaseApplicationFile() []byte {
 func replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte, provider model.ProviderType) []byte {
 	file := string(bytes)
 	var cloudProvider string
-	if provider == model.GCLOUD {
+	switch provider {
+	case model.GCLOUD:
 		cloudProvider = "google"
-	} else {
+	case model.AZURE:
+		cloudProvider = "azure"
+	default:
 		cloudProvider = "aws"
 	}
 	url := source

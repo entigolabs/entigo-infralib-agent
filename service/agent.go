@@ -92,10 +92,13 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 		version = model.LatestImageVersion
 	}
 	var image string
-	if a.resources.GetProviderType() == model.AWS {
+	switch a.resources.GetProviderType() {
+	case model.AWS:
 		image = model.AgentImage
-	} else if a.resources.GetProviderType() == model.GCLOUD {
+	case model.GCLOUD:
 		image = model.AgentImageGCloud
+	case model.AZURE:
+		image = model.AgentImageAzure
 	}
 	tfCache := strconv.FormatBool(a.terraformCache)
 	if project.Image == image+":"+version && tfCache == project.TerraformCache {

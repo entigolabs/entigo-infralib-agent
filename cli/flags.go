@@ -59,6 +59,9 @@ func getProviderFlags() []cli.Flag {
 		&zoneFlag,
 		&gcloudCredentialsJsonFlag,
 		&awsRoleArnFlag,
+		&azureSubscriptionFlag,
+		&azureResourceGroupFlag,
+		&azureLocationFlag,
 	}
 }
 
@@ -143,6 +146,36 @@ var gcloudCredentialsJsonFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "gcloud credentials json content",
 	Destination: &flags.GCloud.CredentialsJson,
+}
+
+var azureSubscriptionFlag = cli.StringFlag{
+	Name:        "azure-subscription-id",
+	Aliases:     []string{"asub"},
+	Sources:     cli.EnvVars(common.AzureSubscriptionEnv),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "Azure subscription ID",
+	Destination: &flags.Azure.SubscriptionId,
+}
+
+var azureResourceGroupFlag = cli.StringFlag{
+	Name:        "azure-resource-group",
+	Aliases:     []string{"arg"},
+	Sources:     cli.EnvVars(common.AzureResourceGroupEnv),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "Azure resource group name",
+	Destination: &flags.Azure.ResourceGroup,
+}
+
+var azureLocationFlag = cli.StringFlag{
+	Name:        "azure-location",
+	Aliases:     []string{"aloc"},
+	Sources:     cli.EnvVars(common.AzureLocationEnv),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "Azure location (e.g., westeurope, eastus)",
+	Destination: &flags.Azure.Location,
 }
 
 var allowParallelFlag = cli.BoolFlag{

@@ -98,6 +98,8 @@ func (t *terraform) modifyBackendType(body *hclwrite.Body) {
 		backendBlock.SetLabels([]string{"s3"})
 	case model.GCLOUD:
 		backendBlock.SetLabels([]string{"gcs"})
+	case model.AZURE:
+		backendBlock.SetLabels([]string{"azurerm"})
 	}
 }
 

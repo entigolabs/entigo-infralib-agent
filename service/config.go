@@ -496,10 +496,14 @@ func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
 }
 
 func getKubernetesClusterName(providerType model.ProviderType) string {
-	if providerType == model.GCLOUD {
+	switch providerType {
+	case model.GCLOUD:
 		return "{{ .toutput.gke.cluster_name }}"
+	case model.AZURE:
+		return "{{ .toutput.aks.cluster_name }}"
+	default:
+		return "{{ .toutput.eks.cluster_name }}"
 	}
-	return "{{ .toutput.eks.cluster_name }}"
 }
 
 func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
@@ -523,6 +527,13 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 		}
 		if step.Vpc.SubnetIds == "" {
 			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		}
+	case model.AZURE:
+		if step.Vpc.Id == "" {
+			step.Vpc.Id = "{{ .toutput.vnet.vnet_name }}"
+		}
+		if step.Vpc.SubnetIds == "" {
+			step.Vpc.SubnetIds = "[{{ .toutput.vnet.private_subnets[0] }}]"
 		}
 	}
 }

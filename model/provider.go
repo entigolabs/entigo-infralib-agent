@@ -6,10 +6,12 @@ const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const ProjectImageGCloud = "docker.io/entigolabs/entigo-infralib-google"
+const ProjectImageAzure = "docker.io/entigolabs/entigo-infralib-azure"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 
 // const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
 const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent"
+const AgentImageAzure = "docker.io/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
@@ -18,6 +20,7 @@ type ProviderType string
 const (
 	AWS    ProviderType = "AWS"
 	GCLOUD ProviderType = "GCLOUD"
+	AZURE  ProviderType = "AZURE"
 )
 
 const (

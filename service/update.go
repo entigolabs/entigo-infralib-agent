@@ -87,7 +87,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, manager),
+		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, flags.Azure, manager),
 		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -347,9 +347,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
+func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, azureFlags common.Azure, manager model.NotificationManager) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline, gcloudFlags, manager)
+		return NewLocalPipeline(resources, pipeline, gcloudFlags, azureFlags, manager)
 	}
 	return nil
 }
@@ -1603,13 +1603,18 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 	}
 
 	providerType := u.resources.GetProviderType()
+	var providerName string
 	switch providerType {
 	case model.AWS:
-		providerType = "aws"
+		providerName = "aws"
 	case model.GCLOUD:
-		providerType = "google"
+		providerName = "google"
+	case model.AZURE:
+		providerName = "azure"
+	default:
+		providerName = string(providerType)
 	}
-	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
+	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerName)
 	providerInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err

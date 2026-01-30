@@ -5,11 +5,14 @@ import (
 )
 
 const (
-	AwsPrefixEnv       = "AWS_PREFIX"
-	PrefixEnv          = "PREFIX"
-	GCloudProjectIdEnv = "PROJECT_ID"
-	GCloudLocationEnv  = "LOCATION"
-	GCloudZoneEnv      = "ZONE"
+	AwsPrefixEnv          = "AWS_PREFIX"
+	PrefixEnv             = "PREFIX"
+	GCloudProjectIdEnv    = "PROJECT_ID"
+	GCloudLocationEnv     = "LOCATION"
+	GCloudZoneEnv         = "ZONE"
+	AzureSubscriptionEnv  = "AZURE_SUBSCRIPTION_ID"
+	AzureResourceGroupEnv = "AZURE_RESOURCE_GROUP"
+	AzureLocationEnv      = "AZURE_LOCATION"
 )
 
 type Flags struct {
@@ -23,6 +26,7 @@ type Flags struct {
 	Pipeline                Pipeline
 	GCloud                  GCloud
 	AWS                     AWS
+	Azure                   Azure
 	Delete                  DeleteFlags
 	Params                  Params
 	Migrate                 Migrate
@@ -41,6 +45,12 @@ type GCloud struct {
 
 type AWS struct {
 	RoleArn string
+}
+
+type Azure struct {
+	SubscriptionId string
+	ResourceGroup  string
+	Location       string
 }
 
 type DeleteFlags struct {
