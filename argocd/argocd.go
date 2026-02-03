@@ -50,7 +50,7 @@ func replacePlaceholders(bytes []byte, module model.Module, source, version stri
 	url := source
 	if util.IsLocalSource(source) {
 		url = "file:///tmp" + source
-	} else if !strings.HasSuffix(url, ".git") {
+	} else if !strings.HasSuffix(url, ".git") && !util.IsAzureDevOps(source) {
 		url += ".git"
 	}
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{moduleVersion}}", version,
