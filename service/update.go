@@ -884,7 +884,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, 
 	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource,
 		vpcConfig, sources)
 	if err != nil {
-		return fmt.Errorf("failed to create CodeBuild project: %w", err)
+		return fmt.Errorf("failed to create project %s: %w", stepName, err)
 	}
 	return u.createExecutePipelines(stepName, stepName, step, autoApprove, bucket, sources)
 }

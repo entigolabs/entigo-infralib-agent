@@ -24,6 +24,8 @@ type azureService struct {
 	resources      Resources
 	pipeline       common.Pipeline
 	skipDelay      bool
+	devOpsOrg      string
+	devOpsProject  string
 }
 
 type Resources struct {
@@ -47,6 +49,10 @@ func NewAzure(ctx context.Context, cloudPrefix string, azureFlags common.Azure, 
 	}
 	log.Printf("Azure session initialized with subscription: %s, resource group: %s, location: %s\n",
 		azureFlags.SubscriptionId, azureFlags.ResourceGroup, azureFlags.Location)
+	if azureFlags.DevOpsOrg != "" && azureFlags.DevOpsProject != "" {
+		log.Printf("Azure DevOps configured: organization: %s, project: %s\n",
+			azureFlags.DevOpsOrg, azureFlags.DevOpsProject)
+	}
 	return &azureService{
 		ctx:            ctx,
 		credential:     credential,
@@ -56,6 +62,8 @@ func NewAzure(ctx context.Context, cloudPrefix string, azureFlags common.Azure, 
 		cloudPrefix:    cloudPrefix,
 		pipeline:       pipeline,
 		skipDelay:      skipBucketDelay,
+		devOpsOrg:      azureFlags.DevOpsOrg,
+		devOpsProject:  azureFlags.DevOpsProject,
 	}, nil
 }
 
@@ -135,7 +143,16 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 		return nil, fmt.Errorf("failed to create builder: %w", err)
 	}
 
-	pipeline, err := NewPipeline(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix, identity, blob, builder, logging, manager)
+	// Create DevOps client if configured
+	var devOps *DevOpsClient
+	if a.devOpsOrg != "" && a.devOpsProject != "" {
+		devOps, err = NewDevOpsClient(a.ctx, a.credential, a.devOpsOrg, a.devOpsProject)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure DevOps client: %w", err)
+		}
+	}
+
+	pipeline, err := NewPipeline(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix, identity, blob, builder, logging, manager, devOps)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %w", err)
 	}
@@ -168,7 +185,16 @@ func (a *azureService) GetResources() (model.Resources, error) {
 		return nil, fmt.Errorf("failed to create logging: %w", err)
 	}
 
-	pipeline, err := NewPipeline(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix, "", blob, builder, logging, nil)
+	// Create DevOps client if configured
+	var devOps *DevOpsClient
+	if a.devOpsOrg != "" && a.devOpsProject != "" {
+		devOps, err = NewDevOpsClient(a.ctx, a.credential, a.devOpsOrg, a.devOpsProject)
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to create Azure DevOps client: %s", err)))
+		}
+	}
+
+	pipeline, err := NewPipeline(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix, "", blob, builder, logging, nil, devOps)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %w", err)
 	}
@@ -303,7 +329,15 @@ func (a *azureService) AddEncryption(_ string, _ map[string]model.TFOutput) erro
 }
 
 func (a *azureService) IsRunningLocally() bool {
-	return os.Getenv("AZURE_CONTAINER_APP_JOB") == ""
+	// Check for Azure Container Apps Job environment
+	if os.Getenv("AZURE_CONTAINER_APP_JOB") != "" {
+		return false
+	}
+	// Check for Azure Pipelines environment
+	if os.Getenv("BUILD_BUILDID") != "" {
+		return false
+	}
+	return true
 }
 
 func (a *azureService) getStorageAccountName() string {

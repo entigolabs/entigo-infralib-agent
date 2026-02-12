@@ -4,11 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	"io"
 	"log"
 	"log/slog"
@@ -18,6 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/entigolabs/entigo-infralib-agent/argocd"
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/terraform"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const executeScript = "entrypoint.sh"
@@ -26,39 +27,33 @@ type LocalPipeline struct {
 	prefix       string
 	regionKey    string
 	region       string
-	project      string
-	zone         string
 	bucket       string
 	pipeline     common.Pipeline
 	inputLock    sync.Mutex
 	manager      model.NotificationManager
-	azureFlags   common.Azure
 	providerType model.ProviderType
+	azureFlags   common.Azure
+	gcloudFlags  common.GCloud
 }
 
 func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, azureFlags common.Azure, manager model.NotificationManager) *LocalPipeline {
 	regionKey := "AWS_REGION"
-	project := ""
-	zone := ""
 	switch resources.GetProviderType() {
 	case model.GCLOUD:
 		regionKey = "GOOGLE_REGION"
-		project = gcloudFlags.ProjectId
-		zone = gcloudFlags.Zone
 	case model.AZURE:
-		regionKey = "ARM_LOCATION"
+		regionKey = "AZURE_REGION"
 	}
 	return &LocalPipeline{
 		prefix:       resources.GetCloudPrefix(),
 		regionKey:    regionKey,
 		region:       resources.GetRegion(),
-		project:      project,
-		zone:         zone,
 		bucket:       resources.GetBucketName(),
 		pipeline:     pipeline,
 		manager:      manager,
-		azureFlags:   azureFlags,
 		providerType: resources.GetProviderType(),
+		azureFlags:   azureFlags,
+		gcloudFlags:  gcloudFlags,
 	}
 }
 
@@ -133,12 +128,15 @@ func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step 
 			fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitUsernameEnvFormat, hash), auth.Username),
 			fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitPasswordEnvFormat, hash), auth.Password))
 	}
-	if l.project != "" {
-		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project), fmt.Sprintf("GOOGLE_ZONE=%s", l.zone))
-	}
-	if l.providerType == model.AZURE {
-		env = append(env, fmt.Sprintf("ARM_SUBSCRIPTION_ID=%s", l.azureFlags.SubscriptionId),
-			fmt.Sprintf("ARM_RESOURCE_GROUP=%s", l.azureFlags.ResourceGroup))
+	switch l.providerType {
+	case model.GCLOUD:
+		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.gcloudFlags.ProjectId),
+			fmt.Sprintf("GOOGLE_ZONE=%s", l.gcloudFlags.Zone))
+	case model.AZURE:
+		env = append(env, fmt.Sprintf("AZURE_SUBSCRIPTION_ID=%s", l.azureFlags.SubscriptionId),
+			fmt.Sprintf("AZURE_RESOURCE_GROUP=%s", l.azureFlags.ResourceGroup),
+			fmt.Sprintf("%s=%s", common.DevOpsOrgEnv, l.azureFlags.DevOpsOrg),
+			fmt.Sprintf("%s=%s", common.DevOpsProjectEnv, l.azureFlags.DevOpsProject))
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {

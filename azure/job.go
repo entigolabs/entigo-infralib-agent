@@ -172,11 +172,7 @@ func (b *Builder) CreateProject(projectName, bucket, stepName string, step model
 
 func getImage(imageVersion, imageSource string) string {
 	if imageSource == "" {
-		if util.IsVersionOlder(imageVersion, "v1.16") {
-			imageSource = model.ProjectImageDocker
-		} else {
-			imageSource = model.ProjectImageAzure
-		}
+		imageSource = model.ProjectImageAzure
 	}
 	return fmt.Sprintf("%s:%s", imageSource, imageVersion)
 }
@@ -229,9 +225,9 @@ func (b *Builder) CreateAgentProject(projectName, cloudPrefix, imageVersion stri
 func (b *Builder) getAgentEnvVars(cloudPrefix string) []*armappcontainers.EnvironmentVar {
 	return []*armappcontainers.EnvironmentVar{
 		{Name: to.Ptr(common.AwsPrefixEnv), Value: to.Ptr(cloudPrefix)},
-		{Name: to.Ptr(common.AzureSubscriptionEnv), Value: to.Ptr(b.subscriptionId)},
-		{Name: to.Ptr(common.AzureResourceGroupEnv), Value: to.Ptr(b.resourceGroup)},
-		{Name: to.Ptr(common.AzureLocationEnv), Value: to.Ptr(b.location)},
+		{Name: to.Ptr(common.SubscriptionIdEnv), Value: to.Ptr(b.subscriptionId)},
+		{Name: to.Ptr(common.ResourceGroupEnv), Value: to.Ptr(b.resourceGroup)},
+		{Name: to.Ptr(common.LocationEnv), Value: to.Ptr(b.location)},
 		{Name: to.Ptr("TERRAFORM_CACHE"), Value: to.Ptr(fmt.Sprintf("%t", b.terraformCache))},
 		{Name: to.Ptr("AZURE_CONTAINER_APP_JOB"), Value: to.Ptr("true")},
 	}

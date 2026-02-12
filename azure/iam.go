@@ -2,11 +2,15 @@ package azure
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
@@ -107,8 +111,9 @@ func (i *IAM) AssignRole(principalID, roleName string) error {
 
 	scope := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", i.subscriptionId, i.resourceGroup)
 
+	// Use assignedTo() filter format as required by the API
 	pager := i.roleAssignClient.NewListForScopePager(scope, &armauthorization.RoleAssignmentsClientListForScopeOptions{
-		Filter: to.Ptr(fmt.Sprintf("principalId eq '%s'", principalID)),
+		Filter: to.Ptr(fmt.Sprintf("assignedTo('%s')", principalID)),
 	})
 
 	for pager.More() {
@@ -165,4 +170,80 @@ func (i *IAM) getRoleDefinitionID(roleName string) (string, error) {
 
 func (i *IAM) getLocation() string {
 	return "westeurope"
+}
+
+func (i *IAM) GetCurrentPrincipalID() (string, error) {
+	// Get an access token and extract the oid (object ID) claim
+	token, err := i.credential.GetToken(i.ctx, policy.TokenRequestOptions{
+		Scopes: []string{"https://management.azure.com/.default"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get token: %w", err)
+	}
+
+	// Parse the JWT token to get the oid claim
+	parts := strings.Split(token.Token, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid token format")
+	}
+
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode token payload: %w", err)
+	}
+
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("failed to parse token claims: %w", err)
+	}
+
+	// Try oid first (for user/service principal), then appid for managed identity
+	if oid, ok := claims["oid"].(string); ok {
+		return oid, nil
+	}
+
+	return "", fmt.Errorf("could not find principal ID in token claims")
+}
+
+func (i *IAM) AssignRoleAtScope(principalID, roleName, scope string) error {
+	roleDefinitionID, err := i.getRoleDefinitionID(roleName)
+	if err != nil {
+		return err
+	}
+
+	// Check if role is already assigned
+	pager := i.roleAssignClient.NewListForScopePager(scope, &armauthorization.RoleAssignmentsClientListForScopeOptions{
+		Filter: to.Ptr(fmt.Sprintf("assignedTo('%s')", principalID)),
+	})
+
+	for pager.More() {
+		resp, err := pager.NextPage(i.ctx)
+		if err != nil {
+			return err
+		}
+		for _, assignment := range resp.Value {
+			if assignment.Properties != nil && assignment.Properties.RoleDefinitionID != nil &&
+				*assignment.Properties.RoleDefinitionID == roleDefinitionID {
+				return nil
+			}
+		}
+	}
+
+	_, err = i.roleAssignClient.Create(i.ctx, scope, uuid.New().String(),
+		armauthorization.RoleAssignmentCreateParameters{
+			Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID:      to.Ptr(principalID),
+				RoleDefinitionID: to.Ptr(roleDefinitionID),
+			},
+		}, nil)
+	if err != nil {
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.ErrorCode == "RoleAssignmentExists" {
+			return nil
+		}
+		return fmt.Errorf("failed to assign role: %w", err)
+	}
+	log.Printf("Assigned role %s to principal %s at scope %s\n", roleName, principalID, scope)
+	return nil
 }

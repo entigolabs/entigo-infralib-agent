@@ -5,20 +5,22 @@ import (
 )
 
 const (
-	AwsPrefixEnv          = "AWS_PREFIX"
-	PrefixEnv             = "PREFIX"
-	GCloudProjectIdEnv    = "PROJECT_ID"
-	GCloudLocationEnv     = "LOCATION"
-	GCloudZoneEnv         = "ZONE"
-	AzureSubscriptionEnv  = "AZURE_SUBSCRIPTION_ID"
-	AzureResourceGroupEnv = "AZURE_RESOURCE_GROUP"
-	AzureLocationEnv      = "AZURE_LOCATION"
+	AwsPrefixEnv       = "AWS_PREFIX"
+	PrefixEnv          = "PREFIX"
+	GCloudProjectIdEnv = "PROJECT_ID"
+	LocationEnv        = "LOCATION"
+	GCloudZoneEnv      = "ZONE"
+	SubscriptionIdEnv  = "SUBSCRIPTION_ID"
+	ResourceGroupEnv   = "RESOURCE_GROUP"
+	DevOpsOrgEnv       = "AZURE_DEVOPS_ORG"
+	DevOpsProjectEnv   = "AZURE_DEVOPS_PROJECT"
 )
 
 type Flags struct {
 	LogLevel                string
 	Config                  string
 	Prefix                  string
+	Location                string // GCloud or Azure location
 	Force                   bool
 	SkipBucketCreationDelay bool
 	Start                   bool
@@ -33,6 +35,10 @@ type Flags struct {
 }
 
 func (f *Flags) Setup(cmd Command) error {
+	if f.Location != "" {
+		f.GCloud.Location = f.Location
+		f.Azure.Location = f.Location
+	}
 	return f.validate(cmd)
 }
 
@@ -51,6 +57,8 @@ type Azure struct {
 	SubscriptionId string
 	ResourceGroup  string
 	Location       string
+	DevOpsOrg      string
+	DevOpsProject  string
 }
 
 type DeleteFlags struct {

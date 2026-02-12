@@ -30,6 +30,14 @@ func (f *Flags) validate(cmd Command) error {
 				return fmt.Errorf("gcloud project ID must be set when credentials JSON is provided")
 			}
 		}
+		if f.Azure.SubscriptionId != "" {
+			if f.Azure.ResourceGroup == "" || f.Azure.Location == "" {
+				return fmt.Errorf("azure resource group and location must be set")
+			}
+			if f.Pipeline.Type == string(PipelineTypeCloud) && (f.Azure.DevOpsOrg == "" || f.Azure.DevOpsProject == "") {
+				return fmt.Errorf("azure DevOps organization and project must be set for cloud pipeline")
+			}
+		}
 		return nil
 	default:
 		return nil

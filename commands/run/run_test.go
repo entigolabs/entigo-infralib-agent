@@ -53,7 +53,7 @@ func TestRunGCloud(t *testing.T) {
 	}
 	test.ChangeRunDir()
 	projectId := os.Getenv(common.GCloudProjectIdEnv)
-	location := os.Getenv(common.GCloudLocationEnv)
+	location := os.Getenv(common.LocationEnv)
 	zone := os.Getenv(common.GCloudZoneEnv)
 	prefix := os.Getenv(common.AwsPrefixEnv)
 	if len(prefix) > 10 {

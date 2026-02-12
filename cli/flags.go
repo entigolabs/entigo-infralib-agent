@@ -61,7 +61,8 @@ func getProviderFlags() []cli.Flag {
 		&awsRoleArnFlag,
 		&azureSubscriptionFlag,
 		&azureResourceGroupFlag,
-		&azureLocationFlag,
+		&azureDevOpsOrgFlag,
+		&azureDevOpsProjectFlag,
 	}
 }
 
@@ -121,11 +122,11 @@ var projectIdFlag = cli.StringFlag{
 var locationFlag = cli.StringFlag{
 	Name:        "location",
 	Aliases:     []string{"loc"},
-	Sources:     cli.EnvVars(common.GCloudLocationEnv),
+	Sources:     cli.EnvVars(common.LocationEnv),
 	DefaultText: "",
 	Value:       "",
-	Usage:       "location used when creating gcloud resources",
-	Destination: &flags.GCloud.Location,
+	Usage:       "location used when creating gcloud/azure resources",
+	Destination: &flags.Location,
 }
 
 var zoneFlag = cli.StringFlag{
@@ -149,9 +150,9 @@ var gcloudCredentialsJsonFlag = cli.StringFlag{
 }
 
 var azureSubscriptionFlag = cli.StringFlag{
-	Name:        "azure-subscription-id",
-	Aliases:     []string{"asub"},
-	Sources:     cli.EnvVars(common.AzureSubscriptionEnv),
+	Name:        "subscription-id",
+	Aliases:     []string{"sid"},
+	Sources:     cli.EnvVars(common.SubscriptionIdEnv),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "Azure subscription ID",
@@ -159,23 +160,33 @@ var azureSubscriptionFlag = cli.StringFlag{
 }
 
 var azureResourceGroupFlag = cli.StringFlag{
-	Name:        "azure-resource-group",
-	Aliases:     []string{"arg"},
-	Sources:     cli.EnvVars(common.AzureResourceGroupEnv),
+	Name:        "resource-group",
+	Aliases:     []string{"rg"},
+	Sources:     cli.EnvVars(common.ResourceGroupEnv),
 	DefaultText: "",
 	Value:       "",
 	Usage:       "Azure resource group name",
 	Destination: &flags.Azure.ResourceGroup,
 }
 
-var azureLocationFlag = cli.StringFlag{
-	Name:        "azure-location",
-	Aliases:     []string{"aloc"},
-	Sources:     cli.EnvVars(common.AzureLocationEnv),
+var azureDevOpsOrgFlag = cli.StringFlag{
+	Name:        "azure-devops-org",
+	Aliases:     []string{"ado-org"},
+	Sources:     cli.EnvVars(common.DevOpsOrgEnv),
 	DefaultText: "",
 	Value:       "",
-	Usage:       "Azure location (e.g., westeurope, eastus)",
-	Destination: &flags.Azure.Location,
+	Usage:       "Azure DevOps organization name (required for cloud pipeline)",
+	Destination: &flags.Azure.DevOpsOrg,
+}
+
+var azureDevOpsProjectFlag = cli.StringFlag{
+	Name:        "azure-devops-project",
+	Aliases:     []string{"ado-proj"},
+	Sources:     cli.EnvVars(common.DevOpsProjectEnv),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "Azure DevOps project name (required for cloud pipeline)",
+	Destination: &flags.Azure.DevOpsProject,
 }
 
 var allowParallelFlag = cli.BoolFlag{

@@ -60,11 +60,9 @@ func (b *BlobStorage) CreateStorageAccount(skipDelay bool) error {
 		return err
 	}
 	if exists {
-		return nil
+		return b.initBlobClientWithKey()
 	}
-
 	util.DelayBucketCreation(b.storageAccountName, skipDelay)
-
 	poller, err := b.storageClient.BeginCreate(b.ctx, b.resourceGroup, b.storageAccountName,
 		armstorage.AccountCreateParameters{
 			Location: to.Ptr(b.location),
@@ -73,13 +71,12 @@ func (b *BlobStorage) CreateStorageAccount(skipDelay bool) error {
 				Name: to.Ptr(armstorage.SKUNameStandardLRS),
 			},
 			Properties: &armstorage.AccountPropertiesCreateParameters{
-				AllowBlobPublicAccess:        to.Ptr(false),
-				MinimumTLSVersion:            to.Ptr(armstorage.MinimumTLSVersionTLS12),
-				EnableHTTPSTrafficOnly:       to.Ptr(true),
-				AllowSharedKeyAccess:         to.Ptr(false),
-				IsHnsEnabled:                 to.Ptr(false),
-				PublicNetworkAccess:          to.Ptr(armstorage.PublicNetworkAccessEnabled),
-				DefaultToOAuthAuthentication: to.Ptr(true),
+				AllowBlobPublicAccess:  to.Ptr(false),
+				MinimumTLSVersion:      to.Ptr(armstorage.MinimumTLSVersionTLS12),
+				EnableHTTPSTrafficOnly: to.Ptr(true),
+				AllowSharedKeyAccess:   to.Ptr(true),
+				IsHnsEnabled:           to.Ptr(false),
+				PublicNetworkAccess:    to.Ptr(armstorage.PublicNetworkAccessEnabled),
 			},
 			Tags: map[string]*string{
 				model.ResourceTagKey: to.Ptr(model.ResourceTagValue),
@@ -95,6 +92,31 @@ func (b *BlobStorage) CreateStorageAccount(skipDelay bool) error {
 	}
 
 	log.Printf("Created Azure Storage Account %s\n", b.storageAccountName)
+	return b.initBlobClientWithKey()
+}
+
+func (b *BlobStorage) initBlobClientWithKey() error {
+	// Get storage account key for data plane operations
+	keysResp, err := b.storageClient.ListKeys(b.ctx, b.resourceGroup, b.storageAccountName, nil)
+	if err != nil {
+		return fmt.Errorf("failed to list storage account keys: %w", err)
+	}
+	if len(keysResp.Keys) == 0 || keysResp.Keys[0].Value == nil {
+		return fmt.Errorf("no storage account keys found")
+	}
+
+	// Create blob client with shared key credential
+	accountKey := *keysResp.Keys[0].Value
+	cred, err := azblob.NewSharedKeyCredential(b.storageAccountName, accountKey)
+	if err != nil {
+		return fmt.Errorf("failed to create shared key credential: %w", err)
+	}
+
+	blobServiceURL := fmt.Sprintf("https://%s.blob.core.windows.net", b.storageAccountName)
+	b.blobClient, err = azblob.NewClientWithSharedKeyCredential(blobServiceURL, cred, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create blob client with shared key: %w", err)
+	}
 	return nil
 }
 
@@ -344,9 +366,6 @@ func (b *BlobStorage) deleteAllBlobsInContainer(containerName string) error {
 }
 
 func (b *BlobStorage) parseFilePath(file string) (containerName, blobName string) {
-	parts := strings.SplitN(file, "/", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
+	// Always use tfstate container, treat full path as blob name (like S3 prefixes)
 	return "tfstate", file
 }
