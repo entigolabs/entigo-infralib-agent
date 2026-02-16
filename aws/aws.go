@@ -178,7 +178,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
-	err = a.createSchedule(config.Schedule, iam)
+	err = a.createSchedule(config.Schedule, iam, manager)
 	if err != nil {
 		return nil, err
 	}
@@ -432,20 +432,26 @@ func (a *awsService) getBuildRoleName() string {
 	return fmt.Sprintf("%s-build-%s", a.cloudPrefix, a.awsConfig.Region)
 }
 
-func (a *awsService) createSchedule(schedule model.Schedule, iam IAM) error {
+func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager model.NotificationManager) error {
 	scheduler := NewScheduler(a.ctx, a.awsConfig, a.cloudPrefix)
 	updateSchedule, err := scheduler.getUpdateSchedule()
+	updateCron := schedule.UpdateCron
 	if err != nil {
-		if schedule.UpdateCron == "" {
+		if updateCron == "" {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get EventBridge schedule %s: %s",
 				getScheduleName(a.cloudPrefix, common.UpdateCommand), err)))
 			return nil
 		}
 		return err
 	}
-	if schedule.UpdateCron == "" {
+	if updateCron == "" {
 		if updateSchedule != nil {
-			return scheduler.deleteUpdateSchedule()
+			err = scheduler.deleteUpdateSchedule()
+			if err == nil {
+				manager.Message(model.MessageTypeSchedule, "Update schedule was removed",
+					map[string]string{"updateSchedule": updateCron})
+			}
+			return err
 		}
 		return nil
 	}
@@ -458,12 +464,19 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM) error {
 		return err
 	}
 	if updateSchedule == nil {
-		return scheduler.createUpdateSchedule(schedule.UpdateCron, updateArn, roleArn)
+		err = scheduler.createUpdateSchedule(updateCron, updateArn, roleArn)
+		if err == nil {
+			manager.Message(model.MessageTypeSchedule, "Update schedule added: "+updateCron,
+				map[string]string{"updateSchedule": updateCron})
+		}
+	} else if *updateSchedule.ScheduleExpression != getCronExpression(updateCron) {
+		err = scheduler.updateUpdateSchedule(updateCron, updateArn, roleArn)
+		if err == nil {
+			manager.Message(model.MessageTypeSchedule, "Update schedule modified: "+updateCron,
+				map[string]string{"updateSchedule": updateCron})
+		}
 	}
-	if *updateSchedule.ScheduleExpression != getCronExpression(schedule.UpdateCron) {
-		return scheduler.updateUpdateSchedule(schedule.UpdateCron, updateArn, roleArn)
-	}
-	return nil
+	return err
 }
 
 func (a *awsService) createScheduleRole(iam IAM, runArn, updateArn string) (string, error) {

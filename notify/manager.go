@@ -119,9 +119,9 @@ func (n *NotificationManager) HasNotifier(messageType model.MessageType) bool {
 	return false
 }
 
-func (n *NotificationManager) Message(messageType model.MessageType, message string) {
+func (n *NotificationManager) Message(messageType model.MessageType, message string, params map[string]string) {
 	n.notify(messageType, func(notifier model.Notifier) error {
-		return notifier.Message(messageType, message)
+		return notifier.Message(messageType, message, params)
 	})
 }
 

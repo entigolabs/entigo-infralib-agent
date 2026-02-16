@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Entigo Infralib Operator API
+  title: Entigo Infralib Agent API
   version: 1.0.0
 paths:
   /agent/status:
@@ -13,12 +13,22 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AgentStatusRequest'
-      parameters:
-        - $ref: '#/components/parameters/OrgHeader'
-        - $ref: '#/components/parameters/WorkspaceHeader'
       responses:
         '200':
           description: Status updated successfully
+  /agent/approval:
+    post:
+      summary: Add approval request for agent
+      operationId: postApprovalRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
+      responses:
+        '200':
+          description: Required approvals updated successfully
   /steps/status:
     post:
       summary: Update step module statuses
@@ -29,9 +39,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/StatusResponse'
-      parameters:
-        - $ref: '#/components/parameters/OrgHeader'
-        - $ref: '#/components/parameters/WorkspaceHeader'
       responses:
         '200':
           description: Status updated successfully
@@ -45,28 +52,10 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ModulesRequest'
-      parameters:
-        - $ref: '#/components/parameters/OrgHeader'
-        - $ref: '#/components/parameters/WorkspaceHeader'
       responses:
         '200':
           description: Steps and modules received successfully
 components:
-  parameters:
-    OrgHeader:
-      name: Entigo-Org
-      in: header
-      description: Organization name
-      required: true
-      schema:
-        type: string
-    WorkspaceHeader:
-      name: Entigo-Workspace
-      in: header
-      description: Workspace name
-      required: true
-      schema:
-        type: string
   schemas:
     AgentStatusRequest:
       type: object
@@ -75,9 +64,35 @@ components:
       properties:
         type:
           type: string
-          enum: [started, success, failure, approvals]
+          enum: [started, success, failure, approvals, schedule]
         message:
           type: string
+        params:
+          type: object
+          additionalProperties:
+            type: string
+    ApprovalRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        plan:
+          $ref: '#/components/schemas/PlanEntity'
+        link:
+          type: string
+    PlanEntity:
+      type: object
+      properties:
+        imported:
+          type: integer
+        added:
+          type: integer
+        changed:
+          type: integer
+        destroyed:
+          type: integer
     ModulesRequest:
       type: object
       required:
@@ -89,6 +104,8 @@ components:
         id:
           type: string
         region:
+          type: string
+        updateSchedule:
           type: string
         provider:
           $ref: '#/components/schemas/ProviderType'

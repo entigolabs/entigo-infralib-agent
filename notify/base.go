@@ -12,7 +12,7 @@ type BaseNotifier struct {
 	MessageFunc func(message string) error
 }
 
-func (b *BaseNotifier) Message(messageType model.MessageType, message string) error {
+func (b *BaseNotifier) Message(messageType model.MessageType, message string, _ map[string]string) error {
 	if messageType == model.MessageTypeFailure {
 		message = fmt.Sprintf("ERROR %s", message)
 	}

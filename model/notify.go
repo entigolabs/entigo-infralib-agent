@@ -4,7 +4,7 @@ import "time"
 
 type NotificationManager interface {
 	HasNotifier(messageType MessageType) bool
-	Message(messageType MessageType, message string)
+	Message(messageType MessageType, message string, params map[string]string)
 	ManualApproval(pipelineName string, changes PipelineChanges, link string)
 	StepState(status ApplyStatus, stepState StateStep, step *Step, err error)
 	Modules(accountId, region string, provider ProviderType, config Config)
@@ -19,6 +19,7 @@ const (
 	MessageTypeSuccess   MessageType = "success"
 	MessageTypeFailure   MessageType = "failure"
 	MessageTypeModules   MessageType = "modules"
+	MessageTypeSchedule  MessageType = "schedule"
 )
 
 type BaseNotifier struct {
@@ -30,7 +31,7 @@ type BaseNotifier struct {
 type Notifier interface {
 	GetName() string
 	Includes(messageType MessageType) bool
-	Message(messageType MessageType, message string) error
+	Message(messageType MessageType, message string, params map[string]string) error
 	ManualApproval(pipelineName string, changes PipelineChanges, link string) error
 	StepState(status ApplyStatus, stepState StateStep, step *Step, err error) error
 	Modules(accountId string, region string, provider ProviderType, config Config) error
@@ -74,28 +75,30 @@ type ModuleStatusEntity struct {
 }
 
 type MessageRequest struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
+	Type    string            `json:"type"`
+	Message string            `json:"message"`
+	Params  map[string]string `json:"params,omitempty"`
 }
 
-type PipelineRequest struct {
+type ApprovalRequest struct {
 	Name string     `json:"name"`
 	Plan PlanEntity `json:"plan"`
 	Link string     `json:"link,omitempty"`
 }
 
 type PlanEntity struct {
-	Import  int `json:"imported,omitempty"`
-	Add     int `json:"added,omitempty"`
-	Change  int `json:"changed,omitempty"`
-	Destroy int `json:"removed,omitempty"`
+	Imported  int `json:"imported,omitempty"`
+	Added     int `json:"added,omitempty"`
+	Changed   int `json:"changed,omitempty"`
+	Destroyed int `json:"destroyed,omitempty"`
 }
 
 type ModulesRequest struct {
-	Id       string       `json:"id"`
-	Region   string       `json:"region"`
-	Provider ProviderType `json:"provider"`
-	Steps    []StepEntity `json:"steps"`
+	Id             string       `json:"id"`
+	Region         string       `json:"region"`
+	UpdateSchedule string       `json:"updateSchedule,omitempty"`
+	Provider       ProviderType `json:"provider"`
+	Steps          []StepEntity `json:"steps"`
 }
 
 type StepEntity struct {

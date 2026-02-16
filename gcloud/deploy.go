@@ -588,7 +588,8 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 				continue
 			}
 			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
-				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName))
+				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName),
+					map[string]string{"pipeline": pipelineName, "step": step.Name})
 				notified = false
 			}
 			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {

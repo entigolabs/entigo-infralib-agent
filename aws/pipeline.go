@@ -716,10 +716,12 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		if action.Status == types.ActionExecutionStatusSucceeded {
 			if status == approvalStatusWaiting && p.manager != nil {
 				message := fmt.Sprintf("Pipeline %s was approved", pipelineName)
+				params := map[string]string{"pipeline": pipelineName, "step": step.Name}
 				if action.UpdatedBy != nil {
 					message += fmt.Sprintf("\nApproved by %s", *action.UpdatedBy)
+					params["approvedBy"] = *action.UpdatedBy
 				}
-				p.manager.Message(model.MessageTypeApprovals, message)
+				p.manager.Message(model.MessageTypeApprovals, message, params)
 			}
 			return approvalStatusApproved, nil
 		}
@@ -752,13 +754,12 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 	}
 	if util.ShouldApprovePipeline(*pipeChanges, step.Approve, autoApprove, approve) {
 		return p.approveStage(pipelineName)
-	} else {
-		log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
-		if p.manager != nil {
-			p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
-		}
-		return approvalStatusWaiting, nil
 	}
+	log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+	if p.manager != nil {
+		p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+	}
+	return approvalStatusWaiting, nil
 }
 
 func (p *Pipeline) getLink(pipelineName string) string {

@@ -67,7 +67,7 @@ func getTokenSource(ctx context.Context, auth *model.ApiOauth) (oauth2.TokenSour
 	return tokenSource, nil
 }
 
-func (a *API) Message(messageType model.MessageType, message string) error {
+func (a *API) Message(messageType model.MessageType, message string, params map[string]string) error {
 	fullUrl, err := url.JoinPath(a.url, "agent", "status")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
@@ -76,12 +76,16 @@ func (a *API) Message(messageType model.MessageType, message string) error {
 	if err != nil {
 		return err
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, headers, model.MessageRequest{Type: string(messageType), Message: message})
+	_, err = a.client.Post(a.ctx, fullUrl, headers, model.MessageRequest{
+		Type:    string(messageType),
+		Message: message,
+		Params:  params,
+	})
 	return err
 }
 
 func (a *API) ManualApproval(pipelineName string, changes model.PipelineChanges, link string) error {
-	fullUrl, err := url.JoinPath(a.url, "pipeline")
+	fullUrl, err := url.JoinPath(a.url, "agent", "approval")
 	if err != nil {
 		return fmt.Errorf(urlErrorFormat, err)
 	}
@@ -89,7 +93,7 @@ func (a *API) ManualApproval(pipelineName string, changes model.PipelineChanges,
 	if err != nil {
 		return err
 	}
-	_, err = a.client.Post(a.ctx, fullUrl, headers, toPipelineRequest(pipelineName, changes, link))
+	_, err = a.client.Post(a.ctx, fullUrl, headers, toApprovalRequest(pipelineName, changes, link))
 	return err
 }
 
@@ -165,14 +169,14 @@ func toStatusRequest(status model.ApplyStatus, stepState model.StateStep, step *
 	}
 }
 
-func toPipelineRequest(pipelineName string, changes model.PipelineChanges, link string) model.PipelineRequest {
-	return model.PipelineRequest{
+func toApprovalRequest(pipelineName string, changes model.PipelineChanges, link string) model.ApprovalRequest {
+	return model.ApprovalRequest{
 		Name: pipelineName,
 		Plan: model.PlanEntity{
-			Import:  changes.Imported,
-			Add:     changes.Added,
-			Change:  changes.Changed,
-			Destroy: changes.Destroyed,
+			Imported:  changes.Imported,
+			Added:     changes.Added,
+			Changed:   changes.Changed,
+			Destroyed: changes.Destroyed,
 		},
 		Link: link,
 	}
@@ -194,9 +198,10 @@ func toModulesRequest(accountId string, region string, provider model.ProviderTy
 		})
 	}
 	return model.ModulesRequest{
-		Id:       accountId,
-		Region:   region,
-		Provider: provider,
-		Steps:    steps,
+		Id:             accountId,
+		Region:         region,
+		UpdateSchedule: config.Schedule.UpdateCron,
+		Provider:       provider,
+		Steps:          steps,
 	}
 }

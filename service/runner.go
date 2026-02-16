@@ -28,7 +28,9 @@ func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags
 		return err
 	}
 	manager.Modules(resources.GetAccount(), resources.GetRegion(), resources.GetProviderType(), config)
-	manager.Message(model.MessageTypeStarted, fmt.Sprintf("Agent %s started: %s", command, provider.GetIdentifier()))
+	identifier := provider.GetIdentifier()
+	params := map[string]string{"command": string(command)}
+	manager.Message(model.MessageTypeStarted, fmt.Sprintf("Agent %s started: %s", command, identifier), params)
 	resources, err = provider.SetupResources(manager, config)
 	if err != nil {
 		return notifyError(manager, fmt.Sprintf("Failed to setup resources: %s", err))
@@ -49,7 +51,8 @@ func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags
 	if err != nil {
 		return notifyError(manager, err.Error())
 	}
-	manager.Message(model.MessageTypeSuccess, fmt.Sprintf("Agent %s finished successfully: %s", command, provider.GetIdentifier()))
+	manager.Message(model.MessageTypeSuccess, fmt.Sprintf("Agent %s finished successfully: %s", command, identifier),
+		params)
 	return nil
 }
 
@@ -63,6 +66,6 @@ func updateAgentJob(cmd common.Command, pipelineFlags common.Pipeline, resources
 }
 
 func notifyError(manager model.NotificationManager, message string) error {
-	manager.Message(model.MessageTypeFailure, message)
+	manager.Message(model.MessageTypeFailure, message, nil)
 	return errors.New(message)
 }

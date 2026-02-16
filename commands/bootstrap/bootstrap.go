@@ -7,6 +7,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/notify"
 	"github.com/entigolabs/entigo-infralib-agent/service"
 )
 
@@ -23,7 +24,11 @@ func Bootstrap(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
-	resources, err = provider.SetupResources(nil, config)
+	manager, err := notify.NewNotificationManager(ctx, config.Notifications)
+	if err != nil {
+		return err
+	}
+	resources, err = provider.SetupResources(manager, config)
 	if err != nil {
 		return fmt.Errorf("failed to setup resources: %v", err)
 	}
