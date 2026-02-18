@@ -3,6 +3,7 @@ package gcloud
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -102,6 +103,26 @@ func (g *GStorage) Delete() error {
 		log.Printf("Deleted GCloud Storage Bucket %s\n", g.bucket)
 	}
 	return err
+}
+
+func (g *GStorage) addEncryption(kmsKeyName string) error {
+	attrs, err := g.bucketHandle.Attrs(g.ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get bucket attributes: %w", err)
+	}
+	if attrs.Encryption != nil && attrs.Encryption.DefaultKMSKeyName != "" {
+		return nil
+	}
+	_, err = g.bucketHandle.Update(g.ctx, storage.BucketAttrsToUpdate{
+		Encryption: &storage.BucketEncryption{
+			DefaultKMSKeyName: kmsKeyName,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set bucket encryption: %w", err)
+	}
+	log.Printf("Set KMS encryption on bucket %s\n", g.bucket)
+	return nil
 }
 
 func (g *GStorage) BucketExists() (bool, error) {

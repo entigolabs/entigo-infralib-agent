@@ -190,6 +190,82 @@ func updateResourcePolicy(policy *cloudresourcemanager.Policy, accountEmail stri
 	}
 }
 
+func (iam *IAM) GetOrCreateCustomRole(roleId, title, description string, permissions []string) error {
+	roleName := fmt.Sprintf("projects/%s/roles/%s", iam.projectId, roleId)
+	existing, err := iam.service.Projects.Roles.Get(roleName).Do()
+	if err != nil {
+		var gerr *googleapi.Error
+		if !errors.As(err, &gerr) || gerr.Code != http.StatusNotFound {
+			return fmt.Errorf("failed to get custom role %s: %w", roleId, err)
+		}
+		return iam.createRole(roleId, title, description, permissions)
+	}
+	if existing.Deleted {
+		_, err = iam.service.Projects.Roles.Undelete(roleName, &iamv1.UndeleteRoleRequest{}).Do()
+		if err != nil {
+			return fmt.Errorf("failed to undelete custom role %s: %w", roleId, err)
+		}
+		log.Printf("Undeleted custom IAM role %s\n", roleId)
+	}
+	if !existing.Deleted && permissionsMatch(existing.IncludedPermissions, permissions) {
+		return nil
+	}
+	existing.IncludedPermissions = permissions
+	_, err = iam.service.Projects.Roles.Patch(roleName, existing).Do()
+	if err != nil {
+		return fmt.Errorf("failed to update custom role %s: %w", roleId, err)
+	}
+	log.Printf("Updated custom IAM role %s\n", roleId)
+	return nil
+}
+
+func (iam *IAM) createRole(roleId, title, description string, permissions []string) error {
+	_, err := iam.service.Projects.Roles.Create(fmt.Sprintf("projects/%s", iam.projectId), &iamv1.CreateRoleRequest{
+		RoleId: roleId,
+		Role: &iamv1.Role{
+			Title:               title,
+			Description:         description,
+			IncludedPermissions: permissions,
+			Stage:               "GA",
+		},
+	}).Do()
+	if err != nil {
+		return fmt.Errorf("failed to create custom role %s: %w", roleId, err)
+	}
+	log.Printf("Created custom IAM role %s\n", roleId)
+	return nil
+}
+
+func permissionsMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, p := range a {
+		set[p] = struct{}{}
+	}
+	for _, p := range b {
+		if _, ok := set[p]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (iam *IAM) DeleteRole(roleId string) error {
+	roleName := fmt.Sprintf("projects/%s/roles/%s", iam.projectId, roleId)
+	_, err := iam.service.Projects.Roles.Delete(roleName).Do()
+	if err != nil {
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+			return nil
+		}
+		return err
+	}
+	log.Printf("Deleted custom IAM role %s\n", roleId)
+	return nil
+}
+
 func (iam *IAM) DeleteServiceAccount(name string) error {
 	_, err := iam.service.Projects.ServiceAccounts.Delete(fmt.Sprintf("projects/%s/serviceAccounts/%s@%s.iam.gserviceaccount.com",
 		iam.projectId, name, iam.projectId)).Do()

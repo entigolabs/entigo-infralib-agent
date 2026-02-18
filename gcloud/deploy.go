@@ -76,11 +76,7 @@ func NewPipeline(ctx context.Context, options []option.ClientOption, projectId s
 	if err != nil {
 		return nil, err
 	}
-	err = createTargets(ctx, client, projectId, location, prefix, serviceAccount)
-	if err != nil {
-		return nil, err
-	}
-	return &Pipeline{
+	pipeline := &Pipeline{
 		ctx:            ctx,
 		client:         client,
 		cloudPrefix:    prefix,
@@ -91,7 +87,12 @@ func NewPipeline(ctx context.Context, options []option.ClientOption, projectId s
 		builder:        builder,
 		logging:        logging,
 		manager:        manager,
-	}, nil
+	}
+	if serviceAccount == "" {
+		return pipeline, nil
+	}
+	err = createTargets(ctx, client, projectId, location, prefix, serviceAccount)
+	return pipeline, err
 }
 
 func createTargets(ctx context.Context, client *deploy.CloudDeployClient, projectId, location, prefix, serviceAccount string) error {

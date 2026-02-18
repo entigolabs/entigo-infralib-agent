@@ -34,11 +34,23 @@ func NewGCloudProvider(ctx context.Context, gCloud common.GCloud) (model.Resourc
 }
 
 func (g *gcloudProvider) GetSSM() (model.SSM, error) {
+	err := g.enableSecretService()
+	if err != nil {
+		return nil, fmt.Errorf("failed to enable secret manager API: %w", err)
+	}
 	sm, err := NewSM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %w", err)
 	}
 	return sm, nil
+}
+
+func (g *gcloudProvider) enableSecretService() error {
+	apiUsage, err := NewApiUsage(g.ctx, g.options, g.projectId)
+	if err != nil {
+		return fmt.Errorf("failed to create API usage service: %s", err)
+	}
+	return apiUsage.EnableService("secretmanager.googleapis.com")
 }
 
 func (g *gcloudProvider) GetBucket(prefix string) (model.Bucket, error) {

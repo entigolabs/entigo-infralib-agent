@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
@@ -17,9 +16,10 @@ import (
 )
 
 type sm struct {
-	ctx       context.Context
-	client    *secretmanager.Client
-	projectId string
+	ctx        context.Context
+	client     *secretmanager.Client
+	projectId  string
+	kmsKeyName string
 }
 
 func NewSM(ctx context.Context, options []option.ClientOption, projectId string) (model.SSM, error) {
@@ -34,8 +34,8 @@ func NewSM(ctx context.Context, options []option.ClientOption, projectId string)
 	}, nil
 }
 
-func (s *sm) AddEncryptionKeyId(_ string) {
-	slog.Warn("AddEncryptionKeyId is not supported for GCP")
+func (s *sm) AddEncryptionKeyId(keyId string) {
+	s.kmsKeyName = keyId
 }
 
 func (s *sm) GetParameter(name string) (*model.Parameter, error) {
@@ -98,14 +98,26 @@ func (s *sm) PutParameter(name string, value string) error {
 }
 
 func (s *sm) createSecret(name string) error {
+	replication := &secretmanagerpb.Replication{
+		Replication: &secretmanagerpb.Replication_Automatic_{},
+	}
+	if s.kmsKeyName != "" {
+		replication = &secretmanagerpb.Replication{
+			Replication: &secretmanagerpb.Replication_Automatic_{
+				Automatic: &secretmanagerpb.Replication_Automatic{
+					CustomerManagedEncryption: &secretmanagerpb.CustomerManagedEncryption{
+						KmsKeyName: s.kmsKeyName,
+					},
+				},
+			},
+		}
+	}
 	_, err := s.client.CreateSecret(s.ctx, &secretmanagerpb.CreateSecretRequest{
 		Parent:   fmt.Sprintf("projects/%s", s.projectId),
 		SecretId: name,
 		Secret: &secretmanagerpb.Secret{
-			Replication: &secretmanagerpb.Replication{
-				Replication: &secretmanagerpb.Replication_Automatic_{},
-			},
-			Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+			Replication: replication,
+			Labels:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
 	return err
