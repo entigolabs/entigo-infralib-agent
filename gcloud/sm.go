@@ -9,10 +9,8 @@ import (
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/grpc/codes"
 )
 
 type sm struct {
@@ -44,8 +42,7 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/latest", s.projectId, name),
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+		if isNotFoundError(err) {
 			return nil, &model.ParameterNotFoundError{Name: name}
 		}
 		return nil, err
@@ -98,16 +95,12 @@ func (s *sm) PutParameter(name string, value string) error {
 }
 
 func (s *sm) createSecret(name string) error {
-	replication := &secretmanagerpb.Replication{
-		Replication: &secretmanagerpb.Replication_Automatic_{},
-	}
+	replication := &secretmanagerpb.Replication_Automatic_{}
 	if s.kmsKeyName != "" {
-		replication = &secretmanagerpb.Replication{
-			Replication: &secretmanagerpb.Replication_Automatic_{
-				Automatic: &secretmanagerpb.Replication_Automatic{
-					CustomerManagedEncryption: &secretmanagerpb.CustomerManagedEncryption{
-						KmsKeyName: s.kmsKeyName,
-					},
+		replication = &secretmanagerpb.Replication_Automatic_{
+			Automatic: &secretmanagerpb.Replication_Automatic{
+				CustomerManagedEncryption: &secretmanagerpb.CustomerManagedEncryption{
+					KmsKeyName: s.kmsKeyName,
 				},
 			},
 		}
@@ -116,7 +109,7 @@ func (s *sm) createSecret(name string) error {
 		Parent:   fmt.Sprintf("projects/%s", s.projectId),
 		SecretId: name,
 		Secret: &secretmanagerpb.Secret{
-			Replication: replication,
+			Replication: &secretmanagerpb.Replication{Replication: replication},
 			Labels:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
@@ -128,8 +121,7 @@ func (s *sm) DeleteParameter(name string) error {
 		Name: fmt.Sprintf("projects/%s/secrets/%s", s.projectId, name),
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+		if isNotFoundError(err) {
 			return nil
 		}
 		return err

@@ -110,7 +110,7 @@ func (g *GStorage) addEncryption(kmsKeyName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get bucket attributes: %w", err)
 	}
-	if attrs.Encryption != nil && attrs.Encryption.DefaultKMSKeyName != "" {
+	if attrs.Encryption != nil && attrs.Encryption.DefaultKMSKeyName == kmsKeyName {
 		return nil
 	}
 	_, err = g.bucketHandle.Update(g.ctx, storage.BucketAttrsToUpdate{

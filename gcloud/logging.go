@@ -12,7 +12,6 @@ import (
 	"cloud.google.com/go/logging/apiv2/loggingpb"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -135,7 +134,7 @@ func (l *Logging) getLogBucket(bucketId string) (*loggingpb.LogBucket, error) {
 		Name: fmt.Sprintf("projects/%s/locations/%s/buckets/%s", l.projectId, l.location, bucketId),
 	})
 	if err != nil {
-		if isNotFound(err) {
+		if isNotFoundError(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -205,7 +204,7 @@ func (l *Logging) getLogSink(sinkName string) (*loggingpb.LogSink, error) {
 		SinkName: fmt.Sprintf("projects/%s/sinks/%s", l.projectId, sinkName),
 	})
 	if err != nil {
-		if isNotFound(err) {
+		if isNotFoundError(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -220,7 +219,7 @@ func (l *Logging) CreateDefaultSinkExclusion(exclusionName, filter string) error
 	if err == nil {
 		return nil
 	}
-	if !isNotFound(err) {
+	if !isNotFoundError(err) {
 		return err
 	}
 	_, err = l.configClient.CreateExclusion(l.ctx, &loggingpb.CreateExclusionRequest{
@@ -242,29 +241,21 @@ func (l *Logging) DeleteLogResources(bucketIds []string, sinkName, exclusionName
 	err := l.configClient.DeleteExclusion(l.ctx, &loggingpb.DeleteExclusionRequest{
 		Name: fmt.Sprintf("projects/%s/exclusions/%s", l.projectId, exclusionName),
 	})
-	if err != nil && !isNotFound(err) {
+	if err != nil && !isNotFoundError(err) {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete exclusion %s: %s", exclusionName, err)))
 	}
 	err = l.configClient.DeleteSink(l.ctx, &loggingpb.DeleteSinkRequest{
 		SinkName: fmt.Sprintf("projects/%s/sinks/%s", l.projectId, sinkName),
 	})
-	if err != nil && !isNotFound(err) {
+	if err != nil && !isNotFoundError(err) {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete log sink %s: %s", sinkName, err)))
 	}
 	for _, bucketId := range bucketIds {
 		err = l.configClient.DeleteBucket(l.ctx, &loggingpb.DeleteBucketRequest{
 			Name: fmt.Sprintf("projects/%s/locations/%s/buckets/%s", l.projectId, l.location, bucketId),
 		})
-		if err != nil && !isNotFound(err) {
+		if err != nil && !isNotFoundError(err) {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete log bucket %s: %s", bucketId, err)))
 		}
 	}
-}
-
-func isNotFound(err error) bool {
-	var apiError *apierror.APIError
-	if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
-		return true
-	}
-	return status.Code(err) == codes.NotFound
 }

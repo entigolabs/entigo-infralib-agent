@@ -257,17 +257,12 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete pipeline targets: %s", err)))
 	}
-	if g.resources.Logging != nil {
-		g.resources.Logging.DeleteLogResources([]string{g.getLogBucketId(), g.getLogBucketKmsId()}, g.getLogSinkName(), g.getLogExclusionName())
-	}
+	g.resources.Logging.DeleteLogResources([]string{g.getLogBucketId(), g.getLogBucketKmsId()}, g.getLogSinkName(), g.getLogExclusionName())
 	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
 	}
-	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
-	if len(accountName) > 30 {
-		accountName = accountName[:30]
-	}
+	accountName := getAgentSAName(g.cloudPrefix, g.location)
 	err = iam.DeleteServiceAccount(accountName)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err)))
@@ -307,11 +302,16 @@ func (g *gcloudService) enableApiServices(services []string) error {
 	return nil
 }
 
-func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
-	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
+func getAgentSAName(cloudPrefix, location string) string {
+	accountName := fmt.Sprintf("%s-agent-%s", cloudPrefix, location)
 	if len(accountName) > 30 {
 		accountName = accountName[:30]
 	}
+	return accountName
+}
+
+func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
+	accountName := getAgentSAName(g.cloudPrefix, g.location)
 	account, created, err := iam.GetOrCreateServiceAccount(accountName, "Entigo infralib service account")
 	if err != nil {
 		return "", fmt.Errorf("failed to create service account: %s", err)
@@ -411,50 +411,12 @@ func getBucketName(cloudPrefix, projectId, location string) string {
 	return fmt.Sprintf("%s-%s-%s", cloudPrefix, projectId, location)
 }
 
-const cicdRoleId = "entigo_infralib_cicd"
-
-var cicdRolePermissions = []string{
-	"clouddeploy.deliveryPipelines.create",
-	"clouddeploy.deliveryPipelines.get",
-	"clouddeploy.deliveryPipelines.update",
-	"clouddeploy.releases.create",
-	"clouddeploy.releases.get",
-	"clouddeploy.releases.abandon",
-	"clouddeploy.rollouts.create",
-	"clouddeploy.rollouts.get",
-	"clouddeploy.targets.get",
-	"clouddeploy.operations.get",
-	"run.jobs.update",
-	"run.jobs.get",
-	"run.jobs.run",
-	"run.operations.get",
-	"cloudscheduler.jobs.create",
-	"cloudscheduler.jobs.update",
-	"cloudscheduler.jobs.get",
-	"cloudscheduler.locations.list",
-	"iam.serviceAccounts.actAs",
-	"iam.serviceAccounts.getIamPolicy",
-	"iam.serviceAccounts.setIamPolicy",
-	"iam.serviceAccounts.getAccessToken",
-	"iam.serviceAccounts.get",
-	"serviceusage.services.enable",
-	"serviceusage.services.get",
-	"serviceusage.services.list",
-	"resourcemanager.projects.getIamPolicy",
-	"resourcemanager.projects.setIamPolicy",
-	"storage.buckets.get",
-	"storage.buckets.create",
-	"storage.buckets.list",
-	"storage.objects.list",
-	"storage.objects.get",
-	"secretmanager.versions.access",
-	"logging.logEntries.list",
-	"logging.logs.list",
-	"logging.views.access",
+func getServiceAccountName(cloudPrefix, location string) string {
+	return fmt.Sprintf("%s-sa-%s", cloudPrefix, location)
 }
 
 func (g *gcloudService) CreateServiceAccount() error {
-	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
+	username := getServiceAccountName(g.cloudPrefix, g.location)
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)
 	}
@@ -478,11 +440,11 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create service account: %s", err)
 	}
-	err = iam.GetOrCreateCustomRole(cicdRoleId, "Entigo Infralib CI/CD", "Entigo Infralib CI/CD", cicdRolePermissions)
+	err = iam.GetOrCreateCustomRole(username, "Entigo Infralib CI/CD", "Entigo Infralib CI/CD", ServiceAccountPermissions())
 	if err != nil {
 		return fmt.Errorf("failed to create custom IAM role: %s", err)
 	}
-	customRole := fmt.Sprintf("projects/%s/roles/%s", g.projectId, cicdRoleId)
+	customRole := fmt.Sprintf("projects/%s/roles/%s", g.projectId, username)
 	err = iam.AddRolesToProject(account.Name, []string{customRole})
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
@@ -510,14 +472,14 @@ func (g *gcloudService) CreateServiceAccount() error {
 }
 
 func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
-	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
+	username := getServiceAccountName(g.cloudPrefix, g.location)
 	err := iam.DeleteServiceAccount(username)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", username, err)))
 	}
-	err = iam.DeleteRole(cicdRoleId)
+	err = iam.DeleteRole(username)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete custom IAM role %s: %s", cicdRoleId, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete custom IAM role %s: %s", username, err)))
 	}
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	err = g.resources.SSM.DeleteParameter(keyParam)

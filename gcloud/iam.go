@@ -303,3 +303,45 @@ func retry(execute func() error) error {
 	}
 	return lastErr
 }
+
+func ServiceAccountPermissions() []string {
+	return []string{
+		"clouddeploy.deliveryPipelines.create",
+		"clouddeploy.deliveryPipelines.get",
+		"clouddeploy.deliveryPipelines.update",
+		"clouddeploy.releases.create",
+		"clouddeploy.releases.get",
+		"clouddeploy.releases.abandon",
+		"clouddeploy.rollouts.create",
+		"clouddeploy.rollouts.get",
+		"clouddeploy.targets.get",
+		"clouddeploy.operations.get",
+		"run.jobs.update",
+		"run.jobs.get",
+		"run.jobs.run",
+		"run.operations.get",
+		"cloudscheduler.jobs.create",
+		"cloudscheduler.jobs.update",
+		"cloudscheduler.jobs.get",
+		"cloudscheduler.locations.list",
+		"iam.serviceAccounts.actAs",
+		"iam.serviceAccounts.getIamPolicy",
+		"iam.serviceAccounts.setIamPolicy",
+		"iam.serviceAccounts.getAccessToken",
+		"iam.serviceAccounts.get",
+		"serviceusage.services.enable",
+		"serviceusage.services.get",
+		"serviceusage.services.list",
+		"resourcemanager.projects.getIamPolicy",
+		"resourcemanager.projects.setIamPolicy",
+		"storage.buckets.get",
+		"storage.buckets.create",
+		"storage.buckets.list",
+		"storage.objects.list",
+		"storage.objects.get",
+		"secretmanager.versions.access",
+		"logging.logEntries.list",
+		"logging.logs.list",
+		"logging.views.access",
+	}
+}

@@ -18,10 +18,8 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"gopkg.in/yaml.v3"
@@ -110,23 +108,9 @@ func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collect
 		if target.GetRequireApproval() == requireApproval {
 			return nil
 		}
-		updateTargetOp, err := client.UpdateTarget(ctx, &deploypb.UpdateTargetRequest{
-			UpdateMask: &fieldmaskpb.FieldMask{
-				Paths: []string{"require_approval"},
-			},
-			Target: &deploypb.Target{
-				Name:            target.GetName(),
-				RequireApproval: requireApproval,
-			},
-		})
-		if err != nil {
-			return err
-		}
-		_, err = updateTargetOp.Wait(ctx)
-		return err
+		return updateTarget(ctx, client, target, requireApproval)
 	}
-	var apiError *apierror.APIError
-	if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.NotFound {
+	if !isNotFoundError(err) {
 		return err
 	}
 	createOp, err := client.CreateTarget(ctx, &deploypb.CreateTargetRequest{
@@ -151,12 +135,29 @@ func createTarget(ctx context.Context, client *deploy.CloudDeployClient, collect
 		},
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.AlreadyExists {
-			return err
+		if isAlreadyExistsError(err) {
+			return nil
 		}
+		return err
 	}
 	_, err = createOp.Wait(ctx)
+	return err
+}
+
+func updateTarget(ctx context.Context, client *deploy.CloudDeployClient, target *deploypb.Target, requireApproval bool) error {
+	updateTargetOp, err := client.UpdateTarget(ctx, &deploypb.UpdateTargetRequest{
+		UpdateMask: &fieldmaskpb.FieldMask{
+			Paths: []string{"require_approval"},
+		},
+		Target: &deploypb.Target{
+			Name:            target.GetName(),
+			RequireApproval: requireApproval,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = updateTargetOp.Wait(ctx)
 	return err
 }
 
@@ -221,8 +222,7 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 		Name: name,
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+		if isNotFoundError(err) {
 			return nil
 		}
 		return err
@@ -284,8 +284,7 @@ func (p *Pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 		},
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.AlreadyExists {
+		if isAlreadyExistsError(err) {
 			return nil
 		}
 		return err
