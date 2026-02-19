@@ -104,6 +104,9 @@ func (l *Logging) CreateLogBucket(bucketId, kmsKeyName string) error {
 	}
 	l.logBucketId = bucketId
 	if existing != nil {
+		if existing.LifecycleState == loggingpb.LifecycleState_DELETE_REQUESTED {
+			return l.restoreLogBucket(bucketId)
+		}
 		return nil
 	}
 	bucket := &loggingpb.LogBucket{
@@ -138,6 +141,18 @@ func (l *Logging) getLogBucket(bucketId string) (*loggingpb.LogBucket, error) {
 		return nil, err
 	}
 	return bucket, nil
+}
+
+func (l *Logging) restoreLogBucket(bucketId string) error {
+	log.Printf("Log bucket %s is in deleting state, restoring it\n", bucketId)
+	err := l.configClient.UndeleteBucket(l.ctx, &loggingpb.UndeleteBucketRequest{
+		Name: fmt.Sprintf("projects/%s/locations/%s/buckets/%s", l.projectId, l.location, bucketId),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to restore log bucket %s: %w", bucketId, err)
+	}
+	log.Printf("Restored log bucket %s\n", bucketId)
+	return nil
 }
 
 func (l *Logging) CreateLogSink(sinkName, bucketId, filter string) error {
