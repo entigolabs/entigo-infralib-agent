@@ -190,7 +190,7 @@ func updateResourcePolicy(policy *cloudresourcemanager.Policy, accountEmail stri
 	}
 }
 
-func (iam *IAM) GetOrCreateCustomRole(roleId, title, description string, permissions []string) error {
+func (iam *IAM) GetOrCreateRole(roleId, title, description string, permissions []string) error {
 	roleName := fmt.Sprintf("projects/%s/roles/%s", iam.projectId, roleId)
 	existing, err := iam.service.Projects.Roles.Get(roleName).Do()
 	if err != nil {

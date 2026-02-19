@@ -440,11 +440,12 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create service account: %s", err)
 	}
-	err = iam.GetOrCreateCustomRole(username, "Entigo Infralib CI/CD", "Entigo Infralib CI/CD", ServiceAccountPermissions())
+	roleName := strings.ReplaceAll(username, "-", "_")
+	err = iam.GetOrCreateRole(roleName, "Entigo Infralib CI/CD", "Entigo Infralib CI/CD", ServiceAccountPermissions())
 	if err != nil {
 		return fmt.Errorf("failed to create custom IAM role: %s", err)
 	}
-	customRole := fmt.Sprintf("projects/%s/roles/%s", g.projectId, username)
+	customRole := fmt.Sprintf("projects/%s/roles/%s", g.projectId, roleName)
 	err = iam.AddRolesToProject(account.Name, []string{customRole})
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
@@ -477,9 +478,10 @@ func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", username, err)))
 	}
-	err = iam.DeleteRole(username)
+	roleName := strings.ReplaceAll(username, "-", "_")
+	err = iam.DeleteRole(roleName)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete custom IAM role %s: %s", username, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete custom IAM role %s: %s", roleName, err)))
 	}
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	err = g.resources.SSM.DeleteParameter(keyParam)
