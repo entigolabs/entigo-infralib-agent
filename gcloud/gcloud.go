@@ -105,7 +105,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage bucket: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -139,7 +139,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage bucket: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -206,7 +206,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -424,10 +424,6 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
 	}
-	secrets, err := NewSM(g.ctx, g.options, g.projectId)
-	if err != nil {
-		return fmt.Errorf("failed to create secret manager: %s", err)
-	}
 	apiUsage, err := NewApiUsage(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create API usage service: %s", err)
@@ -453,7 +449,7 @@ func (g *gcloudService) CreateServiceAccount() error {
 
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	if !created {
-		_, err = secrets.GetParameter(keyParam)
+		_, err = g.resources.SSM.GetParameter(keyParam)
 		if err == nil {
 			log.Printf("Service account secret %s stored in SM", keyParam)
 			return nil
@@ -464,7 +460,7 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create service account key: %v", err)
 	}
-	err = secrets.PutParameter(keyParam, key.PrivateKeyData)
+	err = g.resources.SSM.PutParameter(keyParam, key.PrivateKeyData)
 	if err != nil {
 		return fmt.Errorf("failed to create secret %s: %v", keyParam, err)
 	}

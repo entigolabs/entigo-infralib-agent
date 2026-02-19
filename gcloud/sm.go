@@ -17,10 +17,11 @@ type sm struct {
 	ctx        context.Context
 	client     *secretmanager.Client
 	projectId  string
+	location   string
 	kmsKeyName string
 }
 
-func NewSM(ctx context.Context, options []option.ClientOption, projectId string) (model.SSM, error) {
+func NewSM(ctx context.Context, options []option.ClientOption, projectId, location string) (model.SSM, error) {
 	client, err := secretmanager.NewClient(ctx, options...)
 	if err != nil {
 		return nil, err
@@ -29,6 +30,7 @@ func NewSM(ctx context.Context, options []option.ClientOption, projectId string)
 		ctx:       ctx,
 		client:    client,
 		projectId: projectId,
+		location:  location,
 	}, nil
 }
 
@@ -95,21 +97,26 @@ func (s *sm) PutParameter(name string, value string) error {
 }
 
 func (s *sm) createSecret(name string) error {
-	replication := &secretmanagerpb.Replication_Automatic_{}
+	replication := &secretmanagerpb.Replication{
+		Replication: &secretmanagerpb.Replication_Automatic_{},
+	}
 	if s.kmsKeyName != "" {
-		replication = &secretmanagerpb.Replication_Automatic_{
-			Automatic: &secretmanagerpb.Replication_Automatic{
-				CustomerManagedEncryption: &secretmanagerpb.CustomerManagedEncryption{
-					KmsKeyName: s.kmsKeyName,
-				},
+		replication = &secretmanagerpb.Replication{
+			Replication: &secretmanagerpb.Replication_UserManaged_{UserManaged: &secretmanagerpb.Replication_UserManaged{
+				Replicas: []*secretmanagerpb.Replication_UserManaged_Replica{{
+					Location: s.location,
+					CustomerManagedEncryption: &secretmanagerpb.CustomerManagedEncryption{
+						KmsKeyName: s.kmsKeyName,
+					},
+				}},
 			},
-		}
+			}}
 	}
 	_, err := s.client.CreateSecret(s.ctx, &secretmanagerpb.CreateSecretRequest{
 		Parent:   fmt.Sprintf("projects/%s", s.projectId),
 		SecretId: name,
 		Secret: &secretmanagerpb.Secret{
-			Replication: &secretmanagerpb.Replication{Replication: replication},
+			Replication: replication,
 			Labels:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})

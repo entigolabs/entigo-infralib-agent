@@ -38,7 +38,7 @@ func (g *gcloudProvider) GetSSM() (model.SSM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to enable secret manager API: %w", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %w", err)
 	}
