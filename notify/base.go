@@ -41,16 +41,16 @@ func (b *BaseNotifier) ManualApproval(pipelineName string, changes model.Pipelin
 func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step, err error) error {
 	var buffer bytes.Buffer
 	if b.Context != "" {
-		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
+		fmt.Fprintf(&buffer, "%s ", b.Context)
 	}
-	buffer.WriteString(fmt.Sprintf("Step '%s' status: %s", stepState.Name, status))
+	fmt.Fprintf(&buffer, "Step '%s' status: %s", stepState.Name, status)
 	if err != nil {
-		buffer.WriteString(fmt.Sprintf(", error: %s", err.Error()))
+		fmt.Fprintf(&buffer, ", error: %s", err.Error())
 	}
 	for _, module := range stepState.Modules {
-		buffer.WriteString(fmt.Sprintf("\nModule '%s' version: %s", module.Name, module.Version))
+		fmt.Fprintf(&buffer, "\nModule '%s' version: %s", module.Name, module.Version)
 		if module.AppliedVersion != nil {
-			buffer.WriteString(fmt.Sprintf(", applied version: %s", *module.AppliedVersion))
+			fmt.Fprintf(&buffer, ", applied version: %s", *module.AppliedVersion)
 		}
 	}
 	return b.MessageFunc(buffer.String())
@@ -59,13 +59,13 @@ func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.State
 func (b *BaseNotifier) Modules(accountId string, region string, _ model.ProviderType, config model.Config) error {
 	var buffer bytes.Buffer
 	if b.Context != "" {
-		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
+		fmt.Fprintf(&buffer, "%s ", b.Context)
 	}
-	buffer.WriteString(fmt.Sprintf("Steps for account %s in region %s", accountId, region))
+	fmt.Fprintf(&buffer, "Steps for account %s in region %s", accountId, region)
 	for _, step := range config.Steps {
-		buffer.WriteString(fmt.Sprintf("\nStep '%s':", step.Name))
+		fmt.Fprintf(&buffer, "\nStep '%s':", step.Name)
 		for _, module := range step.Modules {
-			buffer.WriteString(fmt.Sprintf("\n- Module '%s' source: %s", module.Name, module.Source))
+			fmt.Fprintf(&buffer, "\n- Module '%s' source: %s", module.Name, module.Source)
 		}
 	}
 	return b.MessageFunc(buffer.String())

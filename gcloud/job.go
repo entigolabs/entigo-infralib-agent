@@ -15,11 +15,9 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/option"
 	runv1 "google.golang.org/api/run/v1"
 	"google.golang.org/genproto/googleapis/api"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -418,8 +416,7 @@ func (b *Builder) getJob(projectName string) (*runpb.Job, error) {
 		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", b.projectId, b.location, projectName),
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && (apiError.HTTPCode() == 404 || apiError.GRPCStatus().Code() == codes.NotFound) {
+		if isNotFoundError(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -531,11 +528,10 @@ func (b *Builder) deleteJob(name string) error {
 		Name: fmt.Sprintf("projects/%s/locations/%s/jobs/%s", b.projectId, b.location, name),
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.NotFound {
-			return err
+		if isNotFoundError(err) {
+			return nil
 		}
-		return nil
+		return err
 	}
 	_, err = jobOp.Wait(b.ctx)
 	if err == nil {

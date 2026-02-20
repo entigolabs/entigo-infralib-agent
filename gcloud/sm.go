@@ -4,25 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/grpc/codes"
 )
 
 type sm struct {
-	ctx       context.Context
-	client    *secretmanager.Client
-	projectId string
+	ctx        context.Context
+	client     *secretmanager.Client
+	projectId  string
+	location   string
+	kmsKeyName string
 }
 
-func NewSM(ctx context.Context, options []option.ClientOption, projectId string) (model.SSM, error) {
+func NewSM(ctx context.Context, options []option.ClientOption, projectId, location string) (model.SSM, error) {
 	client, err := secretmanager.NewClient(ctx, options...)
 	if err != nil {
 		return nil, err
@@ -31,11 +30,12 @@ func NewSM(ctx context.Context, options []option.ClientOption, projectId string)
 		ctx:       ctx,
 		client:    client,
 		projectId: projectId,
+		location:  location,
 	}, nil
 }
 
-func (s *sm) AddEncryptionKeyId(_ string) {
-	slog.Warn("AddEncryptionKeyId is not supported for GCP")
+func (s *sm) AddEncryptionKeyId(keyId string) {
+	s.kmsKeyName = keyId
 }
 
 func (s *sm) GetParameter(name string) (*model.Parameter, error) {
@@ -44,8 +44,7 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/latest", s.projectId, name),
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+		if isNotFoundError(err) {
 			return nil, &model.ParameterNotFoundError{Name: name}
 		}
 		return nil, err
@@ -98,14 +97,27 @@ func (s *sm) PutParameter(name string, value string) error {
 }
 
 func (s *sm) createSecret(name string) error {
+	replication := &secretmanagerpb.Replication{
+		Replication: &secretmanagerpb.Replication_Automatic_{},
+	}
+	if s.kmsKeyName != "" {
+		replication = &secretmanagerpb.Replication{
+			Replication: &secretmanagerpb.Replication_UserManaged_{UserManaged: &secretmanagerpb.Replication_UserManaged{
+				Replicas: []*secretmanagerpb.Replication_UserManaged_Replica{{
+					Location: s.location,
+					CustomerManagedEncryption: &secretmanagerpb.CustomerManagedEncryption{
+						KmsKeyName: s.kmsKeyName,
+					},
+				}},
+			},
+			}}
+	}
 	_, err := s.client.CreateSecret(s.ctx, &secretmanagerpb.CreateSecretRequest{
 		Parent:   fmt.Sprintf("projects/%s", s.projectId),
 		SecretId: name,
 		Secret: &secretmanagerpb.Secret{
-			Replication: &secretmanagerpb.Replication{
-				Replication: &secretmanagerpb.Replication_Automatic_{},
-			},
-			Labels: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+			Replication: replication,
+			Labels:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
 	return err
@@ -116,8 +128,7 @@ func (s *sm) DeleteParameter(name string) error {
 		Name: fmt.Sprintf("projects/%s/secrets/%s", s.projectId, name),
 	})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+		if isNotFoundError(err) {
 			return nil
 		}
 		return err

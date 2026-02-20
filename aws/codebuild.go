@@ -289,15 +289,15 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("updated CodeBuild project %s", projectName))
+	fmt.Fprintf(&sb, "updated CodeBuild project %s", projectName)
 	if imageChanged {
-		sb.WriteString(fmt.Sprintf(" image to %s", *image))
+		fmt.Fprintf(&sb, " image to %s", *image)
 	}
 	if vpcChanged {
 		if awsVpcConfig.VpcId != nil {
-			sb.WriteString(fmt.Sprintf(" vpc to %s", *awsVpcConfig.VpcId))
+			fmt.Fprintf(&sb, " vpc to %s", *awsVpcConfig.VpcId)
 		} else {
-			sb.WriteString(" removed vpc")
+			fmt.Fprintf(&sb, " removed vpc")
 		}
 	}
 	log.Println(sb.String())

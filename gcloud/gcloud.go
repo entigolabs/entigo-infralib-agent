@@ -12,6 +12,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"google.golang.org/api/option"
 )
 
@@ -29,6 +30,7 @@ type gcloudService struct {
 
 type Resources struct {
 	model.CloudResources
+	Logging *Logging
 }
 
 func (r Resources) GetBackendConfigVars(key string) map[string]string {
@@ -103,7 +105,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage bucket: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
@@ -137,11 +139,11 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage bucket: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
-	resources := Resources{
+	g.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.GCLOUD,
 			Bucket:       storage,
@@ -153,13 +155,18 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 		},
 	}
 	if g.pipeline.Type == string(common.PipelineTypeLocal) {
-		return resources, nil
+		return g.resources, nil
 	}
 
-	logging, err := NewLogging(g.ctx, g.options, g.projectId)
+	logging, err := NewLogging(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logging client: %s", err)
 	}
+	err = g.createLogResources(logging, g.getLogBucketId(), "")
+	if err != nil {
+		return nil, err
+	}
+	g.resources.Logging = logging
 	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IAM service: %s", err)
@@ -176,13 +183,13 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
-	resources.CodeBuild = builder
-	resources.Pipeline = pipeline
+	g.resources.CodeBuild = builder
+	g.resources.Pipeline = pipeline
 	err = g.createSchedule(config.Schedule, serviceAccount)
 	if err != nil {
 		return nil, err
 	}
-	return resources, nil
+	return g.resources, nil
 }
 
 func (g *gcloudService) GetResources() (model.Resources, error) {
@@ -199,10 +206,15 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
-	sm, err := NewSM(g.ctx, g.options, g.projectId)
+	sm, err := NewSM(g.ctx, g.options, g.projectId, g.location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
+	logging, err := NewLogging(g.ctx, g.options, g.projectId, g.location)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logging client: %s", err)
+	}
+	logging.logBucketId = g.resolveLogBucketId(logging)
 	g.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.GCLOUD,
@@ -215,6 +227,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 			Region:       g.location,
 			Account:      g.projectId,
 		},
+		Logging: logging,
 	}
 	return g.resources, nil
 }
@@ -244,14 +257,12 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete pipeline targets: %s", err)))
 	}
+	g.resources.Logging.DeleteLogResources([]string{g.getLogBucketId(), g.getLogBucketKmsId()}, g.getLogSinkName(), g.getLogExclusionName())
 	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
 	}
-	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
-	if len(accountName) > 30 {
-		accountName = accountName[:30]
-	}
+	accountName := getAgentSAName(g.cloudPrefix, g.location)
 	err = iam.DeleteServiceAccount(accountName)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", accountName, err)))
@@ -280,18 +291,27 @@ func (g *gcloudService) enableApiServices(services []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create API usage service: %s", err)
 	}
-	err = apiUsage.EnableServices(services)
+	if len(services) == 1 {
+		err = apiUsage.EnableService(services[0])
+	} else {
+		err = apiUsage.EnableServices(services)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to enable services: %s", err)
 	}
 	return nil
 }
 
-func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
-	accountName := fmt.Sprintf("%s-agent-%s", g.cloudPrefix, g.location)
+func getAgentSAName(cloudPrefix, location string) string {
+	accountName := fmt.Sprintf("%s-agent-%s", cloudPrefix, location)
 	if len(accountName) > 30 {
 		accountName = accountName[:30]
 	}
+	return accountName
+}
+
+func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
+	accountName := getAgentSAName(g.cloudPrefix, g.location)
 	account, created, err := iam.GetOrCreateServiceAccount(accountName, "Entigo infralib service account")
 	if err != nil {
 		return "", fmt.Errorf("failed to create service account: %s", err)
@@ -303,7 +323,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	}
 	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
 		"roles/iam.serviceAccountAdmin", "roles/container.admin", "roles/secretmanager.secretAccessor",
-		"roles/iam.roleAdmin", "roles/servicenetworking.networksAdmin"})
+		"roles/iam.roleAdmin", "roles/servicenetworking.networksAdmin", "roles/logging.viewAccessor"})
 	if err != nil {
 		return "", fmt.Errorf("failed to add roles to project: %s", err)
 	}
@@ -345,6 +365,44 @@ func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount s
 	return nil
 }
 
+func (g *gcloudService) createLogResources(logging *Logging, bucketId, kmsKeyName string) error {
+	err := logging.CreateLogBucket(bucketId, kmsKeyName)
+	if err != nil {
+		return err
+	}
+	filter := fmt.Sprintf(`resource.type = "cloud_run_job" AND resource.labels.job_name =~ "^%s-"`, g.cloudPrefix)
+	err = logging.CreateLogSink(g.getLogSinkName(), bucketId, filter)
+	if err != nil {
+		return err
+	}
+	return logging.CreateDefaultSinkExclusion(g.getLogExclusionName(), filter)
+}
+
+func (g *gcloudService) getLogBucketId() string {
+	return fmt.Sprintf("%s-log", g.cloudPrefix)
+}
+
+func (g *gcloudService) getLogBucketKmsId() string {
+	return fmt.Sprintf("%s-log-kms", g.cloudPrefix)
+}
+
+func (g *gcloudService) resolveLogBucketId(logging *Logging) string {
+	kmsBucketId := g.getLogBucketKmsId()
+	bucket, err := logging.getLogBucket(kmsBucketId)
+	if err == nil && bucket != nil {
+		return kmsBucketId
+	}
+	return g.getLogBucketId()
+}
+
+func (g *gcloudService) getLogSinkName() string {
+	return fmt.Sprintf("%s-log-sink", g.cloudPrefix)
+}
+
+func (g *gcloudService) getLogExclusionName() string {
+	return fmt.Sprintf("%s-log-exclusion", g.cloudPrefix)
+}
+
 func (g *gcloudService) getBucketName() string {
 	return getBucketName(g.cloudPrefix, g.projectId, g.location)
 }
@@ -353,18 +411,18 @@ func getBucketName(cloudPrefix, projectId, location string) string {
 	return fmt.Sprintf("%s-%s-%s", cloudPrefix, projectId, location)
 }
 
+func getServiceAccountName(cloudPrefix, location string) string {
+	return fmt.Sprintf("%s-sa-%s", cloudPrefix, location)
+}
+
 func (g *gcloudService) CreateServiceAccount() error {
-	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
+	username := getServiceAccountName(g.cloudPrefix, g.location)
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)
 	}
 	iam, err := NewIAM(g.ctx, g.options, g.projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
-	}
-	secrets, err := NewSM(g.ctx, g.options, g.projectId)
-	if err != nil {
-		return fmt.Errorf("failed to create secret manager: %s", err)
 	}
 	apiUsage, err := NewApiUsage(g.ctx, g.options, g.projectId)
 	if err != nil {
@@ -378,19 +436,20 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create service account: %s", err)
 	}
-	err = iam.AddRolesToServiceAccount(account.Name, []string{"roles/editor", "roles/iam.securityAdmin"})
+	roleName := strings.ReplaceAll(username, "-", "_")
+	err = iam.GetOrCreateRole(roleName, "Entigo Infralib CI/CD", "Entigo Infralib CI/CD", ServiceAccountPermissions())
 	if err != nil {
-		return fmt.Errorf("failed to add roles to service account: %s", err)
+		return fmt.Errorf("failed to create custom IAM role: %s", err)
 	}
-	err = iam.AddRolesToProject(account.Name, []string{"roles/editor", "roles/iam.securityAdmin",
-		"roles/secretmanager.admin"})
+	customRole := fmt.Sprintf("projects/%s/roles/%s", g.projectId, roleName)
+	err = iam.AddRolesToProject(account.Name, []string{customRole})
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
 	}
 
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	if !created {
-		_, err = secrets.GetParameter(keyParam)
+		_, err = g.resources.SSM.GetParameter(keyParam)
 		if err == nil {
 			log.Printf("Service account secret %s stored in SM", keyParam)
 			return nil
@@ -401,7 +460,7 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create service account key: %v", err)
 	}
-	err = secrets.PutParameter(keyParam, key.PrivateKeyData)
+	err = g.resources.SSM.PutParameter(keyParam, key.PrivateKeyData)
 	if err != nil {
 		return fmt.Errorf("failed to create secret %s: %v", keyParam, err)
 	}
@@ -410,10 +469,15 @@ func (g *gcloudService) CreateServiceAccount() error {
 }
 
 func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
-	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
+	username := getServiceAccountName(g.cloudPrefix, g.location)
 	err := iam.DeleteServiceAccount(username)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", username, err)))
+	}
+	roleName := strings.ReplaceAll(username, "-", "_")
+	err = iam.DeleteRole(roleName)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete custom IAM role %s: %s", roleName, err)))
 	}
 	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
 	err = g.resources.SSM.DeleteParameter(keyParam)
@@ -422,7 +486,63 @@ func (g *gcloudService) DeleteServiceAccount(iam *IAM) {
 	}
 }
 
-func (g *gcloudService) AddEncryption(_ string, _ map[string]model.TFOutput) error {
-	slog.Warn(common.PrefixWarning("Encryption is not yet supported for GCP"))
+func GetConfigEncryptionKey(moduleName string, outputs map[string]model.TFOutput) (string, error) {
+	return util.GetOutputStringValue(outputs, fmt.Sprintf("%s__config_key_id", moduleName))
+}
+
+func (g *gcloudService) AddEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	err := g.setupConfigEncryption(moduleName, outputs)
+	if err != nil {
+		return err
+	}
+	if g.pipeline.Type == string(common.PipelineTypeLocal) {
+		return nil
+	}
+	return g.setupTelemetryEncryption(moduleName, outputs)
+}
+
+func (g *gcloudService) setupConfigEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	keyName, err := GetConfigEncryptionKey(moduleName, outputs)
+	if err != nil {
+		return err
+	}
+	if keyName == "" {
+		return nil
+	}
+	g.resources.GetSSM().(*sm).AddEncryptionKeyId(keyName)
+	err = g.resources.GetBucket().(*GStorage).addEncryption(keyName)
+	if err != nil {
+		return fmt.Errorf("failed to add encryption to bucket: %v", err)
+	}
 	return nil
+}
+
+func (g *gcloudService) setupTelemetryEncryption(moduleName string, outputs map[string]model.TFOutput) error {
+	keyName, err := util.GetOutputStringValue(outputs, fmt.Sprintf("%s__telemetry_key_id", moduleName))
+	if err != nil {
+		return err
+	}
+	if keyName == "" {
+		return nil
+	}
+	logging := g.resources.Logging
+	if logging == nil {
+		slog.Warn(common.PrefixWarning("Logging not initialized, skipping telemetry encryption"))
+		return nil
+	}
+	kmsBucketId := g.getLogBucketKmsId()
+	bucket, err := logging.getLogBucket(kmsBucketId)
+	if err != nil {
+		return err
+	}
+	if bucket != nil && bucket.CmekSettings != nil && bucket.CmekSettings.KmsKeyName != "" {
+		logging.logBucketId = kmsBucketId
+		return nil
+	}
+	log.Printf("Creating CMEK log bucket %s\n", kmsBucketId)
+	err = logging.CreateLogBucket(kmsBucketId, keyName)
+	if err != nil {
+		return fmt.Errorf("failed to create CMEK log bucket: %v", err)
+	}
+	return logging.UpdateLogSinkDestination(g.getLogSinkName(), kmsBucketId)
 }

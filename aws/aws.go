@@ -569,8 +569,12 @@ func (a *awsService) deleteIAMRoles() {
 	}
 }
 
+func getServiceAccountName(cloudPrefix, region string) string {
+	return fmt.Sprintf("%s-service-account-%s", cloudPrefix, region)
+}
+
 func (a *awsService) CreateServiceAccount() error {
-	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
+	username := getServiceAccountName(a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
 	policyStatement := ServiceAccountPolicy(bucketArn, a.cloudPrefix, a.accountId, a.awsConfig.Region, a.getBuildRoleName(), a.getPipelineRoleName(), a.getScheduleRoleName())
@@ -634,7 +638,7 @@ func (a *awsService) updateServiceAccountPolicy(username string, statement []Pol
 }
 
 func (a *awsService) DeleteServiceAccount() {
-	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
+	username := getServiceAccountName(a.cloudPrefix, a.awsConfig.Region)
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, username)
 	err := a.resources.IAM.DetachUserPolicy(policyArn, username)
 	if err != nil {
