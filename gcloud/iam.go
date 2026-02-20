@@ -343,5 +343,8 @@ func ServiceAccountPermissions() []string {
 		"logging.logEntries.list",
 		"logging.logs.list",
 		"logging.views.access",
+		"logging.buckets.get",
+		"logging.sinks.get",
+		"logging.exclusions.get",
 	}
 }

@@ -572,9 +572,15 @@ When configuring api notifications, agent will send requests to the specified UR
 
 ### Encryption
 
-Agent uses default cloud provider encryption settings if no encryption module is present in config.
+Agent uses default cloud provider encryption settings if no encryption module is present in config. Agent applies encryption changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in the bucket after the KMS module was applied will be encrypted with it.
 
-Currently, infralib only supports customer provided encryption in AWS with KMS. When KMS module is present in the config file, agent will use the KMS arn from the module terraform output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets. Agent applies those changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in S3 after the KMS module was applied will be encrypted with it.
+#### AWS
+
+When KMS module is present in the config file, agent will use the KMS arn from the module terraform output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets.
+
+#### GCloud
+
+When KMS module is present in the config file, agent will use the KMS key id from the module terraform output to configure the Cloud Storage bucket and Cloud Logging log buckets to use CMEK by default. Agent will create a new log bucket with the KMS encryption, because encryption can only be added to a log bucket on creation.Agent will also use the KMS when creating Secret Manager secrets. Created secrets will be location based instead of global when KMS is used.
 
 ### Scheduling
 
