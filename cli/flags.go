@@ -28,7 +28,9 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag)
 	case common.PullCommand:
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
-	case common.SACommand, common.ListCustomCommand:
+	case common.SACommand:
+		return append(append(baseFlags, getProviderFlags()...), &rotateCredentialsFlag)
+	case common.ListCustomCommand:
 		return append(baseFlags, getProviderFlags()...)
 	case common.BootstrapCommand:
 		return append(append(baseFlags, getProviderFlags()...), &terraformCacheFlag, &startFlag)
@@ -334,5 +336,15 @@ var typesFileFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "path for type identifications file",
 	Destination: &flags.Migrate.TypesFile,
+	Required:    false,
+}
+
+var rotateCredentialsFlag = cli.BoolFlag{
+	Name:        "rotate-credentials",
+	Aliases:     []string{"rc"},
+	Sources:     cli.EnvVars("ROTATE_CREDENTIALS"),
+	Usage:       "rotate credentials of the service account",
+	Value:       false,
+	Destination: &flags.RotateCredentials,
 	Required:    false,
 }

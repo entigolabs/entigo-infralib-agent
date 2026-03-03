@@ -20,6 +20,7 @@ type Flags struct {
 	SkipBucketCreationDelay bool
 	Start                   bool
 	Steps                   []string
+	RotateCredentials       bool
 	Pipeline                Pipeline
 	GCloud                  GCloud
 	AWS                     AWS
