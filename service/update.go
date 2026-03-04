@@ -1284,7 +1284,8 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 
 	stepState.AppliedAt = time.Now().UTC()
 	for _, module := range stepState.Modules {
-		module.AppliedVersion = &module.Version
+		moduleVersion := module.Version
+		module.AppliedVersion = &moduleVersion
 	}
 	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return u.putStateFile()
