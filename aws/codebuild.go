@@ -274,6 +274,8 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 
 	if !vpcChanged {
 		awsVpcConfig = project.VpcConfig
+	} else if awsVpcConfig == nil {
+		awsVpcConfig = &types.VpcConfig{}
 	}
 	if imageChanged {
 		project.Environment.Image = image
@@ -295,7 +297,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		sb.WriteString(fmt.Sprintf(" image to %s", *image))
 	}
 	if vpcChanged {
-		if awsVpcConfig != nil && awsVpcConfig.VpcId != nil {
+		if awsVpcConfig.VpcId != nil {
 			sb.WriteString(fmt.Sprintf(" vpc to %s", *awsVpcConfig.VpcId))
 		} else {
 			sb.WriteString(" removed vpc")
