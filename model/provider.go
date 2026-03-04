@@ -41,7 +41,7 @@ type CloudProvider interface {
 	SetupMinimalResources() (Resources, error)
 	GetResources() (Resources, error)
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool) error
-	CreateServiceAccount() error
+	CreateServiceAccount(rotateCredentials bool) error
 	AddEncryption(moduleName string, outputs map[string]TFOutput) error
 	IsRunningLocally() bool
 }

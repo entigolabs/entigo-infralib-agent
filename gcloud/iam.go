@@ -208,6 +208,28 @@ func (iam *IAM) CreateServiceAccountKey(serviceAccountName string) (*iamv1.Servi
 	return iam.service.Projects.ServiceAccounts.Keys.Create(serviceAccountName, &iamv1.CreateServiceAccountKeyRequest{}).Do()
 }
 
+func (iam *IAM) DeleteServiceAccountKeys(serviceAccountName string) error {
+	keys, err := iam.service.Projects.ServiceAccounts.Keys.List(serviceAccountName).Do()
+	if err != nil {
+		return fmt.Errorf("failed to list service account keys: %w", err)
+	}
+	for _, key := range keys.Keys {
+		if key.KeyType != "USER_MANAGED" {
+			continue
+		}
+		_, err = iam.service.Projects.ServiceAccounts.Keys.Delete(key.Name).Do()
+		if err == nil {
+			continue
+		}
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+			continue
+		}
+		return fmt.Errorf("failed to delete service account key: %w", err)
+	}
+	return nil
+}
+
 func retry(execute func() error) error {
 	maxRetries := 6
 	var lastErr error

@@ -21,8 +21,10 @@ import (
 )
 
 const (
-	pollingDelay = 10 * time.Second
-	waitTimeout  = 2 * time.Minute
+	pollingDelay     = 10 * time.Second
+	waitTimeout      = 2 * time.Minute
+	logsRetries      = 3
+	logsPollingDelay = 5 * time.Second
 
 	approveStageName  = "Approve"
 	approveActionName = "Approval"
@@ -781,19 +783,27 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.Actio
 	if err != nil {
 		return nil, err
 	}
-	logs, err := p.cloudWatch.GetLogs(p.logGroup, fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId))
-	if err != nil {
-		return nil, err
-	}
-	for _, logRow := range logs {
-		changes, err := logParser(pipelineName, logRow)
+
+	logStreamName := fmt.Sprintf("%s/%s", p.logStream, codeBuildRunId)
+	for attempt := 1; attempt <= logsRetries; attempt++ {
+		logs, err := p.cloudWatch.GetLogs(p.logGroup, logStreamName)
 		if err != nil {
 			return nil, err
 		}
-		if changes != nil {
-			return changes, nil
+		for _, logRow := range logs {
+			changes, err := logParser(pipelineName, logRow)
+			if err != nil {
+				return nil, err
+			}
+			if changes != nil {
+				return changes, nil
+			}
+		}
+		if attempt < logsRetries {
+			time.Sleep(logsPollingDelay)
 		}
 	}
+
 	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
 }
 

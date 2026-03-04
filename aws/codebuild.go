@@ -259,10 +259,11 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 	}
 
 	awsVpcConfig := getAwsVpcConfig(vpcConfig)
-	vpcChanged := awsVpcConfig != nil && (project.VpcConfig == nil ||
+	vpcChanged := (awsVpcConfig != nil && (project.VpcConfig == nil ||
 		(project.VpcConfig.VpcId == nil || *project.VpcConfig.VpcId != *awsVpcConfig.VpcId) ||
 		!util.EqualLists(project.VpcConfig.Subnets, awsVpcConfig.Subnets) ||
-		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))
+		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))) ||
+		(awsVpcConfig == nil && project.VpcConfig != nil)
 
 	image := getImage(imageVersion, imageSource)
 	imageChanged := project.Environment != nil && project.Environment.Image != nil && *project.Environment.Image != *image
@@ -273,6 +274,8 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 
 	if !vpcChanged {
 		awsVpcConfig = project.VpcConfig
+	} else if awsVpcConfig == nil {
+		awsVpcConfig = &types.VpcConfig{}
 	}
 	if imageChanged {
 		project.Environment.Image = image

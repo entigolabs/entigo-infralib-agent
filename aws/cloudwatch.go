@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"log"
-	"log/slog"
 )
 
 type CloudWatch interface {
@@ -132,16 +133,24 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 }
 
 func (c *cloudWatch) GetLogs(logGroupName string, logStreamName string) ([]string, error) {
-	response, err := c.cloudwatchlogs.GetLogEvents(c.ctx, &cloudwatchlogs.GetLogEventsInput{
+	var logs []string
+	input := &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  aws.String(logGroupName),
 		LogStreamName: aws.String(logStreamName),
-	})
-	if err != nil {
-		return nil, err
+		StartFromHead: aws.Bool(true),
 	}
-	var logs []string
-	for _, event := range response.Events {
-		logs = append(logs, *event.Message)
+	for {
+		response, err := c.cloudwatchlogs.GetLogEvents(c.ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range response.Events {
+			logs = append(logs, *event.Message)
+		}
+		if response.NextForwardToken == nil || (input.NextToken != nil && *input.NextToken == *response.NextForwardToken) {
+			break
+		}
+		input.NextToken = response.NextForwardToken
 	}
 	return logs, nil
 }
