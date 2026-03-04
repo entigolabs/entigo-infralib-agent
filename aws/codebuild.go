@@ -259,10 +259,11 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 	}
 
 	awsVpcConfig := getAwsVpcConfig(vpcConfig)
-	vpcChanged := awsVpcConfig != nil && (project.VpcConfig == nil ||
+	vpcChanged := (awsVpcConfig != nil && (project.VpcConfig == nil ||
 		(project.VpcConfig.VpcId == nil || *project.VpcConfig.VpcId != *awsVpcConfig.VpcId) ||
 		!util.EqualLists(project.VpcConfig.Subnets, awsVpcConfig.Subnets) ||
-		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))
+		!util.EqualLists(project.VpcConfig.SecurityGroupIds, awsVpcConfig.SecurityGroupIds))) ||
+		(awsVpcConfig == nil && project.VpcConfig != nil)
 
 	image := getImage(imageVersion, imageSource)
 	imageChanged := project.Environment != nil && project.Environment.Image != nil && *project.Environment.Image != *image
@@ -294,7 +295,7 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		sb.WriteString(fmt.Sprintf(" image to %s", *image))
 	}
 	if vpcChanged {
-		if awsVpcConfig.VpcId != nil {
+		if awsVpcConfig != nil && awsVpcConfig.VpcId != nil {
 			sb.WriteString(fmt.Sprintf(" vpc to %s", *awsVpcConfig.VpcId))
 		} else {
 			sb.WriteString(" removed vpc")
