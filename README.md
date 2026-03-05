@@ -237,7 +237,7 @@ bin/ei-agent delete --config=config.yaml --prefix=infralib
 
 ### service-account
 
-Creates a service account and a key for the account. The key is stored in the AWS SSM Parameter Store or Google Cloud Secret Manager.
+Creates a service account and a key for the account. Key will be outputted to the stdout.
 This account can be used for running the agent in a CI/CD pipeline.
 
 Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
@@ -250,7 +250,7 @@ OPTIONS:
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
-* terraform-cache - use terraform caching, adds the param to the bootstrapped agent (default: **true**) [$TERRAFORM_CACHE]
+* rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
 
 Example
 ```bash

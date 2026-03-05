@@ -578,63 +578,62 @@ func (a *awsService) CreateServiceAccount() error {
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
 	policyStatement := ServiceAccountPolicy(bucketArn, a.cloudPrefix, a.accountId, a.awsConfig.Region, a.getBuildRoleName(), a.getPipelineRoleName(), a.getScheduleRoleName())
+	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
 
-	user, err := a.resources.IAM.GetUser(username)
+	user, err := iam.GetUser(username)
 	if err != nil {
 		return err
 	}
-	if user != nil {
-		log.Printf("Service account %s already exists\n", username)
-		return a.updateServiceAccountPolicy(username, policyStatement)
+	if user == nil {
+		user, err = iam.CreateUser(username)
+		if err != nil {
+			return err
+		}
+		policy, err := iam.CreatePolicy(username, policyStatement)
+		if err != nil {
+			return err
+		}
+		err = iam.AttachUserPolicy(*policy.Arn, *user.UserName)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = updateServiceAccountPolicy(iam, username, policyStatement)
+		if err != nil {
+			return err
+		}
+		if !rotateCredentials {
+			log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
+			return nil
+		}
+		err = iam.DeleteAccessKeys(*user.UserName)
+		if err != nil {
+			return err
+		}
+		log.Printf("Deleted previous keys for service account %s\n", username)
+	}
+	accessKey, err := iam.CreateAccessKey(*user.UserName)
+	if err != nil {
+		return err
 	}
 
-	user, err = a.resources.IAM.CreateUser(username)
-	if err != nil {
-		return err
-	}
-	policy, err := a.resources.IAM.CreatePolicy(username, policyStatement)
-	if err != nil {
-		return err
-	}
-	err = a.resources.IAM.AttachUserPolicy(*policy.Arn, *user.UserName)
-	if err != nil {
-		return err
-	}
-	accessKey, err := a.resources.IAM.CreateAccessKey(*user.UserName)
-	if err != nil {
-		return err
-	}
-
-	accessKeyIdParam := fmt.Sprintf("/entigo-infralib/%s/access_key_id", username)
-	err = a.resources.SSM.PutParameter(accessKeyIdParam, *accessKey.AccessKeyId)
-	if err != nil {
-		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
-		return fmt.Errorf("failed to store access key id: %s", err)
-	}
-	secretAccessKeyParam := fmt.Sprintf("/entigo-infralib/%s/secret_access_key", username)
-	err = a.resources.SSM.PutParameter(secretAccessKeyParam, *accessKey.SecretAccessKey)
-	if err != nil {
-		log.Printf("Access key id: %s\nSecret access key: %s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
-		return fmt.Errorf("failed to store secret access key: %s", err)
-	}
-
-	log.Printf("Service account secrets %s and %s saved into ssm\n", accessKeyIdParam, secretAccessKeyParam)
+	fmt.Printf("Access key id:\n%s\nSecret access key:\n%s\n", *accessKey.AccessKeyId, *accessKey.SecretAccessKey)
 	return nil
 }
 
-func (a *awsService) updateServiceAccountPolicy(username string, statement []PolicyStatement) error {
-	policy, err := a.resources.IAM.GetPolicy(username)
+func updateServiceAccountPolicy(iam IAM, username string, statement []PolicyStatement) error {
+	policy, err := iam.GetPolicy(username)
 	if err != nil {
 		return fmt.Errorf("failed to get policy for user %s: %s", username, err)
 	}
 	if policy != nil {
-		return a.resources.IAM.UpdatePolicy(*policy.Arn, statement)
+		return iam.UpdatePolicy(*policy.Arn, statement)
 	}
-	policy, err = a.resources.IAM.CreatePolicy(username, statement)
+	policy, err = iam.CreatePolicy(username, statement)
 	if err != nil {
 		return err
 	}
-	return a.resources.IAM.AttachUserPolicy(*policy.Arn, username)
+	return iam.AttachUserPolicy(*policy.Arn, username)
 }
 
 func (a *awsService) DeleteServiceAccount() {

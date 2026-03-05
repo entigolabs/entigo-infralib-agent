@@ -424,14 +424,6 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to create IAM service: %s", err)
 	}
-	apiUsage, err := NewApiUsage(g.ctx, g.options, g.projectId)
-	if err != nil {
-		return fmt.Errorf("failed to create API usage service: %s", err)
-	}
-	err = apiUsage.EnableService("secretmanager.googleapis.com")
-	if err != nil {
-		return fmt.Errorf("failed to enable services: %s", err)
-	}
 	account, created, err := iam.GetOrCreateServiceAccount(username, "Entigo infralib CI/CD service account")
 	if err != nil {
 		return fmt.Errorf("failed to create service account: %s", err)
@@ -446,25 +438,24 @@ func (g *gcloudService) CreateServiceAccount() error {
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
 	}
-
-	keyParam := fmt.Sprintf("entigo-infralib-%s-key", username)
-	if !created {
-		_, err = g.resources.SSM.GetParameter(keyParam)
-		if err == nil {
-			log.Printf("Service account secret %s stored in SM", keyParam)
-			return nil
-		}
+	if !created && !rotateCredentials {
+		log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
+		return nil
 	}
-	time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
+	if created {
+		time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
+	} else {
+		err = iam.DeleteServiceAccountKeys(account.Name)
+		if err != nil {
+			return fmt.Errorf("failed to remove existing service account keys: %s", err)
+		}
+		log.Printf("Deleted previous keys for service account %s\n", username)
+	}
 	key, err := iam.CreateServiceAccountKey(account.Name)
 	if err != nil {
 		return fmt.Errorf("failed to create service account key: %v", err)
 	}
-	err = g.resources.SSM.PutParameter(keyParam, key.PrivateKeyData)
-	if err != nil {
-		return fmt.Errorf("failed to create secret %s: %v", keyParam, err)
-	}
-	log.Printf("Service account secret %s stored in SM", keyParam)
+	fmt.Printf("Private key data:\n%s", key.PrivateKeyData)
 	return nil
 }
 
