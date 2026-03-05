@@ -10,6 +10,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"gopkg.in/yaml.v3"
 )
 
 type Deleter interface {
@@ -120,6 +121,10 @@ func (d *deleter) deleteSourceSecret(secret string) {
 }
 
 func (d *deleter) Destroy() error {
+	state, err := getLatestState(d.resources.GetBucket())
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get latest state: %v", err)))
+	}
 	for i := len(d.steps) - 1; i >= 0; i-- {
 		step := d.steps[i]
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
@@ -140,6 +145,9 @@ func (d *deleter) Destroy() error {
 			return fmt.Errorf("failed to run destroy pipeline %s: %s", projectName, err)
 		}
 		log.Printf("Successfully executed destroy pipeline for step %s\n", step.Name)
+		if err = d.removeStepFromState(state, step); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to remove step %s from state: %v", step.Name, err)))
+		}
 	}
 	return nil
 }
@@ -156,4 +164,27 @@ func (d *deleter) getSourceAuths() map[string]model.SourceAuth {
 		}
 	}
 	return authSources
+}
+
+func (d *deleter) removeStepFromState(state *model.State, step model.Step) error {
+	if state == nil || len(state.Steps) == 0 {
+		return nil
+	}
+	stepRemoved := false
+	for i := len(state.Steps) - 1; i >= 0; i-- {
+		stepState := state.Steps[i]
+		if stepState.Name != step.Name {
+			continue
+		}
+		stepRemoved = true
+		state.Steps = append(state.Steps[:i], state.Steps[i+1:]...)
+	}
+	if !stepRemoved {
+		return nil
+	}
+	stateBytes, err := yaml.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("failed to marshal state: %w", err)
+	}
+	return d.resources.GetBucket().PutFile(stateFile, stateBytes)
 }
