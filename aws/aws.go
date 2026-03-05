@@ -573,7 +573,7 @@ func getServiceAccountName(cloudPrefix, region string) string {
 	return fmt.Sprintf("%s-service-account-%s", cloudPrefix, region)
 }
 
-func (a *awsService) CreateServiceAccount() error {
+func (a *awsService) CreateServiceAccount(rotateCredentials bool) error {
 	username := getServiceAccountName(a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)

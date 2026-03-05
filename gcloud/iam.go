@@ -357,7 +357,7 @@ func ServiceAccountPermissions() []string {
 		"resourcemanager.projects.getIamPolicy",
 		"resourcemanager.projects.setIamPolicy",
 		"storage.buckets.get",
-		"storage.buckets.create",
+		"storage.objects.create",
 		"storage.buckets.list",
 		"storage.objects.list",
 		"storage.objects.get",

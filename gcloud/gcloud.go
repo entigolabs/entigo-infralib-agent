@@ -415,7 +415,7 @@ func getServiceAccountName(cloudPrefix, location string) string {
 	return fmt.Sprintf("%s-sa-%s", cloudPrefix, location)
 }
 
-func (g *gcloudService) CreateServiceAccount() error {
+func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
 	username := getServiceAccountName(g.cloudPrefix, g.location)
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)
