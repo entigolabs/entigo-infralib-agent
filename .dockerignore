@@ -4,3 +4,4 @@ Dockerfile
 Dockerfile.github
 .dockerignore
 .gitignore
+bin/

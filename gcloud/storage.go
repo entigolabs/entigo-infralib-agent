@@ -3,6 +3,7 @@ package gcloud
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -138,11 +139,11 @@ func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 
 func (g *GStorage) PutFile(file string, content []byte) error {
 	writer := g.bucketHandle.Object(file).NewWriter(g.ctx)
-	_, err := writer.Write(content)
-	defer func(writer *storage.Writer) {
+	if _, err := writer.Write(content); err != nil {
 		_ = writer.Close()
-	}(writer)
-	return err
+		return fmt.Errorf("failed to write content: %w", err)
+	}
+	return writer.Close()
 }
 
 func (g *GStorage) GetFile(file string) ([]byte, error) {
