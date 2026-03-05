@@ -40,8 +40,15 @@ func (a *ApiUsage) EnableServices(services []string) error {
 }
 
 func (a *ApiUsage) EnableService(service string) error {
-	_, err := a.service.Services.Enable(fmt.Sprintf("projects/%s/services/%s", a.projectId, service),
-		&serviceusage.EnableServiceRequest{}).Do()
+	name := fmt.Sprintf("projects/%s/services/%s", a.projectId, service)
+	apiService, err := a.service.Services.Get(name).Do()
+	if err != nil {
+		return err
+	}
+	if apiService.State == "ENABLED" {
+		return nil
+	}
+	_, err = a.service.Services.Enable(name, &serviceusage.EnableServiceRequest{}).Do()
 	if err != nil {
 		return fmt.Errorf("error enabling API %s: %v", service, err)
 	}
