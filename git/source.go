@@ -403,8 +403,8 @@ func getReleaseHash(repo *git.Repository, release string) (*plumbing.Hash, error
 	if err == nil {
 		return hash, nil
 	}
-	if errors.Is(err, plumbing.ErrReferenceNotFound) {
-		return nil, nil
+	if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, err
 	}
 	hash, err = repo.ResolveRevision(plumbing.Revision(fmt.Sprintf("origin/%s", release)))
 	if err == nil {
@@ -413,7 +413,7 @@ func getReleaseHash(repo *git.Repository, release string) (*plumbing.Hash, error
 	if errors.Is(err, plumbing.ErrReferenceNotFound) {
 		return nil, nil
 	}
-	return hash, err
+	return nil, err
 }
 
 func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, error) {
