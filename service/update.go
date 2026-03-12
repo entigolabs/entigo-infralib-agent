@@ -1382,7 +1382,7 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 		if err != nil {
 			return nil, err
 		}
-		if changed {
+		if changed && !util.IsClientModule(module) {
 			err = moduleMustExist(u.getModuleSource(module.Source), step.Type, module, moduleVersion)
 			if err != nil {
 				return nil, err
