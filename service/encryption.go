@@ -4,15 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entigolabs/entigo-infralib-agent/aws"
+	"github.com/entigolabs/entigo-infralib-agent/gcloud"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
 )
 
 func SetupEncryption(config model.Config, provider model.CloudProvider, resources model.Resources) error {
-	if resources.GetProviderType() != model.AWS {
-		return nil // TODO Remove when GCP encryption is implemented
-	}
 	moduleName, outputs, err := GetEncryptionOutputs(config, resources.GetCloudPrefix(), resources.GetBucket())
 	if err != nil {
 		return fmt.Errorf("failed to get outputs for %s: %v", moduleName, err)
@@ -24,9 +22,6 @@ func SetupEncryption(config model.Config, provider model.CloudProvider, resource
 }
 
 func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string, bucket model.Bucket) (string, error) {
-	if providerType != model.AWS {
-		return "", nil // TODO Remove when GCP encryption is implemented
-	}
 	exists, err := bucket.BucketExists()
 	if err != nil {
 		return "", fmt.Errorf("failed to check bucket existence: %s", err)
@@ -45,7 +40,15 @@ func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string
 	if len(outputs) == 0 {
 		return "", nil
 	}
-	keyId, err := aws.GetConfigEncryptionKey(moduleName, outputs)
+	var keyId string
+	switch providerType {
+	case model.AWS:
+		keyId, err = aws.GetConfigEncryptionKey(moduleName, outputs)
+	case model.GCLOUD:
+		keyId, err = gcloud.GetConfigEncryptionKey(moduleName, outputs)
+	default:
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to get encryption key: %s", err)
 	}
