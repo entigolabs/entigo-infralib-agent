@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -43,6 +44,7 @@ type SourceClient struct {
 	currentRelease string
 	pulled         model.Set[string]
 	CABundle       []byte
+	treesCache     map[string]*object.Tree
 }
 
 func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []byte) (*SourceClient, error) {
@@ -53,6 +55,15 @@ func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []
 	repo, err := getSourceRepo(ctx, auth, source, CABundle)
 	if err != nil {
 		return nil, err
+	}
+	if source.ForceVersion && source.Version != "" {
+		exists, err := releaseExists(repo, source.Version)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check if release %s exists: %w", source.Version, err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("release %s not found in repository", source.Version)
+		}
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -73,6 +84,7 @@ func NewSourceClient(ctx context.Context, source model.ConfigSource, CABundle []
 		releasesSet: releasesSet,
 		pulled:      model.NewSet[string](),
 		CABundle:    CABundle,
+		treesCache:  make(map[string]*object.Tree),
 	}, nil
 }
 
@@ -320,35 +332,88 @@ func (s *SourceClient) fetchBranch(release string) error {
 }
 
 func (s *SourceClient) FileExists(path string, release string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	err := s.checkoutClean(release)
-	if err != nil {
+	tree, err := s.getReleaseTree(release)
+	if err != nil || tree == nil {
 		return false
 	}
-
-	file, err := s.worktree.Filesystem.Stat(path)
-	return err == nil && !file.IsDir()
+	_, err = tree.File(path)
+	return err == nil
 }
 
 func (s *SourceClient) PathExists(path string, release string) (bool, error) {
+	tree, err := s.getReleaseTree(release)
+	if err != nil {
+		return false, fmt.Errorf("failed to get release hash: %w", err)
+	}
+	if tree == nil {
+		return false, nil
+	}
+	_, err = tree.Tree(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, object.ErrDirectoryNotFound) || errors.Is(err, object.ErrEntryNotFound) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to traverse tree: %w", err)
+}
+
+func (s *SourceClient) getReleaseTree(release string) (*object.Tree, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err := s.checkoutClean(release)
-	if err != nil {
-		return false, err
+	if cachedTree, exists := s.treesCache[release]; exists {
+		return cachedTree, nil
+	}
+	if !s.releasesSet.Contains(release) && !s.pulled.Contains(release) {
+		_ = s.fetchBranch(release) // Ignore error here; ResolveRevision will catch missing refs
 	}
 
-	file, err := s.worktree.Filesystem.Stat(path)
+	hash, err := getReleaseHash(s.repo, release)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
+		return nil, fmt.Errorf("failed to get release hash: %w", err)
+	}
+	if hash == nil {
+		return nil, nil // Release doesn't exist
+	}
+
+	commit, err := s.repo.CommitObject(*hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commit object: %w", err)
+	}
+
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commit tree: %w", err)
+	}
+	s.treesCache[release] = tree
+	return tree, nil
+}
+
+func releaseExists(repo *git.Repository, release string) (bool, error) {
+	hash, err := getReleaseHash(repo, release)
+	if err != nil {
 		return false, err
 	}
-	return file.IsDir(), nil
+	return hash != nil, nil
+}
+
+func getReleaseHash(repo *git.Repository, release string) (*plumbing.Hash, error) {
+	hash, err := repo.ResolveRevision(plumbing.Revision(release))
+	if err == nil {
+		return hash, nil
+	}
+	if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, err
+	}
+	hash, err = repo.ResolveRevision(plumbing.Revision(fmt.Sprintf("origin/%s", release)))
+	if err == nil {
+		return hash, nil
+	}
+	if errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, nil
+	}
+	return nil, err
 }
 
 func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, error) {
