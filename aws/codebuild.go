@@ -291,20 +291,24 @@ func (b *builder) UpdateProject(projectName, _, _ string, _ model.Step, imageVer
 		return fmt.Errorf("failed to update CodeBuild project %s: %w", projectName, err)
 	}
 
+	logProjectChanges(projectName, imageChanged, vpcChanged, awsVpcConfig, image)
+	return nil
+}
+
+func logProjectChanges(projectName string, imageChanged, vpcChanged bool, awsVpcConfig *types.VpcConfig, image *string) {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("updated CodeBuild project %s", projectName))
+	fmt.Fprintf(&sb, "Updated CodeBuild project %s", projectName)
 	if imageChanged {
-		sb.WriteString(fmt.Sprintf(" image to %s", *image))
+		fmt.Fprintf(&sb, " image to %s", *image)
 	}
 	if vpcChanged {
 		if awsVpcConfig.VpcId != nil {
-			sb.WriteString(fmt.Sprintf(" vpc to %s", *awsVpcConfig.VpcId))
+			fmt.Fprintf(&sb, " vpc to %s", *awsVpcConfig.VpcId)
 		} else {
 			sb.WriteString(" removed vpc")
 		}
 	}
 	log.Println(sb.String())
-	return nil
 }
 
 func (b *builder) DeleteProject(projectName string, _ model.Step) error {

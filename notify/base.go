@@ -1,8 +1,8 @@
 package notify
 
 import (
-	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
@@ -39,34 +39,34 @@ func (b *BaseNotifier) ManualApproval(pipelineName string, changes model.Pipelin
 }
 
 func (b *BaseNotifier) StepState(status model.ApplyStatus, stepState model.StateStep, _ *model.Step, err error) error {
-	var buffer bytes.Buffer
+	var sb strings.Builder
 	if b.Context != "" {
-		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
+		fmt.Fprintf(&sb, "%s ", b.Context)
 	}
-	buffer.WriteString(fmt.Sprintf("Step '%s' status: %s", stepState.Name, status))
+	fmt.Fprintf(&sb, "Step '%s' status: %s", stepState.Name, status)
 	if err != nil {
-		buffer.WriteString(fmt.Sprintf(", error: %s", err.Error()))
+		fmt.Fprintf(&sb, ", error: %s", err.Error())
 	}
 	for _, module := range stepState.Modules {
-		buffer.WriteString(fmt.Sprintf("\nModule '%s' version: %s", module.Name, module.Version))
+		fmt.Fprintf(&sb, "\nModule '%s' version: %s", module.Name, module.Version)
 		if module.AppliedVersion != nil {
-			buffer.WriteString(fmt.Sprintf(", applied version: %s", *module.AppliedVersion))
+			fmt.Fprintf(&sb, ", applied version: %s", *module.AppliedVersion)
 		}
 	}
-	return b.MessageFunc(buffer.String())
+	return b.MessageFunc(sb.String())
 }
 
 func (b *BaseNotifier) Modules(accountId string, region string, _ model.ProviderType, config model.Config) error {
-	var buffer bytes.Buffer
+	var sb strings.Builder
 	if b.Context != "" {
-		buffer.WriteString(fmt.Sprintf("%s ", b.Context))
+		fmt.Fprintf(&sb, "%s ", b.Context)
 	}
-	buffer.WriteString(fmt.Sprintf("Steps for account %s in region %s", accountId, region))
+	fmt.Fprintf(&sb, "Steps for account %s in region %s", accountId, region)
 	for _, step := range config.Steps {
-		buffer.WriteString(fmt.Sprintf("\nStep '%s':", step.Name))
+		fmt.Fprintf(&sb, "\nStep '%s':", step.Name)
 		for _, module := range step.Modules {
-			buffer.WriteString(fmt.Sprintf("\n- Module '%s' source: %s", module.Name, module.Source))
+			fmt.Fprintf(&sb, "\n- Module '%s' source: %s", module.Name, module.Source)
 		}
 	}
-	return b.MessageFunc(buffer.String())
+	return b.MessageFunc(sb.String())
 }

@@ -7,11 +7,13 @@ import (
 	"io"
 	"log"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -138,7 +140,15 @@ func (g *GStorage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 }
 
 func (g *GStorage) PutFile(file string, content []byte) error {
-	writer := g.bucketHandle.Object(file).NewWriter(g.ctx)
+	obj := g.bucketHandle.Object(file).Retryer(
+		storage.WithBackoff(gax.Backoff{
+			Initial:    1 * time.Second,
+			Max:        30 * time.Second,
+			Multiplier: 2.0,
+		}),
+		storage.WithPolicy(storage.RetryAlways),
+	)
+	writer := obj.NewWriter(g.ctx)
 	if _, err := writer.Write(content); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("failed to write content: %w", err)
