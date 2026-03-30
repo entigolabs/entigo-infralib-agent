@@ -24,6 +24,7 @@ type Flags struct {
 	Pipeline                Pipeline
 	GCloud                  GCloud
 	AWS                     AWS
+	ServiceAccount          ServiceAccount
 	Delete                  DeleteFlags
 	Params                  Params
 	Migrate                 Migrate
@@ -42,6 +43,12 @@ type GCloud struct {
 
 type AWS struct {
 	RoleArn string
+}
+
+type ServiceAccount struct {
+	RemoveUser        bool
+	RotateCredentials bool
+	TrustRole         string
 }
 
 type DeleteFlags struct {

@@ -208,26 +208,95 @@ func (iam *IAM) CreateServiceAccountKey(serviceAccountName string) (*iamv1.Servi
 	return iam.service.Projects.ServiceAccounts.Keys.Create(serviceAccountName, &iamv1.CreateServiceAccountKeyRequest{}).Do()
 }
 
-func (iam *IAM) DeleteServiceAccountKeys(serviceAccountName string) error {
+func (iam *IAM) DeleteServiceAccountKeys(serviceAccountName string) (int, error) {
 	keys, err := iam.service.Projects.ServiceAccounts.Keys.List(serviceAccountName).Do()
 	if err != nil {
-		return fmt.Errorf("failed to list service account keys: %w", err)
+		return 0, fmt.Errorf("failed to list service account keys: %w", err)
 	}
+	deleted := 0
 	for _, key := range keys.Keys {
 		if key.KeyType != "USER_MANAGED" {
 			continue
 		}
 		_, err = iam.service.Projects.ServiceAccounts.Keys.Delete(key.Name).Do()
 		if err == nil {
+			deleted++
 			continue
 		}
 		var gerr *googleapi.Error
 		if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+			deleted++
 			continue
 		}
-		return fmt.Errorf("failed to delete service account key: %w", err)
+		return 0, fmt.Errorf("failed to delete service account key: %w", err)
+	}
+	return deleted, nil
+}
+
+func (iam *IAM) HasUserManagedKeys(serviceAccountName string) (bool, error) {
+	keys, err := iam.service.Projects.ServiceAccounts.Keys.List(serviceAccountName).Do()
+	if err != nil {
+		return false, fmt.Errorf("failed to list service account keys: %w", err)
+	}
+	for _, key := range keys.Keys {
+		if key.KeyType == "USER_MANAGED" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (iam *IAM) GetImpersonationPrincipals(serviceAccountName string) ([]string, error) {
+	policy, err := iam.service.Projects.ServiceAccounts.GetIamPolicy(serviceAccountName).Do()
+	if err != nil {
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get service account IAM policy: %w", err)
+	}
+	for _, binding := range policy.Bindings {
+		if binding.Role == "roles/iam.serviceAccountTokenCreator" {
+			return binding.Members, nil
+		}
+	}
+	return nil, nil
+}
+
+func (iam *IAM) GrantImpersonation(serviceAccountName, principal string) error {
+	err := retry(func() error {
+		return iam.tryGrantImpersonation(serviceAccountName, principal)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to grant impersonation on service account: %w", err)
 	}
 	return nil
+}
+
+func (iam *IAM) tryGrantImpersonation(serviceAccountName, principal string) error {
+	policy, err := iam.service.Projects.ServiceAccounts.GetIamPolicy(serviceAccountName).Do()
+	if err != nil {
+		return err
+	}
+	const role = "roles/iam.serviceAccountTokenCreator"
+	for _, binding := range policy.Bindings {
+		if binding.Role != role {
+			continue
+		}
+		binding.Members = []string{principal}
+		_, err = iam.service.Projects.ServiceAccounts.SetIamPolicy(serviceAccountName, &iamv1.SetIamPolicyRequest{
+			Policy: policy,
+		}).Do()
+		return err
+	}
+	policy.Bindings = append(policy.Bindings, &iamv1.Binding{
+		Role:    role,
+		Members: []string{principal},
+	})
+	_, err = iam.service.Projects.ServiceAccounts.SetIamPolicy(serviceAccountName, &iamv1.SetIamPolicyRequest{
+		Policy: policy,
+	}).Do()
+	return err
 }
 
 func retry(execute func() error) error {

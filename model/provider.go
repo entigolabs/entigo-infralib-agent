@@ -41,7 +41,7 @@ type CloudProvider interface {
 	SetupMinimalResources() (Resources, error)
 	GetResources() (Resources, error)
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool) error
-	CreateServiceAccount(rotateCredentials bool) error
+	CreateServiceAccount(SAFlags common.ServiceAccount) error
 	AddEncryption(moduleName string, outputs map[string]TFOutput) error
 	IsRunningLocally() bool
 }

@@ -36,6 +36,7 @@ type IAM interface {
 	DetachUserPolicy(policyArn string, userName string) error
 	CreateAccessKey(userName string) (*types.AccessKey, error)
 	DeleteAccessKeys(userName string) error
+	UpdateTrustedRole(roleName, roleArn string) error
 	CreateServiceLinkedRole(service string) error
 }
 
@@ -92,7 +93,7 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*ty
 		}
 		return nil, fmt.Errorf("failed to create role %s: %s", roleName, err)
 	}
-	log.Printf("Created IAM role: %s\n", roleName)
+	log.Printf("Created IAM role: %s\n", *result.Role.Arn)
 	return result.Role, nil
 }
 
@@ -223,6 +224,65 @@ func getPolicy(statements []PolicyStatement) (*string, error) {
 		return nil, fmt.Errorf("failed to marshal policy: %s", err)
 	}
 	return aws.String(string(policyBytes)), nil
+}
+
+func decodePolicy(policy string) (PolicyDocument, error) {
+	decoded, err := url.QueryUnescape(policy)
+	if err != nil {
+		return PolicyDocument{}, err
+	}
+	var pd PolicyDocument
+	err = json.Unmarshal([]byte(decoded), &pd)
+	return pd, err
+}
+
+func canAssumeRole(policy, targetPrincipal string) (bool, error) {
+	policyDocument, err := decodePolicy(policy)
+	if err != nil {
+		return false, fmt.Errorf("failed to decode policy: %w", err)
+	}
+	for _, stmt := range policyDocument.Statement {
+		if stmt.Effect != "Allow" {
+			continue
+		}
+		principals := extractAWSPrincipals(stmt.Principal)
+		if principals != nil && principals.Contains(targetPrincipal) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func extractAWSPrincipals(raw interface{}) model.Set[string] {
+	if raw == nil {
+		return nil
+	}
+
+	switch p := raw.(type) {
+	case string:
+		return model.NewSet(p)
+
+	case map[string]interface{}:
+		awsVal, ok := p["AWS"]
+		if !ok {
+			return nil
+		}
+
+		switch val := awsVal.(type) {
+		case string:
+			return model.NewSet(val)
+		case []interface{}:
+			arns := model.NewSet[string]()
+			for _, entry := range val {
+				if str, ok := entry.(string); ok {
+					arns.Add(str)
+				}
+			}
+			return arns
+		}
+	}
+	return nil
 }
 
 func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
@@ -425,6 +485,18 @@ func (i *identity) DeleteAccessKeys(userName string) error {
 	return nil
 }
 
+func (i *identity) UpdateTrustedRole(roleName, roleArn string) error {
+	policy, err := getPolicy(assumeRolePolicy("AWS", roleArn))
+	if err != nil {
+		return err
+	}
+	_, err = i.iamClient.UpdateAssumeRolePolicy(i.ctx, &iam.UpdateAssumeRolePolicyInput{
+		RoleName:       &roleName,
+		PolicyDocument: policy,
+	})
+	return err
+}
+
 func (i *identity) CreateServiceLinkedRole(service string) error {
 	_, err := i.iamClient.CreateServiceLinkedRole(i.ctx, &iam.CreateServiceLinkedRoleInput{
 		AWSServiceName: aws.String(service),
@@ -609,4 +681,12 @@ func SchedulePolicy(runArn, updateArn string) []PolicyStatement {
 		},
 	},
 	}
+}
+
+func assumeRolePolicy(principalKey, principalValue string) []PolicyStatement {
+	return []PolicyStatement{{
+		Effect:    "Allow",
+		Action:    []string{"sts:AssumeRole"},
+		Principal: map[string]string{principalKey: principalValue},
+	}}
 }
