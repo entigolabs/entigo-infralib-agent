@@ -353,7 +353,7 @@ func getBucketName(cloudPrefix, projectId, location string) string {
 	return fmt.Sprintf("%s-%s-%s", cloudPrefix, projectId, location)
 }
 
-func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
+func (g *gcloudService) CreateServiceAccount(SAFlags common.ServiceAccount) error {
 	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)
@@ -375,18 +375,22 @@ func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
 	}
-	if !created && !rotateCredentials {
-		log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
-		return nil
-	}
 	if created {
 		time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
-	} else {
-		err = iam.DeleteServiceAccountKeys(account.Name)
+	}
+	if SAFlags.TrustRole != "" {
+		return g.createServiceAccountImpersonation(SAFlags, iam, account.Name, created)
+	}
+	if !created {
+		if !SAFlags.RotateCredentials {
+			log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
+			return nil
+		}
+		deleted, err := iam.DeleteServiceAccountKeys(account.Name)
 		if err != nil {
 			return fmt.Errorf("failed to remove existing service account keys: %s", err)
 		}
-		log.Printf("Deleted previous keys for service account %s\n", username)
+		log.Printf("Deleted %d previous keys for service account %s\n", deleted, username)
 	}
 	key, err := iam.CreateServiceAccountKey(account.Name)
 	if err != nil {
@@ -394,6 +398,69 @@ func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
 	}
 	fmt.Printf("Private key data:\n%s", key.PrivateKeyData)
 	return nil
+}
+
+func (g *gcloudService) createServiceAccountImpersonation(SAFlags common.ServiceAccount, iam *IAM, accountName string, created bool) error {
+	if created {
+		return grantImpersonation(iam, accountName, SAFlags.TrustRole)
+	}
+	err := removeKeysIfNeeded(iam, accountName, SAFlags.RemoveUser)
+	if err != nil {
+		return err
+	}
+
+	principals, err := iam.GetImpersonationPrincipals(accountName)
+	if err != nil {
+		return fmt.Errorf("failed to get impersonation principals: %s", err)
+	}
+	if containsPrincipal(principals, SAFlags.TrustRole) {
+		return nil
+	} else if len(principals) > 0 && !SAFlags.RotateCredentials {
+		slog.Error(common.PrefixError(fmt.Errorf("service account %s has different trust principal, use rotate-credentials flag to update it", accountName)))
+		return nil
+	}
+	return grantImpersonation(iam, accountName, SAFlags.TrustRole)
+}
+
+func grantImpersonation(iam *IAM, accountName string, principal string) error {
+	if err := iam.GrantImpersonation(accountName, principal); err != nil {
+		return fmt.Errorf("failed to grant impersonation on service account %s: %s", accountName, err)
+	}
+	log.Printf("Granted impersonation on service account %s to %s\n", accountName, principal)
+	return nil
+}
+
+func removeKeysIfNeeded(iam *IAM, accountName string, remove bool) error {
+	hasKeys, err := iam.HasUserManagedKeys(accountName)
+	if err != nil {
+		return err
+	}
+	if !hasKeys {
+		return nil
+	}
+	if !remove {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Service account %s has existing keys, use remove-user flag to delete them", accountName)))
+		return nil
+	}
+	deleted, err := iam.DeleteServiceAccountKeys(accountName)
+	if err != nil {
+		return fmt.Errorf("failed to delete service account keys: %s", err)
+	}
+	if deleted == 0 {
+		log.Printf("Service account %s has no keys", accountName)
+	} else {
+		log.Printf("Deleted %d previous keys for service account %s\n", deleted, accountName)
+	}
+	return nil
+}
+
+func containsPrincipal(principals []string, target string) bool {
+	for _, p := range principals {
+		if p == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *gcloudService) DeleteServiceAccount(iam *IAM) {

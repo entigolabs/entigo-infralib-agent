@@ -29,7 +29,7 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.PullCommand:
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
 	case common.SACommand:
-		return append(append(baseFlags, getProviderFlags()...), &rotateCredentialsFlag)
+		return append(append(baseFlags, getProviderFlags()...), &rotateCredentialsFlag, &removeUserFlag, &trustRoleFlag)
 	case common.ListCustomCommand:
 		return append(baseFlags, getProviderFlags()...)
 	case common.BootstrapCommand:
@@ -345,6 +345,27 @@ var rotateCredentialsFlag = cli.BoolFlag{
 	Sources:     cli.EnvVars("ROTATE_CREDENTIALS"),
 	Usage:       "rotate credentials of the service account",
 	Value:       false,
-	Destination: &flags.RotateCredentials,
+	Destination: &flags.ServiceAccount.RotateCredentials,
+	Required:    false,
+}
+
+var removeUserFlag = cli.BoolFlag{
+	Name:        "remove-user",
+	Aliases:     []string{"ru"},
+	Sources:     cli.EnvVars("REMOVE_USER"),
+	Usage:       "remove existing aws user when using trusted role",
+	Value:       false,
+	Destination: &flags.ServiceAccount.RemoveUser,
+	Required:    false,
+}
+
+var trustRoleFlag = cli.StringFlag{
+	Name:        "trust-role",
+	Aliases:     []string{"tr"},
+	Sources:     cli.EnvVars("TRUST_ROLE"),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "aws arn or gcloud email for allowing assume role",
+	Destination: &flags.ServiceAccount.TrustRole,
 	Required:    false,
 }
