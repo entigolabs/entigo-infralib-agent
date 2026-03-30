@@ -608,6 +608,7 @@ func (a *awsService) createServiceRole(SAFlags common.ServiceAccount, iam IAM, u
 		}
 		return iam.AttachRolePolicy(policyArn, *role.RoleName)
 	}
+	log.Printf("Service account role %s", *role.Arn)
 	if role.AssumeRolePolicyDocument == nil {
 		return iam.UpdateTrustedRole(*role.RoleName, SAFlags.TrustRole)
 	}

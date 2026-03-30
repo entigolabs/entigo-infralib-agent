@@ -93,7 +93,7 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*ty
 		}
 		return nil, fmt.Errorf("failed to create role %s: %s", roleName, err)
 	}
-	log.Printf("Created IAM role: %s\n", roleName)
+	log.Printf("Created IAM role: %s\n", *result.Role.Arn)
 	return result.Role, nil
 }
 
