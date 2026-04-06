@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -71,37 +71,24 @@ func GetAWSConfig(ctx context.Context, roleArn string) (aws.Config, error) {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
 	if err != nil {
-		return cfg, fmt.Errorf("failed to initialize AWS session: %s", err)
+		return cfg, fmt.Errorf("failed to initialize AWS session: %v", err)
 	}
 	log.Printf("AWS session initialized with region: %s\n", cfg.Region)
 	if roleArn != "" {
-		return GetAssumedConfig(ctx, cfg, roleArn)
+		return GetAssumedConfig(cfg, roleArn), nil
 	}
 	return cfg, nil
 }
 
-func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string) (aws.Config, error) {
+func GetAssumedConfig(baseConfig aws.Config, roleArn string) aws.Config {
 	stsClient := sts.NewFromConfig(baseConfig)
-	assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-		RoleArn:         aws.String(roleArn),
-		RoleSessionName: aws.String("entigo-infralib-agent"),
-		DurationSeconds: aws.Int32(3600),
+	provider := stscreds.NewAssumeRoleProvider(stsClient, roleArn, func(o *stscreds.AssumeRoleOptions) {
+		o.RoleSessionName = "entigo-infralib-agent"
+		o.Duration = 1 * time.Hour
 	})
-	if err != nil {
-		return baseConfig, fmt.Errorf("failed to assume role %s: %s", roleArn, err)
-	}
-	assumedConfig, err := config.LoadDefaultConfig(ctx,
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			*assumedRole.Credentials.AccessKeyId,
-			*assumedRole.Credentials.SecretAccessKey,
-			*assumedRole.Credentials.SessionToken,
-		)),
-		config.WithRegion(baseConfig.Region),
-	)
-	if err != nil {
-		return assumedConfig, fmt.Errorf("failed to initialize assumed AWS session: %s", err)
-	}
-	return assumedConfig, nil
+	assumedConfig := baseConfig
+	assumedConfig.Credentials = aws.NewCredentialsCache(provider)
+	return assumedConfig
 }
 
 func (a *awsService) GetIdentifier() string {
