@@ -564,11 +564,7 @@ func CodeBuildS3Policy(s3Arn string) PolicyStatement {
 }
 
 func CodePipelinePolicy(s3Arn string) []PolicyStatement {
-	return []PolicyStatement{{
-		Effect:   "Allow",
-		Resource: []string{"arn:aws:s3:::*"},
-		Action:   []string{"s3:ListBucket"},
-	}, CodePipelineS3Policy(s3Arn),
+	return []PolicyStatement{CodePipelineS3Policy(s3Arn),
 		{
 			Effect:   "Allow",
 			Resource: []string{"*"},
@@ -582,18 +578,20 @@ func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 }
 
 func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName string) []PolicyStatement {
-	return []PolicyStatement{{
-		Effect:   "Allow",
-		Resource: []string{"arn:aws:s3:::*"},
-		Action:   []string{"s3:ListBucket"},
-	}, CodePipelineS3Policy(s3Arn),
+	return []PolicyStatement{CodePipelineS3Policy(s3Arn),
 		{
 			Effect:   "Allow",
-			Resource: []string{"*"},
+			Resource: []string{fmt.Sprintf("arn:aws:codebuild:%s:%s:project/%s-*", region, accountId, prefix)},
 			Action: []string{
 				"codebuild:CreateProject",
 				"codebuild:BatchGetProjects",
 				"codebuild:UpdateProject",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:codepipeline:%s:%s:%s-*", region, accountId, prefix)},
+			Action: []string{
 				"codepipeline:CreatePipeline",
 				"codepipeline:StartPipelineExecution",
 				"codepipeline:UpdatePipeline",
@@ -606,26 +604,74 @@ func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipel
 				"codepipeline:GetPipeline",
 				"codepipeline:GetPipelineState",
 				"codepipeline:TagResource",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s-%s", region, accountId, prefix, accountId)},
+			Action: []string{
 				"dynamodb:DescribeTable",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:*", region, accountId)},
+			Action: []string{
 				"logs:DescribeLogGroups",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s-log:*", region, accountId, prefix)},
+			Action: []string{
 				"logs:DescribeLogStreams",
 				"logs:GetLogEvents",
 				"logs:AssociateKmsKey",
 				"logs:PutRetentionPolicy",
+			},
+		},
+		{
+			Effect: "Allow",
+			Resource: []string{
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, buildRoleName),
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, pipelineRoleName),
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, scheduleRoleName),
+			},
+			Action: []string{
 				"iam:GetRole",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{"*"},
+			Action: []string{
 				"sts:GetCallerIdentity",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:ssm:%s:%s:parameter/*", region, accountId)},
+			Action: []string{
 				"ssm:GetParameter",
-				"ssm:PutParameter",
-				"ssm:DeleteParameter",
-				"ssm:AddTagsToResource",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:secretsmanager:%s:%s:secret:entigo-infralib-*", region, accountId)},
+			Action: []string{
 				"secretsmanager:GetSecretValue",
 				"secretsmanager:DeleteSecret",
 				"secretsmanager:CreateSecret",
 				"secretsmanager:PutSecretValue",
 				"secretsmanager:DescribeSecret",
+				"secretsmanager:RestoreSecret",
 				"secretsmanager:TagResource",
-				"tag:GetResources",
-				"tag:TagResources",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:kms:%s:%s:key/*", region, accountId)},
+			Action: []string{
 				"kms:GenerateDataKey",
 				"kms:Decrypt",
 			},
@@ -667,7 +713,23 @@ func CodePipelineS3Policy(s3Arn string) PolicyStatement {
 		Effect:   "Allow",
 		Resource: []string{s3Arn, fmt.Sprintf("%s/*", s3Arn)},
 		Action: []string{
-			"s3:*",
+			"s3:GetObjectVersion",
+			"s3:GetBucketVersioning",
+			"s3:ListBucket",
+			"s3:ListBucketVersions",
+			"s3:GetBucketPolicy",
+			"s3:PutBucketPolicy",
+			"s3:GetEncryptionConfiguration",
+			"s3:PutEncryptionConfiguration",
+			"s3:PutBucketTagging",
+			"s3:PutBucketVersioning",
+			"s3:GetLifecycleConfiguration",
+			"s3:PutLifecycleConfiguration",
+			"s3:ListBucketVersions",
+			"s3:GetObject",
+			"s3:PutObject",
+			"s3:DeleteObject",
+			"s3:DeleteObjectVersion",
 		},
 	}
 }

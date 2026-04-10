@@ -381,6 +381,7 @@ steps:
       subnet_ids: multiline string
       security_group_ids: multiline string
     kubernetes_cluster_name: string
+    argocd_namespace: string
     modules:
       - name: string
         source: string
