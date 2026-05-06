@@ -31,7 +31,7 @@ const (
 )
 
 type Updater interface {
-	Process(command common.Command) error
+	Process() error
 }
 
 type updater struct {
@@ -52,7 +52,7 @@ type updater struct {
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
@@ -92,6 +92,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
+		cmd:           command,
 	}, nil
 }
 
@@ -380,10 +381,10 @@ func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 	return nil
 }
 
-func (u *updater) Process(command common.Command) error {
+func (u *updater) Process() error {
 	index := 0
 	mostReleases := 1
-	if command == common.UpdateCommand {
+	if u.cmd == common.UpdateCommand {
 		index = 1
 		mostReleases = u.getMostReleases()
 		if mostReleases < 2 {
@@ -391,20 +392,29 @@ func (u *updater) Process(command common.Command) error {
 			return nil
 		}
 	}
-	u.cmd = command
+	u.manager.Sources(u.sources)
 	for ; index < mostReleases; index++ {
-		err := u.processRelease(index, command)
+		if u.cmd == common.RunCommand {
+			u.manager.SetCurrentPipelineIndex(1)
+		} else {
+			u.manager.SetCurrentPipelineIndex(index)
+		}
+		sourceVersions := u.getNotifySourceVersions(index)
+		u.manager.PipelineState(model.ApplyStatusStarting, sourceVersions, nil)
+		err := u.processRelease(index)
 		if err != nil {
+			u.manager.PipelineState(model.ApplyStatusFailure, sourceVersions, err)
 			return fmt.Errorf("failed to process release: %v", err)
 		}
+		u.manager.PipelineState(model.ApplyStatusSuccess, sourceVersions, nil)
 	}
 	return nil
 }
 
-func (u *updater) processRelease(index int, command common.Command) error {
+func (u *updater) processRelease(index int) error {
 	u.logReleases(index)
 	u.updateState()
-	if command == common.UpdateCommand {
+	if u.cmd == common.UpdateCommand {
 		if err := u.updateChecksums(index); err != nil {
 			return err
 		}
@@ -441,7 +451,7 @@ func (u *updater) processRelease(index int, command common.Command) error {
 	if err != nil {
 		return err
 	}
-	if command == common.UpdateCommand {
+	if u.cmd == common.UpdateCommand {
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
 		}
@@ -478,6 +488,23 @@ func (u *updater) logReleases(index int) {
 	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
+func (u *updater) getNotifySourceVersions(index int) []model.SourceVersion {
+	var sourceVersions []model.SourceVersion
+	for _, source := range u.sources {
+		sourceVersion := model.SourceVersion{
+			URL:           source.URL,
+			ForcedVersion: source.ForcedVersion,
+		}
+		if index < len(source.Releases) {
+			sourceVersion.Version = source.Releases[index]
+		} else if len(source.Releases) > 0 {
+			sourceVersion.Version = source.Releases[len(source.Releases)-1]
+		}
+		sourceVersions = append(sourceVersions, sourceVersion)
+	}
+	return sourceVersions
+}
+
 func getFailedSteps(errChan chan string) []string {
 	var failedSteps []string
 	for stepName := range errChan {
@@ -503,6 +530,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	if err != nil {
 		return false, err
 	}
+	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	moduleVersions, err := u.updateModuleVersions(step, stepState, index)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)
@@ -577,7 +605,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s",
 				step.Name, branch, name, err)))
-			return
+			continue
 		}
 	}
 }
@@ -585,6 +613,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[model.SourceKey]model.Set[string], wg *model.SafeCounter, errChan chan<- string, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
+		u.postCallBackWithMetadata(stepState, step, model.ApplyStatusSkipped, index)
 		return nil
 	}
 	u.updateDestinationsPlanFiles(step, files)
@@ -1310,19 +1339,22 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 
 	stepState.AppliedAt = time.Now().UTC()
 	for _, module := range stepState.Modules {
-		moduleVersion := module.Version
-		module.AppliedVersion = &moduleVersion
+		module.AppliedVersion = new(module.Version)
 	}
 	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return u.putStateFile()
 	}
+	u.postCallBackWithMetadata(stepState, step, status, index)
+	return u.putStateFile()
+}
+
+func (u *updater) postCallBackWithMetadata(stepState *model.StateStep, step model.Step, status model.ApplyStatus, index int) {
 	modifiedStep, err := u.replaceStepMetadataValues(step, index)
 	if err == nil {
 		u.postCallbackWithStep(status, *stepState, &modifiedStep, nil)
 	} else {
 		slog.Error(common.PrefixError(fmt.Errorf("error replacing step %s metadata values: %v", step.Name, err)))
 	}
-	return u.putStateFile()
 }
 
 func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep, err error) {
@@ -1398,7 +1430,6 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return nil, err
 	}
-	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	return moduleVersions, nil
 }
 

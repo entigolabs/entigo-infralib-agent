@@ -91,10 +91,6 @@ func GetAssumedConfig(baseConfig aws.Config, roleArn string) aws.Config {
 	return assumedConfig
 }
 
-func (a *awsService) GetIdentifier() string {
-	return fmt.Sprintf("prefix %s, AWS account id %s, region %s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
-}
-
 func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 	bucket := a.getBucketName()
 	s3, _, err := a.createBucket(bucket)
@@ -428,8 +424,7 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager mo
 		if updateSchedule != nil {
 			err = scheduler.deleteUpdateSchedule()
 			if err == nil {
-				manager.Message(model.MessageTypeSchedule, "Update schedule was removed",
-					map[string]string{"updateSchedule": updateCron})
+				manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, updateCron)
 			}
 			return err
 		}
@@ -446,14 +441,12 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager mo
 	if updateSchedule == nil {
 		err = scheduler.createUpdateSchedule(updateCron, updateArn, roleArn)
 		if err == nil {
-			manager.Message(model.MessageTypeSchedule, "Update schedule added: "+updateCron,
-				map[string]string{"updateSchedule": updateCron})
+			manager.Schedule(common.UpdateCommand, model.ScheduleAdded, updateCron)
 		}
 	} else if *updateSchedule.ScheduleExpression != getCronExpression(updateCron) {
 		err = scheduler.updateUpdateSchedule(updateCron, updateArn, roleArn)
 		if err == nil {
-			manager.Message(model.MessageTypeSchedule, "Update schedule modified: "+updateCron,
-				map[string]string{"updateSchedule": updateCron})
+			manager.Schedule(common.UpdateCommand, model.ScheduleModified, updateCron)
 		}
 	}
 	return err

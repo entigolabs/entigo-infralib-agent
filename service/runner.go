@@ -2,70 +2,129 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify"
 )
 
-func RunUpdater(ctx context.Context, command common.Command, flags *common.Flags) error {
+const terminationNotifyTimeout = 10 * time.Second
+
+type Runner struct {
+	ctx          context.Context
+	command      common.Command
+	flags        *common.Flags
+	provider     model.CloudProvider
+	minResources model.Resources
+	rootConfig   model.Config
+	manager      model.NotificationManager
+	finalize     sync.Once
+}
+
+func NewRunner(ctx context.Context, command common.Command, flags *common.Flags) (*Runner, error) {
 	provider, err := GetCloudProvider(ctx, flags)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resources, err := provider.SetupMinimalResources()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	config, err := GetRootConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	manager, err := notify.NewNotificationManager(ctx, config.Notifications)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	manager.Modules(resources.GetAccount(), resources.GetRegion(), resources.GetProviderType(), config)
-	identifier := provider.GetIdentifier()
-	params := map[string]string{"command": string(command)}
-	manager.Message(model.MessageTypeStarted, fmt.Sprintf("Agent %s started: %s", command, identifier), params)
-	resources, err = provider.SetupResources(manager, config)
+	return &Runner{
+		ctx:          ctx,
+		command:      command,
+		flags:        flags,
+		provider:     provider,
+		minResources: resources,
+		rootConfig:   config,
+		manager:      manager,
+	}, nil
+}
+
+func (r *Runner) Run() error {
+	r.manager.Modules(r.minResources, r.command, r.rootConfig)
+	defer r.notifyTerminationIfCanceled()
+	r.manager.Campaign(r.ctx, model.CampaignStatusStarted, r.minResources, r.command, nil)
+
+	resources, err := r.provider.SetupResources(r.manager, r.rootConfig)
 	if err != nil {
-		return notifyError(manager, fmt.Sprintf("Failed to setup resources: %s", err))
+		return r.notifyError(fmt.Errorf("failed to setup resources: %s", err))
 	}
-	err = updateAgentJob(command, flags.Pipeline, resources, config, provider.IsRunningLocally())
+	err = r.updateAgentJob(resources)
 	if err != nil {
-		return notifyError(manager, fmt.Sprintf("Failed to update agent job: %s", err))
+		return r.notifyError(fmt.Errorf("failed to update agent job: %s", err))
 	}
-	err = SetupEncryption(config, provider, resources)
+	err = r.setupEncryption(resources)
 	if err != nil {
-		return notifyError(manager, fmt.Sprintf("Failed to set up encryption: %s", err))
+		return r.notifyError(fmt.Errorf("failed to set up encryption: %s", err))
 	}
-	updater, err := NewUpdater(ctx, flags, resources, manager)
+	updater, err := NewUpdater(r.ctx, r.flags, resources, r.manager, r.command)
 	if err != nil {
-		return notifyError(manager, err.Error())
+		return r.notifyError(err)
 	}
-	err = updater.Process(command)
+	err = updater.Process()
 	if err != nil {
-		return notifyError(manager, err.Error())
+		return r.notifyError(err)
 	}
-	manager.Message(model.MessageTypeSuccess, fmt.Sprintf("Agent %s finished successfully: %s", command, identifier),
-		params)
+	r.finalize.Do(func() {
+		r.manager.Campaign(r.ctx, model.CampaignStatusSuccess, r.minResources, r.command, nil)
+
+	})
 	return nil
 }
 
-func updateAgentJob(cmd common.Command, pipelineFlags common.Pipeline, resources model.Resources, config model.Config, runningLocally bool) error {
-	if pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		return nil
+func (r *Runner) notifyTerminationIfCanceled() {
+	if r.ctx.Err() == nil {
+		return
 	}
-	pipelineFlags = ProcessPipelineFlags(pipelineFlags)
-	agent := NewAgent(resources, *pipelineFlags.TerraformCache.Value)
-	return agent.UpdateProjectImage(config.AgentVersion, cmd, runningLocally)
+	r.finalize.Do(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), terminationNotifyTimeout)
+		defer cancel()
+		r.manager.Campaign(shutdownCtx, model.CampaignStatusTerminated, r.minResources, r.command,
+			fmt.Errorf("agent was terminated"))
+	})
 }
 
-func notifyError(manager model.NotificationManager, message string) error {
-	manager.Message(model.MessageTypeFailure, message, nil)
-	return errors.New(message)
+func (r *Runner) updateAgentJob(resources model.Resources) error {
+	if r.flags.Pipeline.Type == string(common.PipelineTypeLocal) {
+		return nil
+	}
+	pipelineFlags := ProcessPipelineFlags(r.flags.Pipeline)
+	agent := NewAgent(resources, *pipelineFlags.TerraformCache.Value)
+	return agent.UpdateProjectImage(r.rootConfig.AgentVersion, r.command, r.provider.IsRunningLocally())
+}
+
+func (r *Runner) notifyError(err error) error {
+	if r.ctx.Err() != nil {
+		return err
+	}
+	r.finalize.Do(func() {
+		r.manager.Campaign(r.ctx, model.CampaignStatusFailure, r.minResources, r.command, err)
+	})
+	return err
+}
+
+func (r *Runner) setupEncryption(resources model.Resources) error {
+	if resources.GetProviderType() != model.AWS {
+		return nil // TODO Remove when GCP encryption is implemented
+	}
+	moduleName, outputs, err := GetEncryptionOutputs(r.rootConfig, resources.GetCloudPrefix(), resources.GetBucket())
+	if err != nil {
+		return fmt.Errorf("failed to get outputs for %s: %v", moduleName, err)
+	}
+	if outputs == nil {
+		return nil
+	}
+	return r.provider.AddEncryption(moduleName, outputs)
 }

@@ -3,25 +3,12 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/aws"
-	"github.com/entigolabs/entigo-infralib-agent/model"
 	"log"
 	"log/slog"
-)
 
-func SetupEncryption(config model.Config, provider model.CloudProvider, resources model.Resources) error {
-	if resources.GetProviderType() != model.AWS {
-		return nil // TODO Remove when GCP encryption is implemented
-	}
-	moduleName, outputs, err := GetEncryptionOutputs(config, resources.GetCloudPrefix(), resources.GetBucket())
-	if err != nil {
-		return fmt.Errorf("failed to get outputs for %s: %v", moduleName, err)
-	}
-	if outputs == nil {
-		return nil
-	}
-	return provider.AddEncryption(moduleName, outputs)
-}
+	"github.com/entigolabs/entigo-infralib-agent/aws"
+	"github.com/entigolabs/entigo-infralib-agent/model"
+)
 
 func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string, bucket model.Bucket) (string, error) {
 	if providerType != model.AWS {

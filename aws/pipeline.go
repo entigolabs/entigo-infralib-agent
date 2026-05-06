@@ -460,7 +460,7 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model
 	log.Printf("Starting pipeline %s\n", pipelineName)
 	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
-		ClientRequestToken: aws.String(uuid.New().String()),
+		ClientRequestToken: aws.String(uuid.NewString()),
 	})
 	if err != nil {
 		return nil, err
@@ -717,13 +717,11 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		}
 		if action.Status == types.ActionExecutionStatusSucceeded {
 			if status == approvalStatusWaiting && p.manager != nil {
-				message := fmt.Sprintf("Pipeline %s was approved", pipelineName)
-				params := map[string]string{"pipeline": pipelineName, "step": step.Name}
+				var approvedBy string
 				if action.UpdatedBy != nil {
-					message += fmt.Sprintf("\nApproved by %s", *action.UpdatedBy)
-					params["approvedBy"] = *action.UpdatedBy
+					approvedBy = *action.UpdatedBy
 				}
-				p.manager.Message(model.MessageTypeApprovals, message, params)
+				p.manager.Approval(pipelineName, step.Name, approvedBy)
 			}
 			return approvalStatusApproved, nil
 		}
@@ -759,7 +757,7 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 	}
 	log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 	if p.manager != nil {
-		p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+		p.manager.ManualApproval(pipelineName, step.Name, *pipeChanges, p.getLink(pipelineName))
 	}
 	return approvalStatusWaiting, nil
 }
