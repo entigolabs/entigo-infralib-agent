@@ -98,12 +98,38 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	err = mergo.Merge(&baseFile, moduleFile, mergo.WithAppendSlice)
-	if err != nil {
+	if err := mergeFirstSource(baseFile, moduleFile); err != nil {
+		return nil, err
+	}
+	if err := mergo.Merge(&baseFile, moduleFile, mergo.WithAppendSlice); err != nil {
 		return nil, err
 	}
 	deduplicateSyncOptions(baseFile)
 	return util.MapToYamlBytes(baseFile)
+}
+
+func mergeFirstSource(base, module map[string]interface{}) error {
+	baseSpec, _ := base["spec"].(map[string]interface{})
+	modSpec, _ := module["spec"].(map[string]interface{})
+	if baseSpec == nil || modSpec == nil {
+		return nil
+	}
+	baseSources, _ := baseSpec["sources"].([]interface{})
+	modSources, _ := modSpec["sources"].([]interface{})
+	if len(baseSources) == 0 || len(modSources) == 0 {
+		return nil
+	}
+	baseSrc, ok1 := baseSources[0].(map[string]interface{})
+	modSrc, ok2 := modSources[0].(map[string]interface{})
+	if !ok1 || !ok2 {
+		return nil
+	}
+	if err := mergo.Merge(&baseSrc, modSrc, mergo.WithAppendSlice, mergo.WithOverride); err != nil {
+		return err
+	}
+	baseSources[0] = baseSrc
+	modSpec["sources"] = modSources[1:]
+	return nil
 }
 
 func deduplicateSyncOptions(app map[string]interface{}) {
