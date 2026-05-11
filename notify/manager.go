@@ -49,7 +49,7 @@ func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotifica
 		}
 		notifier, err := createNotifier(ctx, configNotifier)
 		if err != nil {
-			return nil, fmt.Errorf("configNotifier %s %s", configNotifier.Name, err)
+			return nil, fmt.Errorf("configNotifier %s: %w", configNotifier.Name, err)
 		}
 		notifiers = append(notifiers, notifier)
 	}
@@ -205,6 +205,10 @@ func (n *NotificationManager) fanout(kind model.MessageType, dispatch func(model
 			defer wg.Done()
 			slog.Debug(fmt.Sprintf("Sending %s notification to %s notifier", kind, notifier.GetName()))
 			if err := dispatch(notifier); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Debug(fmt.Sprintf("notifier '%s' skipped during shutdown: %v", notifier.GetName(), err))
+					return
+				}
 				slog.Error(common.PrefixError(fmt.Errorf("failed to notify '%s': %v", notifier.GetName(), err)))
 			}
 		}(notifier)

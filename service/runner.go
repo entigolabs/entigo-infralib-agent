@@ -88,6 +88,9 @@ func (r *Runner) notifyTerminationIfCanceled() {
 	if r.ctx.Err() == nil {
 		return
 	}
+	if !r.manager.HasNotifier(model.MessageTypeFailure) {
+		return
+	}
 	r.finalize.Do(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), terminationNotifyTimeout)
 		defer cancel()

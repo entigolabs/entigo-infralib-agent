@@ -54,7 +54,7 @@ func getTokenSource(ctx context.Context, auth *model.ApiOauth) (oauth2.TokenSour
 	tokenSource := oauth2.ReuseTokenSourceWithExpiry(nil, config.TokenSource(ctx), 5*time.Minute)
 	_, err := tokenSource.Token() // Validate token source
 	if err != nil {
-		return nil, fmt.Errorf("failed to get oauth2 token: %v", err)
+		return nil, fmt.Errorf("failed to get oauth2 token: %w", err)
 	}
 	return tokenSource, nil
 }
