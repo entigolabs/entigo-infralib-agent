@@ -539,12 +539,12 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 	if err != nil {
 		return false, err
 	}
-	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	moduleVersions, err := u.updateModuleVersions(step, stepState, index)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		return false, err
 	}
+	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	step, err = u.processModules(step, moduleVersions)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)

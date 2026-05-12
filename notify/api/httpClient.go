@@ -15,6 +15,7 @@ import (
 
 type HttpClient struct {
 	client  *http.Client
+	timeout time.Duration
 	retries int
 	headers map[string]string
 }
@@ -22,13 +23,13 @@ type HttpClient struct {
 func NewHttpClient(ctx context.Context, timeout time.Duration, retries int, source oauth2.TokenSource, headers map[string]string) *HttpClient {
 	var client *http.Client
 	if source == nil {
-		client = http.DefaultClient
+		client = &http.Client{}
 	} else {
 		client = oauth2.NewClient(ctx, source)
 	}
-	client.Timeout = timeout
 	return &HttpClient{
 		client:  client,
+		timeout: timeout,
 		retries: retries,
 		headers: headers,
 	}
@@ -37,6 +38,13 @@ func NewHttpClient(ctx context.Context, timeout time.Duration, retries int, sour
 func (c *HttpClient) Do(req *http.Request) (*http.Response, error) {
 	for key, value := range c.headers {
 		req.Header.Set(key, value)
+	}
+	if c.timeout > 0 {
+		// Ctx based timeout is required instead of client timeout to avoid oauth2 CancelRequest func from logging once
+		// deprecated: golang.org/x/oauth2: Transport.CancelRequest no longer does anything; use contexts
+		ctx, cancel := context.WithTimeout(req.Context(), c.timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
 	}
 	if req.Body == nil {
 		return c.doWithRetry(req, nil)
