@@ -85,10 +85,6 @@ func validateServiceAccountJSON(credJSON []byte) error {
 	return nil
 }
 
-func (g *gcloudService) GetIdentifier() string {
-	return fmt.Sprintf("prefix %s, Google project Id %s, location %s", g.cloudPrefix, g.projectId, g.location)
-}
-
 func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	err := g.enableApiServices([]string{"secretmanager.googleapis.com"})
 	if err != nil {
@@ -121,7 +117,6 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 }
 
 func (g *gcloudService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
-	// TODO Default clients use gRPC, connections must be closed before exiting
 	err := g.enableApiServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
 		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com", "cloudscheduler.googleapis.com"})
@@ -178,7 +173,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	}
 	resources.CodeBuild = builder
 	resources.Pipeline = pipeline
-	err = g.createSchedule(config.Schedule, serviceAccount)
+	err = g.createSchedule(config.Schedule, serviceAccount, manager)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +310,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	return nameParts[len(nameParts)-1], nil
 }
 
-func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string) error {
+func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string, manager model.NotificationManager) error {
 	scheduler, err := NewScheduler(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create scheduler service: %s", err)
@@ -331,18 +326,27 @@ func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount s
 	}
 	if schedule.UpdateCron == "" {
 		if updateSchedule != nil {
-			return scheduler.deleteUpdateSchedule()
+			err = scheduler.deleteUpdateSchedule()
+			if err == nil {
+				manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, schedule.UpdateCron)
+			}
+			return err
 		}
 		return nil
 	}
 	agentJob := model.GetAgentProjectName(model.GetAgentPrefix(g.cloudPrefix), common.UpdateCommand)
 	if updateSchedule == nil {
-		return scheduler.createUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+		err = scheduler.createUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+		if err == nil {
+			manager.Schedule(common.UpdateCommand, model.ScheduleAdded, schedule.UpdateCron)
+		}
+	} else if updateSchedule.Schedule != schedule.UpdateCron {
+		err = scheduler.updateUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+		if err == nil {
+			manager.Schedule(common.UpdateCommand, model.ScheduleModified, schedule.UpdateCron)
+		}
 	}
-	if updateSchedule.Schedule != schedule.UpdateCron {
-		return scheduler.updateUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
-	}
-	return nil
+	return err
 }
 
 func (g *gcloudService) getBucketName() string {

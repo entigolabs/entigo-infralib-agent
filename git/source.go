@@ -132,17 +132,16 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 	if err != nil {
 		return nil, err
 	}
+	slog.Debug(fmt.Sprintf("Source %s repository path %s", source.URL, repoPath))
 	repoMutex.Lock()
 	defer repoMutex.Unlock()
 	repo, err := openSourceRepo(ctx, auth, source, repoPath, CABundle)
 	if err == nil {
-		slog.Debug(fmt.Sprintf("Repository path %s", repoPath))
 		return repo, nil
 	}
 	if !errors.Is(err, git.ErrRepositoryNotExists) {
 		return nil, err
 	}
-	slog.Debug(fmt.Sprintf("Cloning repository to %s", repoPath))
 	return git.PlainCloneContext(ctx, repoPath, false, &git.CloneOptions{
 		URL:             source.URL,
 		Auth:            auth,

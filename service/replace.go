@@ -44,7 +44,7 @@ var parameterIndexRegex = regexp.MustCompile(`([^\[\]]+)(\[([A-Za-z0-9.]+)(-([A-
 func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Step, error) {
 	stepYaml, err := yaml.Marshal(step)
 	if err != nil {
-		return step, fmt.Errorf("failed to convert step %s to yaml, error: %v", step.Name, err)
+		return step, fmt.Errorf("failed to convert step %s to yaml, error: %w", step.Name, err)
 	}
 	cache := make(paramCache)
 	modifiedStepYaml, delayedKeyTypes, err := u.replaceStringValues(step, string(stepYaml), index, cache)
@@ -56,7 +56,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
 	if err != nil {
 		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
-		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
+		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %w", step.Name, err)
 	}
 	moduleChecksums, err := calculateModuleChecksums(modifiedStep)
 	if err != nil {
@@ -70,7 +70,7 @@ func (u *updater) replaceConfigStepValues(step model.Step, index int) (model.Ste
 	err = yaml.Unmarshal([]byte(modifiedStepYaml), &modifiedStep)
 	if err != nil {
 		slog.Debug(fmt.Sprintf("broken step yaml %s:\n%s", step.Name, modifiedStepYaml))
-		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %v", step.Name, err)
+		return step, fmt.Errorf("failed to unmarshal modified step %s yaml, error: %w", step.Name, err)
 	}
 	for i, module := range modifiedStep.Modules {
 		var originalModule model.Module
@@ -97,7 +97,7 @@ func calculateModuleChecksums(step model.Step) (map[string][]byte, error) {
 		sorted := util.SortKeys(module.Inputs)
 		inputsYaml, err := yaml.Marshal(sorted)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert step %s module %s inputs to yaml, error: %v", step.Name,
+			return nil, fmt.Errorf("failed to convert step %s module %s inputs to yaml, error: %w", step.Name,
 				module.Name, err)
 		}
 		checksums[module.Name] = util.CalculateHash(inputsYaml)
@@ -118,12 +118,12 @@ func (u *updater) replaceConfigStepFileValues(step model.Step, modifiedStep *mod
 		}
 		newContent, delayedKeyTypes, err := u.replaceStringValues(step, string(file.Content), index, cache)
 		if err != nil {
-			return fmt.Errorf("failed to replace tags in file %s: %v", file.Name, err)
+			return fmt.Errorf("failed to replace tags in file %s: %w", file.Name, err)
 		}
 		checksum := util.CalculateHash([]byte(newContent))
 		newContent, err = u.replaceDelayedStringValues(step, newContent, index, cache, delayedKeyTypes)
 		if err != nil {
-			return fmt.Errorf("failed to replace delayed tags in file %s: %v", file.Name, err)
+			return fmt.Errorf("failed to replace delayed tags in file %s: %w", file.Name, err)
 		}
 		content := []byte(newContent)
 		err = validateStepFile(file.Name, content)
@@ -151,7 +151,7 @@ func validateStepFile(file string, content []byte) error {
 		err := yaml.Unmarshal(content, &yamlContent)
 		if err != nil {
 			slog.Debug(fmt.Sprintf("broken yaml %s:\n%s", file, string(content)))
-			return fmt.Errorf("failed to unmarshal yaml file %s: %v", file, err)
+			return fmt.Errorf("failed to unmarshal yaml file %s: %w", file, err)
 		}
 	}
 	return nil
@@ -199,7 +199,7 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		if strings.Contains(replacement, "\n") {
 			replacement, err = getMultilineReplacement(replaceTag, content, replacement)
 			if err != nil {
-				return "", nil, fmt.Errorf("failed to compile indent regex for step %s: %v", step.Name, err)
+				return "", nil, fmt.Errorf("failed to compile indent regex for step %s: %w", step.Name, err)
 			}
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
@@ -253,7 +253,7 @@ func (u *updater) replaceStepMetadataValues(step model.Step, index int) (model.S
 		var err error
 		module.Metadata, err = u.replaceMetadataValues(step, module, index, cache)
 		if err != nil {
-			return step, fmt.Errorf("failed to replace module %s metadata values in step %s: %v",
+			return step, fmt.Errorf("failed to replace module %s metadata values in step %s: %w",
 				module.Name, step.Name, err)
 		}
 		step.Modules[i] = module
@@ -343,7 +343,7 @@ func (u *updater) getReplacementConfigValue(configKey string) (string, error) {
 	}
 	configValue, err := util.GetValueFromStruct(configKey, u.config)
 	if err != nil {
-		return "", fmt.Errorf("failed to get config value %s: %s", configKey, err)
+		return "", fmt.Errorf("failed to get config value %s: %w", configKey, err)
 	}
 	return configValue, nil
 }
@@ -404,7 +404,7 @@ func (u *updater) getTypedModuleParameter(step model.Step, replaceKey string, ca
 	}
 	foundStep, module, err := u.findStepModuleByType(parts[1])
 	if err != nil {
-		return "", fmt.Errorf("failed to find step and module for toutput key %s: %s", replaceKey, err)
+		return "", fmt.Errorf("failed to find step and module for toutput key %s: %w", replaceKey, err)
 	}
 	if foundStep == nil || module == nil {
 		if optional {
@@ -480,7 +480,7 @@ func getOutputMapValue(v map[string]interface{}, output model.TFOutput, replaceK
 		}
 		value, err := util.GetInterfaceValue(innerValue, output.Type)
 		if err != nil {
-			return "", fmt.Errorf("output %s failed to get value for key %s with index %s: %v",
+			return "", fmt.Errorf("output %s failed to get value for key %s with index %s: %w",
 				replaceKey, match[1], match[2], err)
 		}
 		return strings.Trim(*value, `"`), nil
@@ -510,7 +510,7 @@ func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[strin
 	}
 	err = json.Unmarshal(file, &outputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %s", filePath, err)
+		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %w", filePath, err)
 	}
 	cache[filePath] = outputs
 	return outputs, nil
@@ -533,7 +533,7 @@ func getSSMParameterValue(ssm model.SSM, match []string, replaceKey string, para
 func getSSMParameterValueFromList(match []string, values []string, replaceKey string, parameterName string) (string, error) {
 	start, err := strconv.Atoi(match[3])
 	if err != nil {
-		return "", fmt.Errorf("failed to parse start index %s of parameter %s: %s", match[3], replaceKey, err)
+		return "", fmt.Errorf("failed to parse start index %s of parameter %s: %w", match[3], replaceKey, err)
 	}
 	if start+1 > len(values) {
 		return "", fmt.Errorf("start index %d of parameter %s is out of range", start, parameterName)
@@ -543,7 +543,7 @@ func getSSMParameterValueFromList(match []string, values []string, replaceKey st
 	}
 	end, err := strconv.Atoi(match[5])
 	if err != nil {
-		return "", fmt.Errorf("failed to parse end index %s of parameter %s: %s", match[5], replaceKey, err)
+		return "", fmt.Errorf("failed to parse end index %s of parameter %s: %w", match[5], replaceKey, err)
 	}
 	if end+1 > len(values) {
 		return "", fmt.Errorf("end index %d of parameter %s is out of range", end, parameterName)
@@ -571,7 +571,7 @@ func (u *updater) getTypedModuleName(step model.Step, replaceKey string, optiona
 	}
 	_, module, err := u.findStepModuleByType(parts[1])
 	if err != nil {
-		return "", fmt.Errorf("failed to find module with type %s for toutput key %s: %v", parts[1], replaceKey, err)
+		return "", fmt.Errorf("failed to find module with type %s for toutput key %s: %w", parts[1], replaceKey, err)
 	}
 	if module == nil {
 		if optional {
@@ -591,7 +591,7 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 	}
 	module, err := findModuleByType(step.Modules, parts[1])
 	if err != nil || module == nil {
-		return "", fmt.Errorf("failed to find step module with type %s for tsmodule key %s: %v", parts[1], replaceKey, err)
+		return "", fmt.Errorf("failed to find step module with type %s for tsmodule key %s: %w", parts[1], replaceKey, err)
 	}
 	return module.Name, nil
 }
@@ -859,7 +859,7 @@ func replaceModuleValues(module model.Module, inputs map[string]interface{}) (ma
 	}
 	inputsYaml, err := yaml.Marshal(inputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert module inputs %s to yaml, error: %v", module.Name, err)
+		return nil, fmt.Errorf("failed to convert module inputs %s to yaml, error: %w", module.Name, err)
 	}
 	content := string(inputsYaml)
 	matches := replaceRegex.FindAllStringSubmatch(content, -1)
@@ -873,7 +873,7 @@ func replaceModuleValues(module model.Module, inputs map[string]interface{}) (ma
 	err = yaml.Unmarshal([]byte(content), &inputs)
 	if err != nil {
 		slog.Debug(fmt.Sprintf("broken module inputs yaml %s:\n%s", module.Name, content))
-		return nil, fmt.Errorf("failed to unmarshal modified module inputs %s yaml, error: %v", module.Name, err)
+		return nil, fmt.Errorf("failed to unmarshal modified module inputs %s yaml, error: %w", module.Name, err)
 	}
 	return inputs, nil
 }
@@ -909,7 +909,7 @@ func replaceModuleInputsValues(module model.Module, content string, matches [][]
 		if strings.Contains(replacement, "\n") {
 			replacement, err = getMultilineReplacement(replaceTag, content, replacement)
 			if err != nil {
-				return "", fmt.Errorf("failed to compile indent regex for module %s: %v", module.Name, err)
+				return "", fmt.Errorf("failed to compile indent regex for module %s: %w", module.Name, err)
 			}
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)

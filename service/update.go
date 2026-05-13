@@ -31,10 +31,11 @@ const (
 )
 
 type Updater interface {
-	Process(command common.Command) error
+	Process() error
 }
 
 type updater struct {
+	ctx           context.Context
 	cmd           common.Command
 	config        model.Config
 	steps         []model.Step
@@ -52,7 +53,7 @@ type updater struct {
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
@@ -79,6 +80,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	}
 	pipeline := ProcessPipelineFlags(flags.Pipeline)
 	return &updater{
+		ctx:           ctx,
 		config:        config,
 		steps:         steps,
 		stepChecksums: model.NewStepsChecksums(),
@@ -92,6 +94,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
+		cmd:           command,
 	}, nil
 }
 
@@ -299,7 +302,7 @@ func moduleExists(source *model.Source, stepType model.StepType, module model.Mo
 	if source.ForcedVersion != "" {
 		exists, err := source.Storage.PathExists(moduleKey, source.ForcedVersion)
 		if err != nil {
-			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %v",
+			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %w",
 				module.Name, source.URL, source.ForcedVersion, err)
 		}
 		return exists, nil
@@ -307,7 +310,7 @@ func moduleExists(source *model.Source, stepType model.StepType, module model.Mo
 	if version != "" {
 		exists, err := source.Storage.PathExists(moduleKey, version)
 		if err != nil {
-			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %v",
+			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %w",
 				module.Name, source.URL, version, err)
 		}
 		if exists {
@@ -318,7 +321,7 @@ func moduleExists(source *model.Source, stepType model.StepType, module model.Mo
 		release := source.StableVersion.Original()
 		exists, err := source.Storage.PathExists(moduleKey, release)
 		if err != nil {
-			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %v",
+			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %w",
 				module.Name, source.URL, release, err)
 		}
 		return exists, nil
@@ -380,10 +383,10 @@ func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 	return nil
 }
 
-func (u *updater) Process(command common.Command) error {
+func (u *updater) Process() error {
 	index := 0
 	mostReleases := 1
-	if command == common.UpdateCommand {
+	if u.cmd == common.UpdateCommand {
 		index = 1
 		mostReleases = u.getMostReleases()
 		if mostReleases < 2 {
@@ -391,20 +394,29 @@ func (u *updater) Process(command common.Command) error {
 			return nil
 		}
 	}
-	u.cmd = command
+	u.manager.Sources(u.sources)
 	for ; index < mostReleases; index++ {
-		err := u.processRelease(index, command)
-		if err != nil {
-			return fmt.Errorf("failed to process release: %v", err)
+		if u.cmd == common.RunCommand {
+			u.manager.SetCurrentPipelineIndex(1)
+		} else {
+			u.manager.SetCurrentPipelineIndex(index)
 		}
+		sourceVersions := u.getNotifySourceVersions(index)
+		u.manager.PipelineState(model.ApplyStatusStarting, sourceVersions, nil)
+		err := u.processRelease(index)
+		if err != nil {
+			u.manager.PipelineState(model.ApplyStatusFailure, sourceVersions, err)
+			return fmt.Errorf("failed to process release: %w", err)
+		}
+		u.manager.PipelineState(model.ApplyStatusSuccess, sourceVersions, nil)
 	}
 	return nil
 }
 
-func (u *updater) processRelease(index int, command common.Command) error {
+func (u *updater) processRelease(index int) error {
 	u.logReleases(index)
 	u.updateState()
-	if command == common.UpdateCommand {
+	if u.cmd == common.UpdateCommand {
 		if err := u.updateChecksums(index); err != nil {
 			return err
 		}
@@ -416,6 +428,10 @@ func (u *updater) processRelease(index int, command common.Command) error {
 	for _, step := range u.steps {
 		retry, err := u.processStep(index, step, wg, errChan)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				wg.Wait()
+				return err
+			}
 			slog.Error(common.PrefixError(err))
 			failedSteps = append(failedSteps, step.Name)
 			break
@@ -426,6 +442,9 @@ func (u *updater) processRelease(index int, command common.Command) error {
 	}
 	wg.Wait()
 	close(errChan)
+	if u.ctx.Err() != nil {
+		return u.ctx.Err()
+	}
 	time.Sleep(1 * time.Second)
 	err := u.putStateFileOrDie()
 	if err != nil {
@@ -441,7 +460,7 @@ func (u *updater) processRelease(index int, command common.Command) error {
 	if err != nil {
 		return err
 	}
-	if command == common.UpdateCommand {
+	if u.cmd == common.UpdateCommand {
 		for i, source := range u.sources {
 			u.sources[i].PreviousChecksums = source.CurrentChecksums
 		}
@@ -478,6 +497,23 @@ func (u *updater) logReleases(index int) {
 	log.Printf("Applying releases: %s", strings.Join(sourceReleases, ", "))
 }
 
+func (u *updater) getNotifySourceVersions(index int) []model.SourceVersion {
+	var sourceVersions []model.SourceVersion
+	for _, source := range u.sources {
+		sourceVersion := model.SourceVersion{
+			URL:           source.URL,
+			ForcedVersion: source.ForcedVersion,
+		}
+		if index < len(source.Releases) {
+			sourceVersion.Version = source.Releases[index]
+		} else if len(source.Releases) > 0 {
+			sourceVersion.Version = source.Releases[len(source.Releases)-1]
+		}
+		sourceVersions = append(sourceVersions, sourceVersion)
+	}
+	return sourceVersions
+}
+
 func getFailedSteps(errChan chan string) []string {
 	var failedSteps []string
 	for stepName := range errChan {
@@ -508,6 +544,7 @@ func (u *updater) processStep(index int, step model.Step, wg *model.SafeCounter,
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)
 		return false, err
 	}
+	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	step, err = u.processModules(step, moduleVersions)
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)
@@ -577,7 +614,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s failed to update %s files for destination %s: %s",
 				step.Name, branch, name, err)))
-			return
+			continue
 		}
 	}
 }
@@ -585,6 +622,7 @@ func (u *updater) updateDestinationsFiles(step model.Step, branch string, files 
 func (u *updater) applyRelease(firstRun bool, executePipelines bool, step model.Step, stepState *model.StateStep, index int, providers map[model.SourceKey]model.Set[string], wg *model.SafeCounter, errChan chan<- string, files map[string]model.File) error {
 	if !executePipelines && !firstRun {
 		log.Printf("Skipping step %s because all applied module versions are newer or older than current releases\n", step.Name)
+		u.postCallBackWithMetadata(stepState, step, model.ApplyStatusSkipped, index)
 		return nil
 	}
 	u.updateDestinationsPlanFiles(step, files)
@@ -843,7 +881,7 @@ func (u *updater) updateCertFiles(stepName string) error {
 	}
 	bucketFiles, err := u.resources.GetBucket().ListFolderFiles(fmt.Sprintf("%s/%s", folder, certsFolder))
 	if err != nil {
-		return fmt.Errorf("failed to list folder allFiles: %s", err)
+		return fmt.Errorf("failed to list folder allFiles: %w", err)
 	}
 	for _, bucketFile := range bucketFiles {
 		if allFiles.Contains(bucketFile) {
@@ -851,7 +889,7 @@ func (u *updater) updateCertFiles(stepName string) error {
 		}
 		err = u.resources.GetBucket().DeleteFile(bucketFile)
 		if err != nil {
-			return fmt.Errorf("failed to delete file %s: %s", bucketFile, err)
+			return fmt.Errorf("failed to delete file %s: %w", bucketFile, err)
 		}
 	}
 	return nil
@@ -1176,16 +1214,16 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	}
 	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, sourceVersions)
 	if err != nil {
-		return false, nil, nil, fmt.Errorf("failed to create terraform provider: %s", err)
+		return false, nil, nil, fmt.Errorf("failed to create terraform provider: %w", err)
 	}
 	modifiedProvider, delayedKeyTypes, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
 	if err != nil {
-		return false, nil, nil, fmt.Errorf("failed to replace provider values: %s", err)
+		return false, nil, nil, fmt.Errorf("failed to replace provider values: %w", err)
 	}
 	providerChecksum := util.CalculateHash([]byte(modifiedProvider))
 	modifiedProvider, err = u.replaceDelayedStringValues(step, modifiedProvider, index, make(paramCache), delayedKeyTypes)
 	if err != nil {
-		return false, nil, nil, fmt.Errorf("failed to replace delayed provider values: %s", err)
+		return false, nil, nil, fmt.Errorf("failed to replace delayed provider values: %w", err)
 	}
 	providerFile := fmt.Sprintf("steps/%s-%s/provider.tf", u.resources.GetCloudPrefix(), step.Name)
 	files[providerFile] = model.File{Content: []byte(modifiedProvider), Checksum: providerChecksum}
@@ -1244,7 +1282,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		prefix := fmt.Sprintf("%s-%s-%s", u.resources.GetCloudPrefix(), step.Name, module.Name)
 		err := util.SetChildStringValue(inputs, prefix, false, "global", "prefix")
 		if err != nil {
-			return false, nil, fmt.Errorf("failed to set prefix: %s", err)
+			return false, nil, fmt.Errorf("failed to set prefix: %w", err)
 		}
 		inputBytes, err := getModuleInputBytes(inputs)
 		if err != nil {
@@ -1267,7 +1305,7 @@ func getModuleInputBytes(inputs map[string]interface{}) ([]byte, error) {
 	}
 	inputBytes, err := yaml.Marshal(inputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal inputs: %s", err)
+		return nil, fmt.Errorf("failed to marshal inputs: %w", err)
 	}
 	return inputBytes, nil
 }
@@ -1286,12 +1324,14 @@ func (u *updater) createBackendConf(path string, bucket model.Bucket) (string, [
 func (u *updater) putStateFileOrDie() error {
 	err := u.putStateFile()
 	if err != nil {
-		state, _ := yaml.Marshal(u.state)
-		if state != nil {
-			log.Println(string(state))
-			log.Println("Update the state file manually to avoid reapplying steps")
+		if !errors.Is(err, context.Canceled) {
+			state, _ := yaml.Marshal(u.state)
+			if state != nil {
+				log.Println(string(state))
+				log.Println("Update the state file manually to avoid reapplying steps")
+			}
 		}
-		return fmt.Errorf("failed to put state file: %v", err)
+		return fmt.Errorf("failed to put state file: %w", err)
 	}
 	return nil
 }
@@ -1310,19 +1350,22 @@ func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Ste
 
 	stepState.AppliedAt = time.Now().UTC()
 	for _, module := range stepState.Modules {
-		moduleVersion := module.Version
-		module.AppliedVersion = &moduleVersion
+		module.AppliedVersion = new(module.Version)
 	}
 	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return u.putStateFile()
 	}
+	u.postCallBackWithMetadata(stepState, step, status, index)
+	return u.putStateFile()
+}
+
+func (u *updater) postCallBackWithMetadata(stepState *model.StateStep, step model.Step, status model.ApplyStatus, index int) {
 	modifiedStep, err := u.replaceStepMetadataValues(step, index)
 	if err == nil {
 		u.postCallbackWithStep(status, *stepState, &modifiedStep, nil)
 	} else {
 		slog.Error(common.PrefixError(fmt.Errorf("error replacing step %s metadata values: %v", step.Name, err)))
 	}
-	return u.putStateFile()
 }
 
 func (u *updater) postCallback(status model.ApplyStatus, stepState model.StateStep, err error) {
@@ -1398,7 +1441,6 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 	if err != nil {
 		return nil, err
 	}
-	u.postCallback(model.ApplyStatusStarting, *stepState, nil)
 	return moduleVersions, nil
 }
 
@@ -1451,7 +1493,7 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 	var moduleStateSemver *version.Version
 	moduleStateSemver, err = version.NewVersion(*moduleState.AppliedVersion)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to parse module state applied version %s: %s", moduleVersion, err)
+		return "", false, fmt.Errorf("failed to parse module state applied version %s: %w", moduleVersion, err)
 	}
 	if moduleSemver.Equal(moduleStateSemver) && moduleSemver.LessThan(releaseTag) {
 		return getFormattedVersion(moduleStateSemver), false, nil
@@ -1648,11 +1690,11 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 
 	inputs, err := mergeInputs(defaultInputs, providerInputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to merge inputs: %v", err)
+		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
 	inputs, err = mergeInputs(inputs, module.ConfigInputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to merge inputs: %v", err)
+		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
 	return replaceModuleValues(module, inputs)
 }
@@ -1664,12 +1706,12 @@ func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.So
 		if errors.As(err, &fileError) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get module file %s: %v", filePath, err)
+		return nil, fmt.Errorf("failed to get module file %s: %w", filePath, err)
 	}
 	var defaultInputs map[string]interface{}
 	err = yaml.Unmarshal(defaultInputsRaw, &defaultInputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal default inputs: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal default inputs: %w", err)
 	}
 	return defaultInputs, nil
 }
@@ -1686,11 +1728,11 @@ func (u *updater) getModuleMetadata(module model.Module, moduleSource string, so
 			slog.Debug(fmt.Sprintf("Module %s agent file not found", module.Name))
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get module file %s: %v", filePath, err)
+		return nil, fmt.Errorf("failed to get module file %s: %w", filePath, err)
 	}
 	agentFile, err := model.UnmarshalAgentYaml(metadataRaw)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal module %s agent: %v", module.Name, err)
+		return nil, fmt.Errorf("failed to unmarshal module %s agent: %w", module.Name, err)
 	}
 	switch v := agentFile.(type) {
 	case model.V1Agent:

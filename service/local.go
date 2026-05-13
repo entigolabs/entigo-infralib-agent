@@ -4,11 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
-	"github.com/entigolabs/entigo-infralib-agent/common"
-	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	"io"
 	"log"
 	"log/slog"
@@ -18,6 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/entigolabs/entigo-infralib-agent/argocd"
+	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/terraform"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const executeScript = "entrypoint.sh"
@@ -185,7 +186,7 @@ func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoAp
 		log.Printf("Approved %s\n", pipelineName)
 		return true, nil
 	}
-	return l.getManualApproval(pipelineName, pipeChanges)
+	return l.getManualApproval(pipelineName, step.Name, pipeChanges)
 }
 
 func getPipelineChanges(pipelineName string, stepType model.StepType, output []byte) (*model.PipelineChanges, error) {
@@ -211,7 +212,7 @@ func getPipelineChanges(pipelineName string, stepType model.StepType, output []b
 	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
 }
 
-func (l *LocalPipeline) getManualApproval(pipelineName string, changes *model.PipelineChanges) (bool, error) {
+func (l *LocalPipeline) getManualApproval(pipelineName, step string, changes *model.PipelineChanges) (bool, error) {
 	l.inputLock.Lock()
 
 	var logBuffer bytes.Buffer
@@ -223,7 +224,7 @@ func (l *LocalPipeline) getManualApproval(pipelineName string, changes *model.Pi
 		l.inputLock.Unlock()
 	}()
 	time.Sleep(1 * time.Second) // Wait for output to be redirected
-	l.manager.ManualApproval(pipelineName, *changes, "")
+	l.manager.ManualApproval(pipelineName, step, *changes, "")
 
 	fmt.Printf("Pipeline %s changes: %d to change, %d to destroy. Approve changes? (yes/no)", pipelineName,
 		changes.Changed, changes.Destroyed)

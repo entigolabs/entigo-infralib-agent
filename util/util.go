@@ -90,7 +90,7 @@ func GetValueFromStruct(keyWithDots string, object interface{}) (string, error) 
 		key = strings.ReplaceAll(key, "_", " ")
 		key = cases.Title(language.English, cases.Compact).String(key)
 		key = strings.ReplaceAll(key, " ", "")
-		for v.Kind() == reflect.Ptr {
+		for v.Kind() == reflect.Pointer {
 			v = v.Elem()
 		}
 		if v.Kind() != reflect.Struct {

@@ -29,7 +29,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Optional replacement tags](#optional-replacement-tags)
   * [Including files in steps](#including-files-in-steps)
   * [Including CA certificates](#including-ca-certificates)
-  * [Notification API requests](#notification-api-requests)
+  * [Notifications](#notifications)
   * [Encryption](#encryption)
   * [Scheduling](#scheduling)
 * [Migration Helper](#migration-helper)
@@ -434,7 +434,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * notifications - send notifications with selected types, each notifier can only use one subtype
   * name - name of the notifier
   * context - optional, extra context added to the notification
-  * message_types - list of types of messages to send, possible values `started | approvals | progress | schedule | success | failure`, default **`[approvals, failure]`**
+  * message_types - list of types of messages to send, possible values `started | approvals | sources | progress | schedule | success | failure`, default **`[approvals, failure]`**. More info in [Message types](#message-types)
   * api - send notifications to a custom API
     * url - url for the api
     * headers - key-value pair of headers to add to the request
@@ -569,9 +569,38 @@ It's possible to include files in steps by adding the files into a `./config/<st
 
 It's possible to include CA certificates by adding the files into a `./ca-certificates` subdirectory. Files will be copied into the bucket root and each step directory for Infralib.
 
-### Notification API requests
+### Notifications
 
-When configuring api notifications, agent will send requests to the specified URL. OpenApi specification for the endpoints is in the `notification-api.yaml` file.
+The agent emits lifecycle events at three nested levels of granularity so external systems can observe progress and outcomes:
+
+* **Agent execution** — the entire agent invocation. Emits a start event and a terminal success or failure event.
+* **Pipeline** — each release iteration applied by the agent. A `run` command applies a single release (one pipeline). An `update` command can apply multiple releases sequentially, each emitting its own start, success, or failure events.
+* **Step** — each configuration step within a pipeline. Emits start, success, failure, or skipped events.
+
+**Failure cascade.** The levels nest: a step failure surfaces as a pipeline failure, which surfaces as an agent failure.
+
+**Subscriptions.** Lifecycle events are grouped into *message types*. Each notifier configured under `notifications` subscribes to specific message types via `message_types`, so the same event stream can be routed to different channels at different levels of detail (e.g. `failure` to a low-noise human channel, `progress` to an API integration). When `message_types` is omitted, the default is `[approvals, failure]`.
+
+**Delivery.** Notifier delivery is asynchronous and best-effort within the agent. A notifier returning an error is logged but does not abort the agent or block other notifiers.
+
+**Pre-initialization failures.** Failures that occur before the notification manager is constructed (cloud provider client setup, reading the root config from the bucket, parsing the notifications block itself) cannot be delivered through this system. Those are the responsibility of whatever runs the agent (Kubernetes Job, AWS CodeBuild, Cloud Run Job, etc.) via process exit code and container logs.
+
+#### Message types
+
+* `started` — the agent execution has started. Fires once at the beginning of the execution, after the notification manager is constructed. Includes the command and the agent's cloud identifier.
+* `success` — the agent execution finished successfully. Fires once at the end of a successful execution.
+* `failure` — an agent-level failure. Fires once on any error reachable after the notification manager has been constructed (resource setup, encryption setup, updater construction, or a propagated pipeline failure). Includes the error message.
+* `progress` — pipeline and step lifecycle. Carries:
+  * Pipeline `starting` / `success` / `failure` for each release iteration, with the source versions being applied.
+  * Step `starting` / `success` / `failure` / `skipped` for each configuration step. A step is `skipped` when no changed modules are found.
+* `approvals` — the pipeline is waiting for manual approval. Includes the planned changes and a link to the pipeline. Also fires when an approval is granted.
+* `modules` — list of modules that will be applied across all steps. Fires once near the start of the agent execution.
+* `sources` — list of sources and their resolved releases. Fires once at the start of the release loop.
+* `schedule` — emitted when the agent's update schedule is added, modified, or removed during bootstrap.
+
+#### API
+
+When configuring API notifications, the agent will send requests to the specified URL. The OpenAPI specification for the endpoints is in the [openapi/notification-api.yaml](./openapi/notification-api.yaml).
 
 ### Encryption
 
