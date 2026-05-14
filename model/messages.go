@@ -16,6 +16,7 @@ type CampaignStatus string
 const (
 	CampaignStatusStarted    CampaignStatus = "started"
 	CampaignStatusSuccess    CampaignStatus = "success"
+	CampaignStatusSkipped    CampaignStatus = "skipped"
 	CampaignStatusFailure    CampaignStatus = "failure"
 	CampaignStatusTerminated CampaignStatus = "terminated"
 )
@@ -32,7 +33,7 @@ func (m CampaignMessage) Type() MessageType {
 	switch m.Status {
 	case CampaignStatusStarted:
 		return MessageTypeStarted
-	case CampaignStatusSuccess:
+	case CampaignStatusSuccess, CampaignStatusSkipped:
 		return MessageTypeSuccess
 	case CampaignStatusFailure, CampaignStatusTerminated:
 		return MessageTypeFailure

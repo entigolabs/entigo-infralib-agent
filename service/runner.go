@@ -73,12 +73,16 @@ func (r *Runner) Run() error {
 	if err != nil {
 		return r.notifyError(err)
 	}
-	err = updater.Process()
+	campaignRan, err := updater.Process()
 	if err != nil {
 		return r.notifyError(err)
 	}
 	r.finalize.Do(func() {
-		r.manager.Campaign(r.ctx, model.CampaignStatusSuccess, r.minResources, r.command, nil)
+		status := model.CampaignStatusSuccess
+		if !campaignRan {
+			status = model.CampaignStatusSkipped
+		}
+		r.manager.Campaign(r.ctx, status, r.minResources, r.command, nil)
 
 	})
 	return nil

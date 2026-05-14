@@ -31,7 +31,7 @@ const (
 )
 
 type Updater interface {
-	Process() error
+	Process() (bool, error)
 }
 
 type updater struct {
@@ -383,18 +383,18 @@ func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 	return nil
 }
 
-func (u *updater) Process() error {
+func (u *updater) Process() (bool, error) {
 	index := 0
 	mostReleases := 1
+	u.manager.Sources(u.sources)
 	if u.cmd == common.UpdateCommand {
 		index = 1
 		mostReleases = u.getMostReleases()
 		if mostReleases < 2 {
 			log.Println("No updates found")
-			return nil
+			return false, nil
 		}
 	}
-	u.manager.Sources(u.sources)
 	for ; index < mostReleases; index++ {
 		if u.cmd == common.RunCommand {
 			u.manager.SetCurrentPipelineIndex(1)
@@ -406,11 +406,11 @@ func (u *updater) Process() error {
 		err := u.processRelease(index)
 		if err != nil {
 			u.manager.PipelineState(model.ApplyStatusFailure, sourceVersions, err)
-			return fmt.Errorf("failed to process release: %w", err)
+			return true, fmt.Errorf("failed to process release: %w", err)
 		}
 		u.manager.PipelineState(model.ApplyStatusSuccess, sourceVersions, nil)
 	}
-	return nil
+	return true, nil
 }
 
 func (u *updater) processRelease(index int) error {
