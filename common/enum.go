@@ -17,6 +17,7 @@ const (
 	MigrateConfigCommand   Command = "migrate-config"
 	MigratePlanCommand     Command = "migrate-plan"
 	MigrateValidateCommand Command = "migrate-validate"
+	ProvisionCommand       Command = "provision"
 )
 
 type LogLevel string

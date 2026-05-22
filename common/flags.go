@@ -28,6 +28,7 @@ type Flags struct {
 	Delete                  DeleteFlags
 	Params                  Params
 	Migrate                 Migrate
+	Wrapper                 Wrapper
 }
 
 func (f *Flags) Setup(cmd Command) error {
@@ -70,6 +71,13 @@ type Migrate struct {
 	ImportFile string
 	PlanFile   string
 	TypesFile  string
+}
+
+type Wrapper struct {
+	Config     string
+	Step       string
+	Command    string
+	Entrypoint string
 }
 
 type PipelineType string

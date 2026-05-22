@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package wrapper.v1alpha1;
+option go_package = "github.com/entigolabs/entigo-infralib-agent/gen/wrapper/v1alpha1;v1alpha1";
+
+// WrapperService receives logs from infralib-tool wrapper executions.
+service WrapperService {
+  // StreamLogs opens a bidirectional stream for one wrapper execution.
+  // The first client message MUST be a Handshake; subsequent client messages
+  // MUST be LogLine or Ping. The server responds with HandshakeAck first,
+  // then optional Ping responses while the stream is open, and StreamComplete
+  // before closing.
+  rpc StreamLogs(stream StreamLogsRequest) returns (stream StreamLogsResponse);
+}
+
+message StreamLogsRequest {
+  oneof payload {
+    Handshake handshake = 1;
+    LogLine log_line = 2;
+    Ping ping = 3;
+    ExecutionComplete complete = 4;
+  }
+}
+
+message StreamLogsResponse {
+  oneof payload {
+    HandshakeAck handshake_ack = 1;
+    Ping ping = 2;
+    StreamComplete complete = 3;
+  }
+}
+
+// Handshake binds the stream to a single wrapper execution. Sent once as the
+// first request message.
+message Handshake {
+  string campaign_id = 1;
+  string step = 2;
+  string command = 3;
+}
+
+// HandshakeAck confirms the server accepted the Handshake. The client must
+// wait for this before sending any LogLine messages so handshake-time
+// validation errors surface before logs start flowing.
+message HandshakeAck {}
+
+message LogLine {
+  string line = 1;
+}
+
+// Ping keeps idle connections alive across load balancers that drop HTTP/2
+// flows after inactivity timeouts.
+message Ping {}
+
+// ExecutionComplete reports the outcome of the wrapper's entrypoint.sh
+// execution. Sent as the last client message before CloseSend.
+message ExecutionComplete {
+  int32 exit_code = 1;
+  string error = 2;
+}
+
+message StreamComplete {
+  uint64 total_received = 1;
+}

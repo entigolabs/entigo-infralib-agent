@@ -1,6 +1,10 @@
 package model
 
-import "github.com/entigolabs/entigo-infralib-agent/common"
+import (
+	"fmt"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+)
 
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
@@ -33,7 +37,13 @@ const (
 	GitSourceEnvFormat   = "GIT_AUTH_SOURCE_%s"
 	GitUsernameEnvFormat = "GIT_AUTH_USERNAME_%s"
 	GitPasswordEnvFormat = "GIT_AUTH_PASSWORD_%s"
+
+	WrapperConfigEnv = "WRAPPER_CONFIG"
 )
+
+func WrapperConfigSecretName(prefix string) string {
+	return fmt.Sprintf("entigo-infralib-%s-wrapper-config", prefix)
+}
 
 type CloudProvider interface {
 	SetupResources(manager NotificationManager, config Config) (Resources, error)

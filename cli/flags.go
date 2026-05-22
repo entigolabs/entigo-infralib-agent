@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/urfave/cli/v3"
 )
 
@@ -47,6 +48,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(baseFlags, &stateFileFlag, importFileFlag(true), &planFileFlag)
 	case common.MigrateConfigCommand:
 		return append(baseFlags, &stateFileFlag, importFileFlag(false))
+	case common.ProvisionCommand:
+		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag)
 	default:
 		return baseFlags
 	}
@@ -367,5 +370,42 @@ var trustRoleFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "aws arn or gcloud email for allowing assume role",
 	Destination: &flags.ServiceAccount.TrustRole,
+	Required:    false,
+}
+
+var wrapperConfigFlag = cli.StringFlag{
+	Name:        "wrapper-config",
+	Aliases:     []string{"wc"},
+	Sources:     cli.EnvVars(model.WrapperConfigEnv),
+	Value:       "",
+	Usage:       "wrapper api config yaml; resolved from secret manager at job start",
+	Destination: &flags.Wrapper.Config,
+	Required:    true,
+}
+
+var stepFlag = cli.StringFlag{
+	Name:        "step",
+	Sources:     cli.EnvVars("INFRALIB_STEP"),
+	Value:       "",
+	Usage:       "step name for the current pipeline execution",
+	Destination: &flags.Wrapper.Step,
+	Required:    true,
+}
+
+var commandFlag = cli.StringFlag{
+	Name:        "command",
+	Sources:     cli.EnvVars("COMMAND"),
+	Value:       "",
+	Usage:       "infralib command to execute",
+	Destination: &flags.Wrapper.Command,
+	Required:    true,
+}
+
+var entrypointFlag = cli.StringFlag{
+	Name:        "entrypoint",
+	Sources:     cli.EnvVars("INFRALIB_ENTRYPOINT"),
+	Value:       "entrypoint.sh",
+	Usage:       "path to the infralib-tool entrypoint script",
+	Destination: &flags.Wrapper.Entrypoint,
 	Required:    false,
 }

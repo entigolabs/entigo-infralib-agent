@@ -20,6 +20,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
@@ -53,7 +54,7 @@ type updater struct {
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
@@ -72,6 +73,9 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	}
 	sources, moduleSources, err := createSources(ctx, steps, config, state, resources.GetSSM())
 	if err != nil {
+		return nil, err
+	}
+	if err := upsertWrapperConfig(config.Wrapper, campaignId, resources.GetCloudPrefix(), resources.GetSSM()); err != nil {
 		return nil, err
 	}
 	destinations, err := createDestinations(ctx, config)
@@ -202,6 +206,22 @@ func getCABundle(file string, certs []model.File) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("CA file %s not found", file)
+}
+
+func upsertWrapperConfig(wrapper *model.Wrapper, campaignId uuid.UUID, prefix string, ssm model.SSM) error {
+	var payload string
+	if wrapper != nil && wrapper.Api != nil {
+		wrapper.CampaignId = campaignId.String()
+		bytes, err := yaml.Marshal(wrapper)
+		if err != nil {
+			return fmt.Errorf("failed to marshal wrapper config: %v", err)
+		}
+		payload = string(bytes)
+	}
+	if err := ssm.PutSecret(model.WrapperConfigSecretName(prefix), payload); err != nil {
+		return fmt.Errorf("failed to upsert wrapper config secret: %v", err)
+	}
+	return nil
 }
 
 func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) error {

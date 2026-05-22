@@ -33,9 +33,10 @@ type Builder struct {
 	zone           string
 	serviceAccount string
 	terraformCache bool
+	cloudPrefix    string
 }
 
-func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache bool) (*Builder, error) {
+func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache bool, cloudPrefix string) (*Builder, error) {
 	client, err := run.NewJobsClient(ctx, options...)
 	if err != nil {
 		return nil, err
@@ -48,6 +49,7 @@ func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, l
 		zone:           zone,
 		serviceAccount: serviceAccount,
 		terraformCache: terraformCache,
+		cloudPrefix:    cloudPrefix,
 	}, nil
 }
 
@@ -474,6 +476,9 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
 	}
+	envVars = append(envVars, &runv1.EnvVar{Name: model.WrapperConfigEnv, ValueFrom: &runv1.EnvVarSource{
+		SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: model.WrapperConfigSecretName(b.cloudPrefix)},
+	}})
 	for source := range authSources {
 		hash := util.HashCode(source)
 		envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), ValueFrom: &runv1.EnvVarSource{
@@ -495,6 +500,8 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
 	}
+	envVars = append(envVars, &runpb.EnvVar{Name: model.WrapperConfigEnv,
+		Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: model.WrapperConfigSecretName(b.cloudPrefix)}}}})
 	for source := range authSources {
 		hash := util.HashCode(source)
 		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash),
@@ -516,6 +523,7 @@ func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step 
 		"COMMAND":         string(command),
 		"TF_VAR_prefix":   stepName,
 		"INFRALIB_BUCKET": bucket,
+		"INFRALIB_STEP":   step.Name,
 	}
 	if step.Type == model.StepTypeTerraform {
 		envVars = b.addTerraformEnvironmentVariables(envVars, step)

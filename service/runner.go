@@ -9,6 +9,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify"
+	"github.com/google/uuid"
 )
 
 const terminationNotifyTimeout = 10 * time.Second
@@ -21,6 +22,7 @@ type Runner struct {
 	minResources model.Resources
 	rootConfig   model.Config
 	manager      model.NotificationManager
+	campaignId   uuid.UUID
 	finalize     sync.Once
 }
 
@@ -37,7 +39,8 @@ func NewRunner(ctx context.Context, command common.Command, flags *common.Flags)
 	if err != nil {
 		return nil, err
 	}
-	manager, err := notify.NewNotificationManager(ctx, config.Notifications)
+	campaignId := uuid.New()
+	manager, err := notify.NewNotificationManager(ctx, config.Notifications, campaignId)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +52,7 @@ func NewRunner(ctx context.Context, command common.Command, flags *common.Flags)
 		minResources: resources,
 		rootConfig:   config,
 		manager:      manager,
+		campaignId:   campaignId,
 	}, nil
 }
 
@@ -69,7 +73,7 @@ func (r *Runner) Run() error {
 	if err != nil {
 		return r.notifyError(fmt.Errorf("failed to set up encryption: %s", err))
 	}
-	updater, err := NewUpdater(r.ctx, r.flags, resources, r.manager, r.command)
+	updater, err := NewUpdater(r.ctx, r.flags, resources, r.manager, r.command, r.campaignId)
 	if err != nil {
 		return r.notifyError(err)
 	}

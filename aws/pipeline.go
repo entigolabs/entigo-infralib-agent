@@ -2,10 +2,13 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,6 +49,12 @@ const (
 	approvalStatusApprove  approvalStatus = "Approve"
 )
 
+type envVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Type  string `json:"type,omitempty"`
+}
+
 type Pipeline struct {
 	ctx            context.Context
 	region         string
@@ -55,10 +64,11 @@ type Pipeline struct {
 	logGroup       string
 	logStream      string
 	terraformCache bool
+	cloudPrefix    string
 	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, manager model.NotificationManager) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -68,6 +78,7 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		logGroup:       logGroup,
 		logStream:      logStream,
 		terraformCache: terraformCache,
+		cloudPrefix:    cloudPrefix,
 		manager:        manager,
 	}
 }
@@ -99,8 +110,7 @@ func (p *Pipeline) deletePipeline(projectName string) error {
 		Name: aws.String(projectName),
 	})
 	if err != nil {
-		var notFoundError *types.PipelineNotFoundException
-		if errors.As(err, &notFoundError) {
+		if _, ok := errors.AsType[*types.PipelineNotFoundException](err); ok {
 			return nil
 		}
 		return err
@@ -118,6 +128,14 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return p.startUpdatedPipeline(pipe, stepName, step, bucket, authSources)
 	}
 	planCommand, applyCommand := model.GetCommands(step.Type)
+	planEnvars, err := p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return nil, err
+	}
+	applyEnvVars, err := p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return nil, err
+	}
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -161,7 +179,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": planEnvars,
 					},
 				},
 				},
@@ -193,7 +211,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": applyEnvVars,
 					},
 				},
 				},
@@ -252,6 +270,14 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		planCommand = model.PlanDestroyCommand
 		applyCommand = model.ApplyDestroyCommand
 	}
+	planEnvVars, err := p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return err
+	}
+	applyEnvVars, err := p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return err
+	}
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
 			Name:    aws.String(pipelineName),
@@ -294,7 +320,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": planEnvVars,
 					},
 				},
 				},
@@ -326,7 +352,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": applyEnvVars,
 					},
 				},
 				},
@@ -511,7 +537,10 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 			continue
 		}
 		for _, action := range stage.Actions {
-			envVars := p.getActionEnvironmentVariables(*action.Name, stepName, step, bucket, authSources)
+			envVars, err := p.getActionEnvironmentVariables(*action.Name, stepName, step, bucket, authSources)
+			if err != nil {
+				return err
+			}
 			if action.Configuration == nil || action.Configuration["EnvironmentVariables"] == envVars {
 				continue
 			}
@@ -532,13 +561,12 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 	return err
 }
 
-func (p *Pipeline) getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+func (p *Pipeline) getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
 	command := getCommand(actionName, step.Type)
 	if step.Type == model.StepTypeTerraform {
 		return p.getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
-	} else {
-		return getEnvironmentVariables(command, stepName, step, bucket, authSources)
 	}
+	return p.getEnvironmentVariables(command, stepName, step, bucket, authSources)
 }
 
 func getCommand(actionName string, stepType model.StepType) model.ActionCommand {
@@ -546,27 +574,23 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	case planName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDPlanCommand
-		} else {
-			return model.PlanCommand
 		}
+		return model.PlanCommand
 	case applyName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDApplyCommand
-		} else {
-			return model.ApplyCommand
 		}
+		return model.ApplyCommand
 	case destroyName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDPlanDestroyCommand
-		} else {
-			return model.PlanDestroyCommand
 		}
+		return model.PlanDestroyCommand
 	case applyDestroyName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDApplyDestroyCommand
-		} else {
-			return model.ApplyDestroyCommand
 		}
+		return model.ApplyDestroyCommand
 	}
 	return ""
 }
@@ -903,8 +927,7 @@ func (p *Pipeline) stopPipelineExecution(pipelineName string, executionId string
 		Reason:              &reason,
 	})
 	if err != nil {
-		var awsError *types.PipelineExecutionNotStoppableException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.PipelineExecutionNotStoppableException](err); ok {
 			return nil
 		}
 		return err
@@ -926,59 +949,71 @@ func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 	return pipelineOutput.Pipeline, nil
 }
 
-func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
 	if step.Type == model.StepTypeTerraform {
 		return p.getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
 	}
-	return getEnvironmentVariables(command, stepName, step, bucket, authSources)
+	return p.getEnvironmentVariables(command, stepName, step, bucket, authSources)
 }
 
-func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step, bucket, authSources)
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TERRAFORM_CACHE\",\"value\":\"%t\"}", p.terraformCache))
+func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
+	vars := p.buildEnvVars(command, stepName, step, bucket, authSources)
+	vars = append(vars, envVar{Name: "TERRAFORM_CACHE", Value: fmt.Sprintf("%t", p.terraformCache)})
 	for _, module := range step.Modules {
-		if util.IsClientModule(module) {
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.HttpUsername))
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.HttpPassword))
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.Source))
+		if !util.IsClientModule(module) {
+			continue
 		}
+		up := strings.ToUpper(module.Name)
+		vars = append(vars,
+			envVar{Name: "GIT_AUTH_USERNAME_" + up, Value: module.HttpUsername},
+			envVar{Name: "GIT_AUTH_PASSWORD_" + up, Value: module.HttpPassword},
+			envVar{Name: "GIT_AUTH_SOURCE_" + up, Value: module.Source},
+		)
 	}
-	return "[" + strings.Join(envVars, ",") + "]"
+	return marshalEnvVars(vars)
 }
 
-func getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step, bucket, authSources)
-	return "[" + strings.Join(envVars, ",") + "]"
+func (p *Pipeline) getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
+	return marshalEnvVars(p.buildEnvVars(command, stepName, step, bucket, authSources))
 }
 
-func getEnvironmentVariablesList(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) []string {
-	var envVars []string
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"INFRALIB_BUCKET\",\"value\":\"%s\"}", bucket))
+func marshalEnvVars(vars []envVar) (string, error) {
+	b, err := json.Marshal(vars)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func (p *Pipeline) buildEnvVars(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) []envVar {
+	vars := []envVar{
+		{Name: "COMMAND", Value: string(command)},
+		{Name: "TF_VAR_prefix", Value: stepName},
+		{Name: "INFRALIB_BUCKET", Value: bucket},
+		{Name: "INFRALIB_STEP", Value: step.Name},
+		{Name: model.WrapperConfigEnv, Value: model.WrapperConfigSecretName(p.cloudPrefix), Type: "SECRETS_MANAGER"},
+	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"KUBERNETES_CLUSTER_NAME\",\"value\":\"%s\"}", step.KubernetesClusterName))
+			vars = append(vars, envVar{Name: "KUBERNETES_CLUSTER_NAME", Value: step.KubernetesClusterName})
 		}
-		if step.ArgocdNamespace == "" {
-			envVars = append(envVars, "{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"argocd\"}")
-		} else {
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"%s\"}", step.ArgocdNamespace))
+		ns := step.ArgocdNamespace
+		if ns == "" {
+			ns = "argocd"
 		}
+		vars = append(vars, envVar{Name: "ARGOCD_NAMESPACE", Value: ns})
 	}
-	for source := range authSources {
+	keys := slices.Collect(maps.Keys(authSources))
+	slices.Sort(keys)
+	for _, source := range keys {
 		hash := util.HashCode(source)
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
-			hash, fmt.Sprintf(model.GitUsernameFormat, hash)))
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
-			hash, fmt.Sprintf(model.GitPasswordFormat, hash)))
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
-			hash, fmt.Sprintf(model.GitSourceFormat, hash)))
+		vars = append(vars,
+			envVar{Name: "GIT_AUTH_USERNAME_" + hash, Value: fmt.Sprintf(model.GitUsernameFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: "GIT_AUTH_PASSWORD_" + hash, Value: fmt.Sprintf(model.GitPasswordFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: "GIT_AUTH_SOURCE_" + hash, Value: fmt.Sprintf(model.GitSourceFormat, hash), Type: "SECRETS_MANAGER"},
+		)
 	}
-	return envVars
+	return vars
 }
 
 func (p *Pipeline) getApprovalToken(pipelineName string) *string {

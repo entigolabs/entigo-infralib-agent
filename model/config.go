@@ -18,6 +18,7 @@ type Config struct {
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
+	Wrapper          *Wrapper             `yaml:"wrapper,omitempty"`
 	Schedule         Schedule             `yaml:"schedule,omitempty"`
 	Provider         Provider             `yaml:"provider,omitempty"`
 	Steps            []Step               `yaml:"steps,omitempty"`
@@ -92,6 +93,18 @@ type NotificationApi struct {
 	URL     string            `yaml:"url,omitempty"`
 	Headers map[string]string `yaml:"headers,omitempty"`
 	OAuth   *ApiOauth         `yaml:"oauth,omitempty"`
+}
+
+type Wrapper struct {
+	Api        *WrapperApi `yaml:"api,omitempty"`
+	CampaignId string      `yaml:"campaign_id,omitempty"`
+}
+
+type WrapperApi struct {
+	URL      string            `yaml:"url,omitempty"`
+	Headers  map[string]string `yaml:"headers,omitempty"`
+	OAuth    *ApiOauth         `yaml:"oauth,omitempty"`
+	Insecure bool              `yaml:"insecure,omitempty"`
 }
 
 type ApiOauth struct {

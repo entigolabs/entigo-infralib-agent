@@ -12,6 +12,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify/api"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/google/uuid"
 )
 
 type NotificationManager struct {
@@ -21,8 +22,8 @@ type NotificationManager struct {
 
 var _ model.NotificationManager = (*NotificationManager)(nil)
 
-func NewNotificationManager(ctx context.Context, configNotifiers []model.ConfigNotification) (model.NotificationManager, error) {
-	notifiers, err := createNotifiers(ctx, configNotifiers)
+func NewNotificationManager(ctx context.Context, configNotifiers []model.ConfigNotification, campaignId uuid.UUID) (model.NotificationManager, error) {
+	notifiers, err := createNotifiers(ctx, configNotifiers, campaignId)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +32,7 @@ func NewNotificationManager(ctx context.Context, configNotifiers []model.ConfigN
 	}, nil
 }
 
-func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotification) ([]model.Notifier, error) {
+func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotification, campaignId uuid.UUID) ([]model.Notifier, error) {
 	notifiers := make([]model.Notifier, 0)
 	names := model.NewSet[string]()
 	for i, configNotifier := range configNotifiers {
@@ -47,7 +48,7 @@ func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotifica
 			util.BoolToInt(configNotifier.Teams != nil)) != 1 {
 			return nil, fmt.Errorf("configNotifier %s must have exactly 1 subtype specified", configNotifier.Name)
 		}
-		notifier, err := createNotifier(ctx, configNotifier)
+		notifier, err := createNotifier(ctx, configNotifier, campaignId)
 		if err != nil {
 			return nil, fmt.Errorf("configNotifier %s: %w", configNotifier.Name, err)
 		}
@@ -56,7 +57,7 @@ func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotifica
 	return notifiers, nil
 }
 
-func createNotifier(ctx context.Context, configNotifier model.ConfigNotification) (model.Notifier, error) {
+func createNotifier(ctx context.Context, configNotifier model.ConfigNotification, campaignId uuid.UUID) (model.Notifier, error) {
 	var messageTypes model.Set[model.MessageType]
 	if len(configNotifier.MessageTypes) == 0 {
 		messageTypes = model.NewSet(model.MessageTypeApprovals, model.MessageTypeFailure)
@@ -75,7 +76,7 @@ func createNotifier(ctx context.Context, configNotifier model.ConfigNotification
 		return createTeamsNotifier(baseNotifier, *configNotifier.Teams)
 	}
 	if configNotifier.Api != nil {
-		return createApiNotifier(ctx, baseNotifier, *configNotifier.Api)
+		return createApiNotifier(ctx, baseNotifier, *configNotifier.Api, campaignId)
 	}
 	return nil, errors.New("has no subtype specified")
 }
@@ -97,7 +98,7 @@ func createTeamsNotifier(baseNotifier model.BaseNotifier, teams model.Teams) (mo
 	return newTeamsClient(baseNotifier, teams), nil
 }
 
-func createApiNotifier(ctx context.Context, baseNotifier model.BaseNotifier, notificationApi model.NotificationApi) (model.Notifier, error) {
+func createApiNotifier(ctx context.Context, baseNotifier model.BaseNotifier, notificationApi model.NotificationApi, campaignId uuid.UUID) (model.Notifier, error) {
 	if notificationApi.URL == "" {
 		return nil, errors.New("api url is empty")
 	}
@@ -112,7 +113,7 @@ func createApiNotifier(ctx context.Context, baseNotifier model.BaseNotifier, not
 			return nil, errors.New("api oauth token url is empty")
 		}
 	}
-	return api.NewApi(ctx, baseNotifier, notificationApi)
+	return api.NewApi(ctx, baseNotifier, notificationApi, campaignId)
 }
 
 func (n *NotificationManager) SetCurrentPipelineIndex(index int) {

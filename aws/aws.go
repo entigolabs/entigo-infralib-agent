@@ -158,7 +158,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		return nil, err
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
-		*a.pipeline.TerraformCache.Value, manager)
+		*a.pipeline.TerraformCache.Value, a.cloudPrefix, manager)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -182,7 +182,7 @@ func (a *awsService) GetResources() (model.Resources, error) {
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    codeBuild,
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, nil),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, a.cloudPrefix, nil),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),
