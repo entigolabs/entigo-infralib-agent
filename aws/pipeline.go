@@ -64,11 +64,12 @@ type Pipeline struct {
 	logGroup       string
 	logStream      string
 	terraformCache bool
+	enableOpenTofu bool
 	cloudPrefix    string
 	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -80,6 +81,7 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		terraformCache: terraformCache,
 		cloudPrefix:    cloudPrefix,
 		manager:        manager,
+		enableOpenTofu: enableOpenTofu,
 	}
 }
 
@@ -959,6 +961,9 @@ func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, st
 func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
 	vars := p.buildEnvVars(command, stepName, step, bucket, authSources)
 	vars = append(vars, envVar{Name: "TERRAFORM_CACHE", Value: fmt.Sprintf("%t", p.terraformCache)})
+	if p.enableOpenTofu {
+		vars = append(vars, envVar{Name: "TF_TOOL", Value: model.TofuTfTool})
+	}
 	for _, module := range step.Modules {
 		if !util.IsClientModule(module) {
 			continue

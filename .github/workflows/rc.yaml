@@ -16,9 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26'
       - name: Run tests
@@ -39,12 +39,12 @@ jobs:
           gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
           go test -timeout 25m -v ./...
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Get latest release
         id: get_latest_release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const latestStableRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo });
@@ -58,13 +58,13 @@ jobs:
             core.setOutput('new_version',  new_version);
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to Public ECR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: public.ecr.aws
           username: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -73,7 +73,7 @@ jobs:
           AWS_REGION: us-east-1
 
       - name: Login to Google AR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent
           username: _json_key

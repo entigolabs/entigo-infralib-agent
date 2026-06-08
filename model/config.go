@@ -16,6 +16,7 @@ type Config struct {
 	AgentVersion     string               `yaml:"agent_version,omitempty"`
 	BaseImageSource  string               `yaml:"base_image_source,omitempty"`
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
+	EnableOpenTofu   bool                 `yaml:"enable_opentofu,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
 	Wrapper          *Wrapper             `yaml:"wrapper,omitempty"`
@@ -24,6 +25,8 @@ type Config struct {
 	Steps            []Step               `yaml:"steps,omitempty"`
 	Certs            []File               `yaml:"-"`
 }
+
+const TofuTfTool = "tofu"
 
 type ConfigSource struct {
 	URL          string   `yaml:"url"`
