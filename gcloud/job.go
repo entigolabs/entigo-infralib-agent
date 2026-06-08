@@ -33,9 +33,10 @@ type Builder struct {
 	zone           string
 	serviceAccount string
 	terraformCache bool
+	enableOpenTofu bool
 }
 
-func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache bool) (*Builder, error) {
+func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache, enableOpenTofu bool) (*Builder, error) {
 	client, err := run.NewJobsClient(ctx, options...)
 	if err != nil {
 		return nil, err
@@ -48,6 +49,7 @@ func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, l
 		zone:           zone,
 		serviceAccount: serviceAccount,
 		terraformCache: terraformCache,
+		enableOpenTofu: enableOpenTofu,
 	}, nil
 }
 
@@ -546,6 +548,9 @@ func (b *Builder) deleteJob(name string) error {
 
 func (b *Builder) addTerraformEnvironmentVariables(envVars map[string]string, step model.Step) map[string]string {
 	envVars["TERRAFORM_CACHE"] = fmt.Sprintf("%t", b.terraformCache)
+	if b.enableOpenTofu {
+		envVars["TF_TOOL"] = model.TofuTfTool
+	}
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			envVars[fmt.Sprintf("GIT_AUTH_USERNAME_%s", strings.ToUpper(module.Name))] = module.HttpUsername

@@ -55,10 +55,11 @@ type Pipeline struct {
 	logGroup       string
 	logStream      string
 	terraformCache bool
+	enableOpenTofu bool
 	manager        model.NotificationManager
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, manager model.NotificationManager) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -69,6 +70,7 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		logStream:      logStream,
 		terraformCache: terraformCache,
 		manager:        manager,
+		enableOpenTofu: enableOpenTofu,
 	}
 }
 
@@ -936,14 +938,17 @@ func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, st
 func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
 	envVars := getEnvironmentVariablesList(command, stepName, step, bucket, authSources)
 	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TERRAFORM_CACHE\",\"value\":\"%t\"}", p.terraformCache))
+	if p.enableOpenTofu {
+		envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_TOOL\",\"value\":\"%s\"}", model.TofuTfTool))
+	}
 	for _, module := range step.Modules {
 		if util.IsClientModule(module) {
 			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.HttpUsername))
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.HttpPassword))
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.Source))
+				strings.ToUpper(module.Name), module.HttpUsername),
+				fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\"}",
+					strings.ToUpper(module.Name), module.HttpPassword),
+				fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\"}",
+					strings.ToUpper(module.Name), module.Source))
 		}
 	}
 	return "[" + strings.Join(envVars, ",") + "]"
