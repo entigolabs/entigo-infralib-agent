@@ -24,18 +24,19 @@ import (
 const executeScript = "entrypoint.sh"
 
 type LocalPipeline struct {
-	prefix    string
-	regionKey string
-	region    string
-	project   string
-	zone      string
-	bucket    string
-	pipeline  common.Pipeline
-	inputLock sync.Mutex
-	manager   model.NotificationManager
+	prefix         string
+	regionKey      string
+	region         string
+	project        string
+	zone           string
+	bucket         string
+	enableOpenTofu bool
+	pipeline       common.Pipeline
+	inputLock      sync.Mutex
+	manager        model.NotificationManager
 }
 
-func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager) *LocalPipeline {
+func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, enableOpenTofu bool) *LocalPipeline {
 	regionKey := "AWS_REGION"
 	project := ""
 	zone := ""
@@ -45,14 +46,15 @@ func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 		zone = gcloudFlags.Zone
 	}
 	return &LocalPipeline{
-		prefix:    resources.GetCloudPrefix(),
-		regionKey: regionKey,
-		region:    resources.GetRegion(),
-		project:   project,
-		zone:      zone,
-		bucket:    resources.GetBucketName(),
-		pipeline:  pipeline,
-		manager:   manager,
+		prefix:         resources.GetCloudPrefix(),
+		regionKey:      regionKey,
+		region:         resources.GetRegion(),
+		project:        project,
+		zone:           zone,
+		bucket:         resources.GetBucketName(),
+		pipeline:       pipeline,
+		manager:        manager,
+		enableOpenTofu: enableOpenTofu,
 	}
 }
 
@@ -142,6 +144,9 @@ func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step 
 	}
 	if step.Type == model.StepTypeTerraform {
 		env = append(env, fmt.Sprintf("TERRAFORM_CACHE=%t", *l.pipeline.TerraformCache.Value))
+		if l.enableOpenTofu {
+			env = append(env, fmt.Sprintf("TF_TOOL=%s", model.TofuTfTool))
+		}
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				env = append(env, fmt.Sprintf("GIT_AUTH_USERNAME_%s=%s", strings.ToUpper(module.Name), module.HttpUsername),
