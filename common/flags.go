@@ -78,6 +78,7 @@ type Wrapper struct {
 	Step       string
 	Command    string
 	Entrypoint string
+	PrefixStep string
 }
 
 type PipelineType string

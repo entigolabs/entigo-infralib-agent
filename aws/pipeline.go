@@ -1013,9 +1013,9 @@ func (p *Pipeline) buildEnvVars(command model.ActionCommand, stepName string, st
 	for _, source := range keys {
 		hash := util.HashCode(source)
 		vars = append(vars,
-			envVar{Name: "GIT_AUTH_USERNAME_" + hash, Value: fmt.Sprintf(model.GitUsernameFormat, hash), Type: "SECRETS_MANAGER"},
-			envVar{Name: "GIT_AUTH_PASSWORD_" + hash, Value: fmt.Sprintf(model.GitPasswordFormat, hash), Type: "SECRETS_MANAGER"},
-			envVar{Name: "GIT_AUTH_SOURCE_" + hash, Value: fmt.Sprintf(model.GitSourceFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), Value: fmt.Sprintf(model.GitUsernameFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: fmt.Sprintf(model.GitPasswordEnvFormat, hash), Value: fmt.Sprintf(model.GitPasswordFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: fmt.Sprintf(model.GitSourceEnvFormat, hash), Value: fmt.Sprintf(model.GitSourceFormat, hash), Type: "SECRETS_MANAGER"},
 		)
 	}
 	return vars

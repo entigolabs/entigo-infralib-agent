@@ -49,7 +49,7 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.MigrateConfigCommand:
 		return append(baseFlags, &stateFileFlag, importFileFlag(false))
 	case common.ProvisionCommand:
-		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag)
+		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag, &prefixStepFlag)
 	default:
 		return baseFlags
 	}
@@ -408,4 +408,13 @@ var entrypointFlag = cli.StringFlag{
 	Usage:       "path to the infralib-tool entrypoint script",
 	Destination: &flags.Wrapper.Entrypoint,
 	Required:    false,
+}
+
+var prefixStepFlag = cli.StringFlag{
+	Name:        "prefix-step",
+	Sources:     cli.EnvVars("TF_VAR_prefix"),
+	Value:       "",
+	Usage:       "step name with prefix",
+	Destination: &flags.Wrapper.PrefixStep,
+	Required:    true,
 }

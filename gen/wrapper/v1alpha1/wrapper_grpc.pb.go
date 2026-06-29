@@ -30,9 +30,9 @@ const (
 type WrapperServiceClient interface {
 	// StreamLogs opens a bidirectional stream for one wrapper execution.
 	// The first client message MUST be a Handshake; subsequent client messages
-	// MUST be LogLine or Ping. The server responds with HandshakeAck first,
-	// then optional Ping responses while the stream is open, and StreamComplete
-	// before closing.
+	// MUST be LogLine, Ping, or PlanSummary; ExecutionComplete is the last.
+	// The server responds with HandshakeAck first, then optional Ping responses
+	// while the stream is open, and StreamComplete before closing.
 	StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamLogsRequest, StreamLogsResponse], error)
 }
 
@@ -65,9 +65,9 @@ type WrapperService_StreamLogsClient = grpc.BidiStreamingClient[StreamLogsReques
 type WrapperServiceServer interface {
 	// StreamLogs opens a bidirectional stream for one wrapper execution.
 	// The first client message MUST be a Handshake; subsequent client messages
-	// MUST be LogLine or Ping. The server responds with HandshakeAck first,
-	// then optional Ping responses while the stream is open, and StreamComplete
-	// before closing.
+	// MUST be LogLine, Ping, or PlanSummary; ExecutionComplete is the last.
+	// The server responds with HandshakeAck first, then optional Ping responses
+	// while the stream is open, and StreamComplete before closing.
 	StreamLogs(grpc.BidiStreamingServer[StreamLogsRequest, StreamLogsResponse]) error
 	mustEmbedUnimplementedWrapperServiceServer()
 }

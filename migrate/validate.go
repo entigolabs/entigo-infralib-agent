@@ -18,7 +18,7 @@ type Validator interface {
 type validator struct {
 	ctx    context.Context
 	state  stateV4
-	plan   plan
+	plan   model.Plan
 	config importConfig
 }
 
@@ -69,7 +69,7 @@ func (v *validator) validatePlanState() {
 	validateChangeState(resources, actionTypes, v.plan.ResourceDrifts)
 }
 
-func validateChangeState(resources, actionTypes model.Set[string], changes []resourceChangePlan) {
+func validateChangeState(resources, actionTypes model.Set[string], changes []model.ResourceChange) {
 	for _, change := range changes {
 		if change.Mode != "managed" {
 			continue
@@ -102,7 +102,7 @@ func (v *validator) validateConfigTypes() {
 	validateConfigTypes(types, actionTypes, v.plan.ResourceDrifts)
 }
 
-func validateConfigTypes(types, actionTypes model.Set[string], changes []resourceChangePlan) {
+func validateConfigTypes(types, actionTypes model.Set[string], changes []model.ResourceChange) {
 	for _, change := range changes {
 		if change.Mode != "managed" {
 			continue
@@ -131,7 +131,7 @@ func (v *validator) validateChangedValues() {
 	validateChangedResourceValues(actionTypes, v.plan.ResourceChanges)
 }
 
-func validateChangedResourceValues(actionTypes model.Set[string], changes []resourceChangePlan) {
+func validateChangedResourceValues(actionTypes model.Set[string], changes []model.ResourceChange) {
 	for _, change := range changes {
 		if change.Mode != "managed" {
 			continue
@@ -155,9 +155,9 @@ func validateChangedResourceValues(actionTypes model.Set[string], changes []reso
 	}
 }
 
-func validateValueChange(change resourceChangePlan, beforeJson, afterJson json.RawMessage) {
-	var before changedValuePlan
-	var after changedValuePlan
+func validateValueChange(change model.ResourceChange, beforeJson, afterJson json.RawMessage) {
+	var before model.ChangedValue
+	var after model.ChangedValue
 	if err := json.Unmarshal(beforeJson, &before); err != nil {
 		slog.Error(common.PrefixError(fmt.Errorf("failed to unmarshal before value for %s: %s", change.Address, err)))
 		return

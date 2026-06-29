@@ -75,14 +75,20 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	if err != nil {
 		return nil, err
 	}
-	if err := upsertWrapperConfig(config.Wrapper, campaignId, resources.GetCloudPrefix(), resources.GetSSM()); err != nil {
-		return nil, err
-	}
 	destinations, err := createDestinations(ctx, config)
 	if err != nil {
 		return nil, err
 	}
 	pipeline := ProcessPipelineFlags(flags.Pipeline)
+	if config.Wrapper != nil {
+		config.Wrapper.CampaignId = campaignId.String()
+	}
+	if pipeline.Type != string(common.PipelineTypeLocal) {
+		err = upsertWrapperConfig(config.Wrapper, resources.GetCloudPrefix(), resources.GetSSM())
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &updater{
 		ctx:           ctx,
 		config:        config,
@@ -93,7 +99,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, manager, config.EnableOpenTofu),
+		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags.GCloud, manager, config),
 		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -208,20 +214,27 @@ func getCABundle(file string, certs []model.File) ([]byte, error) {
 	return nil, fmt.Errorf("CA file %s not found", file)
 }
 
-func upsertWrapperConfig(wrapper *model.Wrapper, campaignId uuid.UUID, prefix string, ssm model.SSM) error {
-	var payload string
-	if wrapper != nil && wrapper.Api != nil {
-		wrapper.CampaignId = campaignId.String()
-		bytes, err := yaml.Marshal(wrapper)
-		if err != nil {
-			return fmt.Errorf("failed to marshal wrapper config: %v", err)
-		}
-		payload = string(bytes)
+func upsertWrapperConfig(wrapper *model.Wrapper, prefix string, ssm model.SSM) error {
+	config, err := getWrapperConfig(wrapper)
+	if err != nil {
+		return err
 	}
-	if err := ssm.PutSecret(model.WrapperConfigSecretName(prefix), payload); err != nil {
+	if err := ssm.PutSecret(model.WrapperConfigSecretName(prefix), config); err != nil {
 		return fmt.Errorf("failed to upsert wrapper config secret: %v", err)
 	}
 	return nil
+}
+
+func getWrapperConfig(wrapper *model.Wrapper) (string, error) {
+	var config string
+	if wrapper != nil && wrapper.Api != nil {
+		bytes, err := yaml.Marshal(wrapper)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal wrapper config: %v", err)
+		}
+		config = string(bytes)
+	}
+	return config, nil
 }
 
 func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) error {
@@ -396,9 +409,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, enableOpenTofu bool) *LocalPipeline {
+func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline, gcloudFlags, manager, enableOpenTofu)
+		return NewLocalPipeline(ctx, resources, pipeline, gcloudFlags, manager, config)
 	}
 	return nil
 }

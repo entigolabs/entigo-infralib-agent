@@ -21,6 +21,126 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// StepType is the kind of work the step performs. Matches model.StepType on
+// the agent side.
+type StepType int32
+
+const (
+	StepType_STEP_TYPE_UNSPECIFIED StepType = 0
+	StepType_STEP_TYPE_TERRAFORM   StepType = 1
+	StepType_STEP_TYPE_ARGOCD_APPS StepType = 2
+)
+
+// Enum value maps for StepType.
+var (
+	StepType_name = map[int32]string{
+		0: "STEP_TYPE_UNSPECIFIED",
+		1: "STEP_TYPE_TERRAFORM",
+		2: "STEP_TYPE_ARGOCD_APPS",
+	}
+	StepType_value = map[string]int32{
+		"STEP_TYPE_UNSPECIFIED": 0,
+		"STEP_TYPE_TERRAFORM":   1,
+		"STEP_TYPE_ARGOCD_APPS": 2,
+	}
+)
+
+func (x StepType) Enum() *StepType {
+	p := new(StepType)
+	*p = x
+	return p
+}
+
+func (x StepType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (StepType) Descriptor() protoreflect.EnumDescriptor {
+	return file_wrapper_v1alpha1_wrapper_proto_enumTypes[0].Descriptor()
+}
+
+func (StepType) Type() protoreflect.EnumType {
+	return &file_wrapper_v1alpha1_wrapper_proto_enumTypes[0]
+}
+
+func (x StepType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use StepType.Descriptor instead.
+func (StepType) EnumDescriptor() ([]byte, []int) {
+	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{0}
+}
+
+// Command identifies the concrete action the wrapper is running. Matches
+// model.ActionCommand on the agent side.
+type Command int32
+
+const (
+	Command_COMMAND_UNSPECIFIED          Command = 0
+	Command_COMMAND_PLAN                 Command = 1
+	Command_COMMAND_APPLY                Command = 2
+	Command_COMMAND_PLAN_DESTROY         Command = 3
+	Command_COMMAND_APPLY_DESTROY        Command = 4
+	Command_COMMAND_ARGOCD_PLAN          Command = 5
+	Command_COMMAND_ARGOCD_APPLY         Command = 6
+	Command_COMMAND_ARGOCD_PLAN_DESTROY  Command = 7
+	Command_COMMAND_ARGOCD_APPLY_DESTROY Command = 8
+)
+
+// Enum value maps for Command.
+var (
+	Command_name = map[int32]string{
+		0: "COMMAND_UNSPECIFIED",
+		1: "COMMAND_PLAN",
+		2: "COMMAND_APPLY",
+		3: "COMMAND_PLAN_DESTROY",
+		4: "COMMAND_APPLY_DESTROY",
+		5: "COMMAND_ARGOCD_PLAN",
+		6: "COMMAND_ARGOCD_APPLY",
+		7: "COMMAND_ARGOCD_PLAN_DESTROY",
+		8: "COMMAND_ARGOCD_APPLY_DESTROY",
+	}
+	Command_value = map[string]int32{
+		"COMMAND_UNSPECIFIED":          0,
+		"COMMAND_PLAN":                 1,
+		"COMMAND_APPLY":                2,
+		"COMMAND_PLAN_DESTROY":         3,
+		"COMMAND_APPLY_DESTROY":        4,
+		"COMMAND_ARGOCD_PLAN":          5,
+		"COMMAND_ARGOCD_APPLY":         6,
+		"COMMAND_ARGOCD_PLAN_DESTROY":  7,
+		"COMMAND_ARGOCD_APPLY_DESTROY": 8,
+	}
+)
+
+func (x Command) Enum() *Command {
+	p := new(Command)
+	*p = x
+	return p
+}
+
+func (x Command) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Command) Descriptor() protoreflect.EnumDescriptor {
+	return file_wrapper_v1alpha1_wrapper_proto_enumTypes[1].Descriptor()
+}
+
+func (Command) Type() protoreflect.EnumType {
+	return &file_wrapper_v1alpha1_wrapper_proto_enumTypes[1]
+}
+
+func (x Command) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Command.Descriptor instead.
+func (Command) EnumDescriptor() ([]byte, []int) {
+	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{1}
+}
+
 type StreamLogsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -29,6 +149,7 @@ type StreamLogsRequest struct {
 	//	*StreamLogsRequest_LogLine
 	//	*StreamLogsRequest_Ping
 	//	*StreamLogsRequest_Complete
+	//	*StreamLogsRequest_PlanSummary
 	Payload       isStreamLogsRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -107,6 +228,15 @@ func (x *StreamLogsRequest) GetComplete() *ExecutionComplete {
 	return nil
 }
 
+func (x *StreamLogsRequest) GetPlanSummary() *PlanSummary {
+	if x != nil {
+		if x, ok := x.Payload.(*StreamLogsRequest_PlanSummary); ok {
+			return x.PlanSummary
+		}
+	}
+	return nil
+}
+
 type isStreamLogsRequest_Payload interface {
 	isStreamLogsRequest_Payload()
 }
@@ -127,6 +257,13 @@ type StreamLogsRequest_Complete struct {
 	Complete *ExecutionComplete `protobuf:"bytes,4,opt,name=complete,proto3,oneof"`
 }
 
+type StreamLogsRequest_PlanSummary struct {
+	// PlanSummary is sent at most once per execution, after the entrypoint
+	// exits with code 0 for a plan command. The stream binding (campaign,
+	// step, command) is already established by the Handshake.
+	PlanSummary *PlanSummary `protobuf:"bytes,5,opt,name=plan_summary,json=planSummary,proto3,oneof"`
+}
+
 func (*StreamLogsRequest_Handshake) isStreamLogsRequest_Payload() {}
 
 func (*StreamLogsRequest_LogLine) isStreamLogsRequest_Payload() {}
@@ -134,6 +271,8 @@ func (*StreamLogsRequest_LogLine) isStreamLogsRequest_Payload() {}
 func (*StreamLogsRequest_Ping) isStreamLogsRequest_Payload() {}
 
 func (*StreamLogsRequest_Complete) isStreamLogsRequest_Payload() {}
+
+func (*StreamLogsRequest_PlanSummary) isStreamLogsRequest_Payload() {}
 
 type StreamLogsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -236,10 +375,13 @@ func (*StreamLogsResponse_Complete) isStreamLogsResponse_Payload() {}
 // Handshake binds the stream to a single wrapper execution. Sent once as the
 // first request message.
 type Handshake struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CampaignId    string                 `protobuf:"bytes,1,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id,omitempty"`
-	Step          string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
-	Command       string                 `protobuf:"bytes,3,opt,name=command,proto3" json:"command,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	CampaignId string                 `protobuf:"bytes,1,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id,omitempty"`
+	Step       string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
+	Command    Command                `protobuf:"varint,3,opt,name=command,proto3,enum=wrapper.v1alpha1.Command" json:"command,omitempty"`
+	// step_type tells the backend how to route processing without having to
+	// derive it from command.
+	StepType      StepType `protobuf:"varint,4,opt,name=step_type,json=stepType,proto3,enum=wrapper.v1alpha1.StepType" json:"step_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -288,11 +430,18 @@ func (x *Handshake) GetStep() string {
 	return ""
 }
 
-func (x *Handshake) GetCommand() string {
+func (x *Handshake) GetCommand() Command {
 	if x != nil {
 		return x.Command
 	}
-	return ""
+	return Command_COMMAND_UNSPECIFIED
+}
+
+func (x *Handshake) GetStepType() StepType {
+	if x != nil {
+		return x.StepType
+	}
+	return StepType_STEP_TYPE_UNSPECIFIED
 }
 
 // HandshakeAck confirms the server accepted the Handshake. The client must
@@ -514,27 +663,309 @@ func (x *StreamComplete) GetTotalReceived() uint64 {
 	return 0
 }
 
+// PlanSummary is the compact view of a terraform plan. Resource changes and
+// outputs are grouped by first-level module declared in the working dir.
+// Full diff bodies stay in the raw log stream.
+type PlanSummary struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Bare resources and outputs that live directly in the working dir
+	// (no module address, no `<name>__` output prefix). Unset when there are
+	// none.
+	Root *ModuleChanges `protobuf:"bytes,1,opt,name=root,proto3" json:"root,omitempty"`
+	// First-level modules declared in main.tf, keyed by module name. An entry
+	// exists if the module has resource changes OR outputs. Submodules (any
+	// depth) are rolled up into the parent's resource buckets; their identity
+	// is preserved in the resource address strings.
+	Modules       map[string]*ModuleChanges `protobuf:"bytes,2,rep,name=modules,proto3" json:"modules,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlanSummary) Reset() {
+	*x = PlanSummary{}
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanSummary) ProtoMessage() {}
+
+func (x *PlanSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanSummary.ProtoReflect.Descriptor instead.
+func (*PlanSummary) Descriptor() ([]byte, []int) {
+	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *PlanSummary) GetRoot() *ModuleChanges {
+	if x != nil {
+		return x.Root
+	}
+	return nil
+}
+
+func (x *PlanSummary) GetModules() map[string]*ModuleChanges {
+	if x != nil {
+		return x.Modules
+	}
+	return nil
+}
+
+// ModuleChanges is the per-module breakdown of changes. All repeated-string
+// fields hold full resource addresses (e.g. "module.vpc.module.vpc.aws_subnet.foo").
+type ModuleChanges struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Added         []string               `protobuf:"bytes,1,rep,name=added,proto3" json:"added,omitempty"`
+	Changed       []string               `protobuf:"bytes,2,rep,name=changed,proto3" json:"changed,omitempty"`
+	Destroyed     []string               `protobuf:"bytes,3,rep,name=destroyed,proto3" json:"destroyed,omitempty"`
+	Replaced      []string               `protobuf:"bytes,4,rep,name=replaced,proto3" json:"replaced,omitempty"`
+	Imported      []string               `protobuf:"bytes,5,rep,name=imported,proto3" json:"imported,omitempty"`
+	Forgotten     []string               `protobuf:"bytes,6,rep,name=forgotten,proto3" json:"forgotten,omitempty"`
+	Moved         []*ResourceMove        `protobuf:"bytes,7,rep,name=moved,proto3" json:"moved,omitempty"`
+	Outputs       *OutputChanges         `protobuf:"bytes,8,opt,name=outputs,proto3" json:"outputs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModuleChanges) Reset() {
+	*x = ModuleChanges{}
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModuleChanges) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModuleChanges) ProtoMessage() {}
+
+func (x *ModuleChanges) ProtoReflect() protoreflect.Message {
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModuleChanges.ProtoReflect.Descriptor instead.
+func (*ModuleChanges) Descriptor() ([]byte, []int) {
+	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ModuleChanges) GetAdded() []string {
+	if x != nil {
+		return x.Added
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetChanged() []string {
+	if x != nil {
+		return x.Changed
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetDestroyed() []string {
+	if x != nil {
+		return x.Destroyed
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetReplaced() []string {
+	if x != nil {
+		return x.Replaced
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetImported() []string {
+	if x != nil {
+		return x.Imported
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetForgotten() []string {
+	if x != nil {
+		return x.Forgotten
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetMoved() []*ResourceMove {
+	if x != nil {
+		return x.Moved
+	}
+	return nil
+}
+
+func (x *ModuleChanges) GetOutputs() *OutputChanges {
+	if x != nil {
+		return x.Outputs
+	}
+	return nil
+}
+
+// ResourceMove is an in-state move. From/To are full resource addresses; the
+// entry is filed under the destination module.
+type ResourceMove struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	From          string                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`
+	To            string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceMove) Reset() {
+	*x = ResourceMove{}
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceMove) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceMove) ProtoMessage() {}
+
+func (x *ResourceMove) ProtoReflect() protoreflect.Message {
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceMove.ProtoReflect.Descriptor instead.
+func (*ResourceMove) Descriptor() ([]byte, []int) {
+	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ResourceMove) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *ResourceMove) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+// OutputChanges is the per-action breakdown of output changes. Only names —
+// values are intentionally omitted from the summary.
+type OutputChanges struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Added         []string               `protobuf:"bytes,1,rep,name=added,proto3" json:"added,omitempty"`
+	Changed       []string               `protobuf:"bytes,2,rep,name=changed,proto3" json:"changed,omitempty"`
+	Destroyed     []string               `protobuf:"bytes,3,rep,name=destroyed,proto3" json:"destroyed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OutputChanges) Reset() {
+	*x = OutputChanges{}
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OutputChanges) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OutputChanges) ProtoMessage() {}
+
+func (x *OutputChanges) ProtoReflect() protoreflect.Message {
+	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OutputChanges.ProtoReflect.Descriptor instead.
+func (*OutputChanges) Descriptor() ([]byte, []int) {
+	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *OutputChanges) GetAdded() []string {
+	if x != nil {
+		return x.Added
+	}
+	return nil
+}
+
+func (x *OutputChanges) GetChanged() []string {
+	if x != nil {
+		return x.Changed
+	}
+	return nil
+}
+
+func (x *OutputChanges) GetDestroyed() []string {
+	if x != nil {
+		return x.Destroyed
+	}
+	return nil
+}
+
 var File_wrapper_v1alpha1_wrapper_proto protoreflect.FileDescriptor
 
 const file_wrapper_v1alpha1_wrapper_proto_rawDesc = "" +
 	"\n" +
-	"\x1ewrapper/v1alpha1/wrapper.proto\x12\x10wrapper.v1alpha1\"\x84\x02\n" +
+	"\x1ewrapper/v1alpha1/wrapper.proto\x12\x10wrapper.v1alpha1\"\xc8\x02\n" +
 	"\x11StreamLogsRequest\x12;\n" +
 	"\thandshake\x18\x01 \x01(\v2\x1b.wrapper.v1alpha1.HandshakeH\x00R\thandshake\x126\n" +
 	"\blog_line\x18\x02 \x01(\v2\x19.wrapper.v1alpha1.LogLineH\x00R\alogLine\x12,\n" +
 	"\x04ping\x18\x03 \x01(\v2\x16.wrapper.v1alpha1.PingH\x00R\x04ping\x12A\n" +
-	"\bcomplete\x18\x04 \x01(\v2#.wrapper.v1alpha1.ExecutionCompleteH\x00R\bcompleteB\t\n" +
+	"\bcomplete\x18\x04 \x01(\v2#.wrapper.v1alpha1.ExecutionCompleteH\x00R\bcomplete\x12B\n" +
+	"\fplan_summary\x18\x05 \x01(\v2\x1d.wrapper.v1alpha1.PlanSummaryH\x00R\vplanSummaryB\t\n" +
 	"\apayload\"\xd4\x01\n" +
 	"\x12StreamLogsResponse\x12E\n" +
 	"\rhandshake_ack\x18\x01 \x01(\v2\x1e.wrapper.v1alpha1.HandshakeAckH\x00R\fhandshakeAck\x12,\n" +
 	"\x04ping\x18\x02 \x01(\v2\x16.wrapper.v1alpha1.PingH\x00R\x04ping\x12>\n" +
 	"\bcomplete\x18\x03 \x01(\v2 .wrapper.v1alpha1.StreamCompleteH\x00R\bcompleteB\t\n" +
-	"\apayload\"Z\n" +
+	"\apayload\"\xae\x01\n" +
 	"\tHandshake\x12\x1f\n" +
 	"\vcampaign_id\x18\x01 \x01(\tR\n" +
 	"campaignId\x12\x12\n" +
-	"\x04step\x18\x02 \x01(\tR\x04step\x12\x18\n" +
-	"\acommand\x18\x03 \x01(\tR\acommand\"\x0e\n" +
+	"\x04step\x18\x02 \x01(\tR\x04step\x123\n" +
+	"\acommand\x18\x03 \x01(\x0e2\x19.wrapper.v1alpha1.CommandR\acommand\x127\n" +
+	"\tstep_type\x18\x04 \x01(\x0e2\x1a.wrapper.v1alpha1.StepTypeR\bstepType\"\x0e\n" +
 	"\fHandshakeAck\"\x1d\n" +
 	"\aLogLine\x12\x12\n" +
 	"\x04line\x18\x01 \x01(\tR\x04line\"\x06\n" +
@@ -543,7 +974,43 @@ const file_wrapper_v1alpha1_wrapper_proto_rawDesc = "" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"7\n" +
 	"\x0eStreamComplete\x12%\n" +
-	"\x0etotal_received\x18\x01 \x01(\x04R\rtotalReceived2m\n" +
+	"\x0etotal_received\x18\x01 \x01(\x04R\rtotalReceived\"\xe5\x01\n" +
+	"\vPlanSummary\x123\n" +
+	"\x04root\x18\x01 \x01(\v2\x1f.wrapper.v1alpha1.ModuleChangesR\x04root\x12D\n" +
+	"\amodules\x18\x02 \x03(\v2*.wrapper.v1alpha1.PlanSummary.ModulesEntryR\amodules\x1a[\n" +
+	"\fModulesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x125\n" +
+	"\x05value\x18\x02 \x01(\v2\x1f.wrapper.v1alpha1.ModuleChangesR\x05value:\x028\x01\"\xa4\x02\n" +
+	"\rModuleChanges\x12\x14\n" +
+	"\x05added\x18\x01 \x03(\tR\x05added\x12\x18\n" +
+	"\achanged\x18\x02 \x03(\tR\achanged\x12\x1c\n" +
+	"\tdestroyed\x18\x03 \x03(\tR\tdestroyed\x12\x1a\n" +
+	"\breplaced\x18\x04 \x03(\tR\breplaced\x12\x1a\n" +
+	"\bimported\x18\x05 \x03(\tR\bimported\x12\x1c\n" +
+	"\tforgotten\x18\x06 \x03(\tR\tforgotten\x124\n" +
+	"\x05moved\x18\a \x03(\v2\x1e.wrapper.v1alpha1.ResourceMoveR\x05moved\x129\n" +
+	"\aoutputs\x18\b \x01(\v2\x1f.wrapper.v1alpha1.OutputChangesR\aoutputs\"2\n" +
+	"\fResourceMove\x12\x12\n" +
+	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
+	"\x02to\x18\x02 \x01(\tR\x02to\"]\n" +
+	"\rOutputChanges\x12\x14\n" +
+	"\x05added\x18\x01 \x03(\tR\x05added\x12\x18\n" +
+	"\achanged\x18\x02 \x03(\tR\achanged\x12\x1c\n" +
+	"\tdestroyed\x18\x03 \x03(\tR\tdestroyed*Y\n" +
+	"\bStepType\x12\x19\n" +
+	"\x15STEP_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13STEP_TYPE_TERRAFORM\x10\x01\x12\x19\n" +
+	"\x15STEP_TYPE_ARGOCD_APPS\x10\x02*\xf2\x01\n" +
+	"\aCommand\x12\x17\n" +
+	"\x13COMMAND_UNSPECIFIED\x10\x00\x12\x10\n" +
+	"\fCOMMAND_PLAN\x10\x01\x12\x11\n" +
+	"\rCOMMAND_APPLY\x10\x02\x12\x18\n" +
+	"\x14COMMAND_PLAN_DESTROY\x10\x03\x12\x19\n" +
+	"\x15COMMAND_APPLY_DESTROY\x10\x04\x12\x17\n" +
+	"\x13COMMAND_ARGOCD_PLAN\x10\x05\x12\x18\n" +
+	"\x14COMMAND_ARGOCD_APPLY\x10\x06\x12\x1f\n" +
+	"\x1bCOMMAND_ARGOCD_PLAN_DESTROY\x10\a\x12 \n" +
+	"\x1cCOMMAND_ARGOCD_APPLY_DESTROY\x10\b2m\n" +
 	"\x0eWrapperService\x12[\n" +
 	"\n" +
 	"StreamLogs\x12#.wrapper.v1alpha1.StreamLogsRequest\x1a$.wrapper.v1alpha1.StreamLogsResponse(\x010\x01BKZIgithub.com/entigolabs/entigo-infralib-agent/gen/wrapper/v1alpha1;v1alpha1b\x06proto3"
@@ -560,32 +1027,48 @@ func file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP() []byte {
 	return file_wrapper_v1alpha1_wrapper_proto_rawDescData
 }
 
-var file_wrapper_v1alpha1_wrapper_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_wrapper_v1alpha1_wrapper_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_wrapper_v1alpha1_wrapper_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_wrapper_v1alpha1_wrapper_proto_goTypes = []any{
-	(*StreamLogsRequest)(nil),  // 0: wrapper.v1alpha1.StreamLogsRequest
-	(*StreamLogsResponse)(nil), // 1: wrapper.v1alpha1.StreamLogsResponse
-	(*Handshake)(nil),          // 2: wrapper.v1alpha1.Handshake
-	(*HandshakeAck)(nil),       // 3: wrapper.v1alpha1.HandshakeAck
-	(*LogLine)(nil),            // 4: wrapper.v1alpha1.LogLine
-	(*Ping)(nil),               // 5: wrapper.v1alpha1.Ping
-	(*ExecutionComplete)(nil),  // 6: wrapper.v1alpha1.ExecutionComplete
-	(*StreamComplete)(nil),     // 7: wrapper.v1alpha1.StreamComplete
+	(StepType)(0),              // 0: wrapper.v1alpha1.StepType
+	(Command)(0),               // 1: wrapper.v1alpha1.Command
+	(*StreamLogsRequest)(nil),  // 2: wrapper.v1alpha1.StreamLogsRequest
+	(*StreamLogsResponse)(nil), // 3: wrapper.v1alpha1.StreamLogsResponse
+	(*Handshake)(nil),          // 4: wrapper.v1alpha1.Handshake
+	(*HandshakeAck)(nil),       // 5: wrapper.v1alpha1.HandshakeAck
+	(*LogLine)(nil),            // 6: wrapper.v1alpha1.LogLine
+	(*Ping)(nil),               // 7: wrapper.v1alpha1.Ping
+	(*ExecutionComplete)(nil),  // 8: wrapper.v1alpha1.ExecutionComplete
+	(*StreamComplete)(nil),     // 9: wrapper.v1alpha1.StreamComplete
+	(*PlanSummary)(nil),        // 10: wrapper.v1alpha1.PlanSummary
+	(*ModuleChanges)(nil),      // 11: wrapper.v1alpha1.ModuleChanges
+	(*ResourceMove)(nil),       // 12: wrapper.v1alpha1.ResourceMove
+	(*OutputChanges)(nil),      // 13: wrapper.v1alpha1.OutputChanges
+	nil,                        // 14: wrapper.v1alpha1.PlanSummary.ModulesEntry
 }
 var file_wrapper_v1alpha1_wrapper_proto_depIdxs = []int32{
-	2, // 0: wrapper.v1alpha1.StreamLogsRequest.handshake:type_name -> wrapper.v1alpha1.Handshake
-	4, // 1: wrapper.v1alpha1.StreamLogsRequest.log_line:type_name -> wrapper.v1alpha1.LogLine
-	5, // 2: wrapper.v1alpha1.StreamLogsRequest.ping:type_name -> wrapper.v1alpha1.Ping
-	6, // 3: wrapper.v1alpha1.StreamLogsRequest.complete:type_name -> wrapper.v1alpha1.ExecutionComplete
-	3, // 4: wrapper.v1alpha1.StreamLogsResponse.handshake_ack:type_name -> wrapper.v1alpha1.HandshakeAck
-	5, // 5: wrapper.v1alpha1.StreamLogsResponse.ping:type_name -> wrapper.v1alpha1.Ping
-	7, // 6: wrapper.v1alpha1.StreamLogsResponse.complete:type_name -> wrapper.v1alpha1.StreamComplete
-	0, // 7: wrapper.v1alpha1.WrapperService.StreamLogs:input_type -> wrapper.v1alpha1.StreamLogsRequest
-	1, // 8: wrapper.v1alpha1.WrapperService.StreamLogs:output_type -> wrapper.v1alpha1.StreamLogsResponse
-	8, // [8:9] is the sub-list for method output_type
-	7, // [7:8] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	4,  // 0: wrapper.v1alpha1.StreamLogsRequest.handshake:type_name -> wrapper.v1alpha1.Handshake
+	6,  // 1: wrapper.v1alpha1.StreamLogsRequest.log_line:type_name -> wrapper.v1alpha1.LogLine
+	7,  // 2: wrapper.v1alpha1.StreamLogsRequest.ping:type_name -> wrapper.v1alpha1.Ping
+	8,  // 3: wrapper.v1alpha1.StreamLogsRequest.complete:type_name -> wrapper.v1alpha1.ExecutionComplete
+	10, // 4: wrapper.v1alpha1.StreamLogsRequest.plan_summary:type_name -> wrapper.v1alpha1.PlanSummary
+	5,  // 5: wrapper.v1alpha1.StreamLogsResponse.handshake_ack:type_name -> wrapper.v1alpha1.HandshakeAck
+	7,  // 6: wrapper.v1alpha1.StreamLogsResponse.ping:type_name -> wrapper.v1alpha1.Ping
+	9,  // 7: wrapper.v1alpha1.StreamLogsResponse.complete:type_name -> wrapper.v1alpha1.StreamComplete
+	1,  // 8: wrapper.v1alpha1.Handshake.command:type_name -> wrapper.v1alpha1.Command
+	0,  // 9: wrapper.v1alpha1.Handshake.step_type:type_name -> wrapper.v1alpha1.StepType
+	11, // 10: wrapper.v1alpha1.PlanSummary.root:type_name -> wrapper.v1alpha1.ModuleChanges
+	14, // 11: wrapper.v1alpha1.PlanSummary.modules:type_name -> wrapper.v1alpha1.PlanSummary.ModulesEntry
+	12, // 12: wrapper.v1alpha1.ModuleChanges.moved:type_name -> wrapper.v1alpha1.ResourceMove
+	13, // 13: wrapper.v1alpha1.ModuleChanges.outputs:type_name -> wrapper.v1alpha1.OutputChanges
+	11, // 14: wrapper.v1alpha1.PlanSummary.ModulesEntry.value:type_name -> wrapper.v1alpha1.ModuleChanges
+	2,  // 15: wrapper.v1alpha1.WrapperService.StreamLogs:input_type -> wrapper.v1alpha1.StreamLogsRequest
+	3,  // 16: wrapper.v1alpha1.WrapperService.StreamLogs:output_type -> wrapper.v1alpha1.StreamLogsResponse
+	16, // [16:17] is the sub-list for method output_type
+	15, // [15:16] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_wrapper_v1alpha1_wrapper_proto_init() }
@@ -598,6 +1081,7 @@ func file_wrapper_v1alpha1_wrapper_proto_init() {
 		(*StreamLogsRequest_LogLine)(nil),
 		(*StreamLogsRequest_Ping)(nil),
 		(*StreamLogsRequest_Complete)(nil),
+		(*StreamLogsRequest_PlanSummary)(nil),
 	}
 	file_wrapper_v1alpha1_wrapper_proto_msgTypes[1].OneofWrappers = []any{
 		(*StreamLogsResponse_HandshakeAck)(nil),
@@ -609,13 +1093,14 @@ func file_wrapper_v1alpha1_wrapper_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wrapper_v1alpha1_wrapper_proto_rawDesc), len(file_wrapper_v1alpha1_wrapper_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      2,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_wrapper_v1alpha1_wrapper_proto_goTypes,
 		DependencyIndexes: file_wrapper_v1alpha1_wrapper_proto_depIdxs,
+		EnumInfos:         file_wrapper_v1alpha1_wrapper_proto_enumTypes,
 		MessageInfos:      file_wrapper_v1alpha1_wrapper_proto_msgTypes,
 	}.Build()
 	File_wrapper_v1alpha1_wrapper_proto = out.File

@@ -45,9 +45,18 @@ type backendClient struct {
 
 	handshake HandshakeData
 
-	logs     chan string
-	done     chan struct{}
-	finished chan error
+	logs        chan string
+	planSummary chan *v1alpha1.PlanSummary
+	done        chan struct{}
+	finished    chan error
+
+	// pendingLog / pendingPlan hold the single item that has been consumed
+	// from its channel but not yet successfully Sent. Set before Send, cleared
+	// after success; on a broken stream they survive into the next epoch and
+	// get replayed on the freshly-opened stream so reconnect doesn't drop them.
+	// Single-item (not a slice) because runEpoch consumes one item per select.
+	pendingLog  *string
+	pendingPlan *v1alpha1.PlanSummary
 
 	closeOnce sync.Once
 
@@ -92,15 +101,16 @@ func newBackendClient(_ context.Context, api *model.WrapperApi) (*backendClient,
 	}
 
 	return &backendClient{
-		ctx:        internalCtx,
-		cancel:     cancel,
-		client:     v1alpha1.NewWrapperServiceClient(conn),
-		conn:       conn,
-		pingTime:   pingInterval,
-		pingTicker: time.NewTicker(pingInterval),
-		logs:       make(chan string, logBufferSize),
-		done:       make(chan struct{}),
-		finished:   make(chan error, 1),
+		ctx:         internalCtx,
+		cancel:      cancel,
+		client:      v1alpha1.NewWrapperServiceClient(conn),
+		conn:        conn,
+		pingTime:    pingInterval,
+		pingTicker:  time.NewTicker(pingInterval),
+		logs:        make(chan string, logBufferSize),
+		planSummary: make(chan *v1alpha1.PlanSummary, 1),
+		done:        make(chan struct{}),
+		finished:    make(chan error, 1),
 	}, nil
 }
 
@@ -121,6 +131,16 @@ func (g *backendClient) SendLog(line string) error {
 	case g.logs <- line:
 	default:
 		slog.Debug("wrapper log buffer full, dropping line")
+	}
+	return nil
+}
+
+// Buffer size 1 — there's only ever one plan summary per execution.
+func (g *backendClient) SendPlan(summary *v1alpha1.PlanSummary) error {
+	select {
+	case g.planSummary <- summary:
+	default:
+		slog.Warn("wrapper plan summary buffer full, dropping")
 	}
 	return nil
 }
@@ -197,18 +217,19 @@ func (g *backendClient) reconnect() (wrapperStream, bool) {
 }
 
 func (g *backendClient) runEpoch(stream wrapperStream, recvErrCh <-chan error) error {
+	if err := g.flushPending(stream); err != nil {
+		return err
+	}
 	for {
 		select {
 		case line := <-g.logs:
-			err := stream.Send(&v1alpha1.StreamLogsRequest{
-				Payload: &v1alpha1.StreamLogsRequest_LogLine{
-					LogLine: &v1alpha1.LogLine{Line: line},
-				},
-			})
-			if err != nil {
+			if err := g.sendLogLine(stream, line); err != nil {
 				return err
 			}
-			g.pingTicker.Reset(g.pingTime)
+		case summary := <-g.planSummary:
+			if err := g.sendPlanSummary(stream, summary); err != nil {
+				return err
+			}
 		case <-g.pingTicker.C:
 			slog.Debug("Sending ping request to server")
 			if err := stream.Send(pingRequest); err != nil {
@@ -217,9 +238,72 @@ func (g *backendClient) runEpoch(stream wrapperStream, recvErrCh <-chan error) e
 		case err := <-recvErrCh:
 			return err
 		case <-g.done:
+			return g.drainPending(stream)
+		}
+	}
+}
+
+// drainPending flushes anything Disconnect's caller pushed before signalling
+// done. Callers can rely on "anything sent before Disconnect arrives at the
+// server before ExecutionComplete" — important for the plan summary, which
+// would otherwise race with the disconnect signal in select.
+func (g *backendClient) drainPending(stream wrapperStream) error {
+	for {
+		select {
+		case line := <-g.logs:
+			if err := g.sendLogLine(stream, line); err != nil {
+				return err
+			}
+		case summary := <-g.planSummary:
+			if err := g.sendPlanSummary(stream, summary); err != nil {
+				return err
+			}
+		default:
 			return nil
 		}
 	}
+}
+
+func (g *backendClient) sendLogLine(stream wrapperStream, line string) error {
+	g.pendingLog = &line
+	if err := stream.Send(&v1alpha1.StreamLogsRequest{
+		Payload: &v1alpha1.StreamLogsRequest_LogLine{
+			LogLine: &v1alpha1.LogLine{Line: line},
+		},
+	}); err != nil {
+		return err
+	}
+	g.pendingLog = nil
+	g.pingTicker.Reset(g.pingTime)
+	return nil
+}
+
+func (g *backendClient) sendPlanSummary(stream wrapperStream, summary *v1alpha1.PlanSummary) error {
+	g.pendingPlan = summary
+	if err := stream.Send(&v1alpha1.StreamLogsRequest{
+		Payload: &v1alpha1.StreamLogsRequest_PlanSummary{
+			PlanSummary: summary,
+		},
+	}); err != nil {
+		return err
+	}
+	g.pendingPlan = nil
+	g.pingTicker.Reset(g.pingTime)
+	return nil
+}
+
+func (g *backendClient) flushPending(stream wrapperStream) error {
+	if g.pendingLog != nil {
+		if err := g.sendLogLine(stream, *g.pendingLog); err != nil {
+			return err
+		}
+	}
+	if g.pendingPlan != nil {
+		if err := g.sendPlanSummary(stream, g.pendingPlan); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (g *backendClient) runReceive(stream wrapperStream, recvErrCh chan<- error, recvDone chan<- struct{}) {
@@ -263,6 +347,7 @@ func (g *backendClient) openStream() (wrapperStream, error) {
 				CampaignId: g.handshake.CampaignId,
 				Step:       g.handshake.Step,
 				Command:    g.handshake.Command,
+				StepType:   g.handshake.StepType,
 			},
 		},
 	}
