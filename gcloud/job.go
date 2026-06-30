@@ -518,14 +518,14 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 
 func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step model.Step, bucket string, command model.ActionCommand) map[string]string {
 	envVars := map[string]string{
-		"PROJECT_NAME":    projectName,
-		"GOOGLE_REGION":   b.location,
-		"GOOGLE_PROJECT":  b.projectId,
-		"GOOGLE_ZONE":     b.zone,
-		"COMMAND":         string(command),
-		"TF_VAR_prefix":   stepName,
-		"INFRALIB_BUCKET": bucket,
-		"INFRALIB_STEP":   step.Name,
+		"PROJECT_NAME":     projectName,
+		model.GoogleRegion: b.location,
+		"GOOGLE_PROJECT":   b.projectId,
+		"GOOGLE_ZONE":      b.zone,
+		"COMMAND":          string(command),
+		"TF_VAR_prefix":    stepName,
+		"INFRALIB_BUCKET":  bucket,
+		"INFRALIB_STEP":    step.Name,
 	}
 	if step.Type == model.StepTypeTerraform {
 		envVars = b.addTerraformEnvironmentVariables(envVars, step)

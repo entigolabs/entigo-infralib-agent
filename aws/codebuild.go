@@ -127,7 +127,7 @@ func (b *builder) getEnvironmentVariables(projectName, stepName, bucket string) 
 		Name:  aws.String("PROJECT_NAME"),
 		Value: aws.String(projectName),
 	}, {
-		Name:  aws.String("AWS_REGION"),
+		Name:  aws.String(model.AWSRegion),
 		Value: b.region,
 	}, {
 		Name:  aws.String("COMMAND"),
@@ -342,7 +342,7 @@ func buildSpec() (*string, error) {
 		Version: "0.2",
 		Phases: Phases{
 			Build: Build{
-				Commands: []string{"/usr/bin/entrypoint.sh"},
+				Commands: []string{"/usr/bin/ei-agent " + string(common.ProvisionCommand)}, // TODO How to update for existing?
 			},
 		},
 		Artifacts: Artifacts{
@@ -372,6 +372,5 @@ func buildSpecYaml(spec BuildSpec) (*string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal buildspec: %s", err)
 	}
-	specString := string(buildSpec)
-	return &specString, nil
+	return new(string(buildSpec)), nil
 }

@@ -25,14 +25,7 @@ const (
 // WrapperServiceClient is the client API for WrapperService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// WrapperService receives logs from infralib-tool wrapper executions.
 type WrapperServiceClient interface {
-	// StreamLogs opens a bidirectional stream for one wrapper execution.
-	// The first client message MUST be a Handshake; subsequent client messages
-	// MUST be LogLine, Ping, or PlanSummary; ExecutionComplete is the last.
-	// The server responds with HandshakeAck first, then optional Ping responses
-	// while the stream is open, and StreamComplete before closing.
 	StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamLogsRequest, StreamLogsResponse], error)
 }
 
@@ -60,14 +53,7 @@ type WrapperService_StreamLogsClient = grpc.BidiStreamingClient[StreamLogsReques
 // WrapperServiceServer is the server API for WrapperService service.
 // All implementations must embed UnimplementedWrapperServiceServer
 // for forward compatibility.
-//
-// WrapperService receives logs from infralib-tool wrapper executions.
 type WrapperServiceServer interface {
-	// StreamLogs opens a bidirectional stream for one wrapper execution.
-	// The first client message MUST be a Handshake; subsequent client messages
-	// MUST be LogLine, Ping, or PlanSummary; ExecutionComplete is the last.
-	// The server responds with HandshakeAck first, then optional Ping responses
-	// while the stream is open, and StreamComplete before closing.
 	StreamLogs(grpc.BidiStreamingServer[StreamLogsRequest, StreamLogsResponse]) error
 	mustEmbedUnimplementedWrapperServiceServer()
 }

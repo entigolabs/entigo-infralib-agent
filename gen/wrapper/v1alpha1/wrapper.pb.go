@@ -21,8 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// StepType is the kind of work the step performs. Matches model.StepType on
-// the agent side.
+// StepType is the step executor. Matches model.StepType on the agent side.
 type StepType int32
 
 const (
@@ -72,8 +71,7 @@ func (StepType) EnumDescriptor() ([]byte, []int) {
 	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{0}
 }
 
-// Command identifies the concrete action the wrapper is running. Matches
-// model.ActionCommand on the agent side.
+// Command identifies the concrete action the wrapper is running. Matches model.ActionCommand on the agent side.
 type Command int32
 
 const (
@@ -146,7 +144,7 @@ type StreamLogsRequest struct {
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*StreamLogsRequest_Handshake
-	//	*StreamLogsRequest_LogLine
+	//	*StreamLogsRequest_LogBatch
 	//	*StreamLogsRequest_Ping
 	//	*StreamLogsRequest_Complete
 	//	*StreamLogsRequest_PlanSummary
@@ -201,10 +199,10 @@ func (x *StreamLogsRequest) GetHandshake() *Handshake {
 	return nil
 }
 
-func (x *StreamLogsRequest) GetLogLine() *LogLine {
+func (x *StreamLogsRequest) GetLogBatch() *LogBatch {
 	if x != nil {
-		if x, ok := x.Payload.(*StreamLogsRequest_LogLine); ok {
-			return x.LogLine
+		if x, ok := x.Payload.(*StreamLogsRequest_LogBatch); ok {
+			return x.LogBatch
 		}
 	}
 	return nil
@@ -245,8 +243,8 @@ type StreamLogsRequest_Handshake struct {
 	Handshake *Handshake `protobuf:"bytes,1,opt,name=handshake,proto3,oneof"`
 }
 
-type StreamLogsRequest_LogLine struct {
-	LogLine *LogLine `protobuf:"bytes,2,opt,name=log_line,json=logLine,proto3,oneof"`
+type StreamLogsRequest_LogBatch struct {
+	LogBatch *LogBatch `protobuf:"bytes,2,opt,name=log_batch,json=logBatch,proto3,oneof"`
 }
 
 type StreamLogsRequest_Ping struct {
@@ -258,15 +256,12 @@ type StreamLogsRequest_Complete struct {
 }
 
 type StreamLogsRequest_PlanSummary struct {
-	// PlanSummary is sent at most once per execution, after the entrypoint
-	// exits with code 0 for a plan command. The stream binding (campaign,
-	// step, command) is already established by the Handshake.
 	PlanSummary *PlanSummary `protobuf:"bytes,5,opt,name=plan_summary,json=planSummary,proto3,oneof"`
 }
 
 func (*StreamLogsRequest_Handshake) isStreamLogsRequest_Payload() {}
 
-func (*StreamLogsRequest_LogLine) isStreamLogsRequest_Payload() {}
+func (*StreamLogsRequest_LogBatch) isStreamLogsRequest_Payload() {}
 
 func (*StreamLogsRequest_Ping) isStreamLogsRequest_Payload() {}
 
@@ -375,13 +370,11 @@ func (*StreamLogsResponse_Complete) isStreamLogsResponse_Payload() {}
 // Handshake binds the stream to a single wrapper execution. Sent once as the
 // first request message.
 type Handshake struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	CampaignId string                 `protobuf:"bytes,1,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id,omitempty"`
-	Step       string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
-	Command    Command                `protobuf:"varint,3,opt,name=command,proto3,enum=wrapper.v1alpha1.Command" json:"command,omitempty"`
-	// step_type tells the backend how to route processing without having to
-	// derive it from command.
-	StepType      StepType `protobuf:"varint,4,opt,name=step_type,json=stepType,proto3,enum=wrapper.v1alpha1.StepType" json:"step_type,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CampaignId    string                 `protobuf:"bytes,1,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id,omitempty"`
+	Step          string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
+	Command       Command                `protobuf:"varint,3,opt,name=command,proto3,enum=wrapper.v1alpha1.Command" json:"command,omitempty"`
+	StepType      StepType               `protobuf:"varint,4,opt,name=step_type,json=stepType,proto3,enum=wrapper.v1alpha1.StepType" json:"step_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -445,7 +438,7 @@ func (x *Handshake) GetStepType() StepType {
 }
 
 // HandshakeAck confirms the server accepted the Handshake. The client must
-// wait for this before sending any LogLine messages so handshake-time
+// wait for this before sending any LogBatch messages so handshake-time
 // validation errors surface before logs start flowing.
 type HandshakeAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -483,27 +476,30 @@ func (*HandshakeAck) Descriptor() ([]byte, []int) {
 	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{3}
 }
 
-type LogLine struct {
+// LogBatch is one or more raw stdout lines from the entrypoint. Lines are
+// batched per Send to amortize gRPC per-message overhead — terraform emits
+// in bursts and a per-line stream would saturate the channel buffer.
+type LogBatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Line          string                 `protobuf:"bytes,1,opt,name=line,proto3" json:"line,omitempty"`
+	Lines         []string               `protobuf:"bytes,1,rep,name=lines,proto3" json:"lines,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *LogLine) Reset() {
-	*x = LogLine{}
+func (x *LogBatch) Reset() {
+	*x = LogBatch{}
 	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *LogLine) String() string {
+func (x *LogBatch) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*LogLine) ProtoMessage() {}
+func (*LogBatch) ProtoMessage() {}
 
-func (x *LogLine) ProtoReflect() protoreflect.Message {
+func (x *LogBatch) ProtoReflect() protoreflect.Message {
 	mi := &file_wrapper_v1alpha1_wrapper_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -515,20 +511,19 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
-func (*LogLine) Descriptor() ([]byte, []int) {
+// Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
+func (*LogBatch) Descriptor() ([]byte, []int) {
 	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *LogLine) GetLine() string {
+func (x *LogBatch) GetLines() []string {
 	if x != nil {
-		return x.Line
+		return x.Lines
 	}
-	return ""
+	return nil
 }
 
-// Ping keeps idle connections alive across load balancers that drop HTTP/2
-// flows after inactivity timeouts.
+// Ping keeps idle connections alive across load balancers that drop HTTP/2 flows after inactivity timeouts.
 type Ping struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -565,8 +560,7 @@ func (*Ping) Descriptor() ([]byte, []int) {
 	return file_wrapper_v1alpha1_wrapper_proto_rawDescGZIP(), []int{5}
 }
 
-// ExecutionComplete reports the outcome of the wrapper's entrypoint.sh
-// execution. Sent as the last client message before CloseSend.
+// ExecutionComplete reports the outcome of the wrapper's execution. Sent as the last client message.
 type ExecutionComplete struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ExitCode      int32                  `protobuf:"varint,1,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
@@ -663,14 +657,10 @@ func (x *StreamComplete) GetTotalReceived() uint64 {
 	return 0
 }
 
-// PlanSummary is the compact view of a terraform plan. Resource changes and
-// outputs are grouped by first-level module declared in the working dir.
-// Full diff bodies stay in the raw log stream.
+// PlanSummary is the compact view of a step plan.
 type PlanSummary struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Bare resources and outputs that live directly in the working dir
-	// (no module address, no `<name>__` output prefix). Unset when there are
-	// none.
+	// Bare resources and outputs not connected to any module.
 	Root *ModuleChanges `protobuf:"bytes,1,opt,name=root,proto3" json:"root,omitempty"`
 	// First-level modules declared in main.tf, keyed by module name. An entry
 	// exists if the module has resource changes OR outputs. Submodules (any
@@ -947,10 +937,10 @@ var File_wrapper_v1alpha1_wrapper_proto protoreflect.FileDescriptor
 
 const file_wrapper_v1alpha1_wrapper_proto_rawDesc = "" +
 	"\n" +
-	"\x1ewrapper/v1alpha1/wrapper.proto\x12\x10wrapper.v1alpha1\"\xc8\x02\n" +
+	"\x1ewrapper/v1alpha1/wrapper.proto\x12\x10wrapper.v1alpha1\"\xcb\x02\n" +
 	"\x11StreamLogsRequest\x12;\n" +
-	"\thandshake\x18\x01 \x01(\v2\x1b.wrapper.v1alpha1.HandshakeH\x00R\thandshake\x126\n" +
-	"\blog_line\x18\x02 \x01(\v2\x19.wrapper.v1alpha1.LogLineH\x00R\alogLine\x12,\n" +
+	"\thandshake\x18\x01 \x01(\v2\x1b.wrapper.v1alpha1.HandshakeH\x00R\thandshake\x129\n" +
+	"\tlog_batch\x18\x02 \x01(\v2\x1a.wrapper.v1alpha1.LogBatchH\x00R\blogBatch\x12,\n" +
 	"\x04ping\x18\x03 \x01(\v2\x16.wrapper.v1alpha1.PingH\x00R\x04ping\x12A\n" +
 	"\bcomplete\x18\x04 \x01(\v2#.wrapper.v1alpha1.ExecutionCompleteH\x00R\bcomplete\x12B\n" +
 	"\fplan_summary\x18\x05 \x01(\v2\x1d.wrapper.v1alpha1.PlanSummaryH\x00R\vplanSummaryB\t\n" +
@@ -966,9 +956,9 @@ const file_wrapper_v1alpha1_wrapper_proto_rawDesc = "" +
 	"\x04step\x18\x02 \x01(\tR\x04step\x123\n" +
 	"\acommand\x18\x03 \x01(\x0e2\x19.wrapper.v1alpha1.CommandR\acommand\x127\n" +
 	"\tstep_type\x18\x04 \x01(\x0e2\x1a.wrapper.v1alpha1.StepTypeR\bstepType\"\x0e\n" +
-	"\fHandshakeAck\"\x1d\n" +
-	"\aLogLine\x12\x12\n" +
-	"\x04line\x18\x01 \x01(\tR\x04line\"\x06\n" +
+	"\fHandshakeAck\" \n" +
+	"\bLogBatch\x12\x14\n" +
+	"\x05lines\x18\x01 \x03(\tR\x05lines\"\x06\n" +
 	"\x04Ping\"F\n" +
 	"\x11ExecutionComplete\x12\x1b\n" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12\x14\n" +
@@ -1036,7 +1026,7 @@ var file_wrapper_v1alpha1_wrapper_proto_goTypes = []any{
 	(*StreamLogsResponse)(nil), // 3: wrapper.v1alpha1.StreamLogsResponse
 	(*Handshake)(nil),          // 4: wrapper.v1alpha1.Handshake
 	(*HandshakeAck)(nil),       // 5: wrapper.v1alpha1.HandshakeAck
-	(*LogLine)(nil),            // 6: wrapper.v1alpha1.LogLine
+	(*LogBatch)(nil),           // 6: wrapper.v1alpha1.LogBatch
 	(*Ping)(nil),               // 7: wrapper.v1alpha1.Ping
 	(*ExecutionComplete)(nil),  // 8: wrapper.v1alpha1.ExecutionComplete
 	(*StreamComplete)(nil),     // 9: wrapper.v1alpha1.StreamComplete
@@ -1048,7 +1038,7 @@ var file_wrapper_v1alpha1_wrapper_proto_goTypes = []any{
 }
 var file_wrapper_v1alpha1_wrapper_proto_depIdxs = []int32{
 	4,  // 0: wrapper.v1alpha1.StreamLogsRequest.handshake:type_name -> wrapper.v1alpha1.Handshake
-	6,  // 1: wrapper.v1alpha1.StreamLogsRequest.log_line:type_name -> wrapper.v1alpha1.LogLine
+	6,  // 1: wrapper.v1alpha1.StreamLogsRequest.log_batch:type_name -> wrapper.v1alpha1.LogBatch
 	7,  // 2: wrapper.v1alpha1.StreamLogsRequest.ping:type_name -> wrapper.v1alpha1.Ping
 	8,  // 3: wrapper.v1alpha1.StreamLogsRequest.complete:type_name -> wrapper.v1alpha1.ExecutionComplete
 	10, // 4: wrapper.v1alpha1.StreamLogsRequest.plan_summary:type_name -> wrapper.v1alpha1.PlanSummary
@@ -1078,7 +1068,7 @@ func file_wrapper_v1alpha1_wrapper_proto_init() {
 	}
 	file_wrapper_v1alpha1_wrapper_proto_msgTypes[0].OneofWrappers = []any{
 		(*StreamLogsRequest_Handshake)(nil),
-		(*StreamLogsRequest_LogLine)(nil),
+		(*StreamLogsRequest_LogBatch)(nil),
 		(*StreamLogsRequest_Ping)(nil),
 		(*StreamLogsRequest_Complete)(nil),
 		(*StreamLogsRequest_PlanSummary)(nil),

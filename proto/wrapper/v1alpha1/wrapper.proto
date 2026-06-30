@@ -10,7 +10,7 @@ service WrapperService {
 message StreamLogsRequest {
   oneof payload {
     Handshake handshake = 1;
-    LogLine log_line = 2;
+    LogBatch log_batch = 2;
     Ping ping = 3;
     ExecutionComplete complete = 4;
     PlanSummary plan_summary = 5;
@@ -55,12 +55,15 @@ enum Command {
 }
 
 // HandshakeAck confirms the server accepted the Handshake. The client must
-// wait for this before sending any LogLine messages so handshake-time
+// wait for this before sending any LogBatch messages so handshake-time
 // validation errors surface before logs start flowing.
 message HandshakeAck {}
 
-message LogLine {
-  string line = 1;
+// LogBatch is one or more raw stdout lines from the entrypoint. Lines are
+// batched per Send to amortize gRPC per-message overhead — terraform emits
+// in bursts and a per-line stream would saturate the channel buffer.
+message LogBatch {
+  repeated string lines = 1;
 }
 
 // Ping keeps idle connections alive across load balancers that drop HTTP/2 flows after inactivity timeouts.

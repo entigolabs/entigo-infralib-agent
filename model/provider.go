@@ -25,6 +25,11 @@ const (
 )
 
 const (
+	AWSRegion    = "AWS_REGION"
+	GoogleRegion = "GOOGLE_REGION"
+)
+
+const (
 	ResourceTagKey   = "created-by"
 	ResourceTagValue = "entigo-infralib-agent"
 )

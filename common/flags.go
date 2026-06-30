@@ -79,6 +79,7 @@ type Wrapper struct {
 	Command    string
 	Entrypoint string
 	PrefixStep string
+	PlanPath   string
 }
 
 type PipelineType string

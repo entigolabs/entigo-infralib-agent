@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
-const tfPlanPath = "/tmp/plans/%s/%s-plan.json"
+const tfPlan = "steps/%s/%s-plan.json"
 
 const disconnectTimeout = 10 * time.Second
 
@@ -26,6 +27,7 @@ type Wrapper struct {
 	client     BackendClient
 	command    model.ActionCommand
 	prefixStep string
+	planPath   string
 	step       string
 	stepType   model.StepType
 	entrypoint string
@@ -34,7 +36,7 @@ type Wrapper struct {
 }
 
 func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper, env []string, stdout io.Writer) (*Wrapper, error) {
-	client, err := getBackendClient(ctx, config)
+	client, err := getBackendClient(config)
 	if err != nil {
 		return nil, err
 	}
@@ -51,17 +53,18 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 		prefixStep: flags.PrefixStep,
 		step:       flags.Step,
 		entrypoint: flags.Entrypoint,
+		planPath:   flags.PlanPath,
 		env:        env,
 		stdout:     stdout,
 		stepType:   stepType,
 	}, nil
 }
 
-func getBackendClient(ctx context.Context, config *model.Wrapper) (BackendClient, error) {
+func getBackendClient(config *model.Wrapper) (BackendClient, error) {
 	if config == nil || config.Api == nil {
 		return nil, nil
 	}
-	return newBackendClient(ctx, config.Api)
+	return newBackendClient(config.Api)
 }
 
 func (w *Wrapper) Provision() error {
@@ -72,7 +75,7 @@ func (w *Wrapper) Provision() error {
 		return runErr
 	}
 
-	if exitCode == 0 && w.command == model.PlanCommand {
+	if w.command == model.PlanCommand && exitCode == 0 && w.client != nil {
 		w.sendPlan()
 	}
 	disconnectCtx := w.ctx
@@ -150,11 +153,14 @@ func (w *Wrapper) streamStdout(r io.Reader) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		slog.Error("wrapper stdout scanner failed", "err", err)
+	}
 }
 
 func (w *Wrapper) sendPlan() {
-	path := fmt.Sprintf(tfPlanPath, w.prefixStep, w.prefixStep)
-	summary, err := readPlanSummary(path)
+	planFile := path.Join(w.getPlanPath(), fmt.Sprintf(tfPlan, w.prefixStep, w.prefixStep))
+	summary, err := readPlanSummary(planFile)
 	if err != nil {
 		slog.Warn("wrapper plan summary unavailable", "err", err)
 		return
@@ -162,4 +168,17 @@ func (w *Wrapper) sendPlan() {
 	if err := w.client.SendPlan(summary); err != nil {
 		slog.Warn("wrapper backend SendPlan failed", "err", err)
 	}
+}
+
+func (w *Wrapper) getPlanPath() string {
+	if w.planPath != "" {
+		return w.planPath
+	}
+	if os.Getenv(model.GoogleRegion) != "" {
+		return "/project"
+	}
+	if os.Getenv(model.AWSRegion) != "" {
+		return os.Getenv("CODEBUILD_SRC_DIR")
+	}
+	return ""
 }

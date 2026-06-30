@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/gen/wrapper/v1alpha1"
@@ -24,7 +25,8 @@ const (
 	pingInterval     = 4 * time.Minute
 	initialBackoff   = 1 * time.Second
 	maxBackoff       = 30 * time.Second
-	logBufferSize    = 256
+	logBufferSize    = 4096
+	maxBatchSize     = 1024
 	windDownTimeout  = 5 * time.Second
 	handshakeTimeout = 10 * time.Second
 )
@@ -50,13 +52,14 @@ type backendClient struct {
 	done        chan struct{}
 	finished    chan error
 
-	// pendingLog / pendingPlan hold the single item that has been consumed
-	// from its channel but not yet successfully Sent. Set before Send, cleared
-	// after success; on a broken stream they survive into the next epoch and
-	// get replayed on the freshly-opened stream so reconnect doesn't drop them.
-	// Single-item (not a slice) because runEpoch consumes one item per select.
-	pendingLog  *string
+	// pendingLogs / pendingPlan hold the batch consumed from its channel but
+	// not yet successfully Sent. Set before Send, cleared after success; on a
+	// broken stream they survive into the next epoch and get replayed on the
+	// freshly-opened stream so reconnect doesn't drop them.
+	pendingLogs []string
 	pendingPlan *v1alpha1.PlanSummary
+
+	droppedLogs uint64
 
 	closeOnce sync.Once
 
@@ -64,7 +67,7 @@ type backendClient struct {
 	execErr  error
 }
 
-func newBackendClient(_ context.Context, api *model.WrapperApi) (*backendClient, error) {
+func newBackendClient(api *model.WrapperApi) (*backendClient, error) {
 	host, pathPrefix, err := parseTarget(api.URL)
 	if err != nil {
 		return nil, err
@@ -130,7 +133,7 @@ func (g *backendClient) SendLog(line string) error {
 	select {
 	case g.logs <- line:
 	default:
-		slog.Debug("wrapper log buffer full, dropping line")
+		atomic.AddUint64(&g.droppedLogs, 1)
 	}
 	return nil
 }
@@ -146,6 +149,9 @@ func (g *backendClient) SendPlan(summary *v1alpha1.PlanSummary) error {
 }
 
 func (g *backendClient) Disconnect(ctx context.Context, exitCode int, execErr error) error {
+	if dropped := atomic.LoadUint64(&g.droppedLogs); dropped > 0 {
+		slog.Warn("wrapper dropped log lines due to backpressure", "count", dropped)
+	}
 	g.exitCode = exitCode
 	g.execErr = execErr
 	g.closeOnce.Do(func() { close(g.done) })
@@ -223,7 +229,7 @@ func (g *backendClient) runEpoch(stream wrapperStream, recvErrCh <-chan error) e
 	for {
 		select {
 		case line := <-g.logs:
-			if err := g.sendLogLine(stream, line); err != nil {
+			if err := g.sendLogBatch(stream, g.drainLogBatch(line)); err != nil {
 				return err
 			}
 		case summary := <-g.planSummary:
@@ -251,7 +257,7 @@ func (g *backendClient) drainPending(stream wrapperStream) error {
 	for {
 		select {
 		case line := <-g.logs:
-			if err := g.sendLogLine(stream, line); err != nil {
+			if err := g.sendLogBatch(stream, g.drainLogBatch(line)); err != nil {
 				return err
 			}
 		case summary := <-g.planSummary:
@@ -264,16 +270,34 @@ func (g *backendClient) drainPending(stream wrapperStream) error {
 	}
 }
 
-func (g *backendClient) sendLogLine(stream wrapperStream, line string) error {
-	g.pendingLog = &line
+// drainLogBatch pulls everything currently sitting in g.logs into a batch
+// starting with the line that already woke the select. Caps at maxBatchSize
+// to bound message size; if more remain, the next select iteration picks them
+// up.
+func (g *backendClient) drainLogBatch(first string) []string {
+	batch := make([]string, 0, maxBatchSize)
+	batch = append(batch, first)
+	for len(batch) < maxBatchSize {
+		select {
+		case more := <-g.logs:
+			batch = append(batch, more)
+		default:
+			return batch
+		}
+	}
+	return batch
+}
+
+func (g *backendClient) sendLogBatch(stream wrapperStream, lines []string) error {
+	g.pendingLogs = lines
 	if err := stream.Send(&v1alpha1.StreamLogsRequest{
-		Payload: &v1alpha1.StreamLogsRequest_LogLine{
-			LogLine: &v1alpha1.LogLine{Line: line},
+		Payload: &v1alpha1.StreamLogsRequest_LogBatch{
+			LogBatch: &v1alpha1.LogBatch{Lines: lines},
 		},
 	}); err != nil {
 		return err
 	}
-	g.pendingLog = nil
+	g.pendingLogs = nil
 	g.pingTicker.Reset(g.pingTime)
 	return nil
 }
@@ -293,8 +317,8 @@ func (g *backendClient) sendPlanSummary(stream wrapperStream, summary *v1alpha1.
 }
 
 func (g *backendClient) flushPending(stream wrapperStream) error {
-	if g.pendingLog != nil {
-		if err := g.sendLogLine(stream, *g.pendingLog); err != nil {
+	if len(g.pendingLogs) > 0 {
+		if err := g.sendLogBatch(stream, g.pendingLogs); err != nil {
 			return err
 		}
 	}

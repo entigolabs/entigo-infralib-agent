@@ -40,11 +40,11 @@ type LocalPipeline struct {
 }
 
 func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config) *LocalPipeline {
-	regionKey := "AWS_REGION"
+	regionKey := model.AWSRegion
 	project := ""
 	zone := ""
 	if resources.GetProviderType() == model.GCLOUD {
-		regionKey = "GOOGLE_REGION"
+		regionKey = model.GoogleRegion
 		project = gcloudFlags.ProjectId
 		zone = gcloudFlags.Zone
 	}
@@ -105,6 +105,7 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		Command:    string(command),
 		Entrypoint: executeScript,
 		PrefixStep: prefixStep,
+		PlanPath:   "/tmp/project",
 	}
 	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer
