@@ -61,7 +61,7 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 }
 
 func getBackendClient(config *model.Wrapper) (BackendClient, error) {
-	if config == nil || config.Api == nil {
+	if config == nil || config.Api == nil || config.CampaignId == "" {
 		return nil, nil
 	}
 	return newBackendClient(config.Api)
