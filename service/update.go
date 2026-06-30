@@ -219,6 +219,14 @@ func upsertWrapperConfig(wrapper *model.Wrapper, prefix string, ssm model.SSM) e
 	if err != nil {
 		return err
 	}
+	if config == "" {
+		// AWS Secrets Manager (and GCP Secret Manager) reject empty payloads,
+		// and a whitespace-only WRAPPER_CONFIG breaks CodeBuild's log shipper
+		// (it mangles subsequent stdout — spaces become asterisks). `{}` is
+		// valid YAML for an empty map; parseConfig unmarshals it to a
+		// zero-value Wrapper whose nil Api triggers transparent mode.
+		config = "{}"
+	}
 	if err := ssm.PutSecret(model.WrapperConfigSecretName(prefix), config); err != nil {
 		return fmt.Errorf("failed to upsert wrapper config secret: %v", err)
 	}
