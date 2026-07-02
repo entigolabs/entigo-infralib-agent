@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,18 +23,19 @@ const tfPlan = "steps/%s/%s-plan.json"
 const disconnectTimeout = 10 * time.Second
 
 type Wrapper struct {
-	ctx        context.Context
-	config     *model.Wrapper
-	client     BackendClient
-	command    model.ActionCommand
-	campaignId string
-	prefixStep string
-	planPath   string
-	step       string
-	stepType   model.StepType
-	entrypoint string
-	env        []string
-	stdout     io.Writer
+	ctx           context.Context
+	config        *model.Wrapper
+	client        BackendClient
+	command       model.ActionCommand
+	campaignId    string
+	pipelineIndex int32
+	prefixStep    string
+	planPath      string
+	step          string
+	stepType      model.StepType
+	entrypoint    string
+	env           []string
+	stdout        io.Writer
 }
 
 func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper, env []string, stdout io.Writer) (*Wrapper, error) {
@@ -46,6 +48,7 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 	if campaignId == model.CampaignSentinelNone {
 		campaignId = ""
 	}
+	pipelineIndex := parsePipelineIndex(flags.PipelineIndex)
 	// Provisioning must not depend on the backend — fall back to transparent
 	// mode on any init failure.
 	client, err := getBackendClient(config, campaignId)
@@ -54,19 +57,33 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 		client = nil
 	}
 	return &Wrapper{
-		ctx:        ctx,
-		config:     config,
-		client:     client,
-		command:    command,
-		campaignId: campaignId,
-		prefixStep: flags.PrefixStep,
-		step:       flags.Step,
-		entrypoint: flags.Entrypoint,
-		planPath:   flags.PlanPath,
-		env:        env,
-		stdout:     stdout,
-		stepType:   stepType,
+		ctx:           ctx,
+		config:        config,
+		client:        client,
+		command:       command,
+		campaignId:    campaignId,
+		pipelineIndex: pipelineIndex,
+		prefixStep:    flags.PrefixStep,
+		step:          flags.Step,
+		entrypoint:    flags.Entrypoint,
+		planPath:      flags.PlanPath,
+		env:           env,
+		stdout:        stdout,
+		stepType:      stepType,
 	}, nil
+}
+
+// Empty or the CampaignSentinelNone sentinel returns 0.
+func parsePipelineIndex(raw string) int32 {
+	if raw == "" || raw == model.CampaignSentinelNone {
+		return 0
+	}
+	v, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		slog.Warn("wrapper PIPELINE_INDEX is not a valid integer, treating as unset", "value", raw, "err", err)
+		return 0
+	}
+	return int32(v)
 }
 
 func getBackendClient(config *model.Wrapper, campaignId string) (BackendClient, error) {
@@ -110,10 +127,11 @@ func (w *Wrapper) connectBackend() {
 		return
 	}
 	err := w.client.Connect(HandshakeData{
-		CampaignId: w.campaignId,
-		Step:       w.step,
-		Command:    protoCommand(w.command),
-		StepType:   protoStepType(w.stepType),
+		CampaignId:    w.campaignId,
+		Step:          w.step,
+		Command:       protoCommand(w.command),
+		StepType:      protoStepType(w.stepType),
+		PipelineIndex: w.pipelineIndex,
 	})
 	if err != nil {
 		slog.Error("wrapper backend connection failed, running entrypoint without log forwarding", "err", err)

@@ -79,6 +79,12 @@ func (p *Pipeline) SetCampaignId(id string) {
 	}
 }
 
+func (p *Pipeline) SetPipelineIndex(index int) {
+	if p.builder != nil {
+		p.builder.SetPipelineIndex(index)
+	}
+}
+
 func NewPipeline(ctx context.Context, options []option.ClientOption, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
 	client, err := deploy.NewCloudDeployClient(ctx, options...)
 	if err != nil {

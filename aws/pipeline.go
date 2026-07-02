@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,10 +70,15 @@ type Pipeline struct {
 	cloudPrefix    string
 	manager        model.NotificationManager
 	campaignId     string
+	pipelineIndex  string
 }
 
 func (p *Pipeline) SetCampaignId(id string) {
 	p.campaignId = id
+}
+
+func (p *Pipeline) SetPipelineIndex(index int) {
+	p.pipelineIndex = strconv.Itoa(index)
 }
 
 func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
@@ -152,6 +158,9 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 			Variables: []types.PipelineVariableDeclaration{{
 				Name:         aws.String("CampaignId"),
 				DefaultValue: aws.String(model.CampaignSentinelNone),
+			}, {
+				Name:         aws.String("PipelineIndex"),
+				DefaultValue: aws.String("0"),
 			}},
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
@@ -280,6 +289,9 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 			Variables: []types.PipelineVariableDeclaration{{
 				Name:         aws.String("CampaignId"),
 				DefaultValue: aws.String(model.CampaignSentinelNone),
+			}, {
+				Name:         aws.String("PipelineIndex"),
+				DefaultValue: aws.String("0"),
 			}},
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
@@ -485,12 +497,18 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model
 		ClientRequestToken: aws.String(uuid.NewString()),
 	}
 	if p.campaignId != "" {
-		input.Variables = []types.PipelineVariable{{
+		input.Variables = append(input.Variables, types.PipelineVariable{
 			Name:  aws.String("CampaignId"),
 			Value: aws.String(p.campaignId),
-		}}
+		})
 	} else {
 		slog.Debug("starting pipeline without CampaignId — SetCampaignId was not called", "pipeline", pipelineName)
+	}
+	if p.pipelineIndex != "" {
+		input.Variables = append(input.Variables, types.PipelineVariable{
+			Name:  aws.String("PipelineIndex"),
+			Value: aws.String(p.pipelineIndex),
+		})
 	}
 	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, input)
 	if err != nil {
@@ -535,9 +553,9 @@ func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 	return p.updatePipeline(pipe, stepName, step, bucket, authSources)
 }
 
-func hasCampaignIdVariable(vars []types.PipelineVariableDeclaration) bool {
+func hasPipelineVariable(vars []types.PipelineVariableDeclaration, name string) bool {
 	for _, v := range vars {
-		if v.Name != nil && *v.Name == "CampaignId" {
+		if v.Name != nil && *v.Name == name {
 			return true
 		}
 	}
@@ -552,10 +570,17 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 		pipeline.PipelineType = types.PipelineTypeV2
 		changed = true
 	}
-	if !hasCampaignIdVariable(pipeline.Variables) {
+	if !hasPipelineVariable(pipeline.Variables, "CampaignId") {
 		pipeline.Variables = append(pipeline.Variables, types.PipelineVariableDeclaration{
 			Name:         aws.String("CampaignId"),
 			DefaultValue: aws.String(model.CampaignSentinelNone),
+		})
+		changed = true
+	}
+	if !hasPipelineVariable(pipeline.Variables, "PipelineIndex") {
+		pipeline.Variables = append(pipeline.Variables, types.PipelineVariableDeclaration{
+			Name:         aws.String("PipelineIndex"),
+			DefaultValue: aws.String("0"),
 		})
 		changed = true
 	}
@@ -1033,6 +1058,7 @@ func (p *Pipeline) buildEnvVars(command model.ActionCommand, stepName string, st
 		{Name: "INFRALIB_STEP", Value: step.Name},
 		{Name: model.WrapperConfigEnv, Value: model.WrapperConfigSecretName(p.cloudPrefix), Type: "SECRETS_MANAGER"},
 		{Name: "CAMPAIGN_ID", Value: "#{variables.CampaignId}"},
+		{Name: "PIPELINE_INDEX", Value: "#{variables.PipelineIndex}"},
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {

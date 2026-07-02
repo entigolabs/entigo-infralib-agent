@@ -8,10 +8,11 @@ import (
 
 // HandshakeData binds a wrapper stream to a single pipeline execution.
 type HandshakeData struct {
-	CampaignId string
-	Step       string
-	Command    v1alpha1.Command
-	StepType   v1alpha1.StepType
+	CampaignId    string
+	Step          string
+	Command       v1alpha1.Command
+	StepType      v1alpha1.StepType
+	PipelineIndex int32
 }
 
 // BackendClient forwards wrapper logs to the portal backend over gRPC.

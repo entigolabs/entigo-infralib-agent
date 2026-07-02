@@ -370,11 +370,15 @@ func (*StreamLogsResponse_Complete) isStreamLogsResponse_Payload() {}
 // Handshake binds the stream to a single wrapper execution. Sent once as the
 // first request message.
 type Handshake struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CampaignId    string                 `protobuf:"bytes,1,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id,omitempty"`
-	Step          string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
-	Command       Command                `protobuf:"varint,3,opt,name=command,proto3,enum=wrapper.v1alpha1.Command" json:"command,omitempty"`
-	StepType      StepType               `protobuf:"varint,4,opt,name=step_type,json=stepType,proto3,enum=wrapper.v1alpha1.StepType" json:"step_type,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	CampaignId string                 `protobuf:"bytes,1,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id,omitempty"`
+	Step       string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
+	Command    Command                `protobuf:"varint,3,opt,name=command,proto3,enum=wrapper.v1alpha1.Command" json:"command,omitempty"`
+	StepType   StepType               `protobuf:"varint,4,opt,name=step_type,json=stepType,proto3,enum=wrapper.v1alpha1.StepType" json:"step_type,omitempty"`
+	// Sent verbatim from the agent so the backend doesn't have to infer it from
+	// DB state (which can be stale if a previous pipeline's completion notification
+	// was lost).
+	PipelineIndex int32 `protobuf:"varint,5,opt,name=pipeline_index,json=pipelineIndex,proto3" json:"pipeline_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -435,6 +439,13 @@ func (x *Handshake) GetStepType() StepType {
 		return x.StepType
 	}
 	return StepType_STEP_TYPE_UNSPECIFIED
+}
+
+func (x *Handshake) GetPipelineIndex() int32 {
+	if x != nil {
+		return x.PipelineIndex
+	}
+	return 0
 }
 
 // HandshakeAck confirms the server accepted the Handshake. The client must
@@ -949,13 +960,14 @@ const file_wrapper_v1alpha1_wrapper_proto_rawDesc = "" +
 	"\rhandshake_ack\x18\x01 \x01(\v2\x1e.wrapper.v1alpha1.HandshakeAckH\x00R\fhandshakeAck\x12,\n" +
 	"\x04ping\x18\x02 \x01(\v2\x16.wrapper.v1alpha1.PingH\x00R\x04ping\x12>\n" +
 	"\bcomplete\x18\x03 \x01(\v2 .wrapper.v1alpha1.StreamCompleteH\x00R\bcompleteB\t\n" +
-	"\apayload\"\xae\x01\n" +
+	"\apayload\"\xd5\x01\n" +
 	"\tHandshake\x12\x1f\n" +
 	"\vcampaign_id\x18\x01 \x01(\tR\n" +
 	"campaignId\x12\x12\n" +
 	"\x04step\x18\x02 \x01(\tR\x04step\x123\n" +
 	"\acommand\x18\x03 \x01(\x0e2\x19.wrapper.v1alpha1.CommandR\acommand\x127\n" +
-	"\tstep_type\x18\x04 \x01(\x0e2\x1a.wrapper.v1alpha1.StepTypeR\bstepType\"\x0e\n" +
+	"\tstep_type\x18\x04 \x01(\x0e2\x1a.wrapper.v1alpha1.StepTypeR\bstepType\x12%\n" +
+	"\x0epipeline_index\x18\x05 \x01(\x05R\rpipelineIndex\"\x0e\n" +
 	"\fHandshakeAck\" \n" +
 	"\bLogBatch\x12\x14\n" +
 	"\x05lines\x18\x01 \x03(\tR\x05lines\"\x06\n" +

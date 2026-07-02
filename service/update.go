@@ -435,11 +435,7 @@ func (u *updater) Process() (bool, error) {
 		}
 	}
 	for ; index < mostReleases; index++ {
-		if u.cmd == common.RunCommand {
-			u.manager.SetCurrentPipelineIndex(1)
-		} else {
-			u.manager.SetCurrentPipelineIndex(index)
-		}
+		u.setPipelineIndex(index)
 		sourceVersions := u.getNotifySourceVersions(index)
 		u.manager.PipelineState(model.ApplyStatusStarting, sourceVersions, nil)
 		err := u.processRelease(index)
@@ -450,6 +446,20 @@ func (u *updater) Process() (bool, error) {
 		u.manager.PipelineState(model.ApplyStatusSuccess, sourceVersions, nil)
 	}
 	return true, nil
+}
+
+func (u *updater) setPipelineIndex(index int) {
+	pipelineIndex := index
+	if u.cmd == common.RunCommand {
+		pipelineIndex = 1
+	}
+	u.manager.SetCurrentPipelineIndex(pipelineIndex)
+	if u.resources.GetPipeline() != nil {
+		u.resources.GetPipeline().SetPipelineIndex(pipelineIndex)
+	}
+	if u.localPipeline != nil {
+		u.localPipeline.SetPipelineIndex(pipelineIndex)
+	}
 }
 
 func (u *updater) processRelease(index int) error {

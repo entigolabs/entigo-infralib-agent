@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,11 @@ type LocalPipeline struct {
 	manager        model.NotificationManager
 	wrapper        *model.Wrapper
 	campaignId     string
+	pipelineIndex  int
+}
+
+func (l *LocalPipeline) SetPipelineIndex(index int) {
+	l.pipelineIndex = index
 }
 
 func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
@@ -103,12 +109,13 @@ func (l *LocalPipeline) startDestroyExecution(step model.Step, sourceAuths map[s
 
 func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) ([]byte, error) {
 	flags := common.Wrapper{
-		Step:       step.Name,
-		Command:    string(command),
-		Entrypoint: executeScript,
-		PrefixStep: prefixStep,
-		PlanPath:   "/tmp/project",
-		CampaignId: l.campaignId,
+		Step:          step.Name,
+		Command:       string(command),
+		Entrypoint:    executeScript,
+		PrefixStep:    prefixStep,
+		PlanPath:      "/tmp/project",
+		CampaignId:    l.campaignId,
+		PipelineIndex: strconv.Itoa(l.pipelineIndex),
 	}
 	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer

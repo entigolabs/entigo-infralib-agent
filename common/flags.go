@@ -74,13 +74,14 @@ type Migrate struct {
 }
 
 type Wrapper struct {
-	Config     string
-	Step       string
-	Command    string
-	Entrypoint string
-	PrefixStep string
-	PlanPath   string
-	CampaignId string
+	Config        string
+	Step          string
+	Command       string
+	Entrypoint    string
+	PrefixStep    string
+	PlanPath      string
+	CampaignId    string
+	PipelineIndex string
 }
 
 type PipelineType string

@@ -108,9 +108,8 @@ type Pipeline interface {
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
 	// Empty campaignId means "no campaign" — wrapper runs transparently.
-	// Providers translate empty to CampaignSentinelNone when passing to the
-	// pipeline execution, because some providers reject empty values.
 	SetCampaignId(campaignId string)
+	SetPipelineIndex(index int)
 }
 
 type Builder interface {

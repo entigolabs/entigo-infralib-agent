@@ -368,10 +368,11 @@ func (g *backendClient) openStream() (wrapperStream, error) {
 	hs := &v1alpha1.StreamLogsRequest{
 		Payload: &v1alpha1.StreamLogsRequest_Handshake{
 			Handshake: &v1alpha1.Handshake{
-				CampaignId: g.handshake.CampaignId,
-				Step:       g.handshake.Step,
-				Command:    g.handshake.Command,
-				StepType:   g.handshake.StepType,
+				CampaignId:    g.handshake.CampaignId,
+				Step:          g.handshake.Step,
+				Command:       g.handshake.Command,
+				StepType:      g.handshake.StepType,
+				PipelineIndex: g.handshake.PipelineIndex,
 			},
 		},
 	}

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	run "cloud.google.com/go/run/apiv2"
@@ -36,10 +37,15 @@ type Builder struct {
 	enableOpenTofu bool
 	cloudPrefix    string
 	campaignId     string
+	pipelineIndex  string
 }
 
 func (b *Builder) SetCampaignId(id string) {
 	b.campaignId = id
+}
+
+func (b *Builder) SetPipelineIndex(index int) {
+	b.pipelineIndex = strconv.Itoa(index)
 }
 
 func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache, enableOpenTofu bool, cloudPrefix string) (*Builder, error) {
@@ -409,13 +415,23 @@ func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
 		return "", model.NewNotFoundError(fmt.Sprintf("job %s", projectName))
 	}
 	req := &runpb.RunJobRequest{Name: job.Name}
+	var envOverrides []*runpb.EnvVar
 	if b.campaignId != "" {
+		envOverrides = append(envOverrides, &runpb.EnvVar{
+			Name:   "CAMPAIGN_ID",
+			Values: &runpb.EnvVar_Value{Value: b.campaignId},
+		})
+	}
+	if b.pipelineIndex != "" {
+		envOverrides = append(envOverrides, &runpb.EnvVar{
+			Name:   "PIPELINE_INDEX",
+			Values: &runpb.EnvVar_Value{Value: b.pipelineIndex},
+		})
+	}
+	if len(envOverrides) > 0 {
 		req.Overrides = &runpb.RunJobRequest_Overrides{
 			ContainerOverrides: []*runpb.RunJobRequest_Overrides_ContainerOverride{{
-				Env: []*runpb.EnvVar{{
-					Name:   "CAMPAIGN_ID",
-					Values: &runpb.EnvVar_Value{Value: b.campaignId},
-				}},
+				Env: envOverrides,
 			}},
 		}
 	}

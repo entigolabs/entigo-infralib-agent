@@ -32,6 +32,7 @@ message Handshake {
   string step = 2;
   Command command = 3;
   StepType step_type = 4;
+  int32 pipeline_index = 5;
 }
 
 // StepType is the step executor. Matches model.StepType on the agent side.
