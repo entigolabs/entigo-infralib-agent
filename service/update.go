@@ -80,10 +80,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		return nil, err
 	}
 	pipeline := ProcessPipelineFlags(flags.Pipeline)
-	if config.Wrapper != nil {
-		config.Wrapper.CampaignId = campaignId.String()
-	}
 	if pipeline.Type != string(common.PipelineTypeLocal) {
+		resources.GetPipeline().SetCampaignId(campaignId.String())
 		err = upsertWrapperConfig(config.Wrapper, resources.GetCloudPrefix(), resources.GetSSM())
 		if err != nil {
 			return nil, err
@@ -99,7 +97,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags.GCloud, manager, config),
+		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags.GCloud, manager, config, campaignId.String()),
 		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -417,9 +415,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config) *LocalPipeline {
+func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(ctx, resources, pipeline, gcloudFlags, manager, config)
+		return NewLocalPipeline(ctx, resources, pipeline, gcloudFlags, manager, config, campaignId)
 	}
 	return nil
 }

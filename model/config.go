@@ -99,8 +99,7 @@ type NotificationApi struct {
 }
 
 type Wrapper struct {
-	Api        *WrapperApi `yaml:"api,omitempty"`
-	CampaignId string      `yaml:"campaign_id,omitempty"`
+	Api *WrapperApi `yaml:"api,omitempty"`
 }
 
 type WrapperApi struct {

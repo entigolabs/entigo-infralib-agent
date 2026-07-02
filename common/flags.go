@@ -80,6 +80,7 @@ type Wrapper struct {
 	Entrypoint string
 	PrefixStep string
 	PlanPath   string
+	CampaignId string
 }
 
 type PipelineType string

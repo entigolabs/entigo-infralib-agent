@@ -24,10 +24,11 @@ import (
 )
 
 const (
-	pollingDelay     = 10 * time.Second
-	waitTimeout      = 2 * time.Minute
-	logsRetries      = 3
-	logsPollingDelay = 5 * time.Second
+	pollingDelay         = 10 * time.Second
+	waitTimeout          = 2 * time.Minute
+	logsRetries          = 3
+	logsPollingDelay     = 5 * time.Second
+	autoExecutionTimeout = 30 * time.Second
 
 	approveStageName  = "Approve"
 	approveActionName = "Approval"
@@ -67,6 +68,11 @@ type Pipeline struct {
 	enableOpenTofu bool
 	cloudPrefix    string
 	manager        model.NotificationManager
+	campaignId     string
+}
+
+func (p *Pipeline) SetCampaignId(id string) {
+	p.campaignId = id
 }
 
 func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
@@ -140,8 +146,13 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 	}
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
+			Name:         aws.String(pipelineName),
+			RoleArn:      aws.String(p.roleArn),
+			PipelineType: types.PipelineTypeV2,
+			Variables: []types.PipelineVariableDeclaration{{
+				Name:         aws.String("CampaignId"),
+				DefaultValue: aws.String(model.CampaignSentinelNone),
+			}},
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
@@ -229,30 +240,11 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return nil, err
 	}
 	log.Printf("Created CodePipeline %s\n", pipelineName)
-	return p.getNewPipelineExecutionId(pipelineName)
-}
-
-func (p *Pipeline) getNewPipelineExecutionId(pipelineName string) (*string, error) {
-	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
-	executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
-		PipelineName: aws.String(pipelineName),
-	})
-	if err != nil {
+	// The auto-start on create has no CampaignId — replace it with our own.
+	if err := p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout); err != nil {
 		return nil, err
 	}
-	summaries := executions.PipelineExecutionSummaries
-	if len(summaries) == 0 {
-		return nil, fmt.Errorf("couldn't find a pipeline execution id")
-	}
-	var oldestExecutionId *string
-	var oldestStartTime *time.Time
-	for _, execution := range summaries {
-		if oldestStartTime == nil || execution.StartTime.Before(*oldestStartTime) {
-			oldestExecutionId = execution.PipelineExecutionId
-			oldestStartTime = execution.StartTime
-		}
-	}
-	return oldestExecutionId, nil
+	return p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
 }
 
 func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) error {
@@ -282,8 +274,13 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	}
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
+			Name:         aws.String(pipelineName),
+			RoleArn:      aws.String(p.roleArn),
+			PipelineType: types.PipelineTypeV2,
+			Variables: []types.PipelineVariableDeclaration{{
+				Name:         aws.String("CampaignId"),
+				DefaultValue: aws.String(model.CampaignSentinelNone),
+			}},
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
@@ -382,8 +379,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-	return p.stopLatestPipelineExecutions(pipelineName, 1)
+	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
 }
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
@@ -397,8 +393,7 @@ func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucke
 		if err != nil {
 			return err
 		}
-		time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-		err = p.stopLatestPipelineExecutions(updatePipeline, 1)
+		err = p.waitAndStopAutoExecution(updatePipeline, autoExecutionTimeout)
 		if err != nil {
 			return err
 		}
@@ -420,8 +415,7 @@ func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucke
 	if err != nil || run {
 		return err
 	}
-	time.Sleep(5 * time.Second)
-	return p.stopLatestPipelineExecutions(runPipeline, 1)
+	return p.waitAndStopAutoExecution(runPipeline, autoExecutionTimeout)
 }
 
 func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket string) error {
@@ -486,10 +480,19 @@ func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model.Step, _ string) (*string, error) {
 	log.Printf("Starting pipeline %s\n", pipelineName)
-	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, &codepipeline.StartPipelineExecutionInput{
+	input := &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
 		ClientRequestToken: aws.String(uuid.NewString()),
-	})
+	}
+	if p.campaignId != "" {
+		input.Variables = []types.PipelineVariable{{
+			Name:  aws.String("CampaignId"),
+			Value: aws.String(p.campaignId),
+		}}
+	} else {
+		slog.Debug("starting pipeline without CampaignId — SetCampaignId was not called", "pipeline", pipelineName)
+	}
+	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -532,8 +535,30 @@ func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 	return p.updatePipeline(pipe, stepName, step, bucket, authSources)
 }
 
+func hasCampaignIdVariable(vars []types.PipelineVariableDeclaration) bool {
+	for _, v := range vars {
+		if v.Name != nil && *v.Name == "CampaignId" {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) error {
 	changed := false
+	// V1 pipelines treat #{variables.CampaignId} as a literal string, which
+	// would corrupt the wrapper's CAMPAIGN_ID env var — upgrade in place.
+	if pipeline.PipelineType != types.PipelineTypeV2 {
+		pipeline.PipelineType = types.PipelineTypeV2
+		changed = true
+	}
+	if !hasCampaignIdVariable(pipeline.Variables) {
+		pipeline.Variables = append(pipeline.Variables, types.PipelineVariableDeclaration{
+			Name:         aws.String("CampaignId"),
+			DefaultValue: aws.String(model.CampaignSentinelNone),
+		})
+		changed = true
+	}
 	for _, stage := range pipeline.Stages {
 		if *stage.Name == sourceName || *stage.Name == approveStageName {
 			continue
@@ -900,25 +925,35 @@ func (p *Pipeline) disableStageTransition(pipelineName string, stage string) err
 	return err
 }
 
-func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount int32) error {
-	executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
-		PipelineName: aws.String(pipelineName),
-		MaxResults:   aws.Int32(latestCount),
-	})
-	if err != nil {
-		return err
-	}
-	for _, execution := range executions.PipelineExecutionSummaries {
-		if execution.Status != types.PipelineExecutionStatusInProgress {
-			continue
-		}
-		err = p.stopPipelineExecution(pipelineName, *execution.PipelineExecutionId,
-			"Abandoned pipeline execution")
+// Bounded by timeout — if no execution appears we return without error so a
+// subsequent StartPipelineExecution can still succeed.
+func (p *Pipeline) waitAndStopAutoExecution(pipelineName string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
+			PipelineName: aws.String(pipelineName),
+			MaxResults:   aws.Int32(1),
+		})
 		if err != nil {
 			return err
 		}
+		for _, execution := range executions.PipelineExecutionSummaries {
+			if execution.Status != types.PipelineExecutionStatusInProgress {
+				continue
+			}
+			slog.Info("intercepting auto-execution", "pipeline", pipelineName, "execution", *execution.PipelineExecutionId)
+			return p.stopPipelineExecution(pipelineName, *execution.PipelineExecutionId, "Superseded by agent-orchestrated execution")
+		}
+		if time.Now().After(deadline) {
+			slog.Warn("no auto-execution appeared to intercept", "pipeline", pipelineName, "timeout", timeout)
+			return nil
+		}
+		select {
+		case <-p.ctx.Done():
+			return p.ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
-	return nil
 }
 
 func (p *Pipeline) stopPipelineExecution(pipelineName string, executionId string, reason string) error {
@@ -997,6 +1032,7 @@ func (p *Pipeline) buildEnvVars(command model.ActionCommand, stepName string, st
 		{Name: "INFRALIB_BUCKET", Value: bucket},
 		{Name: "INFRALIB_STEP", Value: step.Name},
 		{Name: model.WrapperConfigEnv, Value: model.WrapperConfigSecretName(p.cloudPrefix), Type: "SECRETS_MANAGER"},
+		{Name: "CAMPAIGN_ID", Value: "#{variables.CampaignId}"},
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {

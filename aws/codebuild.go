@@ -342,7 +342,7 @@ func buildSpec() (*string, error) {
 		Version: "0.2",
 		Phases: Phases{
 			Build: Build{
-				Commands: []string{"/usr/bin/ei-agent " + string(common.ProvisionCommand)}, // TODO How to update for existing?
+				Commands: []string{"/usr/bin/entrypoint.sh"},
 			},
 		},
 		Artifacts: Artifacts{

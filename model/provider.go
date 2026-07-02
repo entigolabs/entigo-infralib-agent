@@ -44,6 +44,12 @@ const (
 	GitPasswordEnvFormat = "GIT_AUTH_PASSWORD_%s"
 
 	WrapperConfigEnv = "WRAPPER_CONFIG"
+
+	// CampaignSentinelNone is the on-the-wire value used when there is no
+	// active campaign. AWS CodePipeline rejects empty DefaultValue on pipeline
+	// variables, so we can't represent "no campaign" as "". The wrapper treats
+	// this sentinel identically to an empty CAMPAIGN_ID — transparent mode.
+	CampaignSentinelNone = "none"
 )
 
 func WrapperConfigSecretName(prefix string) string {
@@ -101,6 +107,10 @@ type Pipeline interface {
 	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
+	// Empty campaignId means "no campaign" — wrapper runs transparently.
+	// Providers translate empty to CampaignSentinelNone when passing to the
+	// pipeline execution, because some providers reject empty values.
+	SetCampaignId(campaignId string)
 }
 
 type Builder interface {

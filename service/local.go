@@ -22,7 +22,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/wrapper"
 )
 
-const executeScript = "entrypoint.sh"
+const executeScript = "entrypoint-core.sh"
 
 type LocalPipeline struct {
 	ctx            context.Context
@@ -37,9 +37,10 @@ type LocalPipeline struct {
 	inputLock      sync.Mutex
 	manager        model.NotificationManager
 	wrapper        *model.Wrapper
+	campaignId     string
 }
 
-func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config) *LocalPipeline {
+func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
 	regionKey := model.AWSRegion
 	project := ""
 	zone := ""
@@ -60,6 +61,7 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 		manager:        manager,
 		enableOpenTofu: config.EnableOpenTofu,
 		wrapper:        config.Wrapper,
+		campaignId:     campaignId,
 	}
 }
 
@@ -106,6 +108,7 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		Entrypoint: executeScript,
 		PrefixStep: prefixStep,
 		PlanPath:   "/tmp/project",
+		CampaignId: l.campaignId,
 	}
 	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer

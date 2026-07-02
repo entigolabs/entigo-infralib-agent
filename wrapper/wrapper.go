@@ -26,6 +26,7 @@ type Wrapper struct {
 	config     *model.Wrapper
 	client     BackendClient
 	command    model.ActionCommand
+	campaignId string
 	prefixStep string
 	planPath   string
 	step       string
@@ -36,20 +37,28 @@ type Wrapper struct {
 }
 
 func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper, env []string, stdout io.Writer) (*Wrapper, error) {
-	client, err := getBackendClient(config)
-	if err != nil {
-		return nil, err
-	}
 	command := model.ActionCommand(flags.Command)
 	stepType := getStepType(command)
 	if stepType == "" {
 		return nil, fmt.Errorf("unknown command: %s", flags.Command)
+	}
+	campaignId := flags.CampaignId
+	if campaignId == model.CampaignSentinelNone {
+		campaignId = ""
+	}
+	// Provisioning must not depend on the backend — fall back to transparent
+	// mode on any init failure.
+	client, err := getBackendClient(config, campaignId)
+	if err != nil {
+		slog.Error("wrapper backend init failed, running entrypoint without log forwarding", "err", err)
+		client = nil
 	}
 	return &Wrapper{
 		ctx:        ctx,
 		config:     config,
 		client:     client,
 		command:    command,
+		campaignId: campaignId,
 		prefixStep: flags.PrefixStep,
 		step:       flags.Step,
 		entrypoint: flags.Entrypoint,
@@ -60,8 +69,12 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 	}, nil
 }
 
-func getBackendClient(config *model.Wrapper) (BackendClient, error) {
-	if config == nil || config.Api == nil || config.CampaignId == "" {
+func getBackendClient(config *model.Wrapper, campaignId string) (BackendClient, error) {
+	if config == nil || config.Api == nil {
+		return nil, nil
+	}
+	if campaignId == "" {
+		slog.Warn("wrapper config supplied but CAMPAIGN_ID is empty, running transparently")
 		return nil, nil
 	}
 	return newBackendClient(config.Api)
@@ -78,12 +91,14 @@ func (w *Wrapper) Provision() error {
 	if w.command == model.PlanCommand && exitCode == 0 && w.client != nil {
 		w.sendPlan()
 	}
-	disconnectCtx := w.ctx
-	if w.ctx.Err() != nil {
-		var cancel context.CancelFunc
-		disconnectCtx, cancel = context.WithTimeout(context.Background(), disconnectTimeout)
-		defer cancel()
+	// w.ctx has no deadline of its own — always cap Disconnect so a hung
+	// backend can't block Provision indefinitely.
+	base := w.ctx
+	if base.Err() != nil {
+		base = context.Background()
 	}
+	disconnectCtx, cancel := context.WithTimeout(base, disconnectTimeout)
+	defer cancel()
 	if err := w.client.Disconnect(disconnectCtx, exitCode, runErr); err != nil {
 		slog.Warn("wrapper backend Disconnect failed", "err", err)
 	}
@@ -95,7 +110,7 @@ func (w *Wrapper) connectBackend() {
 		return
 	}
 	err := w.client.Connect(HandshakeData{
-		CampaignId: w.config.CampaignId,
+		CampaignId: w.campaignId,
 		Step:       w.step,
 		Command:    protoCommand(w.command),
 		StepType:   protoStepType(w.stepType),

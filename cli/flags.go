@@ -49,7 +49,7 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.MigrateConfigCommand:
 		return append(baseFlags, &stateFileFlag, importFileFlag(false))
 	case common.ProvisionCommand:
-		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag, &prefixStepFlag)
+		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag, &prefixStepFlag, &campaignIdFlag)
 	default:
 		return baseFlags
 	}
@@ -404,7 +404,7 @@ var commandFlag = cli.StringFlag{
 var entrypointFlag = cli.StringFlag{
 	Name:        "entrypoint",
 	Sources:     cli.EnvVars("INFRALIB_ENTRYPOINT"),
-	Value:       "entrypoint.sh",
+	Value:       "entrypoint-core.sh",
 	Usage:       "path to the infralib-tool entrypoint script",
 	Destination: &flags.Wrapper.Entrypoint,
 	Required:    false,
@@ -417,4 +417,13 @@ var prefixStepFlag = cli.StringFlag{
 	Usage:       "step name with prefix",
 	Destination: &flags.Wrapper.PrefixStep,
 	Required:    true,
+}
+
+var campaignIdFlag = cli.StringFlag{
+	Name:        "campaign-id",
+	Sources:     cli.EnvVars("CAMPAIGN_ID"),
+	Value:       "",
+	Usage:       "campaign id for the current agent-orchestrated execution; empty runs the wrapper in transparent mode",
+	Destination: &flags.Wrapper.CampaignId,
+	Required:    false,
 }

@@ -35,6 +35,11 @@ type Builder struct {
 	terraformCache bool
 	enableOpenTofu bool
 	cloudPrefix    string
+	campaignId     string
+}
+
+func (b *Builder) SetCampaignId(id string) {
+	b.campaignId = id
 }
 
 func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache, enableOpenTofu bool, cloudPrefix string) (*Builder, error) {
@@ -403,7 +408,18 @@ func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
 	if job == nil {
 		return "", model.NewNotFoundError(fmt.Sprintf("job %s", projectName))
 	}
-	jobOp, err := b.client.RunJob(b.ctx, &runpb.RunJobRequest{Name: job.Name})
+	req := &runpb.RunJobRequest{Name: job.Name}
+	if b.campaignId != "" {
+		req.Overrides = &runpb.RunJobRequest_Overrides{
+			ContainerOverrides: []*runpb.RunJobRequest_Overrides_ContainerOverride{{
+				Env: []*runpb.EnvVar{{
+					Name:   "CAMPAIGN_ID",
+					Values: &runpb.EnvVar_Value{Value: b.campaignId},
+				}},
+			}},
+		}
+	}
+	jobOp, err := b.client.RunJob(b.ctx, req)
 	if err != nil {
 		return "", err
 	}
