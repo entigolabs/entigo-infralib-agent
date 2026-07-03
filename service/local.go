@@ -3,13 +3,14 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,11 +20,13 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/entigolabs/entigo-infralib-agent/wrapper"
 )
 
-const executeScript = "entrypoint.sh"
+const executeScript = "entrypoint-core.sh"
 
 type LocalPipeline struct {
+	ctx            context.Context
 	prefix         string
 	regionKey      string
 	region         string
@@ -34,18 +37,26 @@ type LocalPipeline struct {
 	pipeline       common.Pipeline
 	inputLock      sync.Mutex
 	manager        model.NotificationManager
+	wrapper        *model.Wrapper
+	campaignId     string
+	pipelineIndex  int
 }
 
-func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, enableOpenTofu bool) *LocalPipeline {
-	regionKey := "AWS_REGION"
+func (l *LocalPipeline) SetPipelineIndex(index int) {
+	l.pipelineIndex = index
+}
+
+func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
+	regionKey := model.AWSRegion
 	project := ""
 	zone := ""
 	if resources.GetProviderType() == model.GCLOUD {
-		regionKey = "GOOGLE_REGION"
+		regionKey = model.GoogleRegion
 		project = gcloudFlags.ProjectId
 		zone = gcloudFlags.Zone
 	}
 	return &LocalPipeline{
+		ctx:            ctx,
 		prefix:         resources.GetCloudPrefix(),
 		regionKey:      regionKey,
 		region:         resources.GetRegion(),
@@ -54,55 +65,65 @@ func NewLocalPipeline(resources model.Resources, pipeline common.Pipeline, gclou
 		bucket:         resources.GetBucketName(),
 		pipeline:       pipeline,
 		manager:        manager,
-		enableOpenTofu: enableOpenTofu,
+		enableOpenTofu: config.EnableOpenTofu,
+		wrapper:        config.Wrapper,
+		campaignId:     campaignId,
 	}
 }
 
 func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth, approve model.ManualApprove) error {
-	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
-	log.Printf("Starting local pipeline %s", prefix)
+	prefixStep := fmt.Sprintf("%s-%s", l.prefix, step.Name)
+	log.Printf("Starting local pipeline %s", prefixStep)
 	planCommand, applyCommand := model.GetCommands(step.Type)
-	output, err := l.executeLocalCommand(prefix, planCommand, step, sourceAuths)
+	output, err := l.executeWrapper(prefixStep, planCommand, step, sourceAuths)
 	if err != nil {
-		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
+		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefixStep, err)
 	}
-	approved, err := l.getApproval(prefix, step, autoApprove, output, approve)
+	approved, err := l.getApproval(prefixStep, step, autoApprove, output, approve)
 	if err != nil {
-		return fmt.Errorf("failed to get approval for %s: %v", prefix, err)
+		return fmt.Errorf("failed to get approval for %s: %v", prefixStep, err)
 	}
 	if !approved {
 		return nil
 	}
-	_, err = l.executeLocalCommand(prefix, applyCommand, step, sourceAuths)
+	_, err = l.executeWrapper(prefixStep, applyCommand, step, sourceAuths)
 	if err != nil {
-		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefix, err)
+		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefixStep, err)
 	}
 	return nil
 }
 
 func (l *LocalPipeline) startDestroyExecution(step model.Step, sourceAuths map[string]model.SourceAuth) error {
-	prefix := fmt.Sprintf("%s-%s", l.prefix, step.Name)
+	prefixStep := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	planCommand, applyCommand := model.GetDestroyCommands(step.Type)
-	_, err := l.executeLocalCommand(prefix, planCommand, step, sourceAuths)
+	_, err := l.executeWrapper(prefixStep, planCommand, step, sourceAuths)
 	if err != nil {
-		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefix, err)
+		return fmt.Errorf("failed to execute %s for %s: %v", planCommand, prefixStep, err)
 	}
-	_, err = l.executeLocalCommand(prefix, applyCommand, step, sourceAuths)
+	_, err = l.executeWrapper(prefixStep, applyCommand, step, sourceAuths)
 	if err != nil {
-		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefix, err)
+		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefixStep, err)
 	}
 	return nil
 }
 
-func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) ([]byte, error) {
-	cmd := exec.Command(executeScript)
-	cmd.Env = l.getEnv(prefix, command, step, sourceAuths)
+func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) ([]byte, error) {
+	flags := common.Wrapper{
+		Step:          step.Name,
+		Command:       string(command),
+		Entrypoint:    executeScript,
+		PrefixStep:    prefixStep,
+		PlanPath:      "/tmp/project",
+		CampaignId:    l.campaignId,
+		PipelineIndex: strconv.Itoa(l.pipelineIndex),
+	}
+	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer
 	writers := []io.Writer{&stdoutBuf}
 	if l.pipeline.PrintLogs {
 		writers = append(writers, log.Writer())
 	}
-	file := l.getLogFileWriter(prefix, command)
+	file := l.getLogFileWriter(prefixStep, command)
 	if file != nil {
 		defer func(file *os.File) {
 			_ = file.Close()
@@ -110,18 +131,17 @@ func (l *LocalPipeline) executeLocalCommand(prefix string, command model.ActionC
 		writers = append(writers, file)
 	}
 	stdout := io.MultiWriter(writers...)
-	cmd.Stdout = stdout
-	cmd.Stderr = log.Writer()
-	err := cmd.Run()
+	wrap, err := wrapper.NewWrapper(l.ctx, flags, l.wrapper, env, stdout)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize wrapper: %w", err)
 	}
+	err = wrap.Provision() // Provision results have to be before stdoutBuf.Bytes()
 	return stdoutBuf.Bytes(), err
 }
 
-func (l *LocalPipeline) getEnv(prefix string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) []string {
+func (l *LocalPipeline) getEnv(prefixStep string, command model.ActionCommand, step model.Step, sourceAuths map[string]model.SourceAuth) []string {
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("COMMAND=%s", command), fmt.Sprintf("TF_VAR_prefix=%s", prefix),
+	env = append(env, fmt.Sprintf("COMMAND=%s", command), fmt.Sprintf("TF_VAR_prefix=%s", prefixStep),
 		fmt.Sprintf("INFRALIB_BUCKET=%s", l.bucket), fmt.Sprintf("%s=%s", l.regionKey, l.region))
 	for source, auth := range sourceAuths {
 		hash := util.HashCode(source)

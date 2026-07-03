@@ -278,6 +278,20 @@ Example
 bin/ei-agent pull --prefix=infralib
 ```
 
+### provision
+
+Used by Infralib wrapper layer. `provision` is executed by a step pipeline. It wraps the Infralib output and, when a `wrapper` block is configured in the agent config, forwards raw stdout log lines and a compact plan summary to the backend over gRPC. Without a wrapper config the invocation is fully transparent. Infralib output goes only to the pipeline's normal stdout. All the OPTIONS are optional and any missing values fallback to running transparently.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* wrapper-config - **optional** wrapper api config yaml (resolved from secret manager by the pipeline) [$WRAPPER_CONFIG]
+* step - **optional** step name for the current pipeline execution [$INFRALIB_STEP]
+* prefix-step - **optional** step name with cloud prefix [$TF_VAR_prefix]
+* command - **optional** infralib command to execute (plan | apply | plan-destroy | apply-destroy | argocd-plan | argocd-apply | argocd-plan-destroy | argocd-apply-destroy) [$COMMAND]
+* entrypoint - **optional** path to the infralib-tool entrypoint script (default: **entrypoint-core.sh**) [$INFRALIB_ENTRYPOINT]
+* campaign-id - **optional** agent-run identifier forwarded to the backend handshake; empty runs the wrapper transparently [$CAMPAIGN_ID]
+* pipeline-index - **optional** release iteration index forwarded to the backend handshake [$PIPELINE_INDEX]
+
 ### Custom Parameters
 
 Agent has helpful commands for managing custom parameters that can be used in the config file with the `{{ .output-custom.key }}` replacement tag. These commands are:
@@ -350,6 +364,16 @@ notifications:
         client_secret: string
         token_url: string
         scopes: []string
+wrapper:
+  api:
+    url: string
+    insecure: bool
+    headers: map[string]string
+    oauth:
+      client_id: string
+      client_secret: string
+      token_url: string
+      scopes: []string
 schedule:
   update_cron: string
 agent_version: latest | semver
@@ -445,6 +469,16 @@ Source version is overwritten by module version. Default version is **stable** w
     * channel_id - slack channel id
   * teams - send notifications to teams
     * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify GitHub](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
+* wrapper - configures the [provision](#provision) wrapper's gRPC forwarding to the portal backend. When omitted, provision runs the entrypoint transparently. When set, the config is stored in Secret Manager and injected into each pipeline execution as the `WRAPPER_CONFIG` env var.
+  * api - gRPC endpoint for wrapper log/plan forwarding
+    * url - full URL of the backend endpoint (`https://host[:port][/path]`). The path segment is preserved and prepended to gRPC method names.
+    * insecure - skip TLS (h2c). Only valid with an `http://` URL; the default is TLS.
+    * headers - key-value pairs added to every gRPC request
+    * oauth - oauth2 client-credentials configuration; the wrapper acquires a bearer token and attaches it to every request
+      * client_id - oauth client id
+      * client_secret - oauth client secret, recommended to use custom replacement tags, e.g. `"{{ .output-custom.wrapper-client-secret }}"`
+      * token_url - oauth token endpoint
+      * scopes - list of scopes to request
 * schedule - allows scheduling CodePipeline/Cloud Run Job executions. More info in [Scheduling](#scheduling)
   * update_cron - cron expression in UTC for scheduling agent update executions.
 * agent_version - image version of Entigo Infralib Agent to use

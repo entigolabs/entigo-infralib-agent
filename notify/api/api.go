@@ -2,13 +2,11 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
 )
 
 // Generation requires dependency tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
@@ -23,8 +21,8 @@ type API struct {
 	campaignId CampaignId
 }
 
-func NewApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi model.NotificationApi) (*API, error) {
-	tokenSource, err := getTokenSource(ctx, configApi.OAuth)
+func NewApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi model.NotificationApi, campaignId uuid.UUID) (*API, error) {
+	tokenSource, err := util.GetTokenSource(ctx, configApi.OAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -37,26 +35,8 @@ func NewApi(ctx context.Context, baseNotifier model.BaseNotifier, configApi mode
 		BaseNotifier: baseNotifier,
 		ctx:          ctx,
 		client:       apiClient,
-		campaignId:   uuid.New(),
+		campaignId:   campaignId,
 	}, nil
-}
-
-func getTokenSource(ctx context.Context, auth *model.ApiOauth) (oauth2.TokenSource, error) {
-	if auth == nil {
-		return nil, nil
-	}
-	config := clientcredentials.Config{
-		ClientID:     auth.ClientId,
-		ClientSecret: auth.ClientSecret,
-		TokenURL:     auth.TokenURL,
-		Scopes:       auth.Scopes,
-	}
-	tokenSource := oauth2.ReuseTokenSourceWithExpiry(nil, config.TokenSource(ctx), 5*time.Minute)
-	_, err := tokenSource.Token() // Validate token source
-	if err != nil {
-		return nil, fmt.Errorf("failed to get oauth2 token: %w", err)
-	}
-	return tokenSource, nil
 }
 
 func (a *API) HandleCampaign(msg model.CampaignMessage) error {

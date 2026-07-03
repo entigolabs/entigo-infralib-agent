@@ -1,6 +1,10 @@
 package model
 
-import "github.com/entigolabs/entigo-infralib-agent/common"
+import (
+	"fmt"
+
+	"github.com/entigolabs/entigo-infralib-agent/common"
+)
 
 const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
@@ -21,6 +25,11 @@ const (
 )
 
 const (
+	AWSRegion    = "AWS_REGION"
+	GoogleRegion = "GOOGLE_REGION"
+)
+
+const (
 	ResourceTagKey   = "created-by"
 	ResourceTagValue = "entigo-infralib-agent"
 )
@@ -33,7 +42,19 @@ const (
 	GitSourceEnvFormat   = "GIT_AUTH_SOURCE_%s"
 	GitUsernameEnvFormat = "GIT_AUTH_USERNAME_%s"
 	GitPasswordEnvFormat = "GIT_AUTH_PASSWORD_%s"
+
+	WrapperConfigEnv = "WRAPPER_CONFIG"
+
+	// CampaignSentinelNone is the on-the-wire value used when there is no
+	// active campaign. AWS CodePipeline rejects empty DefaultValue on pipeline
+	// variables, so we can't represent "no campaign" as "". The wrapper treats
+	// this sentinel identically to an empty CAMPAIGN_ID — transparent mode.
+	CampaignSentinelNone = "none"
 )
+
+func WrapperConfigSecretName(prefix string) string {
+	return fmt.Sprintf("entigo-infralib-%s-wrapper-config", prefix)
+}
 
 type CloudProvider interface {
 	SetupResources(manager NotificationManager, config Config) (Resources, error)
@@ -86,6 +107,9 @@ type Pipeline interface {
 	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
+	// Empty campaignId means "no campaign" — wrapper runs transparently.
+	SetCampaignId(campaignId string)
+	SetPipelineIndex(index int)
 }
 
 type Builder interface {

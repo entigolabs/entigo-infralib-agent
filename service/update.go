@@ -20,6 +20,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"gopkg.in/yaml.v3"
@@ -53,7 +54,7 @@ type updater struct {
 	firstRunDone  map[string]bool
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
@@ -79,6 +80,13 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		return nil, err
 	}
 	pipeline := ProcessPipelineFlags(flags.Pipeline)
+	if pipeline.Type != string(common.PipelineTypeLocal) {
+		resources.GetPipeline().SetCampaignId(campaignId.String())
+		err = upsertWrapperConfig(config.Wrapper, resources.GetCloudPrefix(), resources.GetSSM())
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &updater{
 		ctx:           ctx,
 		config:        config,
@@ -89,7 +97,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(resources, pipeline, flags.GCloud, manager, config.EnableOpenTofu),
+		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags.GCloud, manager, config, campaignId.String()),
 		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -202,6 +210,37 @@ func getCABundle(file string, certs []model.File) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("CA file %s not found", file)
+}
+
+func upsertWrapperConfig(wrapper *model.Wrapper, prefix string, ssm model.SSM) error {
+	config, err := getWrapperConfig(wrapper)
+	if err != nil {
+		return err
+	}
+	if config == "" {
+		// AWS Secrets Manager (and GCP Secret Manager) reject empty payloads,
+		// and a whitespace-only WRAPPER_CONFIG breaks CodeBuild's log shipper
+		// (it mangles subsequent stdout — spaces become asterisks). `{}` is
+		// valid YAML for an empty map; parseConfig unmarshals it to a
+		// zero-value Wrapper whose nil Api triggers transparent mode.
+		config = "{}"
+	}
+	if err := ssm.PutSecret(model.WrapperConfigSecretName(prefix), config); err != nil {
+		return fmt.Errorf("failed to upsert wrapper config secret: %v", err)
+	}
+	return nil
+}
+
+func getWrapperConfig(wrapper *model.Wrapper) (string, error) {
+	var config string
+	if wrapper != nil && wrapper.Api != nil {
+		bytes, err := yaml.Marshal(wrapper)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal wrapper config: %v", err)
+		}
+		config = string(bytes)
+	}
+	return config, nil
 }
 
 func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) error {
@@ -376,9 +415,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, enableOpenTofu bool) *LocalPipeline {
+func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(resources, pipeline, gcloudFlags, manager, enableOpenTofu)
+		return NewLocalPipeline(ctx, resources, pipeline, gcloudFlags, manager, config, campaignId)
 	}
 	return nil
 }
@@ -396,11 +435,7 @@ func (u *updater) Process() (bool, error) {
 		}
 	}
 	for ; index < mostReleases; index++ {
-		if u.cmd == common.RunCommand {
-			u.manager.SetCurrentPipelineIndex(1)
-		} else {
-			u.manager.SetCurrentPipelineIndex(index)
-		}
+		u.setPipelineIndex(index)
 		sourceVersions := u.getNotifySourceVersions(index)
 		u.manager.PipelineState(model.ApplyStatusStarting, sourceVersions, nil)
 		err := u.processRelease(index)
@@ -411,6 +446,20 @@ func (u *updater) Process() (bool, error) {
 		u.manager.PipelineState(model.ApplyStatusSuccess, sourceVersions, nil)
 	}
 	return true, nil
+}
+
+func (u *updater) setPipelineIndex(index int) {
+	pipelineIndex := index
+	if u.cmd == common.RunCommand {
+		pipelineIndex = 1
+	}
+	u.manager.SetCurrentPipelineIndex(pipelineIndex)
+	if u.resources.GetPipeline() != nil {
+		u.resources.GetPipeline().SetPipelineIndex(pipelineIndex)
+	}
+	if u.localPipeline != nil {
+		u.localPipeline.SetPipelineIndex(pipelineIndex)
+	}
 }
 
 func (u *updater) processRelease(index int) error {

@@ -21,6 +21,7 @@ func cliCommands() []*cli.Command {
 		&migrateConfigCommand,
 		&migratePlanCommand,
 		&migrateValidateCommand,
+		&provisionCommand,
 	}
 }
 
@@ -134,4 +135,12 @@ var migrateValidateCommand = cli.Command{
 	Usage:   "validate a terraform plan file based on the import config",
 	Action:  action(common.MigrateValidateCommand),
 	Flags:   cliFlags(common.MigrateValidateCommand),
+}
+
+var provisionCommand = cli.Command{
+	Name:    string(common.ProvisionCommand),
+	Aliases: []string{"pr"},
+	Usage:   "execute the Infralib Tool entrypoint, optionally forwarding logs to the portal backend",
+	Action:  action(common.ProvisionCommand),
+	Flags:   cliFlags(common.ProvisionCommand),
 }

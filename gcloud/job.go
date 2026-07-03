@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	run "cloud.google.com/go/run/apiv2"
@@ -34,9 +35,20 @@ type Builder struct {
 	serviceAccount string
 	terraformCache bool
 	enableOpenTofu bool
+	cloudPrefix    string
+	campaignId     string
+	pipelineIndex  string
 }
 
-func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache, enableOpenTofu bool) (*Builder, error) {
+func (b *Builder) SetCampaignId(id string) {
+	b.campaignId = id
+}
+
+func (b *Builder) SetPipelineIndex(index int) {
+	b.pipelineIndex = strconv.Itoa(index)
+}
+
+func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, location, zone, serviceAccount string, terraformCache, enableOpenTofu bool, cloudPrefix string) (*Builder, error) {
 	client, err := run.NewJobsClient(ctx, options...)
 	if err != nil {
 		return nil, err
@@ -50,6 +62,7 @@ func NewBuilder(ctx context.Context, options []option.ClientOption, projectId, l
 		serviceAccount: serviceAccount,
 		terraformCache: terraformCache,
 		enableOpenTofu: enableOpenTofu,
+		cloudPrefix:    cloudPrefix,
 	}, nil
 }
 
@@ -401,7 +414,28 @@ func (b *Builder) executeJob(projectName string, wait bool) (string, error) {
 	if job == nil {
 		return "", model.NewNotFoundError(fmt.Sprintf("job %s", projectName))
 	}
-	jobOp, err := b.client.RunJob(b.ctx, &runpb.RunJobRequest{Name: job.Name})
+	req := &runpb.RunJobRequest{Name: job.Name}
+	var envOverrides []*runpb.EnvVar
+	if b.campaignId != "" {
+		envOverrides = append(envOverrides, &runpb.EnvVar{
+			Name:   "CAMPAIGN_ID",
+			Values: &runpb.EnvVar_Value{Value: b.campaignId},
+		})
+	}
+	if b.pipelineIndex != "" {
+		envOverrides = append(envOverrides, &runpb.EnvVar{
+			Name:   "PIPELINE_INDEX",
+			Values: &runpb.EnvVar_Value{Value: b.pipelineIndex},
+		})
+	}
+	if len(envOverrides) > 0 {
+		req.Overrides = &runpb.RunJobRequest_Overrides{
+			ContainerOverrides: []*runpb.RunJobRequest_Overrides_ContainerOverride{{
+				Env: envOverrides,
+			}},
+		}
+	}
+	jobOp, err := b.client.RunJob(b.ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -476,6 +510,9 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
 	}
+	envVars = append(envVars, &runv1.EnvVar{Name: model.WrapperConfigEnv, ValueFrom: &runv1.EnvVarSource{
+		SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: model.WrapperConfigSecretName(b.cloudPrefix)},
+	}})
 	for source := range authSources {
 		hash := util.HashCode(source)
 		envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), ValueFrom: &runv1.EnvVarSource{
@@ -497,6 +534,8 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
 	}
+	envVars = append(envVars, &runpb.EnvVar{Name: model.WrapperConfigEnv,
+		Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: model.WrapperConfigSecretName(b.cloudPrefix)}}}})
 	for source := range authSources {
 		hash := util.HashCode(source)
 		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash),
@@ -511,13 +550,14 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 
 func (b *Builder) getRawEnvironmentVariables(projectName, stepName string, step model.Step, bucket string, command model.ActionCommand) map[string]string {
 	envVars := map[string]string{
-		"PROJECT_NAME":    projectName,
-		"GOOGLE_REGION":   b.location,
-		"GOOGLE_PROJECT":  b.projectId,
-		"GOOGLE_ZONE":     b.zone,
-		"COMMAND":         string(command),
-		"TF_VAR_prefix":   stepName,
-		"INFRALIB_BUCKET": bucket,
+		"PROJECT_NAME":     projectName,
+		model.GoogleRegion: b.location,
+		"GOOGLE_PROJECT":   b.projectId,
+		"GOOGLE_ZONE":      b.zone,
+		"COMMAND":          string(command),
+		"TF_VAR_prefix":    stepName,
+		"INFRALIB_BUCKET":  bucket,
+		"INFRALIB_STEP":    step.Name,
 	}
 	if step.Type == model.StepTypeTerraform {
 		envVars = b.addTerraformEnvironmentVariables(envVars, step)

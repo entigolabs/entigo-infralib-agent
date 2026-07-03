@@ -9,6 +9,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify"
 	"github.com/entigolabs/entigo-infralib-agent/service"
+	"github.com/google/uuid"
 )
 
 func Bootstrap(ctx context.Context, flags *common.Flags) error {
@@ -24,7 +25,7 @@ func Bootstrap(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
-	manager, err := notify.NewNotificationManager(ctx, config.Notifications)
+	manager, err := notify.NewNotificationManager(ctx, config.Notifications, uuid.New())
 	if err != nil {
 		return err
 	}

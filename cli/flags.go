@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/urfave/cli/v3"
 )
 
@@ -47,6 +48,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(baseFlags, &stateFileFlag, importFileFlag(true), &planFileFlag)
 	case common.MigrateConfigCommand:
 		return append(baseFlags, &stateFileFlag, importFileFlag(false))
+	case common.ProvisionCommand:
+		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag, &prefixStepFlag, &campaignIdFlag, &pipelineIndexFlag)
 	default:
 		return baseFlags
 	}
@@ -367,5 +370,69 @@ var trustRoleFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "aws arn or gcloud email for allowing assume role",
 	Destination: &flags.ServiceAccount.TrustRole,
+	Required:    false,
+}
+
+var wrapperConfigFlag = cli.StringFlag{
+	Name:        "wrapper-config",
+	Aliases:     []string{"wc"},
+	Sources:     cli.EnvVars(model.WrapperConfigEnv),
+	Value:       "",
+	Usage:       "wrapper api config yaml; resolved from secret manager at job start",
+	Destination: &flags.Wrapper.Config,
+	Required:    false,
+}
+
+var stepFlag = cli.StringFlag{
+	Name:        "step",
+	Sources:     cli.EnvVars("INFRALIB_STEP"),
+	Value:       "",
+	Usage:       "step name for the current pipeline execution",
+	Destination: &flags.Wrapper.Step,
+	Required:    false,
+}
+
+var commandFlag = cli.StringFlag{
+	Name:        "command",
+	Sources:     cli.EnvVars("COMMAND"),
+	Value:       "",
+	Usage:       "infralib command to execute",
+	Destination: &flags.Wrapper.Command,
+	Required:    false,
+}
+
+var entrypointFlag = cli.StringFlag{
+	Name:        "entrypoint",
+	Sources:     cli.EnvVars("INFRALIB_ENTRYPOINT"),
+	Value:       "entrypoint-core.sh",
+	Usage:       "path to the infralib-tool entrypoint script",
+	Destination: &flags.Wrapper.Entrypoint,
+	Required:    false,
+}
+
+var prefixStepFlag = cli.StringFlag{
+	Name:        "prefix-step",
+	Sources:     cli.EnvVars("TF_VAR_prefix"),
+	Value:       "",
+	Usage:       "step name with prefix",
+	Destination: &flags.Wrapper.PrefixStep,
+	Required:    false,
+}
+
+var campaignIdFlag = cli.StringFlag{
+	Name:        "campaign-id",
+	Sources:     cli.EnvVars("CAMPAIGN_ID"),
+	Value:       "",
+	Usage:       "campaign id for the current agent-orchestrated execution; empty runs the wrapper in transparent mode",
+	Destination: &flags.Wrapper.CampaignId,
+	Required:    false,
+}
+
+var pipelineIndexFlag = cli.StringFlag{
+	Name:        "pipeline-index",
+	Sources:     cli.EnvVars("PIPELINE_INDEX"),
+	Value:       "",
+	Usage:       "release iteration index for the current pipeline execution, forwarded in the backend handshake",
+	Destination: &flags.Wrapper.PipelineIndex,
 	Required:    false,
 }

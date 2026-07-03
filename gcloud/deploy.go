@@ -69,6 +69,20 @@ type Pipeline struct {
 	builder        *Builder
 	logging        *Logging
 	manager        model.NotificationManager
+	campaignId     string
+}
+
+func (p *Pipeline) SetCampaignId(id string) {
+	p.campaignId = id
+	if p.builder != nil {
+		p.builder.SetCampaignId(id)
+	}
+}
+
+func (p *Pipeline) SetPipelineIndex(index int) {
+	if p.builder != nil {
+		p.builder.SetPipelineIndex(index)
+	}
 }
 
 func NewPipeline(ctx context.Context, options []option.ClientOption, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
