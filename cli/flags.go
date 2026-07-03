@@ -380,7 +380,7 @@ var wrapperConfigFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "wrapper api config yaml; resolved from secret manager at job start",
 	Destination: &flags.Wrapper.Config,
-	Required:    true,
+	Required:    false,
 }
 
 var stepFlag = cli.StringFlag{
@@ -389,7 +389,7 @@ var stepFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "step name for the current pipeline execution",
 	Destination: &flags.Wrapper.Step,
-	Required:    true,
+	Required:    false,
 }
 
 var commandFlag = cli.StringFlag{
@@ -398,7 +398,7 @@ var commandFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "infralib command to execute",
 	Destination: &flags.Wrapper.Command,
-	Required:    true,
+	Required:    false,
 }
 
 var entrypointFlag = cli.StringFlag{
@@ -416,7 +416,7 @@ var prefixStepFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "step name with prefix",
 	Destination: &flags.Wrapper.PrefixStep,
-	Required:    true,
+	Required:    false,
 }
 
 var campaignIdFlag = cli.StringFlag{

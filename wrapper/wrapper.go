@@ -40,10 +40,6 @@ type Wrapper struct {
 
 func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper, env []string, stdout io.Writer) (*Wrapper, error) {
 	command := model.ActionCommand(flags.Command)
-	stepType := getStepType(command)
-	if stepType == "" {
-		return nil, fmt.Errorf("unknown command: %s", flags.Command)
-	}
 	campaignId := flags.CampaignId
 	if campaignId == model.CampaignSentinelNone {
 		campaignId = ""
@@ -69,7 +65,7 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 		planPath:      flags.PlanPath,
 		env:           env,
 		stdout:        stdout,
-		stepType:      stepType,
+		stepType:      getStepType(command),
 	}, nil
 }
 
@@ -105,7 +101,7 @@ func (w *Wrapper) Provision() error {
 		return runErr
 	}
 
-	if w.command == model.PlanCommand && exitCode == 0 && w.client != nil {
+	if w.command == model.PlanCommand && exitCode == 0 {
 		w.sendPlan()
 	}
 	// w.ctx has no deadline of its own — always cap Disconnect so a hung
@@ -123,7 +119,8 @@ func (w *Wrapper) Provision() error {
 }
 
 func (w *Wrapper) connectBackend() {
-	if w.client == nil {
+	if w.client == nil || w.stepType == "" {
+		slog.Debug("Wrapper client has not been initialized, either empty wrapper config or stepType from command flag")
 		return
 	}
 	err := w.client.Connect(HandshakeData{
@@ -192,6 +189,10 @@ func (w *Wrapper) streamStdout(r io.Reader) {
 }
 
 func (w *Wrapper) sendPlan() {
+	if w.prefixStep == "" {
+		slog.Warn("TF_VAR_prefix flag not set, can't find the plan")
+		return
+	}
 	planFile := path.Join(w.getPlanPath(), fmt.Sprintf(tfPlan, w.prefixStep, w.prefixStep))
 	summary, err := readPlanSummary(planFile)
 	if err != nil {
