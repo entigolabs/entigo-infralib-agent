@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -144,7 +145,7 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("failed to create stdout pipe: %v", err)
 	}
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = log.Writer()
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("failed to start %s: %v", w.entrypoint, err)
@@ -157,8 +158,11 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 		w.streamStdout(stdout)
 	}()
 
-	waitErr := cmd.Wait()
+	// Drain the pipe fully before Wait: cmd.Wait closes the stdout pipe on
+	// process exit, so calling it while the scanner is still reading races and
+	// fails the scanner with "file already closed", truncating the output.
 	wg.Wait()
+	waitErr := cmd.Wait()
 
 	exitCode := 0
 	if waitErr != nil {
