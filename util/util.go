@@ -129,7 +129,49 @@ func IsClientModule(module model.Module) bool {
 }
 
 func IsLocalSource(source string) bool {
-	return !strings.HasPrefix(source, "http:") && !strings.HasPrefix(source, "https:")
+	return !strings.HasPrefix(source, "http:") && !strings.HasPrefix(source, "https:") && !IsOCISource(source)
+}
+
+func IsOCISource(source string) bool {
+	return strings.HasPrefix(source, "oci:") || strings.HasPrefix(source, "oci@")
+}
+
+// TrimOCIScheme strips the oci scheme from a source URL, leaving the bare
+// registry reference (e.g. ghcr.io/entigolabs/entigo-infralib-release).
+func TrimOCIScheme(source string) string {
+	for _, prefix := range []string{"oci://", "oci:", "oci@"} {
+		if strings.HasPrefix(source, prefix) {
+			return strings.TrimSuffix(source[len(prefix):], "/")
+		}
+	}
+	return strings.TrimSuffix(source, "/")
+}
+
+// IsOCIDigest reports whether an OCI version reference is a sha256 digest
+// rather than a tag.
+func IsOCIDigest(version string) bool {
+	return strings.HasPrefix(version, "sha256:")
+}
+
+// NormalizeOCIVersion converts an agent version string to its OCI reference
+// form. Digests pass through untouched; otherwise the leading "v" (kept for git
+// tag parity across the agent) is stripped, since OCI tags carry no "v".
+func NormalizeOCIVersion(version string) string {
+	if IsOCIDigest(version) {
+		return version
+	}
+	return strings.TrimPrefix(version, "v")
+}
+
+func GetSourceType(source string) model.SourceType {
+	switch {
+	case IsOCISource(source):
+		return model.SourceTypeOCI
+	case IsLocalSource(source):
+		return model.SourceTypeLocal
+	default:
+		return model.SourceTypeGit
+	}
 }
 
 func IsAzureDevOps(url string) bool {

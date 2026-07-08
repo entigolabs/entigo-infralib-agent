@@ -532,7 +532,7 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		return fmt.Errorf("at least one source must be provided")
 	}
 	for index, source := range config.Sources {
-		if err := validateSource(index, source); err != nil {
+		if err := validateSource(index, source, config.EnableOpenTofu); err != nil {
 			return err
 		}
 	}
@@ -553,9 +553,12 @@ func ValidateConfig(config model.Config, state *model.State) error {
 	return nil
 }
 
-func validateSource(index int, source model.ConfigSource) error {
+func validateSource(index int, source model.ConfigSource, tofuEnabled bool) error {
 	if source.URL == "" {
 		return fmt.Errorf("%d. source URL is not set", index+1)
+	}
+	if util.IsOCISource(source.URL) && !tofuEnabled {
+		return fmt.Errorf("source %s can't use OCI if OpenTofu hasn't been enabled", source.URL)
 	}
 	if source.Include != nil && source.Exclude != nil {
 		return fmt.Errorf("source %s can't have both include and exclude", source.URL)

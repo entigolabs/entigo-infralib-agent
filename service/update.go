@@ -18,6 +18,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/oci"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
@@ -179,14 +180,26 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 }
 
 func getSourceStorage(ctx context.Context, source model.ConfigSource, certs []model.File) (model.Storage, *version.Version, error) {
-	if util.IsLocalSource(source.URL) {
+	switch util.GetSourceType(source.URL) {
+	case model.SourceTypeLocal:
 		return git.NewLocalPath(source.URL), nil, nil
+	case model.SourceTypeOCI:
+		return newRemoteStorage(source, certs, func(CABundle []byte) (model.SourceRepository, error) {
+			return oci.NewSourceClient(ctx, source, CABundle)
+		})
+	default:
+		return newRemoteStorage(source, certs, func(CABundle []byte) (model.SourceRepository, error) {
+			return git.NewSourceClient(ctx, source, CABundle)
+		})
 	}
+}
+
+func newRemoteStorage(source model.ConfigSource, certs []model.File, newClient func(CABundle []byte) (model.SourceRepository, error)) (model.Storage, *version.Version, error) {
 	CABundle, err := getCABundle(source.CAFile, certs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
 	}
-	sourceClient, err := git.NewSourceClient(ctx, source, CABundle)
+	sourceClient, err := newClient(CABundle)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create source client %s: %v", source.URL, err)
 	}
@@ -1099,7 +1112,10 @@ func getAutoApprove(state model.StateStep) bool {
 }
 
 func getSourceReleases(steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
-	sourceClient := source.Storage.(*git.SourceClient)
+	sourceClient, ok := source.Storage.(model.SourceRepository)
+	if !ok {
+		return nil, nil, fmt.Errorf("source %s storage does not support release enumeration", source.URL)
+	}
 	oldestVersion, err := getOldestVersion(steps, source, state)
 	if err != nil {
 		return nil, nil, err

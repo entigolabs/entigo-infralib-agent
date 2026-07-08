@@ -327,6 +327,14 @@ func (s SourceKey) IsEmpty() bool {
 	return s.URL == "" && s.ForcedVersion == ""
 }
 
+type SourceType string
+
+const (
+	SourceTypeLocal SourceType = "local"
+	SourceTypeGit   SourceType = "git"
+	SourceTypeOCI   SourceType = "oci"
+)
+
 type Source struct {
 	URL               string
 	Version           *version.Version
@@ -353,6 +361,16 @@ type Storage interface {
 	FileExists(path, release string) bool
 	PathExists(path, release string) (bool, error)
 	CalculateChecksums(release string) (map[string][]byte, error)
+}
+
+// SourceRepository is a Storage backed by a versioned remote (git tags or OCI
+// index tags) that can enumerate and resolve releases. Local sources implement
+// only Storage.
+type SourceRepository interface {
+	Storage
+	GetLatestReleaseTag() (*version.Version, error)
+	GetRelease(release string) (*version.Version, error)
+	GetReleases(oldestRelease, newestRelease *version.Version) ([]*version.Version, error)
 }
 
 type ModuleVersion struct {

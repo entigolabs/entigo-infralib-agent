@@ -17,6 +17,12 @@ import (
 //go:embed app.yaml
 var appYaml []byte
 
+// ociChartLineRegex matches the git-style source locator line
+// (path: "modules/k8s/{{moduleSource}}") so it can be swapped for an OCI Helm
+// chart reference. It keys on the yet-unreplaced {{moduleSource}} token, which
+// survives the YAML round-trip in mergeAppFiles regardless of quote style.
+var ociChartLineRegex = regexp.MustCompile(`(?m)^(\s*)path:.*\{\{moduleSource\}\}.*$`)
+
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 var newPlanRegex = regexp.MustCompile(`ArgoCD Applications: (?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
 
@@ -50,11 +56,15 @@ func replacePlaceholders(bytes []byte, module model.Module, source, version stri
 	url := source
 	if util.IsLocalSource(source) {
 		url = "file:///tmp" + source
+	} else if util.IsOCISource(source) {
+		url = util.TrimOCIScheme(source) + "/k8s"
+		version = util.NormalizeOCIVersion(version)
+		file = ociChartLineRegex.ReplaceAllString(file, "${1}chart: '{{moduleSource}}'")
 	} else if !strings.HasSuffix(url, ".git") && !util.IsAzureDevOps(source) {
 		url += ".git"
 	}
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{moduleVersion}}", version,
-		"{{moduleSource}}", module.Source, "{{moduleValues}}", getValuesString(file, bytes, values),
+		"{{moduleSource}}", module.Source, "{{moduleValues}}", getValuesString(file, []byte(file), values),
 		"{{cloudProvider}}", cloudProvider, "{{moduleSourceURL}}", url)
 	return []byte(replacer.Replace(file))
 }

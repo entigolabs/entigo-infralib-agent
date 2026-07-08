@@ -432,6 +432,9 @@ func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Ste
 	} else if util.IsLocalSource(moduleVersion.Source.URL) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("%s/modules/%s", moduleVersion.Source.URL, module.Source)))
+	} else if util.IsOCISource(moduleVersion.Source.URL) {
+		moduleBody.SetAttributeValue("source",
+			cty.StringVal(ociModuleSource(moduleVersion.Source.URL, module.Source, moduleVersion.Version)))
 	} else if util.IsAzureDevOps(moduleVersion.Source.URL) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s//modules/%s?ref=%s", moduleVersion.Source.URL, module.Source,
@@ -444,6 +447,13 @@ func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Ste
 	moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", prefix, step.Name, module.Name)))
 	addInputs(module.Inputs, moduleBody)
 	return t.addOutputs(body, step.Type, module, moduleVersion.Version, moduleVersion.Source)
+}
+
+func ociModuleSource(sourceURL, moduleSource, version string) string {
+	if util.IsOCIDigest(version) {
+		return fmt.Sprintf("%s/%s?digest=%s", sourceURL, moduleSource, version)
+	}
+	return fmt.Sprintf("%s/%s?tag=%s", sourceURL, moduleSource, util.NormalizeOCIVersion(version))
 }
 
 func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
