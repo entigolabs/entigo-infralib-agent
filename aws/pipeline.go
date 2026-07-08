@@ -1056,9 +1056,12 @@ func (p *Pipeline) buildEnvVars(command model.ActionCommand, stepName string, st
 		{Name: "TF_VAR_prefix", Value: stepName},
 		{Name: "INFRALIB_BUCKET", Value: bucket},
 		{Name: "INFRALIB_STEP", Value: step.Name},
-		{Name: model.WrapperConfigEnv, Value: model.WrapperConfigSecretName(p.cloudPrefix), Type: "SECRETS_MANAGER"},
 		{Name: "CAMPAIGN_ID", Value: "#{variables.CampaignId}"},
 		{Name: "PIPELINE_INDEX", Value: "#{variables.PipelineIndex}"},
+	}
+	if p.campaignId != "" {
+		vars = append(vars, envVar{Name: model.WrapperConfigEnv, Value: model.WrapperConfigSecretName(p.cloudPrefix),
+			Type: "SECRETS_MANAGER"})
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {

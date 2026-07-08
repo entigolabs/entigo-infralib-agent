@@ -82,10 +82,12 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	}
 	pipeline := ProcessPipelineFlags(flags.Pipeline)
 	if pipeline.Type != string(common.PipelineTypeLocal) {
-		resources.GetPipeline().SetCampaignId(campaignId.String())
-		err = upsertWrapperConfig(config.Wrapper, resources.GetCloudPrefix(), resources.GetSSM())
+		wrapperConfigured, err := upsertWrapperConfig(config.Notifications, resources.GetCloudPrefix(), resources.GetSSM())
 		if err != nil {
 			return nil, err
+		}
+		if wrapperConfigured {
+			resources.GetPipeline().SetCampaignId(campaignId.String())
 		}
 	}
 	return &updater{
@@ -225,35 +227,35 @@ func getCABundle(file string, certs []model.File) ([]byte, error) {
 	return nil, fmt.Errorf("CA file %s not found", file)
 }
 
-func upsertWrapperConfig(wrapper *model.Wrapper, prefix string, ssm model.SSM) error {
-	config, err := getWrapperConfig(wrapper)
+func upsertWrapperConfig(notifiers []model.ConfigNotification, prefix string, ssm model.SSM) (bool, error) {
+	notifierApi := getWrapperConfig(notifiers)
+	if notifierApi == nil {
+		if err := ssm.DeleteSecret(model.WrapperConfigSecretName(prefix)); err != nil {
+			slog.Warn("failed to delete wrapper config secret", "error", err)
+		}
+		return false, nil
+	}
+	notifierYaml, err := yaml.Marshal(notifierApi)
 	if err != nil {
-		return err
+		return false, fmt.Errorf("failed to marshal wrapper notifier config: %v", err)
 	}
-	if config == "" {
-		// AWS Secrets Manager (and GCP Secret Manager) reject empty payloads,
-		// and a whitespace-only WRAPPER_CONFIG breaks CodeBuild's log shipper
-		// (it mangles subsequent stdout — spaces become asterisks). `{}` is
-		// valid YAML for an empty map; parseConfig unmarshals it to a
-		// zero-value Wrapper whose nil Api triggers transparent mode.
-		config = "{}"
+	if err = ssm.PutSecret(model.WrapperConfigSecretName(prefix), string(notifierYaml)); err != nil {
+		return false, fmt.Errorf("failed to upsert wrapper config secret: %v", err)
 	}
-	if err := ssm.PutSecret(model.WrapperConfigSecretName(prefix), config); err != nil {
-		return fmt.Errorf("failed to upsert wrapper config secret: %v", err)
-	}
-	return nil
+	return true, nil
 }
 
-func getWrapperConfig(wrapper *model.Wrapper) (string, error) {
-	var config string
-	if wrapper != nil && wrapper.Api != nil {
-		bytes, err := yaml.Marshal(wrapper)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal wrapper config: %v", err)
+func getWrapperConfig(notifiers []model.ConfigNotification) *model.NotificationApi {
+	for _, notifier := range notifiers {
+		if notifier.Api == nil {
+			continue
 		}
-		config = string(bytes)
+		if notifier.Api.WrapperURL == "" {
+			continue
+		}
+		return notifier.Api
 	}
-	return config, nil
+	return nil
 }
 
 func upsertSourceCredentials(source model.ConfigSource, ssm model.SSM) error {

@@ -28,11 +28,11 @@ func Run(ctx context.Context, flags *common.Flags) error {
 	return wrap.Provision()
 }
 
-func parseConfig(raw string) (*model.Wrapper, error) {
+func parseConfig(raw string) (*model.NotificationApi, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	var config model.Wrapper
+	var config model.NotificationApi
 	if err := yaml.Unmarshal([]byte(raw), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse wrapper config: %w", err)
 	}

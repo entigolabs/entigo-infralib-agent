@@ -510,9 +510,11 @@ func (b *Builder) getEnvironmentVariables(projectName string, stepName string, s
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runv1.EnvVar{Name: key, Value: value})
 	}
-	envVars = append(envVars, &runv1.EnvVar{Name: model.WrapperConfigEnv, ValueFrom: &runv1.EnvVarSource{
-		SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: model.WrapperConfigSecretName(b.cloudPrefix)},
-	}})
+	if b.campaignId != "" {
+		envVars = append(envVars, &runv1.EnvVar{Name: model.WrapperConfigEnv, ValueFrom: &runv1.EnvVarSource{
+			SecretKeyRef: &runv1.SecretKeySelector{Key: "latest", Name: model.WrapperConfigSecretName(b.cloudPrefix)},
+		}})
+	}
 	for source := range authSources {
 		hash := util.HashCode(source)
 		envVars = append(envVars, &runv1.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), ValueFrom: &runv1.EnvVarSource{
@@ -534,8 +536,10 @@ func (b *Builder) getJobEnvironmentVariables(projectName, stepName string, step 
 	for key, value := range rawEnvVars {
 		envVars = append(envVars, &runpb.EnvVar{Name: key, Values: &runpb.EnvVar_Value{Value: value}})
 	}
-	envVars = append(envVars, &runpb.EnvVar{Name: model.WrapperConfigEnv,
-		Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: model.WrapperConfigSecretName(b.cloudPrefix)}}}})
+	if b.campaignId != "" {
+		envVars = append(envVars, &runpb.EnvVar{Name: model.WrapperConfigEnv,
+			Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{SecretKeyRef: &runpb.SecretKeySelector{Version: "latest", Secret: model.WrapperConfigSecretName(b.cloudPrefix)}}}})
+	}
 	for source := range authSources {
 		hash := util.HashCode(source)
 		envVars = append(envVars, &runpb.EnvVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash),

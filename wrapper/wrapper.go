@@ -24,7 +24,7 @@ const disconnectTimeout = 10 * time.Second
 
 type Wrapper struct {
 	ctx           context.Context
-	config        *model.Wrapper
+	config        *model.NotificationApi
 	client        BackendClient
 	command       model.ActionCommand
 	campaignId    string
@@ -38,7 +38,7 @@ type Wrapper struct {
 	stdout        io.Writer
 }
 
-func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper, env []string, stdout io.Writer) (*Wrapper, error) {
+func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.NotificationApi, env []string, stdout io.Writer) (*Wrapper, error) {
 	command := model.ActionCommand(flags.Command)
 	campaignId := flags.CampaignId
 	if campaignId == model.CampaignSentinelNone {
@@ -47,7 +47,7 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Wrapper
 	pipelineIndex := parsePipelineIndex(flags.PipelineIndex)
 	// Provisioning must not depend on the backend — fall back to transparent
 	// mode on any init failure.
-	client, err := getBackendClient(config, campaignId)
+	client, err := getBackendClient(config, campaignId, flags.Insecure)
 	if err != nil {
 		slog.Error("wrapper backend init failed, running entrypoint without log forwarding", "err", err)
 		client = nil
@@ -82,15 +82,15 @@ func parsePipelineIndex(raw string) int32 {
 	return int32(v)
 }
 
-func getBackendClient(config *model.Wrapper, campaignId string) (BackendClient, error) {
-	if config == nil || config.Api == nil {
+func getBackendClient(config *model.NotificationApi, campaignId string, insecure bool) (BackendClient, error) {
+	if config == nil || config.WrapperURL == "" {
 		return nil, nil
 	}
 	if campaignId == "" {
 		slog.Warn("wrapper config supplied but CAMPAIGN_ID is empty, running transparently")
 		return nil, nil
 	}
-	return newBackendClient(config.Api)
+	return newBackendClient(config, insecure)
 }
 
 func (w *Wrapper) Provision() error {

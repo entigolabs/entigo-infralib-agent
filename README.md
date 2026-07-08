@@ -291,6 +291,7 @@ OPTIONS:
 * entrypoint - **optional** path to the infralib-tool entrypoint script (default: **entrypoint-core.sh**) [$INFRALIB_ENTRYPOINT]
 * campaign-id - **optional** agent-run identifier forwarded to the backend handshake; empty runs the wrapper transparently [$CAMPAIGN_ID]
 * pipeline-index - **optional** release iteration index forwarded to the backend handshake [$PIPELINE_INDEX]
+* insecure - **optional** allow insecure gRPC connection (default: **false**) [$INSECURE]
 
 ### Custom Parameters
 
@@ -358,22 +359,13 @@ notifications:
       webhook_url: string
     api:
       url: string
+      wrapper_url: string
       headers: map[string]string
       oauth:
         client_id: string
         client_secret: string
         token_url: string
         scopes: []string
-wrapper:
-  api:
-    url: string
-    insecure: bool
-    headers: map[string]string
-    oauth:
-      client_id: string
-      client_secret: string
-      token_url: string
-      scopes: []string
 schedule:
   update_cron: string
 agent_version: latest | semver
@@ -462,6 +454,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * message_types - list of types of messages to send, possible values `started | approvals | sources | progress | schedule | success | failure`, default **`[approvals, failure]`**. More info in [Message types](#message-types)
   * api - send notifications to a custom API
     * url - url for the api
+    * wrapper_url - optional, enables gRPC connection while provisioning for sending logs and plan summaries. Full URL of the backend endpoint (`https://host[:port][/path]`). The path segment is preserved and prepended to gRPC method names. When omitted, [provision](#provision) runs the entrypoint transparently. When set, the config is stored in Secret Manager and injected into each pipeline execution as the `WRAPPER_CONFIG` env var.
     * headers - key-value pair of headers to add to the request
     * oauth - optional oauth2 configuration for the api
   * slack - send notifications to slack
@@ -469,16 +462,6 @@ Source version is overwritten by module version. Default version is **stable** w
     * channel_id - slack channel id
   * teams - send notifications to teams
     * webhook_url - webhook url for the teams channel, possible options include Teams Workflow or Power Automate, more info in [go-teams-notify GitHub](https://github.com/atc0005/go-teams-notify?tab=readme-ov-file#using-teams-client-workflows-context-option)
-* wrapper - configures the [provision](#provision) wrapper's gRPC forwarding to the portal backend. When omitted, provision runs the entrypoint transparently. When set, the config is stored in Secret Manager and injected into each pipeline execution as the `WRAPPER_CONFIG` env var.
-  * api - gRPC endpoint for wrapper log/plan forwarding
-    * url - full URL of the backend endpoint (`https://host[:port][/path]`). The path segment is preserved and prepended to gRPC method names.
-    * insecure - skip TLS (h2c). Only valid with an `http://` URL; the default is TLS.
-    * headers - key-value pairs added to every gRPC request
-    * oauth - oauth2 client-credentials configuration; the wrapper acquires a bearer token and attaches it to every request
-      * client_id - oauth client id
-      * client_secret - oauth client secret, recommended to use custom replacement tags, e.g. `"{{ .output-custom.wrapper-client-secret }}"`
-      * token_url - oauth token endpoint
-      * scopes - list of scopes to request
 * schedule - allows scheduling CodePipeline/Cloud Run Job executions. More info in [Scheduling](#scheduling)
   * update_cron - cron expression in UTC for scheduling agent update executions.
 * agent_version - image version of Entigo Infralib Agent to use

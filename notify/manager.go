@@ -11,7 +11,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify/api"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 )
 
@@ -34,20 +33,7 @@ func NewNotificationManager(ctx context.Context, configNotifiers []model.ConfigN
 
 func createNotifiers(ctx context.Context, configNotifiers []model.ConfigNotification, campaignId uuid.UUID) ([]model.Notifier, error) {
 	notifiers := make([]model.Notifier, 0)
-	names := model.NewSet[string]()
-	for i, configNotifier := range configNotifiers {
-		if configNotifier.Name == "" {
-			return nil, fmt.Errorf("configNotifier[%d] name is empty", i)
-		}
-		if names.Contains(configNotifier.Name) {
-			return nil, fmt.Errorf("configNotifier %s name must be unique", configNotifier.Name)
-		}
-		names.Add(configNotifier.Name)
-		if (util.BoolToInt(configNotifier.Slack != nil) +
-			util.BoolToInt(configNotifier.Api != nil) +
-			util.BoolToInt(configNotifier.Teams != nil)) != 1 {
-			return nil, fmt.Errorf("configNotifier %s must have exactly 1 subtype specified", configNotifier.Name)
-		}
+	for _, configNotifier := range configNotifiers {
 		notifier, err := createNotifier(ctx, configNotifier, campaignId)
 		if err != nil {
 			return nil, fmt.Errorf("configNotifier %s: %w", configNotifier.Name, err)
@@ -82,37 +68,14 @@ func createNotifier(ctx context.Context, configNotifier model.ConfigNotification
 }
 
 func createSlackNotifier(baseNotifier model.BaseNotifier, slack model.Slack) (model.Notifier, error) {
-	if slack.Token == "" {
-		return nil, errors.New("slack token is empty")
-	}
-	if slack.ChannelId == "" {
-		return nil, errors.New("slack channel id is empty")
-	}
 	return newSlackClient(baseNotifier, slack), nil
 }
 
 func createTeamsNotifier(baseNotifier model.BaseNotifier, teams model.Teams) (model.Notifier, error) {
-	if teams.WebhookUrl == "" {
-		return nil, errors.New("teams webhook url is empty")
-	}
 	return newTeamsClient(baseNotifier, teams), nil
 }
 
 func createApiNotifier(ctx context.Context, baseNotifier model.BaseNotifier, notificationApi model.NotificationApi, campaignId uuid.UUID) (model.Notifier, error) {
-	if notificationApi.URL == "" {
-		return nil, errors.New("api url is empty")
-	}
-	if notificationApi.OAuth != nil {
-		if notificationApi.OAuth.ClientId == "" {
-			return nil, errors.New("api oauth client id is empty")
-		}
-		if notificationApi.OAuth.ClientSecret == "" {
-			return nil, errors.New("api oauth client secret is empty")
-		}
-		if notificationApi.OAuth.TokenURL == "" {
-			return nil, errors.New("api oauth token url is empty")
-		}
-	}
 	return api.NewApi(ctx, baseNotifier, notificationApi, campaignId)
 }
 
