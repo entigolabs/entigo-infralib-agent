@@ -82,6 +82,7 @@ type Wrapper struct {
 	PlanPath      string
 	CampaignId    string
 	PipelineIndex string
+	Insecure      bool
 }
 
 type PipelineType string

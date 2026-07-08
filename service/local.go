@@ -37,7 +37,7 @@ type LocalPipeline struct {
 	pipeline       common.Pipeline
 	inputLock      sync.Mutex
 	manager        model.NotificationManager
-	wrapper        *model.Wrapper
+	wrapper        *model.NotificationApi
 	campaignId     string
 	pipelineIndex  int
 }
@@ -66,7 +66,7 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 		pipeline:       pipeline,
 		manager:        manager,
 		enableOpenTofu: config.EnableOpenTofu,
-		wrapper:        config.Wrapper,
+		wrapper:        getWrapperConfig(config.Notifications),
 		campaignId:     campaignId,
 	}
 }
@@ -116,6 +116,7 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		PlanPath:      "/tmp/project",
 		CampaignId:    l.campaignId,
 		PipelineIndex: strconv.Itoa(l.pipelineIndex),
+		//		Insecure:      true, // Development only
 	}
 	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer

@@ -49,7 +49,8 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 	case common.MigrateConfigCommand:
 		return append(baseFlags, &stateFileFlag, importFileFlag(false))
 	case common.ProvisionCommand:
-		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag, &prefixStepFlag, &campaignIdFlag, &pipelineIndexFlag)
+		return append(baseFlags, &wrapperConfigFlag, &stepFlag, &commandFlag, &entrypointFlag, &prefixStepFlag,
+			&campaignIdFlag, &pipelineIndexFlag, &insecureFlag)
 	default:
 		return baseFlags
 	}
@@ -434,5 +435,15 @@ var pipelineIndexFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "release iteration index for the current pipeline execution, forwarded in the backend handshake",
 	Destination: &flags.Wrapper.PipelineIndex,
+	Required:    false,
+}
+
+var insecureFlag = cli.BoolFlag{
+	Name:        "insecure",
+	Aliases:     []string{"i"},
+	Sources:     cli.EnvVars("INSECURE"),
+	Usage:       "allow insecure connections for the wrapper grpc connection",
+	Value:       false,
+	Destination: &flags.Wrapper.Insecure,
 	Required:    false,
 }

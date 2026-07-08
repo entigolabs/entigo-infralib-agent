@@ -67,8 +67,8 @@ type backendClient struct {
 	execErr  error
 }
 
-func newBackendClient(api *model.WrapperApi) (*backendClient, error) {
-	host, pathPrefix, err := parseTarget(api.URL)
+func newBackendClient(api *model.NotificationApi, insecureGRPC bool) (*backendClient, error) {
+	host, pathPrefix, err := parseTarget(api.WrapperURL)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func newBackendClient(api *model.WrapperApi) (*backendClient, error) {
 	dialOpts := []grpc.DialOption{
 		grpc.WithChainStreamInterceptor(interceptors...),
 	}
-	if api.Insecure {
+	if insecureGRPC {
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
