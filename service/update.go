@@ -1468,7 +1468,11 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 		if moduleVersion.Changed {
 			changed = true
 		}
-		err := u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion)
+		source, err := u.getProxySource(moduleVersion.Source.URL, step)
+		if err != nil {
+			return false, "", nil, err
+		}
+		err = u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion, source)
 		if err != nil {
 			return false, "", nil, err
 		}
@@ -1482,7 +1486,7 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	source, err := u.getProxySource(moduleSource.URL)
+	source, err := u.getProxySource(moduleSource.URL, step)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to resolve OCI proxy source: %w", err)
 	}
@@ -1495,9 +1499,15 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 }
 
 // getProxySource keeps the oci scheme prefix intact so ArgoCD can still apply
-// its OCI-specific logic to the returned source.
-func (u *updater) getProxySource(source string) (string, error) {
+// its OCI-specific logic to the returned source. Modules in the same step as the
+// proxy itself are left unproxied, so a broken proxy can't fail its own step and
+// prevent self-healing.
+func (u *updater) getProxySource(source string, step model.Step) (string, error) {
 	if !u.config.UseOCIProxy || !util.IsOCISource(source) {
+		return source, nil
+	}
+	proxyStep, _ := getModuleByType(u.config, u.proxyModuleType())
+	if proxyStep == nil || proxyStep.Name == step.Name {
 		return source, nil
 	}
 	registry, err := u.getProxyRegistry(util.TrimOCIScheme(source))
@@ -1508,6 +1518,13 @@ func (u *updater) getProxySource(source string) (string, error) {
 		return source, nil
 	}
 	return replaceOCIRegistry(source, registry), nil
+}
+
+func (u *updater) proxyModuleType() string {
+	if u.resources.GetProviderType() == model.GCLOUD {
+		return "gar-proxy"
+	}
+	return "ecr-proxy"
 }
 
 // getProxyRegistry expects a bare (scheme-trimmed) OCI source. An empty string
@@ -1538,11 +1555,7 @@ func (u *updater) resolveProxyRegistry(source string) (string, error) {
 	if !util.IsPublicECRSource(source) && !isGHCRSource {
 		return "", nil
 	}
-	moduleType := "ecr-proxy"
-	if u.resources.GetProviderType() == model.GCLOUD {
-		moduleType = "gar-proxy"
-	}
-	step, module := getModuleByType(u.config, moduleType)
+	step, module := getModuleByType(u.config, u.proxyModuleType())
 	if step == nil || module == nil {
 		return "", nil
 	}
