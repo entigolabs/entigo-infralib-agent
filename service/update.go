@@ -892,6 +892,9 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 			return false
 		}
 		module := getModule(moduleState.Name, step.Modules)
+		if module == nil {
+			return false
+		}
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.ForcedVersion != "" {
 			return true // Always allow parallel execution for forced versions

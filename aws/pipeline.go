@@ -249,8 +249,16 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return nil, err
 	}
 	log.Printf("Created CodePipeline %s\n", pipelineName)
+	err = p.disableStageTransition(pipelineName, planName)
+	if err != nil {
+		return nil, err
+	}
 	// The auto-start on create has no CampaignId — replace it with our own.
 	if err := p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout); err != nil {
+		return nil, err
+	}
+	err = p.enableStageTransition(pipelineName, planName)
+	if err != nil {
 		return nil, err
 	}
 	return p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
@@ -501,8 +509,6 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model
 			Name:  aws.String("CampaignId"),
 			Value: aws.String(p.campaignId),
 		})
-	} else {
-		slog.Debug("starting pipeline without CampaignId — SetCampaignId was not called", "pipeline", pipelineName)
 	}
 	if p.pipelineIndex != "" {
 		input.Variables = append(input.Variables, types.PipelineVariable{
@@ -966,7 +972,7 @@ func (p *Pipeline) waitAndStopAutoExecution(pipelineName string, timeout time.Du
 			if execution.Status != types.PipelineExecutionStatusInProgress {
 				continue
 			}
-			slog.Info("intercepting auto-execution", "pipeline", pipelineName, "execution", *execution.PipelineExecutionId)
+			slog.Debug("intercepting auto-execution", "pipeline", pipelineName, "execution", *execution.PipelineExecutionId)
 			return p.stopPipelineExecution(pipelineName, *execution.PipelineExecutionId, "Superseded by agent-orchestrated execution")
 		}
 		if time.Now().After(deadline) {
@@ -1142,15 +1148,23 @@ func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {
 		if stage.InboundTransitionState == nil || stage.InboundTransitionState.Enabled {
 			continue
 		}
-		_, err = p.codePipeline.EnableStageTransition(p.ctx, &codepipeline.EnableStageTransitionInput{
-			PipelineName:   aws.String(pipelineName),
-			StageName:      stage.StageName,
-			TransitionType: types.StageTransitionTypeInbound,
-		})
+		err = p.enableStageTransition(pipelineName, *stage.StageName)
 		if err != nil {
-			return fmt.Errorf("failed to enable inbound transition for stage %s: %v", *stage.StageName, err)
+			return err
 		}
 	}
 	log.Printf("Enabled all stage transitions for pipeline %s", pipelineName)
+	return nil
+}
+
+func (p *Pipeline) enableStageTransition(pipelineName string, stageName string) error {
+	_, err := p.codePipeline.EnableStageTransition(p.ctx, &codepipeline.EnableStageTransitionInput{
+		PipelineName:   &pipelineName,
+		StageName:      &stageName,
+		TransitionType: types.StageTransitionTypeInbound,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to enable inbound transition for stage %s: %v", stageName, err)
+	}
 	return nil
 }

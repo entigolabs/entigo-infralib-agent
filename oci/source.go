@@ -113,13 +113,28 @@ func validateForcedVersion(ctx context.Context, repo *remote.Repository, release
 	return nil
 }
 
+// canonicalOCIVersion converts a raw OCI tag into the agent's canonical,
+// v-prefixed form so the service layer can compare it against git-sourced and
+// state versions uniformly. Digests, already-prefixed tags, and non-semver tags
+// (e.g. branch names) pass through untouched; util.NormalizeOCIVersion strips
+// the "v" again at the OCI wire boundary.
+func canonicalOCIVersion(tag string) string {
+	if util.IsOCIDigest(tag) || strings.HasPrefix(tag, "v") {
+		return tag
+	}
+	if _, err := version.NewVersion(tag); err != nil {
+		return tag
+	}
+	return "v" + tag
+}
+
 func getReleases(ctx context.Context, repo *remote.Repository) ([]*version.Version, model.Set[string], error) {
 	var releases []*version.Version
 	releaseSet := model.NewSet[string]()
 	err := repo.Tags(ctx, "", func(tags []string) error {
 		for _, tag := range tags {
 			releaseSet.Add(tag)
-			tagVersion, err := version.NewVersion(tag)
+			tagVersion, err := version.NewVersion(canonicalOCIVersion(tag))
 			if err != nil {
 				continue
 			}
@@ -146,7 +161,7 @@ func (s *SourceClient) GetRelease(release string) (*version.Version, error) {
 	if !s.releasesSet.Contains(normalized) {
 		return nil, fmt.Errorf("release %s not found", release)
 	}
-	return version.NewVersion(normalized)
+	return version.NewVersion(canonicalOCIVersion(normalized))
 }
 
 func (s *SourceClient) GetReleases(oldestRelease, newestRelease *version.Version) ([]*version.Version, error) {
