@@ -17,6 +17,7 @@ type Config struct {
 	BaseImageSource  string               `yaml:"base_image_source,omitempty"`
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
 	EnableOpenTofu   bool                 `yaml:"enable_opentofu,omitempty"`
+	UseOCIProxy      bool                 `yaml:"use_oci_proxy,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
 	Schedule         Schedule             `yaml:"schedule,omitempty"`

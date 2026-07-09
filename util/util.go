@@ -32,6 +32,9 @@ import (
 var (
 	azureHTTPSPattern = regexp.MustCompile(`^https://(?:[^@]+@)?dev\.azure\.com/[^/]+/[^/]+/_git/[^/]+`)
 	azureSSHPattern   = regexp.MustCompile(`^git@ssh\.dev\.azure\.com:v3/[^/]+/[^/]+/[^/]+`)
+
+	publicECRPattern = regexp.MustCompile(`^public\.ecr\.aws(?:/|$)`)
+	GHCRPattern      = regexp.MustCompile(`^ghcr\.io(?:/|$)`)
 )
 
 func CreateKeyValuePairs(m map[string]string, prefix string, suffix string) ([]byte, error) {
@@ -172,6 +175,14 @@ func GetSourceType(source string) model.SourceType {
 	default:
 		return model.SourceTypeGit
 	}
+}
+
+func IsPublicECRSource(source string) bool {
+	return publicECRPattern.MatchString(source)
+}
+
+func IsGHCRSource(source string) bool {
+	return GHCRPattern.MatchString(source)
 }
 
 func IsAzureDevOps(url string) bool {

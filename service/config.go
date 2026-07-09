@@ -924,3 +924,14 @@ func getModule(moduleName string, modules []model.Module) *model.Module {
 	}
 	return nil
 }
+
+func getModuleByType(config model.Config, moduleType string) (*model.Step, *model.Module) {
+	for _, step := range config.Steps {
+		for _, module := range step.Modules {
+			if getModuleType(module) == moduleType {
+				return &step, &module
+			}
+		}
+	}
+	return nil, nil
+}

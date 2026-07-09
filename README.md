@@ -372,6 +372,7 @@ agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
 enable_opentofu: bool
+use_oci_proxy: bool
 provider:
   inputs: map[string]string
   aws:
@@ -468,6 +469,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
 * enable_opentofu - make Infralib use OpenTofu instead of Terraform, default **false**.
+* use_oci_proxy - replace OCI source url host with proxy for ArgoCD modules if registry proxy module has been applied, default **false**
 * provider - provider values to add for all terraform steps
   * inputs - variables for provider tf file
   * aws - aws provider default, ignore tags and endpoints to add

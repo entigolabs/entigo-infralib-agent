@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"golang.org/x/sync/singleflight"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,6 +45,7 @@ type updater struct {
 	stepChecksums model.StepsChecksums
 	resources     model.Resources
 	terraform     terraform.Terraform
+	argocd        argocd.ArgoCD
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -53,6 +55,9 @@ type updater struct {
 	moduleSources map[string]model.SourceKey
 	sources       map[model.SourceKey]*model.Source
 	firstRunDone  map[string]bool
+
+	proxyRegistries sync.Map
+	proxyGroup      singleflight.Group
 }
 
 func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
@@ -97,6 +102,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		stepChecksums: model.NewStepsChecksums(),
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
+		argocd:        argocd.NewArgoCD(resources.GetProviderType()),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
@@ -1473,13 +1479,96 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	appBytes, err := argocd.GetApplicationFile(moduleSource.Storage, module, moduleSource.URL, moduleVersion, values,
-		u.resources.GetProviderType())
+	source, err := u.getProxySource(moduleSource.URL)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to resolve OCI proxy source: %w", err)
+	}
+	appBytes, err := u.argocd.GetApplicationFile(moduleSource.Storage, module, source, moduleVersion, values)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)
 	}
 	filePath := fmt.Sprintf("steps/%s-%s/%s.yaml", u.resources.GetCloudPrefix(), step.Name, module.Name)
 	return filePath, appBytes, u.resources.GetBucket().PutFile(filePath, appBytes)
+}
+
+// getProxySource keeps the oci scheme prefix intact so ArgoCD can still apply
+// its OCI-specific logic to the returned source.
+func (u *updater) getProxySource(source string) (string, error) {
+	if !u.config.UseOCIProxy || !util.IsOCISource(source) {
+		return source, nil
+	}
+	registry, err := u.getProxyRegistry(util.TrimOCIScheme(source))
+	if err != nil {
+		return "", err
+	}
+	if registry == "" {
+		return source, nil
+	}
+	return replaceOCIRegistry(source, registry), nil
+}
+
+// getProxyRegistry expects a bare (scheme-trimmed) OCI source. An empty string
+// is a valid cached result meaning "no proxy applies".
+func (u *updater) getProxyRegistry(source string) (string, error) {
+	if val, ok := u.proxyRegistries.Load(source); ok {
+		return val.(string), nil
+	}
+	registry, err, _ := u.proxyGroup.Do(source, func() (interface{}, error) {
+		if val, ok := u.proxyRegistries.Load(source); ok {
+			return val.(string), nil
+		}
+		registry, err := u.resolveProxyRegistry(source)
+		if err != nil {
+			return nil, err
+		}
+		u.proxyRegistries.Store(source, registry)
+		return registry, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return registry.(string), nil
+}
+
+func (u *updater) resolveProxyRegistry(source string) (string, error) {
+	isGHCRSource := util.IsGHCRSource(source)
+	if !util.IsPublicECRSource(source) && !isGHCRSource {
+		return "", nil
+	}
+	moduleType := "ecr-proxy"
+	if u.resources.GetProviderType() == model.GCLOUD {
+		moduleType = "gar-proxy"
+	}
+	step, module := getModuleByType(u.config, moduleType)
+	if step == nil || module == nil {
+		return "", nil
+	}
+	outputs, err := getModuleOutputs(*step, u.resources.GetCloudPrefix(), u.resources.GetBucket())
+	if err != nil {
+		return "", err
+	}
+	outputName := "ecr_registry"
+	if isGHCRSource {
+		outputName = "ghcr_registry"
+	}
+	return util.GetOutputStringValue(outputs, fmt.Sprintf("%s__%s", module.Name, outputName))
+}
+
+func replaceOCIRegistry(source, newRegistry string) string {
+	newRegistry = strings.Trim(strings.TrimSpace(newRegistry), "/")
+	prefix := ""
+	for _, p := range []string{"oci://", "oci:", "oci@"} {
+		if strings.HasPrefix(source, p) {
+			prefix = p
+			source = source[len(p):]
+			break
+		}
+	}
+	parts := strings.SplitN(strings.TrimSuffix(source, "/"), "/", 2)
+	if len(parts) == 1 {
+		return prefix + newRegistry
+	}
+	return prefix + newRegistry + "/" + parts[1]
 }
 
 func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {

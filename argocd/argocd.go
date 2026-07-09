@@ -26,7 +26,17 @@ var ociChartLineRegex = regexp.MustCompile(`(?m)^(\s*)path:.*\{\{moduleSource\}\
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 var newPlanRegex = regexp.MustCompile(`ArgoCD Applications: (?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
 
-func GetApplicationFile(storage model.Storage, module model.Module, source, version string, values []byte, provider model.ProviderType) ([]byte, error) {
+type ArgoCD struct {
+	provider model.ProviderType
+}
+
+func NewArgoCD(providerType model.ProviderType) ArgoCD {
+	return ArgoCD{
+		provider: providerType,
+	}
+}
+
+func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, source, version string, values []byte) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
 	moduleFile, err := getModuleApplicationFile(storage, version, module.Source)
 	if err != nil {
@@ -36,7 +46,7 @@ func GetApplicationFile(storage model.Storage, module model.Module, source, vers
 	if err != nil {
 		return nil, err
 	}
-	return replacePlaceholders(bytes, module, source, version, values, provider), nil
+	return a.replacePlaceholders(bytes, module, source, version, values), nil
 }
 
 func getBaseApplicationFile() []byte {
@@ -45,10 +55,10 @@ func getBaseApplicationFile() []byte {
 	return contentCopy
 }
 
-func replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte, provider model.ProviderType) []byte {
+func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte) []byte {
 	file := string(bytes)
 	var cloudProvider string
-	if provider == model.GCLOUD {
+	if a.provider == model.GCLOUD {
 		cloudProvider = "google"
 	} else {
 		cloudProvider = "aws"
@@ -91,8 +101,7 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 func getModuleApplicationFile(storage model.Storage, release, moduleSource string) (map[string]interface{}, error) {
 	bytes, err := storage.GetFile(fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
-		var fileError model.NotFoundError
-		if errors.As(err, &fileError) {
+		if _, ok := errors.AsType[model.NotFoundError](err); ok {
 			return nil, nil
 		}
 		return nil, err
