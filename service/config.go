@@ -462,17 +462,23 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 }
 
 func ProcessConfig(config *model.Config, providerType model.ProviderType) {
+	if config.EnableOpenTofu == nil {
+		enabled := true
+		config.EnableOpenTofu = &enabled
+	}
 	processSources(config)
 	processSteps(config, providerType)
 }
 
 func processSources(config *model.Config) {
 	for i, source := range config.Sources {
-		if !util.IsLocalSource(source.URL) {
-			continue
+		if source.VerifySignature {
+			source.UseOCIDigests = true
 		}
-		source.ForceVersion = true
-		source.Version = "local"
+		if util.IsLocalSource(source.URL) {
+			source.ForceVersion = true
+			source.Version = "local"
+		}
 		config.Sources[i] = source
 	}
 }
@@ -532,7 +538,7 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		return fmt.Errorf("at least one source must be provided")
 	}
 	for index, source := range config.Sources {
-		if err := validateSource(index, source, config.EnableOpenTofu); err != nil {
+		if err := validateSource(index, source, config.IsOpenTofuEnabled()); err != nil {
 			return err
 		}
 	}

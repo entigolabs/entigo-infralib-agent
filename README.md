@@ -337,6 +337,7 @@ sources:
     repo_path: string
     ca_file: string
     use_oci_digests: bool
+    verify_signature: bool
 destinations:
   - name: string
     git:
@@ -438,6 +439,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
   * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
   * use_oci_digests - use OCI digests for module sources instead of version tags when using OCI source with version tag, default **false**
+  * verify_signature - verify the OCI index signature when using OCI entigolabs source, true value forces use_oci_digests to true as well, default **false**
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
   * name - name of the destination
   * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
@@ -470,7 +472,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
-* enable_opentofu - make Infralib use OpenTofu instead of Terraform, default **false**.
+* enable_opentofu - make Infralib use OpenTofu instead of Terraform, default **true**.
 * use_oci_proxy - replace OCI source url host with proxy for ArgoCD modules if registry proxy module has been applied, default **false**
 * provider - provider values to add for all terraform steps
   * inputs - variables for provider tf file

@@ -34,6 +34,7 @@ import (
 const indexPackage = "index"
 
 var _ model.SourceRepository = (*SourceClient)(nil)
+var _ model.OCIImageResolver = (*SourceClient)(nil)
 
 // SourceClient serves infralib releases published as OCI artifacts. It mirrors
 // git.SourceClient: it enumerates releases (tags of the "index" package),
@@ -147,6 +148,16 @@ func getReleases(ctx context.Context, repo *remote.Repository) ([]*version.Versi
 	}
 	sort.Sort(version.Collection(releases))
 	return releases, releaseSet, nil
+}
+
+// GetImageReference resolves the release to the digest-pinned index image
+// reference used for signature verification (registry/path/index@sha256:...).
+func (s *SourceClient) GetImageReference(release string) (string, error) {
+	desc, err := s.repo.Resolve(s.ctx, util.NormalizeOCIVersion(release))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve OCI index %s: %w", release, err)
+	}
+	return fmt.Sprintf("%s/%s@%s", util.TrimOCIScheme(s.url), indexPackage, desc.Digest.String()), nil
 }
 
 func (s *SourceClient) GetLatestReleaseTag() (*version.Version, error) {

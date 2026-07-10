@@ -16,7 +16,7 @@ type Config struct {
 	AgentVersion     string               `yaml:"agent_version,omitempty"`
 	BaseImageSource  string               `yaml:"base_image_source,omitempty"`
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
-	EnableOpenTofu   bool                 `yaml:"enable_opentofu,omitempty"`
+	EnableOpenTofu   *bool                `yaml:"enable_opentofu,omitempty"`
 	UseOCIProxy      bool                 `yaml:"use_oci_proxy,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
@@ -28,18 +28,24 @@ type Config struct {
 
 const TofuTfTool = "tofu"
 
+// IsOpenTofuEnabled defaults to true when unset (nil).
+func (c Config) IsOpenTofuEnabled() bool {
+	return c.EnableOpenTofu == nil || *c.EnableOpenTofu
+}
+
 type ConfigSource struct {
-	URL           string   `yaml:"url"`
-	Version       string   `yaml:"version,omitempty"`
-	ForceVersion  bool     `yaml:"force_version,omitempty"`
-	Include       []string `yaml:"include,omitempty"`
-	Exclude       []string `yaml:"exclude,omitempty"`
-	Username      string   `yaml:"username,omitempty"`
-	Password      string   `yaml:"password,omitempty"`
-	Insecure      bool     `yaml:"insecure,omitempty"`
-	RepoPath      string   `yaml:"repo_path,omitempty"`
-	CAFile        string   `yaml:"ca_file,omitempty"`
-	UseOCIDigests bool     `yaml:"use_oci_digests,omitempty"`
+	URL             string   `yaml:"url"`
+	Version         string   `yaml:"version,omitempty"`
+	ForceVersion    bool     `yaml:"force_version,omitempty"`
+	Include         []string `yaml:"include,omitempty"`
+	Exclude         []string `yaml:"exclude,omitempty"`
+	Username        string   `yaml:"username,omitempty"`
+	Password        string   `yaml:"password,omitempty"`
+	Insecure        bool     `yaml:"insecure,omitempty"`
+	RepoPath        string   `yaml:"repo_path,omitempty"`
+	CAFile          string   `yaml:"ca_file,omitempty"`
+	UseOCIDigests   bool     `yaml:"use_oci_digests,omitempty"`
+	VerifySignature bool     `yaml:"verify_signature,omitempty"`
 }
 
 func (s ConfigSource) GetSourceKey() SourceKey {
@@ -341,6 +347,7 @@ type Source struct {
 	Includes          Set[string]
 	Excludes          Set[string]
 	UseOCIDigests     bool
+	VerifySignature   bool
 }
 
 type SourceAuth struct {

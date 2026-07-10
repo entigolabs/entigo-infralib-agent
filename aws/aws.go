@@ -158,7 +158,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		return nil, err
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
-		*a.pipeline.TerraformCache.Value, config.EnableOpenTofu, a.cloudPrefix, manager)
+		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), a.cloudPrefix, manager)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline

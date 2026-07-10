@@ -63,6 +63,10 @@ type updater struct {
 
 	manifests     sync.Map
 	manifestGroup singleflight.Group
+
+	verifier    oci.Verifier
+	verified    sync.Map
+	verifyGroup singleflight.Group
 }
 
 func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
@@ -117,6 +121,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
 		cmd:           command,
+		verifier:      oci.NewCosignVerifier(flags.OfflineTrustBundle),
 	}, nil
 }
 
@@ -174,15 +179,16 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 			forcedVersion = source.Version
 		}
 		sources[model.SourceKey{URL: source.URL, ForcedVersion: forcedVersion}] = &model.Source{
-			URL:           source.URL,
-			StableVersion: stableVersion,
-			ForcedVersion: forcedVersion,
-			Modules:       model.NewSet[string](),
-			Includes:      model.ToSet(source.Include),
-			Excludes:      model.ToSet(source.Exclude),
-			Storage:       storage,
-			Auth:          model.SourceAuth{Username: source.Username, Password: source.Password},
-			UseOCIDigests: source.UseOCIDigests,
+			URL:             source.URL,
+			StableVersion:   stableVersion,
+			ForcedVersion:   forcedVersion,
+			Modules:         model.NewSet[string](),
+			Includes:        model.ToSet(source.Include),
+			Excludes:        model.ToSet(source.Exclude),
+			Storage:         storage,
+			Auth:            model.SourceAuth{Username: source.Username, Password: source.Password},
+			UseOCIDigests:   source.UseOCIDigests,
+			VerifySignature: source.VerifySignature,
 		}
 	}
 	moduleSources, err := addSourceModules(steps, config.Sources, sources, state)
@@ -1679,6 +1685,55 @@ func ociHost(ref string) string {
 	return trimmed
 }
 
+const entigoReleaseRepo = "entigolabs/entigo-infralib-release"
+
+// isVerifiableSource reports whether the source is an official entigolabs
+// release registry (ecr or ghcr). Signature verification pins the entigolabs
+// cosign identity, so it can't validate any other registry.
+func isVerifiableSource(url string) bool {
+	trimmed := util.TrimOCIScheme(url)
+	return trimmed == "public.ecr.aws/"+entigoReleaseRepo || trimmed == "ghcr.io/"+entigoReleaseRepo
+}
+
+// verifyIndexSignature validates the source's index image signature once per
+// resolved image (deduped across steps/modules). Only official entigolabs
+// release sources are verifiable; other sources with the flag set are skipped
+// with a one-time warning.
+func (u *updater) verifyIndexSignature(source *model.Source, release string) error {
+	if !source.VerifySignature {
+		return nil
+	}
+	if !isVerifiableSource(source.URL) {
+		if _, loaded := u.verified.LoadOrStore("unverifiable:"+source.URL, struct{}{}); !loaded {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("verify_signature is only supported for entigolabs release sources, skipping %s", source.URL)))
+		}
+		return nil
+	}
+	resolver, ok := source.Storage.(model.OCIImageResolver)
+	if !ok {
+		return fmt.Errorf("source %s does not support signature verification", source.URL)
+	}
+	image, err := resolver.GetImageReference(release)
+	if err != nil {
+		return err
+	}
+	if _, ok := u.verified.Load(image); ok {
+		return nil
+	}
+	_, err, _ = u.verifyGroup.Do(image, func() (interface{}, error) {
+		if _, ok := u.verified.Load(image); ok {
+			return nil, nil
+		}
+		if err := u.verifier.Verify(u.ctx, image); err != nil {
+			return nil, err
+		}
+		log.Printf("Verified OCI index image signature %s", image)
+		u.verified.Store(image, struct{}{})
+		return nil, nil
+	})
+	return err
+}
+
 // getModuleManifest parses manifest.json from the source's index for a release
 // into a map keyed by module source path (type/name), caching per source+release.
 func (u *updater) getModuleManifest(sourceKey model.SourceKey, release string) (map[string]model.OCIManifestModule, error) {
@@ -1733,10 +1788,15 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 		if err != nil {
 			return nil, err
 		}
-		if changed && !util.IsClientModule(module) {
-			err = moduleMustExist(u.getModuleSource(module.Source), step.Type, module, moduleVersion)
-			if err != nil {
+		if !util.IsClientModule(module) {
+			source := u.getModuleSource(module.Source)
+			if err = u.verifyIndexSignature(source, moduleVersion); err != nil {
 				return nil, err
+			}
+			if changed {
+				if err = moduleMustExist(source, step.Type, module, moduleVersion); err != nil {
+					return nil, err
+				}
 			}
 		}
 		moduleVersions[module.Name] = model.ModuleVersion{
