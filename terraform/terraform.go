@@ -35,7 +35,7 @@ var planRegex = regexp.MustCompile(`Plan: (?:(?P<import>\d+) to import, )?(?P<ad
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[model.SourceKey]string) ([]byte, map[model.SourceKey]model.Set[string], error)
-	AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion, sourceURL string) error
+	AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion, sourceURL, ociVersion string) error
 }
 
 type terraform struct {
@@ -425,8 +425,10 @@ func addProviderInputs(providerInputs map[string]interface{}, providerBlock *hcl
 
 // sourceURL is the module source, possibly rewritten to a proxy registry. It
 // only feeds the source attribute; moduleVersion.Source stays the original key
-// so addOutputs can still resolve the source from t.sources.
-func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion, sourceURL string) error {
+// so addOutputs can still resolve the source from t.sources. ociVersion is the
+// reference embedded in an OCI source (a digest in digest mode, else the tag);
+// moduleVersion.Version stays the release used to fetch outputs.tf from storage.
+func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion, sourceURL, ociVersion string) error {
 	newModule := body.AppendNewBlock("module", []string{module.Name})
 	moduleBody := newModule.Body()
 	if util.IsClientModule(module) {
@@ -437,7 +439,7 @@ func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Ste
 			cty.StringVal(fmt.Sprintf("%s/modules/%s", sourceURL, module.Source)))
 	} else if util.IsOCISource(sourceURL) {
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(ociModuleSource(sourceURL, module.Source, moduleVersion.Version)))
+			cty.StringVal(ociModuleSource(sourceURL, module.Source, ociVersion)))
 	} else if util.IsAzureDevOps(sourceURL) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("git::%s//modules/%s?ref=%s", sourceURL, module.Source,

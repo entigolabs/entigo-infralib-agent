@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -29,8 +30,9 @@ import (
 )
 
 const (
-	stateFile = "state.yaml"
-	ssmPrefix = "/entigo-infralib"
+	stateFile       = "state.yaml"
+	ssmPrefix       = "/entigo-infralib"
+	ociManifestFile = "manifest.json"
 )
 
 type Updater interface {
@@ -58,6 +60,9 @@ type updater struct {
 
 	proxyRegistries sync.Map
 	proxyGroup      singleflight.Group
+
+	manifests     sync.Map
+	manifestGroup singleflight.Group
 }
 
 func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
@@ -177,6 +182,7 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 			Excludes:      model.ToSet(source.Exclude),
 			Storage:       storage,
 			Auth:          model.SourceAuth{Username: source.Username, Password: source.Password},
+			UseOCIDigests: source.UseOCIDigests,
 		}
 	}
 	moduleSources, err := addSourceModules(steps, config.Sources, sources, state)
@@ -1472,7 +1478,11 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 		if err != nil {
 			return false, "", nil, err
 		}
-		err = u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion, source)
+		ociVersion, err := u.getOCIModuleVersion(step.Type, moduleVersion.Source, module.Source, moduleVersion.Version)
+		if err != nil {
+			return false, "", nil, err
+		}
+		err = u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion, source, ociVersion)
 		if err != nil {
 			return false, "", nil, err
 		}
@@ -1490,7 +1500,11 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to resolve OCI proxy source: %w", err)
 	}
-	appBytes, err := u.argocd.GetApplicationFile(moduleSource.Storage, module, source, moduleVersion, values)
+	ociVersion, err := u.getOCIModuleVersion(step.Type, u.moduleSources[module.Source], fmt.Sprintf("k8s/%s", module.Source), moduleVersion)
+	if err != nil {
+		return "", nil, err
+	}
+	appBytes, err := u.argocd.GetApplicationFile(moduleSource.Storage, module, source, moduleVersion, ociVersion, values)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)
 	}
@@ -1585,6 +1599,128 @@ func replaceOCIRegistry(source, newRegistry string) string {
 		return prefix + newRegistry
 	}
 	return prefix + newRegistry + "/" + parts[1]
+}
+
+// getOCIModuleVersion returns the reference to embed in a module's OCI source:
+// the module's sha256 digest when digest mode applies and resolves, otherwise
+// the release unchanged. Digest mode is on when the config source opts in with
+// use_oci_digests or when the release is already a digest. The release stays the
+// version used for storage lookups (outputs.tf, argo-apps.yaml); only the
+// emitted reference switches to a digest.
+func (u *updater) getOCIModuleVersion(stepType model.StepType, sourceKey model.SourceKey, moduleSourcePath, release string) (string, error) {
+	// ArgoCD can't resolve an OCI Helm chart by digest, so apps steps stay on
+	// tags regardless of digest mode: https://github.com/argoproj/argo-cd/issues/25078
+	if stepType == model.StepTypeArgoCD {
+		return release, nil
+	}
+	if !util.IsOCISource(sourceKey.URL) {
+		return release, nil
+	}
+	source := u.sources[sourceKey]
+	if source == nil {
+		return release, nil
+	}
+	if !source.UseOCIDigests && !util.IsOCIDigest(release) {
+		return release, nil
+	}
+	manifest, err := u.getModuleManifest(sourceKey, release)
+	if err != nil {
+		return "", err
+	}
+	if module, ok := manifest[moduleSourcePath]; ok {
+		if digest := moduleDigest(module, sourceKey.URL); digest != "" {
+			return digest, nil
+		}
+	}
+	// No digest for this module in its own registry. Fall back to the release; a
+	// wrong reference fails at apply and the user clears the image to recover.
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("no OCI digest for module %s in %s, using %s",
+		moduleSourcePath, sourceKey, release)))
+	return release, nil
+}
+
+// moduleDigest returns the module's package digest for the source's own
+// registry, matched first by the ecr/ghcr label, then by the registry whose
+// repository host equals the source host (so custom mirrors that publish their
+// own repository URL resolve too). It never returns a different registry's
+// digest.
+func moduleDigest(module model.OCIManifestModule, sourceURL string) string {
+	if registry := ociRegistryKind(sourceURL); registry != "" {
+		if ref, ok := module.Registries[registry]; ok && ref.Package != "" {
+			return ref.Package
+		}
+	}
+	host := ociHost(sourceURL)
+	for _, ref := range module.Registries {
+		if ref.Package != "" && ociHost(ref.Repository) == host {
+			return ref.Package
+		}
+	}
+	return ""
+}
+
+func ociRegistryKind(source string) string {
+	trimmed := util.TrimOCIScheme(source)
+	switch {
+	case util.IsPublicECRSource(trimmed):
+		return "ecr"
+	case util.IsGHCRSource(trimmed):
+		return "ghcr"
+	default:
+		return ""
+	}
+}
+
+func ociHost(ref string) string {
+	trimmed := util.TrimOCIScheme(ref)
+	if i := strings.IndexByte(trimmed, '/'); i != -1 {
+		return trimmed[:i]
+	}
+	return trimmed
+}
+
+// getModuleManifest parses manifest.json from the source's index for a release
+// into a map keyed by module source path (type/name), caching per source+release.
+func (u *updater) getModuleManifest(sourceKey model.SourceKey, release string) (map[string]model.OCIManifestModule, error) {
+	cacheKey := fmt.Sprintf("%s|%s", sourceKey, release)
+	if val, ok := u.manifests.Load(cacheKey); ok {
+		return val.(map[string]model.OCIManifestModule), nil
+	}
+	result, err, _ := u.manifestGroup.Do(cacheKey, func() (interface{}, error) {
+		if val, ok := u.manifests.Load(cacheKey); ok {
+			return val, nil
+		}
+		source := u.sources[sourceKey]
+		if source == nil {
+			return nil, fmt.Errorf("source %s not found", sourceKey)
+		}
+		data, err := source.Storage.GetFile(ociManifestFile, release)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read OCI manifest for %s@%s: %w", sourceKey, release, err)
+		}
+		modules, err := parseOCIManifest(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse OCI manifest for %s@%s: %w", sourceKey, release, err)
+		}
+		u.manifests.Store(cacheKey, modules)
+		return modules, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(map[string]model.OCIManifestModule), nil
+}
+
+func parseOCIManifest(data []byte) (map[string]model.OCIManifestModule, error) {
+	var manifest model.OCIManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	modules := make(map[string]model.OCIManifestModule, len(manifest.Modules))
+	for _, module := range manifest.Modules {
+		modules[fmt.Sprintf("%s/%s", module.Type, module.Name)] = module
+	}
+	return modules, nil
 }
 
 func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {

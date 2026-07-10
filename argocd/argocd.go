@@ -36,9 +36,12 @@ func NewArgoCD(providerType model.ProviderType) ArgoCD {
 	}
 }
 
-func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, source, version string, values []byte) ([]byte, error) {
+// release is the version used to fetch the module's argo-apps.yaml from storage;
+// ociVersion is the reference written as targetRevision (a digest in digest mode,
+// else the tag). They differ only for OCI sources in digest mode.
+func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, source, release, ociVersion string, values []byte) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
-	moduleFile, err := getModuleApplicationFile(storage, version, module.Source)
+	moduleFile, err := getModuleApplicationFile(storage, release, module.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +49,7 @@ func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, 
 	if err != nil {
 		return nil, err
 	}
-	return a.replacePlaceholders(bytes, module, source, version, values), nil
+	return a.replacePlaceholders(bytes, module, source, ociVersion, values), nil
 }
 
 func getBaseApplicationFile() []byte {

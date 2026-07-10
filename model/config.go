@@ -29,16 +29,17 @@ type Config struct {
 const TofuTfTool = "tofu"
 
 type ConfigSource struct {
-	URL          string   `yaml:"url"`
-	Version      string   `yaml:"version,omitempty"`
-	ForceVersion bool     `yaml:"force_version,omitempty"`
-	Include      []string `yaml:"include,omitempty"`
-	Exclude      []string `yaml:"exclude,omitempty"`
-	Username     string   `yaml:"username,omitempty"`
-	Password     string   `yaml:"password,omitempty"`
-	Insecure     bool     `yaml:"insecure,omitempty"`
-	RepoPath     string   `yaml:"repo_path,omitempty"`
-	CAFile       string   `yaml:"ca_file,omitempty"`
+	URL           string   `yaml:"url"`
+	Version       string   `yaml:"version,omitempty"`
+	ForceVersion  bool     `yaml:"force_version,omitempty"`
+	Include       []string `yaml:"include,omitempty"`
+	Exclude       []string `yaml:"exclude,omitempty"`
+	Username      string   `yaml:"username,omitempty"`
+	Password      string   `yaml:"password,omitempty"`
+	Insecure      bool     `yaml:"insecure,omitempty"`
+	RepoPath      string   `yaml:"repo_path,omitempty"`
+	CAFile        string   `yaml:"ca_file,omitempty"`
+	UseOCIDigests bool     `yaml:"use_oci_digests,omitempty"`
 }
 
 func (s ConfigSource) GetSourceKey() SourceKey {
@@ -339,6 +340,7 @@ type Source struct {
 	CurrentChecksums  map[string][]byte
 	Includes          Set[string]
 	Excludes          Set[string]
+	UseOCIDigests     bool
 }
 
 type SourceAuth struct {
