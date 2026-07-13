@@ -723,6 +723,24 @@ func getModuleType(module model.Module) string {
 	return moduleSource[strings.Index(module.Source, "/")+1:]
 }
 
+func getModuleOutputs(step model.Step, prefix string, bucket model.Bucket) (map[string]model.TFOutput, error) {
+	filePath := fmt.Sprintf("%s-%s/%s", prefix, step.Name, terraformOutput)
+	file, err := bucket.GetFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	outputs := make(map[string]model.TFOutput)
+	if file == nil {
+		slog.Debug(fmt.Sprintf("terraform output file %s not found", filePath))
+		return outputs, nil
+	}
+	err = json.Unmarshal(file, &outputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %s", filePath, err)
+	}
+	return outputs, nil
+}
+
 func replaceConfigValues(ssm model.SSM, prefix string, config model.Config) (model.Config, error) {
 	if ssm == nil {
 		return config, nil

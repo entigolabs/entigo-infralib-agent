@@ -17,12 +17,31 @@ import (
 //go:embed app.yaml
 var appYaml []byte
 
+// ociChartLineRegex matches the git-style source locator line
+// (path: "modules/k8s/{{moduleSource}}") so it can be swapped for an OCI Helm
+// chart reference. It keys on the yet-unreplaced {{moduleSource}} token, which
+// survives the YAML round-trip in mergeAppFiles regardless of quote style.
+var ociChartLineRegex = regexp.MustCompile(`(?m)^(\s*)path:.*\{\{moduleSource\}\}.*$`)
+
 var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 var newPlanRegex = regexp.MustCompile(`ArgoCD Applications: (?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
 
-func GetApplicationFile(storage model.Storage, module model.Module, source, version string, values []byte, provider model.ProviderType) ([]byte, error) {
+type ArgoCD struct {
+	provider model.ProviderType
+}
+
+func NewArgoCD(providerType model.ProviderType) ArgoCD {
+	return ArgoCD{
+		provider: providerType,
+	}
+}
+
+// release is the version used to fetch the module's argo-apps.yaml from storage;
+// ociVersion is the reference written as targetRevision (a digest in digest mode,
+// else the tag). They differ only for OCI sources in digest mode.
+func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, source, release, ociVersion string, values []byte) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
-	moduleFile, err := getModuleApplicationFile(storage, version, module.Source)
+	moduleFile, err := getModuleApplicationFile(storage, release, module.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +49,7 @@ func GetApplicationFile(storage model.Storage, module model.Module, source, vers
 	if err != nil {
 		return nil, err
 	}
-	return replacePlaceholders(bytes, module, source, version, values, provider), nil
+	return a.replacePlaceholders(bytes, module, source, ociVersion, values), nil
 }
 
 func getBaseApplicationFile() []byte {
@@ -39,10 +58,10 @@ func getBaseApplicationFile() []byte {
 	return contentCopy
 }
 
-func replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte, provider model.ProviderType) []byte {
+func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte) []byte {
 	file := string(bytes)
 	var cloudProvider string
-	if provider == model.GCLOUD {
+	if a.provider == model.GCLOUD {
 		cloudProvider = "google"
 	} else {
 		cloudProvider = "aws"
@@ -50,11 +69,15 @@ func replacePlaceholders(bytes []byte, module model.Module, source, version stri
 	url := source
 	if util.IsLocalSource(source) {
 		url = "file:///tmp" + source
+	} else if util.IsOCISource(source) {
+		url = util.TrimOCIScheme(source) + "/k8s"
+		version = util.NormalizeOCIVersion(version)
+		file = ociChartLineRegex.ReplaceAllString(file, "${1}chart: '{{moduleSource}}'")
 	} else if !strings.HasSuffix(url, ".git") && !util.IsAzureDevOps(source) {
 		url += ".git"
 	}
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{moduleVersion}}", version,
-		"{{moduleSource}}", module.Source, "{{moduleValues}}", getValuesString(file, bytes, values),
+		"{{moduleSource}}", module.Source, "{{moduleValues}}", getValuesString(file, []byte(file), values),
 		"{{cloudProvider}}", cloudProvider, "{{moduleSourceURL}}", url)
 	return []byte(replacer.Replace(file))
 }
@@ -81,8 +104,7 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 func getModuleApplicationFile(storage model.Storage, release, moduleSource string) (map[string]interface{}, error) {
 	bytes, err := storage.GetFile(fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
-		var fileError model.NotFoundError
-		if errors.As(err, &fileError) {
+		if _, ok := errors.AsType[model.NotFoundError](err); ok {
 			return nil, nil
 		}
 		return nil, err

@@ -35,7 +35,7 @@ var planRegex = regexp.MustCompile(`Plan: (?:(?P<import>\d+) to import, )?(?P<ad
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[model.SourceKey]string) ([]byte, map[model.SourceKey]model.Set[string], error)
-	AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion) error
+	AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion, sourceURL, ociVersion string) error
 }
 
 type terraform struct {
@@ -423,27 +423,42 @@ func addProviderInputs(providerInputs map[string]interface{}, providerBlock *hcl
 	}
 }
 
-func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion) error {
+// sourceURL is the module source, possibly rewritten to a proxy registry. It
+// only feeds the source attribute; moduleVersion.Source stays the original key
+// so addOutputs can still resolve the source from t.sources. ociVersion is the
+// reference embedded in an OCI source (a digest in digest mode, else the tag);
+// moduleVersion.Version stays the release used to fetch outputs.tf from storage.
+func (t *terraform) AddModule(prefix string, body *hclwrite.Body, step model.Step, module model.Module, moduleVersion model.ModuleVersion, sourceURL, ociVersion string) error {
 	newModule := body.AppendNewBlock("module", []string{module.Name})
 	moduleBody := newModule.Body()
 	if util.IsClientModule(module) {
 		moduleBody.SetAttributeValue("source",
 			cty.StringVal(fmt.Sprintf("%s?ref=%s", module.Source, moduleVersion.Version)))
-	} else if util.IsLocalSource(moduleVersion.Source.URL) {
+	} else if util.IsLocalSource(sourceURL) {
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("%s/modules/%s", moduleVersion.Source.URL, module.Source)))
-	} else if util.IsAzureDevOps(moduleVersion.Source.URL) {
+			cty.StringVal(fmt.Sprintf("%s/modules/%s", sourceURL, module.Source)))
+	} else if util.IsOCISource(sourceURL) {
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s//modules/%s?ref=%s", moduleVersion.Source.URL, module.Source,
+			cty.StringVal(ociModuleSource(sourceURL, module.Source, ociVersion)))
+	} else if util.IsAzureDevOps(sourceURL) {
+		moduleBody.SetAttributeValue("source",
+			cty.StringVal(fmt.Sprintf("git::%s//modules/%s?ref=%s", sourceURL, module.Source,
 				moduleVersion.Version)))
 	} else {
 		moduleBody.SetAttributeValue("source",
-			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", moduleVersion.Source.URL, module.Source,
+			cty.StringVal(fmt.Sprintf("git::%s.git//modules/%s?ref=%s", sourceURL, module.Source,
 				moduleVersion.Version)))
 	}
 	moduleBody.SetAttributeValue("prefix", cty.StringVal(fmt.Sprintf("%s-%s-%s", prefix, step.Name, module.Name)))
 	addInputs(module.Inputs, moduleBody)
 	return t.addOutputs(body, step.Type, module, moduleVersion.Version, moduleVersion.Source)
+}
+
+func ociModuleSource(sourceURL, moduleSource, version string) string {
+	if util.IsOCIDigest(version) {
+		return fmt.Sprintf("%s/%s?digest=%s", sourceURL, moduleSource, version)
+	}
+	return fmt.Sprintf("%s/%s?tag=%s", sourceURL, moduleSource, util.NormalizeOCIVersion(version))
 }
 
 func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {

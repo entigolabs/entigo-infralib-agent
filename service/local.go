@@ -65,7 +65,7 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 		bucket:         resources.GetBucketName(),
 		pipeline:       pipeline,
 		manager:        manager,
-		enableOpenTofu: config.EnableOpenTofu,
+		enableOpenTofu: config.IsOpenTofuEnabled(),
 		wrapper:        getWrapperConfig(config.Notifications),
 		campaignId:     campaignId,
 	}

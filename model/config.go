@@ -16,7 +16,8 @@ type Config struct {
 	AgentVersion     string               `yaml:"agent_version,omitempty"`
 	BaseImageSource  string               `yaml:"base_image_source,omitempty"`
 	BaseImageVersion string               `yaml:"base_image_version,omitempty"`
-	EnableOpenTofu   bool                 `yaml:"enable_opentofu,omitempty"`
+	EnableOpenTofu   *bool                `yaml:"enable_opentofu,omitempty"`
+	UseOCIProxy      bool                 `yaml:"use_oci_proxy,omitempty"`
 	Destinations     []ConfigDestination  `yaml:"destinations,omitempty"`
 	Notifications    []ConfigNotification `yaml:"notifications,omitempty"`
 	Schedule         Schedule             `yaml:"schedule,omitempty"`
@@ -27,17 +28,24 @@ type Config struct {
 
 const TofuTfTool = "tofu"
 
+// IsOpenTofuEnabled defaults to true when unset (nil).
+func (c Config) IsOpenTofuEnabled() bool {
+	return c.EnableOpenTofu == nil || *c.EnableOpenTofu
+}
+
 type ConfigSource struct {
-	URL          string   `yaml:"url"`
-	Version      string   `yaml:"version,omitempty"`
-	ForceVersion bool     `yaml:"force_version,omitempty"`
-	Include      []string `yaml:"include,omitempty"`
-	Exclude      []string `yaml:"exclude,omitempty"`
-	Username     string   `yaml:"username,omitempty"`
-	Password     string   `yaml:"password,omitempty"`
-	Insecure     bool     `yaml:"insecure,omitempty"`
-	RepoPath     string   `yaml:"repo_path,omitempty"`
-	CAFile       string   `yaml:"ca_file,omitempty"`
+	URL             string   `yaml:"url"`
+	Version         string   `yaml:"version,omitempty"`
+	ForceVersion    bool     `yaml:"force_version,omitempty"`
+	Include         []string `yaml:"include,omitempty"`
+	Exclude         []string `yaml:"exclude,omitempty"`
+	Username        string   `yaml:"username,omitempty"`
+	Password        string   `yaml:"password,omitempty"`
+	Insecure        bool     `yaml:"insecure,omitempty"`
+	RepoPath        string   `yaml:"repo_path,omitempty"`
+	CAFile          string   `yaml:"ca_file,omitempty"`
+	UseOCIDigests   bool     `yaml:"use_oci_digests,omitempty"`
+	VerifySignature bool     `yaml:"verify_signature,omitempty"`
 }
 
 func (s ConfigSource) GetSourceKey() SourceKey {
@@ -316,6 +324,14 @@ func (s SourceKey) IsEmpty() bool {
 	return s.URL == "" && s.ForcedVersion == ""
 }
 
+type SourceType string
+
+const (
+	SourceTypeLocal SourceType = "local"
+	SourceTypeGit   SourceType = "git"
+	SourceTypeOCI   SourceType = "oci"
+)
+
 type Source struct {
 	URL               string
 	Version           *version.Version
@@ -330,6 +346,8 @@ type Source struct {
 	CurrentChecksums  map[string][]byte
 	Includes          Set[string]
 	Excludes          Set[string]
+	UseOCIDigests     bool
+	VerifySignature   bool
 }
 
 type SourceAuth struct {
@@ -342,6 +360,16 @@ type Storage interface {
 	FileExists(path, release string) bool
 	PathExists(path, release string) (bool, error)
 	CalculateChecksums(release string) (map[string][]byte, error)
+}
+
+// SourceRepository is a Storage backed by a versioned remote (git tags or OCI
+// index tags) that can enumerate and resolve releases. Local sources implement
+// only Storage.
+type SourceRepository interface {
+	Storage
+	GetLatestReleaseTag() (*version.Version, error)
+	GetRelease(release string) (*version.Version, error)
+	GetReleases(oldestRelease, newestRelease *version.Version) ([]*version.Version, error)
 }
 
 type ModuleVersion struct {

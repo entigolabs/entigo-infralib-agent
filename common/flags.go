@@ -29,6 +29,7 @@ type Flags struct {
 	Params                  Params
 	Migrate                 Migrate
 	Wrapper                 Wrapper
+	OfflineTrustBundle      string
 }
 
 func (f *Flags) Setup(cmd Command) error {

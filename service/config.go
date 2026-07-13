@@ -21,6 +21,7 @@ const (
 	IncludeFormat = "config/%s/include"
 	ConfigFile    = "config.yaml"
 	EntigoSource  = "github.com/entigolabs/entigo-infralib-release"
+	EntigoRepo    = "entigolabs/entigo-infralib-release"
 
 	certsFolder    = "ca-certificates"
 	terraformCache = ".terraform"
@@ -462,17 +463,23 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 }
 
 func ProcessConfig(config *model.Config, providerType model.ProviderType) {
+	if config.EnableOpenTofu == nil {
+		enabled := true
+		config.EnableOpenTofu = &enabled
+	}
 	processSources(config)
 	processSteps(config, providerType)
 }
 
 func processSources(config *model.Config) {
 	for i, source := range config.Sources {
-		if !util.IsLocalSource(source.URL) {
-			continue
+		if source.VerifySignature {
+			source.UseOCIDigests = true
 		}
-		source.ForceVersion = true
-		source.Version = "local"
+		if util.IsLocalSource(source.URL) {
+			source.ForceVersion = true
+			source.Version = "local"
+		}
 		config.Sources[i] = source
 	}
 }
@@ -532,7 +539,7 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		return fmt.Errorf("at least one source must be provided")
 	}
 	for index, source := range config.Sources {
-		if err := validateSource(index, source); err != nil {
+		if err := validateSource(index, source, config.IsOpenTofuEnabled()); err != nil {
 			return err
 		}
 	}
@@ -553,9 +560,12 @@ func ValidateConfig(config model.Config, state *model.State) error {
 	return validateSteps(config, state)
 }
 
-func validateSource(index int, source model.ConfigSource) error {
+func validateSource(index int, source model.ConfigSource, tofuEnabled bool) error {
 	if source.URL == "" {
 		return fmt.Errorf("%d. source URL is not set", index+1)
+	}
+	if util.IsOCISource(source.URL) && !tofuEnabled {
+		return fmt.Errorf("source %s can't use OCI if OpenTofu hasn't been enabled", source.URL)
 	}
 	if source.Include != nil && source.Exclude != nil {
 		return fmt.Errorf("source %s can't have both include and exclude", source.URL)
@@ -920,4 +930,15 @@ func getModule(moduleName string, modules []model.Module) *model.Module {
 		}
 	}
 	return nil
+}
+
+func getModuleByType(config model.Config, moduleType string) (*model.Step, *model.Module) {
+	for _, step := range config.Steps {
+		for _, module := range step.Modules {
+			if getModuleType(module) == moduleType {
+				return &step, &module
+			}
+		}
+	}
+	return nil, nil
 }
