@@ -1685,14 +1685,16 @@ func ociHost(ref string) string {
 	return trimmed
 }
 
-const entigoReleaseRepo = "entigolabs/entigo-infralib-release"
+func isEntigoReleaseSource(url string) bool {
+	if util.GetSourceType(url) == model.SourceTypeOCI {
+		return isVerifiableSource(url)
+	}
+	return strings.Contains(url, EntigoSource)
+}
 
-// isVerifiableSource reports whether the source is an official entigolabs
-// release registry (ecr or ghcr). Signature verification pins the entigolabs
-// cosign identity, so it can't validate any other registry.
 func isVerifiableSource(url string) bool {
 	trimmed := util.TrimOCIScheme(url)
-	return trimmed == "public.ecr.aws/"+entigoReleaseRepo || trimmed == "ghcr.io/"+entigoReleaseRepo
+	return trimmed == "public.ecr.aws/"+EntigoRepo || trimmed == "ghcr.io/"+EntigoRepo
 }
 
 // verifyIndexSignature validates the source's index image signature once per
@@ -1940,7 +1942,7 @@ func (u *updater) getBaseImageVersion(step model.Step, index int) string {
 				continue
 			}
 			source := u.getModuleSource(module.Source)
-			if !strings.Contains(source.URL, EntigoSource) {
+			if !isEntigoReleaseSource(source.URL) {
 				continue
 			}
 			if source.ForcedVersion != "" {

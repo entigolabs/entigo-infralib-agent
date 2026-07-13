@@ -21,6 +21,7 @@ const (
 	IncludeFormat = "config/%s/include"
 	ConfigFile    = "config.yaml"
 	EntigoSource  = "github.com/entigolabs/entigo-infralib-release"
+	EntigoRepo    = "entigolabs/entigo-infralib-release"
 
 	certsFolder    = "ca-certificates"
 	terraformCache = ".terraform"
