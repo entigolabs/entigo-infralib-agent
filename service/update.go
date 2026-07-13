@@ -1685,6 +1685,16 @@ func ociHost(ref string) string {
 	return trimmed
 }
 
+// moduleSourceChanged reports whether a module's source moved in a way that
+// should reset its applied version. Switching between infralib release sources
+// (git <-> oci, or between them) preserves the version instead.
+func moduleSourceChanged(previous, current string) bool {
+	if previous == current {
+		return false
+	}
+	return !(isEntigoReleaseSource(previous) && isEntigoReleaseSource(current))
+}
+
 func isEntigoReleaseSource(url string) bool {
 	if util.GetSourceType(url) == model.SourceTypeOCI {
 		return isVerifiableSource(url)
@@ -1850,8 +1860,9 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		return getFormattedVersion(moduleSemver), false, nil
 	}
 	releaseTag := moduleSource.Releases[index]
-	if moduleState.AppliedVersion == nil || moduleState.Source != moduleSource.URL {
-		moduleState.Source = moduleSource.URL
+	sourceChanged := moduleSourceChanged(moduleState.Source, moduleSource.URL)
+	moduleState.Source = moduleSource.URL
+	if moduleState.AppliedVersion == nil || sourceChanged {
 		moduleState.AppliedVersion = nil
 		if moduleSemver.GreaterThan(releaseTag) {
 			moduleState.Version = getFormattedVersion(releaseTag)
