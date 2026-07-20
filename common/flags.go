@@ -10,6 +10,12 @@ const (
 	GCloudProjectIdEnv = "PROJECT_ID"
 	GCloudLocationEnv  = "LOCATION"
 	GCloudZoneEnv      = "ZONE"
+
+	// OracleRegionEnv is OCI_REGION (not ORACLE_REGION): the OCI SDK and the oci
+	// Terraform provider read OCI_REGION natively, so a single variable serves
+	// the --oracle-region flag and both of those.
+	OracleRegionEnv        = "OCI_REGION"
+	OracleCompartmentIdEnv = "ORACLE_COMPARTMENT_ID"
 )
 
 type Flags struct {
@@ -24,6 +30,7 @@ type Flags struct {
 	Pipeline                Pipeline
 	GCloud                  GCloud
 	AWS                     AWS
+	Oracle                  Oracle
 	ServiceAccount          ServiceAccount
 	Delete                  DeleteFlags
 	Params                  Params
@@ -45,6 +52,15 @@ type GCloud struct {
 
 type AWS struct {
 	RoleArn string
+}
+
+// Oracle holds OCI (Oracle Cloud) resource placement. CompartmentId selects the
+// Oracle provider when set. Credentials are resolved ambiently by the SDK
+// (~/.oci/config or OCI_CONFIG_FILE / config env vars), or via resource principal
+// in-container — see oracle.newConfigProvider.
+type Oracle struct {
+	Region        string
+	CompartmentId string
 }
 
 type ServiceAccount struct {

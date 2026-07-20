@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -145,23 +144,38 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("failed to create stdout pipe: %v", err)
 	}
-	cmd.Stderr = log.Writer()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return -1, fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("failed to start %s: %v", w.entrypoint, err)
 	}
 
+	sink := newOCILogSink()
+
+	// Both streams are forwarded to the portal and OCI Logging so neither loses
+	// output: unlike CloudWatch/Cloud Logging, which capture a container's stdout
+	// AND stderr natively, OCI has no such capture, so the wrapper is the only way
+	// stderr (terraform detail, errors) reaches the custom log. Each is echoed to
+	// the matching local stream so the OCI console's native view is unchanged.
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		w.streamStdout(stdout)
+		w.streamPipe(stdout, w.stdout, sink)
+	}()
+	go func() {
+		defer wg.Done()
+		w.streamPipe(stderr, os.Stderr, sink)
 	}()
 
-	// Drain the pipe fully before Wait: cmd.Wait closes the stdout pipe on
-	// process exit, so calling it while the scanner is still reading races and
-	// fails the scanner with "file already closed", truncating the output.
+	// Drain both pipes fully before Wait: cmd.Wait closes them on process exit,
+	// so calling it while a scanner is still reading races and fails the scanner
+	// with "file already closed", truncating the output.
 	wg.Wait()
+	sink.close()
 	waitErr := cmd.Wait()
 
 	exitCode := 0
@@ -175,20 +189,21 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 	return exitCode, waitErr
 }
 
-func (w *Wrapper) streamStdout(r io.Reader) {
+func (w *Wrapper) streamPipe(r io.Reader, echo io.Writer, sink *ociLogSink) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		_, _ = fmt.Fprintln(w.stdout, line)
+		_, _ = fmt.Fprintln(echo, line)
 		if w.client != nil {
 			if err := w.client.SendLog(line); err != nil {
 				slog.Warn("wrapper backend SendLog failed", "err", err)
 			}
 		}
+		sink.write(line)
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Error("wrapper stdout scanner failed", "err", err)
+		slog.Error("wrapper output scanner failed", "err", err)
 	}
 }
 
@@ -211,6 +226,11 @@ func (w *Wrapper) sendPlan() {
 func (w *Wrapper) getPlanPath() string {
 	if w.planPath != "" {
 		return w.planPath
+	}
+	// Oracle must be checked before AWS: the OCI s3-compatible backend needs
+	// AWS_REGION set, which would otherwise match the AWS branch below.
+	if os.Getenv(model.OracleRegion) != "" {
+		return "/tmp/project"
 	}
 	if os.Getenv(model.GoogleRegion) != "" {
 		return "/project"

@@ -66,7 +66,29 @@ func getProviderFlags() []cli.Flag {
 		&zoneFlag,
 		&gcloudCredentialsJsonFlag,
 		&awsRoleArnFlag,
+		&oracleRegionFlag,
+		&oracleCompartmentIdFlag,
 	}
+}
+
+var oracleRegionFlag = cli.StringFlag{
+	Name:        "oracle-region",
+	Aliases:     []string{"or"},
+	Sources:     cli.EnvVars(common.OracleRegionEnv),
+	Value:       "",
+	Usage:       "oracle cloud region used when creating resources",
+	Destination: &flags.Oracle.Region,
+	Required:    false,
+}
+
+var oracleCompartmentIdFlag = cli.StringFlag{
+	Name:        "oracle-compartment-id",
+	Aliases:     []string{"oci-comp"},
+	Sources:     cli.EnvVars(common.OracleCompartmentIdEnv),
+	Value:       "",
+	Usage:       "oracle cloud compartment ocid where resources are created; selects the oracle provider when set",
+	Destination: &flags.Oracle.CompartmentId,
+	Required:    false,
 }
 
 var offlineTrustBundleFlag = cli.StringFlag{

@@ -115,7 +115,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags.GCloud, manager, config, campaignId.String()),
+		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags, manager, config, campaignId.String()),
 		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -448,9 +448,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
+func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, flags *common.Flags, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(ctx, resources, pipeline, gcloudFlags, manager, config, campaignId)
+		return NewLocalPipeline(ctx, resources, pipeline, flags, manager, config, campaignId)
 	}
 	return nil
 }

@@ -10,10 +10,14 @@ const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const ProjectImageGCloud = "docker.io/entigolabs/entigo-infralib-google"
+const ProjectImageOracle = "docker.io/entigolabs/entigo-infralib-oracle"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 
 // const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
 const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent"
+
+// AgentImageOracle is provisional; final home is OCIR once the oracle base image build lands.
+const AgentImageOracle = "docker.io/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
@@ -22,12 +26,37 @@ type ProviderType string
 const (
 	AWS    ProviderType = "AWS"
 	GCLOUD ProviderType = "GCLOUD"
+	ORACLE ProviderType = "ORACLE"
 )
 
 const (
 	AWSRegion    = "AWS_REGION"
 	GoogleRegion = "GOOGLE_REGION"
+	// OracleRegion uses the OCI_REGION env name (not ORACLE_REGION) so one
+	// variable serves the agent, the OCI SDK, and the oci Terraform provider —
+	// all of which read OCI_REGION natively. The identifier keeps the Oracle
+	// prefix to match the rest of the provider; only the value is OCI-named.
+	OracleRegion = "OCI_REGION"
 )
+
+// OracleLogOCID names the OCI custom Log the wrapper pushes container stdout to
+// via the loggingingestion API. Set only for Oracle cloud executions; absent
+// (so the sink stays off) for local runs and the AWS/GCloud providers.
+const OracleLogOCID = "LOG_OCID"
+
+// OracleRunContextFormat is the config-bucket object key (prefixStep, command)
+// carrying the campaign correlation for one Oracle container execution. OCI
+// Container Instances have immutable env and no per-run overrides, and the env
+// is part of the instance-reuse spec hash, so volatile per-execution values
+// travel out-of-band: the agent writes this object before each launch and the
+// wrapper reads AND deletes it at startup — a manual console Start finds
+// nothing and runs transparently instead of reporting under a stale campaign.
+const OracleRunContextFormat = "runs/%s-%s"
+
+type OracleRunContext struct {
+	CampaignId    string `json:"campaignId"`
+	PipelineIndex int    `json:"pipelineIndex"`
+}
 
 const (
 	ResourceTagKey   = "created-by"
@@ -134,6 +163,14 @@ type SSM interface {
 
 type Destination interface {
 	UpdateFiles(branch, folder string, files map[string]File) error
+}
+
+// BackendEnvProvider is optionally implemented by Resources whose terraform
+// backend needs extra environment variables at execution time — e.g. Oracle's
+// S3-compatible Object Storage endpoint and region for the s3 backend. Providers
+// that need nothing extra simply don't implement it.
+type BackendEnvProvider interface {
+	GetBackendEnv() map[string]string
 }
 
 type CloudResources struct {

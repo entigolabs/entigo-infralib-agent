@@ -1,7 +1,7 @@
 # Entigo Infralib Agent
 
-Entigo infralib agent prepares an AWS Account or Google Cloud Project for [Entigo Infralib modules](https://github.com/entigolabs/entigo-infralib).
-Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
+Entigo infralib agent prepares an AWS Account, Google Cloud Project, or Oracle Cloud compartment for [Entigo Infralib modules](https://github.com/entigolabs/entigo-infralib).
+Creates the required resources for object storage, state locking, logging, job execution, pipelines, and IAM, using each provider's native services (AWS: S3, DynamoDB, CloudWatch, CodeBuild, CodePipeline; Google Cloud: Cloud Storage, Cloud Logging, Cloud Run Jobs; Oracle Cloud: Object Storage, Logging, Container Instances).
 Executes pipelines which apply the configured modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 
 * [Requirements](#requirements)
@@ -11,6 +11,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Building a local Docker image](#building-a-local-docker-image)
     * [Running the Docker image](#running-the-docker-image)
     * [Using with AWS Profile](#using-with-aws-profile)
+    * [Using with Oracle Cloud](#using-with-oracle-cloud)
 * [Commands](#commands)
     * [Bootstrap](#bootstrap)
     * [Run](#run)
@@ -47,6 +48,10 @@ AWS Service Account with administrator access, credentials provided by AWS or en
 or
 
 Google Cloud Service Account with owner access, credentials provided by GCP or gcloud cli tool.
+
+or
+
+Oracle Cloud user with compartment manage access. Credentials are resolved ambiently like the `oci` CLI: a resource principal when running in-container (Container Instances), otherwise the OCI configuration (`~/.oci/config`, `OCI_CONFIG_FILE`, or config env vars). The first local run must use an API-key or session-token profile to seed the Object Storage credentials used by the terraform state backend.
 
 ## Compiling Source
 
@@ -109,13 +114,41 @@ docker run --pull always -it --rm \
     entigolabs/entigo-infralib-agent ei-agent run
 ```
 
+### Using with Oracle Cloud
+
+The agent resolves Oracle credentials the same way as the `oci` CLI. For local use, create an API key config with `oci setup config`, which writes `~/.oci/config` and a private key PEM. Mount `~/.oci` at the same path inside the container and point `OCI_CONFIG_FILE` at it — the agent then uses the config as-is, with no edits.
+
+```shell
+#!/bin/bash
+
+OCI_REGION="eu-frankfurt-1"
+ORACLE_COMPARTMENT_ID="ocid1.compartment.oc1..aaaa..."
+
+docker run --pull always -it --rm \
+    -v "$(pwd)/config":"/etc/ei-agent/config" \
+    -v "$(pwd)/config.yaml":"/etc/ei-agent/config.yaml" \
+    -v "$HOME/.oci:$HOME/.oci:ro" \
+    -e OCI_CONFIG_FILE="$HOME/.oci/config" \
+    -e OCI_REGION="${OCI_REGION}" \
+    -e ORACLE_COMPARTMENT_ID="${ORACLE_COMPARTMENT_ID}" \
+    -e ORACLE_REGION="${OCI_REGION}" \
+    -e CONFIG=/etc/ei-agent/config.yaml \
+    entigolabs/entigo-infralib-agent ei-agent run
+```
+
+`ORACLE_COMPARTMENT_ID` selects the Oracle provider and `OCI_REGION` sets the region (equivalent to the `--oracle-compartment-id` and `--oracle-region` flags). Credentials come from the `DEFAULT` profile of the mounted `~/.oci/config`.
+
+Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is what avoids editing the config: `oci setup config` records an **absolute host path** for `key_file` (e.g. `/Users/you/.oci/oci_api_key.pem`), so the key only resolves inside the container when `~/.oci` is mounted at that same path. If you prefer a fixed `-v "$HOME/.oci:/root/.oci:ro"` mount, edit `key_file` in `~/.oci/config` to the in-container path `/root/.oci/oci_api_key.pem` instead.
+
 ## Commands
 
-For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding AWS resources. Bootstrap adds that value as an environment variable for the agent pipeline.
+For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding cloud resources. Bootstrap adds that value as an environment variable for the agent pipeline.
+
+The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, and Oracle Cloud when `--oracle-compartment-id` is set. Oracle also requires `--oracle-region`.
 
 ### bootstrap
 
-Creates the required cloud resources and pipelines for executing the agent run and update commands. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started. For AWS, CodePipeline is used, for GCloud, Cloud Run Jobs are used.
+Creates the required cloud resources and pipelines for executing the agent run and update commands. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started. For AWS, CodePipeline is used; for GCloud, Cloud Run Jobs; for Oracle, Container Instances.
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
@@ -125,6 +158,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * start - start pipeline execution after creating (default: **true**) [$START]
 
@@ -147,6 +182,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
@@ -174,6 +211,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
@@ -200,6 +239,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * steps - **optional** comma separated list of steps to destroy [$STEPS]
@@ -225,6 +266,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]
@@ -249,6 +292,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
 * trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. [$TRUST_ROLE]
@@ -271,6 +316,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * force - overwrite existing local files, default **false**. **Warning!** Force deletes the `/config` subfolder before writing. [$FORCE]
 
 Example
@@ -311,6 +358,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
 * key - key for the custom parameter [$KEY]
 * value - value for the custom parameter [$VALUE]
 * overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]
@@ -427,7 +476,7 @@ Complex values need to be as multiline strings with | symbol.
 
 Source version is overwritten by module version. Default version is **stable** which means latest release of the source repository.
 
-* prefix - prefix used for AWS/GCloud resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
+* prefix - prefix used for AWS/GCloud/Oracle resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
 * sources - list of source repositories for Entigo Infralib modules
   * url - url of the source repository or path to the local directory. Path must start with `./` or `../` Path will set force_version to true and use `local` as the version. Path only works with the local pipeline execution type.
   * version - highest version of Entigo Infralib modules to use
@@ -489,7 +538,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * vpc - vpc values to add
     * attach - attach vpc to code build/cloud run job, if other fields are empty then uses default vpc based on typed output of a vpc module, default **nil**. When nil, the value will be set based on the step type, for `argocd-apps` steps the value will be set to `true`
     * id - vpc id for code build/cloud run job, gcloud default `{{ .toutput.vpc.vpc_name }}`, aws default `{{ .toutput.vpc.vpc_id }}`
-    * subnet_ids - vpc subnet ids for code build/cloud run job, gcloud default `[{{ .toutput.vpc.private_subnets[0] }}]`, aws default `[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]`
+    * subnet_ids - vpc subnet ids for code build/cloud run job/container instance, gcloud default `[{{ .toutput.vpc.private_subnets[0] }}]`, aws default `[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]`, oracle no default (a step that attaches its own vpc must set this, otherwise the container runs in the agent's bootstrap subnet)
     * security_group_ids - vpc security group ids for code build/cloud run job, gcloud no default, aws default `[{{ .toutput.vpc.pipeline_security_group }}]`
   * kubernetes_cluster_name - kubernetes cluster name for argocd-apps steps, gcloud default `{{ .toutput.gke.cluster_name }}`, aws default `{{ .toutput.eks.cluster_name }}`
   * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
@@ -555,7 +604,7 @@ Step, module and input field values can be overwritten by using replacement tags
 |                 | source                      | `.module.source`                | Source of the module itself (for module inputs and input files only).                     |
 | `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn` | Optional value from Terraform output from specific step/module. Defaults to empty string. |
 | `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn` | Value from Terraform output from specific step/module.                                    |
-| `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter or GCloud SM.                                                |
+| `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter, GCloud SM, or Oracle Object Storage config bucket.          |
 | `step`          | name                        | `.step.name`                    | Name of the step containing the module.                                                   |
 | `tmodule`       | type                        | `.tmodule.eks`                  | Name of the module with a specified type.                                                 |
 | `toptmodule`    | type                        | `.toptmodule.eks`               | Optional name of the module with a specified type.                                        |
@@ -563,7 +612,7 @@ Step, module and input field values can be overwritten by using replacement tags
 | `toutput`       | type.key                    | `.toutput.eks.cluster_arn`      | Value from Terraform output based on module type.                                         |
 | `tsmodule`      | type                        | `.tsmodule.eks`                 | Name of the typed module in the current step.                                             |
 
-For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store or Google Cloud Secret Manager.
+For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or the Oracle Cloud Object Storage config bucket.
 
 For example, `{{ .output.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
 
@@ -665,6 +714,10 @@ Scheduler doesn't support all Cloud locations. Agent will try to use the configu
 | us            | us-central1             |
 
 Supported locations can change in the future. If configured location starts supporting scheduler then agent will create a new schedule in that location. Older schedule must be manually removed, otherwise both schedules will start Job executions.
+
+#### Oracle
+
+Scheduling is not yet supported for Oracle Cloud. A configured `update_cron` is ignored with a warning; run the agent's update command on an external schedule (e.g. a cron job or CI pipeline) instead.
 
 ## Migration Helper
 

@@ -20,8 +20,8 @@ type BackendClient interface {
 	// Connect opens the stream, sends the handshake, and starts the supervisor
 	// that owns reconnect logic. Must be called exactly once before SendLog.
 	Connect(h HandshakeData) error
-	// SendLog forwards a single raw stdout line. Safe to call concurrently
-	// from multiple goroutines; non-blocking (drops on buffer overflow).
+	// SendLog forwards a single raw output line (stdout or stderr). Safe to call
+	// concurrently from multiple goroutines; non-blocking (drops on buffer overflow).
 	SendLog(line string) error
 	// SendPlan delivers the summary of a successful plan run. One-shot, called
 	// at most once after the entrypoint exits and before Disconnect.

@@ -36,6 +36,7 @@ require (
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/oapi-codegen/runtime v1.4.2
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/oracle/oci-go-sdk/v65 v65.120.0
 	github.com/sigstore/protobuf-specs v0.5.1
 	github.com/sigstore/sigstore-go v1.2.2
 	github.com/slack-go/slack v0.27.0
@@ -128,6 +129,7 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.26.1 // indirect
 	github.com/go-openapi/validate v0.26.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/gofrs/flock v0.10.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/certificate-transparency-go v1.3.3 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -156,6 +158,7 @@ require (
 	github.com/sigstore/timestamp-authority/v2 v2.1.2 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
+	github.com/sony/gobreaker/v2 v2.4.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
 	github.com/theupdateframework/go-tuf/v2 v2.4.2 // indirect
 	github.com/transparency-dev/formats v0.1.1 // indirect

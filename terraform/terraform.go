@@ -98,6 +98,10 @@ func (t *terraform) modifyBackendType(body *hclwrite.Body) {
 		backendBlock.SetLabels([]string{"s3"})
 	case model.GCLOUD:
 		backendBlock.SetLabels([]string{"gcs"})
+	case model.ORACLE:
+		// OCI Object Storage exposes an S3-compatible API; the endpoint, region
+		// and credentials are supplied via backend.conf + env (see oracle.Resources).
+		backendBlock.SetLabels([]string{"s3"})
 	}
 }
 

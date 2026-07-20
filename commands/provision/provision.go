@@ -21,6 +21,11 @@ func Run(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
+	if config != nil {
+		// Oracle cloud runs deliver the campaign correlation out-of-band (the
+		// container env is immutable and reused across executions).
+		wrapper.ApplyOracleRunContext(ctx, &flags.Wrapper)
+	}
 	wrap, err := wrapper.NewWrapper(ctx, flags.Wrapper, config, os.Environ(), os.Stdout)
 	if err != nil {
 		return fmt.Errorf("failed to initialize wrapper: %w", err)
