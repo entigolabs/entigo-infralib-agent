@@ -43,9 +43,23 @@ const (
 	// only Start an INACTIVE instance as-is (env, image and VNIC are immutable —
 	// UpdateContainerInstance/UpdateContainer touch nothing but display name and
 	// tags), so an instance is reused only when the desired spec hashes to the
-	// same value; otherwise it is deleted and recreated.
+	// same value; otherwise it is deleted and recreated. Only consulted when
+	// reuseInstances is on.
 	specHashTag = "entigo-spec-hash"
 )
+
+// reuseInstances toggles the persistent-instance optimisation. When true a
+// step's INACTIVE instance is restarted on the next run (reuseInstance) and
+// left alive between runs; when false every execution creates a fresh instance
+// and deletes it as soon as its container has exited. Fresh-per-run is the
+// default: reusing an INACTIVE instance added noticeable latency (the start
+// work-request round-trip) and the ContainerInstance's INACTIVE transition
+// lagged the container's actual exit, so exit-state capture was slow. The
+// reuse machinery is kept intact behind this flag so we can switch back. See
+// waitForCompletion (polls the Container object, not the ContainerInstance,
+// because the container's lifecycleState/exitCode update the instant the
+// process finishes).
+const reuseInstances = false
 
 // Builder runs infralib steps as OCI Container Instances. Unlike AWS CodeBuild /
 // GCloud Cloud Run Jobs there is no persistent job definition, so
@@ -283,8 +297,10 @@ func (b *Builder) launch(projectName, prefixStep string, command model.ActionCom
 		nsgIds = project.VpcConfig.SecurityGroupIds
 	}
 	hash := specHash(project.Image, subnet, publicIp, nsgIds, env)
-	if instanceId := b.reuseInstance(displayName, hash); instanceId != "" {
-		return instanceId, nil
+	if reuseInstances {
+		if instanceId := b.reuseInstance(displayName, hash); instanceId != "" {
+			return instanceId, nil
+		}
 	}
 	vnic := containerinstances.CreateContainerVnicDetails{
 		SubnetId:           &subnet,
@@ -434,6 +450,7 @@ func (b *Builder) waitForWorkRequest(workRequestId string) error {
 		}
 		switch response.Status {
 		case containerinstances.OperationStatusSucceeded:
+			slog.Debug("Job operation succeeded")
 			return nil
 		case containerinstances.OperationStatusFailed, containerinstances.OperationStatusCanceling,
 			containerinstances.OperationStatusCanceled:
@@ -480,47 +497,124 @@ func (b *Builder) listInstancesNamed(displayName string) ([]containerinstances.C
 	}
 }
 
-// waitForCompletion polls a Container Instance until its container exits and
-// returns the exit code. Logs are NOT read here: RetrieveLogs only works while
-// the container is ACTIVE (it 409s once INACTIVE) and is capped at 256 KB, so
-// stdout is instead pushed to OCI Logging by the in-container wrapper and read
-// back via Logging.StepLogs — mirroring the CloudWatch/Cloud Logging read-back
-// the AWS/GCloud providers use.
+// waitForCompletion waits for a step's container to exit and returns its exit
+// code. It polls the Container object (not the ContainerInstance): the
+// container's lifecycleState flips to INACTIVE and its exitCode is populated the
+// instant the process finishes, whereas the enclosing instance's INACTIVE
+// transition lags behind — polling the container captures the result sooner.
+// Logs are NOT read here: RetrieveLogs only works while the container is ACTIVE
+// (it 409s once INACTIVE) and is capped at 256 KB, so stdout is instead pushed
+// to OCI Logging by the in-container wrapper and read back via Logging.StepLogs.
+// In fresh-per-run mode (reuseInstances off) the instance is deleted as soon as
+// the container terminates and the exit code is captured — nothing reads the
+// instance afterwards. Deletion is skipped when the wait was cut short (ctx
+// cancellation, API error) so a mid-flight apply runs to completion, and in
+// reuse mode the INACTIVE instance is kept for the next run.
 func (b *Builder) waitForCompletion(instanceId string) (int, error) {
+	containerId, err := b.waitForContainerId(instanceId)
+	if err != nil {
+		return 0, err
+	}
+	exitCode, terminated, err := b.pollContainer(containerId)
+	if terminated && !reuseInstances {
+		b.deleteInstanceLogged(instanceId)
+	}
+	return exitCode, err
+}
+
+// waitForContainerId resolves the id of the instance's single container,
+// polling briefly in case the instance is still CREATING and hasn't exposed it.
+func (b *Builder) waitForContainerId(instanceId string) (string, error) {
 	for {
 		instance, err := b.client.GetContainerInstance(b.ctx, containerinstances.GetContainerInstanceRequest{
 			ContainerInstanceId: &instanceId,
 		})
 		if err != nil {
-			return 0, err
+			return "", err
+		}
+		if len(instance.Containers) > 0 && instance.Containers[0].ContainerId != nil {
+			return *instance.Containers[0].ContainerId, nil
 		}
 		switch instance.LifecycleState {
-		case containerinstances.ContainerInstanceLifecycleStateInactive:
-			return b.exitCode(instance.Containers)
-		case containerinstances.ContainerInstanceLifecycleStateFailed:
-			exitCode, _ := b.exitCode(instance.Containers)
-			return exitCode, fmt.Errorf("container instance %s failed", instanceId)
+		case containerinstances.ContainerInstanceLifecycleStateFailed,
+			containerinstances.ContainerInstanceLifecycleStateDeleting,
+			containerinstances.ContainerInstanceLifecycleStateDeleted:
+			return "", fmt.Errorf("container instance %s has no container (state %s)", instanceId, instance.LifecycleState)
 		}
 		select {
 		case <-b.ctx.Done():
-			return 0, b.ctx.Err()
+			return "", b.ctx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
 }
 
-func (b *Builder) exitCode(containers []containerinstances.ContainerInstanceContainer) (int, error) {
-	if len(containers) == 0 {
-		return 0, fmt.Errorf("container instance has no containers")
+// pollContainer polls a container until it finishes, returning its exit code and
+// whether it reached a terminal state (false only when the wait was interrupted
+// by ctx cancellation).
+//
+// exitCode is NOT itself a completion signal: OCI reports exitCode=0 as a
+// placeholder from the moment the container turns ACTIVE — while the process is
+// still running (verified live) — so returning on a non-nil exitCode deletes the
+// container ~instantly, before it does any work (no logs ever reach OCI Logging).
+//
+// Completion keys on lifecycleState. The observed lifecycle of a run is
+// CREATING → ACTIVE → UPDATING → INACTIVE, and the exit code is already correct
+// at UPDATING, so returning there shaves the UPDATING→INACTIVE teardown wait
+// (~10-20s). But UPDATING is only trusted once ACTIVE has been seen: a reused
+// instance (StartContainerInstance) passes through UPDATING while STARTING,
+// before ACTIVE, where the exit code would be stale. INACTIVE/FAILED remain the
+// terminal fallbacks (e.g. a fast container that never reports an ACTIVE poll).
+// Every state change is logged so the real timeline stays observable.
+func (b *Builder) pollContainer(containerId string) (int, bool, error) {
+	var lastState containerinstances.ContainerLifecycleStateEnum
+	sawActive := false
+	for {
+		container, err := b.client.GetContainer(b.ctx, containerinstances.GetContainerRequest{
+			ContainerId: &containerId,
+		})
+		if err != nil {
+			return 0, false, err
+		}
+		if container.LifecycleState != lastState {
+			slog.Debug(fmt.Sprintf("Container %s state=%s exitCode=%s", containerId, container.LifecycleState, exitCodeString(container.ExitCode)))
+			lastState = container.LifecycleState
+		}
+		switch container.LifecycleState {
+		case containerinstances.ContainerLifecycleStateActive:
+			sawActive = true
+		case containerinstances.ContainerLifecycleStateUpdating:
+			if sawActive {
+				return exitCodeValue(container.ExitCode), true, nil
+			}
+		case containerinstances.ContainerLifecycleStateInactive:
+			return exitCodeValue(container.ExitCode), true, nil
+		case containerinstances.ContainerLifecycleStateFailed:
+			return exitCodeValue(container.ExitCode), true, fmt.Errorf("container %s failed", containerId)
+		case containerinstances.ContainerLifecycleStateDeleting,
+			containerinstances.ContainerLifecycleStateDeleted:
+			return exitCodeValue(container.ExitCode), true, fmt.Errorf("container %s was deleted before it finished", containerId)
+		}
+		select {
+		case <-b.ctx.Done():
+			return 0, false, b.ctx.Err()
+		case <-time.After(pollInterval):
+		}
 	}
-	container, err := b.client.GetContainer(b.ctx, containerinstances.GetContainerRequest{ContainerId: containers[0].ContainerId})
-	if err != nil {
-		return 0, err
+}
+
+func exitCodeValue(code *int) int {
+	if code != nil {
+		return *code
 	}
-	if container.ExitCode != nil {
-		return *container.ExitCode, nil
+	return 0
+}
+
+func exitCodeString(code *int) string {
+	if code != nil {
+		return strconv.Itoa(*code)
 	}
-	return 0, nil
+	return "<nil>"
 }
 
 func (b *Builder) deleteInstance(instanceId string) error {
