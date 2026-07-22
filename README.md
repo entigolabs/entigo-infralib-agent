@@ -1,7 +1,7 @@
 # Entigo Infralib Agent
 
 Entigo infralib agent prepares an AWS Account, Google Cloud Project, or Oracle Cloud compartment for [Entigo Infralib modules](https://github.com/entigolabs/entigo-infralib).
-Creates the required resources for object storage, state locking, logging, job execution, pipelines, and IAM, using each provider's native services (AWS: S3, DynamoDB, CloudWatch, CodeBuild, CodePipeline; Google Cloud: Cloud Storage, Cloud Logging, Cloud Run Jobs; Oracle Cloud: Object Storage, Logging, Container Instances).
+Creates the required resources for object storage, state locking, logging, job execution, pipelines, and IAM, using each provider's native services (AWS: S3, DynamoDB, CloudWatch, CodeBuild, CodePipeline; Google Cloud: Cloud Storage, Cloud Logging, Cloud Run Jobs; Oracle Cloud: Object Storage, Logging, DevOps Build Pipelines).
 Executes pipelines which apply the configured modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
 
 * [Requirements](#requirements)
@@ -51,7 +51,7 @@ Google Cloud Service Account with owner access, credentials provided by GCP or g
 
 or
 
-Oracle Cloud user with compartment manage access. Credentials are resolved ambiently like the `oci` CLI: a resource principal when running in-container (Container Instances), otherwise the OCI configuration (`~/.oci/config`, `OCI_CONFIG_FILE`, or config env vars). The first local run must use an API-key or session-token profile to seed the Object Storage credentials used by the terraform state backend.
+Oracle Cloud user with compartment manage access. Credentials are resolved ambiently like the `oci` CLI: a resource principal when running in-container, otherwise the OCI configuration (`~/.oci/config`, `OCI_CONFIG_FILE`, or config env vars). The first local run must use an API-key or session-token profile: it seeds both the Object Storage credentials used by the terraform state backend and the hosted DevOps build-spec repository (a one-time git push). If that git push fails with a 401 on an identity-domain tenancy, set `ORACLE_GIT_USERNAME` to the correct `<tenancy>/<domain>/<username>` form. Subsequent in-container runs reuse the seeded resources.
 
 ## Compiling Source
 
@@ -122,7 +122,7 @@ The agent resolves Oracle credentials the same way as the `oci` CLI. For local u
 #!/bin/bash
 
 OCI_REGION="eu-frankfurt-1"
-ORACLE_COMPARTMENT_ID="ocid1.compartment.oc1..aaaa..."
+OCI_COMPARTMENT_ID="ocid1.compartment.oc1..aaaa..."
 
 docker run --pull always -it --rm \
     -v "$(pwd)/config":"/etc/ei-agent/config" \
@@ -130,13 +130,12 @@ docker run --pull always -it --rm \
     -v "$HOME/.oci:$HOME/.oci:ro" \
     -e OCI_CONFIG_FILE="$HOME/.oci/config" \
     -e OCI_REGION="${OCI_REGION}" \
-    -e ORACLE_COMPARTMENT_ID="${ORACLE_COMPARTMENT_ID}" \
-    -e ORACLE_REGION="${OCI_REGION}" \
+    -e OCI_COMPARTMENT_ID="${OCI_COMPARTMENT_ID}" \
     -e CONFIG=/etc/ei-agent/config.yaml \
     entigolabs/entigo-infralib-agent ei-agent run
 ```
 
-`ORACLE_COMPARTMENT_ID` selects the Oracle provider and `OCI_REGION` sets the region (equivalent to the `--oracle-compartment-id` and `--oracle-region` flags). Credentials come from the `DEFAULT` profile of the mounted `~/.oci/config`.
+`OCI_COMPARTMENT_ID` selects the Oracle provider and `OCI_REGION` sets the region (equivalent to the `--oci-compartment-id` and `--oci-region` flags). Credentials come from the `DEFAULT` profile of the mounted `~/.oci/config`.
 
 Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is what avoids editing the config: `oci setup config` records an **absolute host path** for `key_file` (e.g. `/Users/you/.oci/oci_api_key.pem`), so the key only resolves inside the container when `~/.oci` is mounted at that same path. If you prefer a fixed `-v "$HOME/.oci:/root/.oci:ro"` mount, edit `key_file` in `~/.oci/config` to the in-container path `/root/.oci/oci_api_key.pem` instead.
 
@@ -144,11 +143,11 @@ Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is w
 
 For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding cloud resources. Bootstrap adds that value as an environment variable for the agent pipeline.
 
-The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, and Oracle Cloud when `--oracle-compartment-id` is set. Oracle also requires `--oracle-region`.
+The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, and Oracle Cloud when `--oci-compartment-id` is set. Oracle also requires `--oci-region`.
 
 ### bootstrap
 
-Creates the required cloud resources and pipelines for executing the agent run and update commands. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started. For AWS, CodePipeline is used; for GCloud, Cloud Run Jobs; for Oracle, Container Instances.
+Creates the required cloud resources and pipelines for executing the agent run and update commands. If the pipeline already exists, the agent image version will be updated if needed and a new execution of the run command will be started. For AWS, CodePipeline is used; for GCloud, Cloud Run Jobs; for Oracle, DevOps build pipelines (one plan/apply pipeline per step) with a DevOps deployment pipeline for manual approval.
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
@@ -158,8 +157,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * start - start pipeline execution after creating (default: **true**) [$START]
 
@@ -182,8 +181,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
@@ -211,8 +210,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
@@ -239,8 +238,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * steps - **optional** comma separated list of steps to destroy [$STEPS]
@@ -266,8 +265,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]
@@ -292,8 +291,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
 * trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. [$TRUST_ROLE]
@@ -316,8 +315,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * force - overwrite existing local files, default **false**. **Warning!** Force deletes the `/config` subfolder before writing. [$FORCE]
 
 Example
@@ -358,8 +357,8 @@ OPTIONS:
 * location - location used when creating gcloud resources [$LOCATION]
 * zone - zone used in gcloud run jobs [$ZONE]
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
-* oracle-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
-* oracle-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$ORACLE_COMPARTMENT_ID]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * key - key for the custom parameter [$KEY]
 * value - value for the custom parameter [$VALUE]
 * overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]

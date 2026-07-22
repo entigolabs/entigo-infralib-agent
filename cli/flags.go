@@ -72,9 +72,9 @@ func getProviderFlags() []cli.Flag {
 }
 
 var oracleRegionFlag = cli.StringFlag{
-	Name:        "oracle-region",
+	Name:        "oci-region",
 	Aliases:     []string{"or"},
-	Sources:     cli.EnvVars(common.OracleRegionEnv),
+	Sources:     cli.EnvVars(model.OracleRegion),
 	Value:       "",
 	Usage:       "oracle cloud region used when creating resources",
 	Destination: &flags.Oracle.Region,
@@ -82,7 +82,7 @@ var oracleRegionFlag = cli.StringFlag{
 }
 
 var oracleCompartmentIdFlag = cli.StringFlag{
-	Name:        "oracle-compartment-id",
+	Name:        "oci-compartment-id",
 	Aliases:     []string{"oci-comp"},
 	Sources:     cli.EnvVars(common.OracleCompartmentIdEnv),
 	Value:       "",

@@ -32,31 +32,8 @@ const (
 const (
 	AWSRegion    = "AWS_REGION"
 	GoogleRegion = "GOOGLE_REGION"
-	// OracleRegion uses the OCI_REGION env name (not ORACLE_REGION) so one
-	// variable serves the agent, the OCI SDK, and the oci Terraform provider —
-	// all of which read OCI_REGION natively. The identifier keeps the Oracle
-	// prefix to match the rest of the provider; only the value is OCI-named.
 	OracleRegion = "OCI_REGION"
 )
-
-// OracleLogOCID names the OCI custom Log the wrapper pushes container stdout to
-// via the loggingingestion API. Set only for Oracle cloud executions; absent
-// (so the sink stays off) for local runs and the AWS/GCloud providers.
-const OracleLogOCID = "LOG_OCID"
-
-// OracleRunContextFormat is the config-bucket object key (prefixStep, command)
-// carrying the campaign correlation for one Oracle container execution. OCI
-// Container Instances have immutable env and no per-run overrides, and the env
-// is part of the instance-reuse spec hash, so volatile per-execution values
-// travel out-of-band: the agent writes this object before each launch and the
-// wrapper reads AND deletes it at startup — a manual console Start finds
-// nothing and runs transparently instead of reporting under a stale campaign.
-const OracleRunContextFormat = "runs/%s-%s"
-
-type OracleRunContext struct {
-	CampaignId    string `json:"campaignId"`
-	PipelineIndex int    `json:"pipelineIndex"`
-}
 
 const (
 	ResourceTagKey   = "created-by"

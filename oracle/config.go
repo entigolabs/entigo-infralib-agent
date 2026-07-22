@@ -9,8 +9,8 @@ import (
 )
 
 // newConfigProvider builds an OCI SDK configuration provider, mirroring how the
-// oci CLI resolves credentials. In-container runs (OCI Container Instances)
-// authenticate via resource principal, signalled by the injected version env var;
+// oci CLI resolves credentials. In-container runs authenticate via resource
+// principal, signalled by the injected version env var;
 // every other run uses the SDK default chain — ~/.oci/config (or the path in
 // OCI_CONFIG_FILE) plus config env vars. Region is applied separately via
 // SetRegion on each client, so a resource-principal run needs no region here.

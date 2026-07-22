@@ -11,11 +11,7 @@ const (
 	GCloudLocationEnv  = "LOCATION"
 	GCloudZoneEnv      = "ZONE"
 
-	// OracleRegionEnv is OCI_REGION (not ORACLE_REGION): the OCI SDK and the oci
-	// Terraform provider read OCI_REGION natively, so a single variable serves
-	// the --oracle-region flag and both of those.
-	OracleRegionEnv        = "OCI_REGION"
-	OracleCompartmentIdEnv = "ORACLE_COMPARTMENT_ID"
+	OracleCompartmentIdEnv = "OCI_COMPARTMENT_ID"
 )
 
 type Flags struct {

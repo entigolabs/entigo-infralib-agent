@@ -22,22 +22,19 @@ const (
 )
 
 // Pipeline orchestrates a step's plan → approve → apply cycle by launching
-// Container Instances through the Builder, mirroring the local pipeline flow.
+// DevOps build runs through the Builder, mirroring the local pipeline flow.
 // Manual approval is a DevOps deployment gate (Gate): when the change set is not
 // auto-approvable the agent blocks until an IAM-authorized user approves or
 // rejects the deployment in the OCI Console; rejection fails the step so
-// dependent steps never run. Instances persist between runs (the Builder
-// restarts them when the spec is unchanged), so plan logs stay reviewable in
-// the console during the approval wait and afterwards.
+// dependent steps never run. Build-run logs stay reviewable in the console
+// during the approval wait and afterwards.
 type Pipeline struct {
-	ctx           context.Context
-	builder       *Builder
-	gate          *Gate
-	logs          *Logging
-	manager       model.NotificationManager
-	cloudPrefix   string
-	campaignId    string
-	pipelineIndex int
+	ctx         context.Context
+	builder     *Builder
+	gate        *Gate
+	logs        *Logging
+	manager     model.NotificationManager
+	cloudPrefix string
 }
 
 func NewPipeline(ctx context.Context, builder *Builder, gate *Gate, logs *Logging, cloudPrefix string, manager model.NotificationManager) *Pipeline {
@@ -51,19 +48,15 @@ func NewPipeline(ctx context.Context, builder *Builder, gate *Gate, logs *Loggin
 	}
 }
 
-// SetCampaignId stores the campaign correlation, which is forwarded to step
-// containers OUT-OF-BAND (Builder.putRunContext → config-bucket object read
-// and deleted by the wrapper), never via env: the campaign id is a fresh UUID
-// per agent process and container env is immutable and part of the reuse spec
-// hash, so a per-run env value would force a recreate on every execution — and
-// OCI offers no per-execution overrides (StartContainerInstance takes only the
-// instance OCID).
+// SetCampaignId / SetPipelineIndex forward the campaign correlation to the
+// Builder, which bakes it into each step's per-run env file (CAMPAIGN_ID /
+// PIPELINE_INDEX) for the wrapper to read directly — same as AWS/GCloud.
 func (p *Pipeline) SetCampaignId(campaignId string) {
-	p.campaignId = campaignId
+	p.builder.SetCampaignId(campaignId)
 }
 
 func (p *Pipeline) SetPipelineIndex(index int) {
-	p.pipelineIndex = index
+	p.builder.SetPipelineIndex(index)
 }
 
 func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, _ model.Bucket, _ map[string]model.SourceAuth) (*string, error) {
@@ -78,24 +71,11 @@ func (p *Pipeline) UpdatePipeline(_, _ string, _ model.Step, _ string, _ map[str
 
 func (p *Pipeline) StartPipelineExecution(pipelineName, _ string, step model.Step, _ string) (*string, error) {
 	planCommand, _ := model.GetCommands(step.Type)
-	if err := p.builder.putRunContext(pipelineName, planCommand, p.campaignId, p.pipelineIndex); err != nil {
-		return nil, err
-	}
-	instanceId, err := p.builder.launch(pipelineName, pipelineName, planCommand, step)
+	buildRunId, err := p.builder.launch(pipelineName, pipelineName, planCommand, step)
 	if err != nil {
 		return nil, err
 	}
-	p.logStepHint(pipelineName, planCommand)
-	return &instanceId, nil
-}
-
-// logStepHint prints an OCI Log Search query scoped to this one execution so a
-// gitops engineer can jump straight to its logs in the shared log group.
-func (p *Pipeline) logStepHint(prefixStep string, command model.ActionCommand) {
-	if p.logs == nil {
-		return
-	}
-	log.Printf("Logs for %s %s — OCI Log Search: %s\n", prefixStep, command, p.logs.StepLogHint(prefixStep, command))
+	return &buildRunId, nil
 }
 
 func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
@@ -110,8 +90,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, execu
 	if exitCode != 0 {
 		return fmt.Errorf("plan failed for %s (exit code %d)", pipelineName, exitCode)
 	}
-	planCommand, _ := model.GetCommands(step.Type)
-	changes, err := p.planChanges(pipelineName, step.Type, planCommand, since)
+	changes, err := p.planChanges(pipelineName, step.Type, *executionId, since)
 	if err != nil {
 		return err
 	}
@@ -132,9 +111,8 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, execu
 	return p.runToCompletion(projectName, pipelineName, applyCommand, step)
 }
 
-// waitForManualApproval blocks on the DevOps approval gate. The plan container
-// instance persists, so the approver can review the plan logs in the OCI
-// Console before deciding.
+// waitForManualApproval blocks on the DevOps approval gate. The plan build run's
+// logs persist, so the approver can review them in the OCI Console before deciding.
 func (p *Pipeline) waitForManualApproval(pipelineName string, step model.Step, changes *model.PipelineChanges) error {
 	if p.gate == nil {
 		return fmt.Errorf("manual approval required for %s but no approval gate is available", pipelineName)
@@ -163,10 +141,9 @@ func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) er
 	return p.runToCompletion(projectName, projectName, applyCommand, step)
 }
 
-// DeletePipeline removes the persistent container instances of a removed step.
-// The approval pipeline in the DevOps project is left behind (known gap).
+// DeletePipeline removes a removed step's build pipelines.
 func (p *Pipeline) DeletePipeline(projectName string) error {
-	p.builder.deleteProjectInstances(projectName)
+	p.builder.devopsBuild.deleteStepPipelines(projectName)
 	return nil
 }
 
@@ -184,15 +161,11 @@ func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 }
 
 func (p *Pipeline) runToCompletion(projectName, pipelineName string, command model.ActionCommand, step model.Step) error {
-	if err := p.builder.putRunContext(pipelineName, command, p.campaignId, p.pipelineIndex); err != nil {
-		return err
-	}
-	instanceId, err := p.builder.launch(projectName, pipelineName, command, step)
+	buildRunId, err := p.builder.launch(projectName, pipelineName, command, step)
 	if err != nil {
 		return err
 	}
-	p.logStepHint(pipelineName, command)
-	exitCode, err := p.builder.waitForCompletion(instanceId)
+	exitCode, err := p.builder.waitForCompletion(buildRunId)
 	if err != nil {
 		return fmt.Errorf("failed to wait for %s of %s: %w", command, pipelineName, err)
 	}
@@ -202,17 +175,17 @@ func (p *Pipeline) runToCompletion(projectName, pipelineName string, command mod
 	return nil
 }
 
-// planChanges reads the plan container's stdout back from OCI Logging and parses
-// the terraform/helm change summary. Because log ingestion is asynchronous, the
-// summary may not be searchable the instant the container exits, so it polls
-// until the summary appears or the deadline passes.
-func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, command model.ActionCommand, since time.Time) (*model.PipelineChanges, error) {
+// planChanges reads the plan build run's stdout back from the DevOps service log
+// and parses the terraform/helm change summary. Because log ingestion is
+// asynchronous, the summary may not be searchable the instant the build run
+// exits, so it polls until the summary appears or the deadline passes.
+func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, buildRunId string, since time.Time) (*model.PipelineChanges, error) {
 	if p.logs == nil {
 		return nil, fmt.Errorf("no logging service available to read plan output for %s", pipelineName)
 	}
 	deadline := time.After(logSearchWait)
 	for {
-		lines, err := p.logs.StepLogs(pipelineName, command, since)
+		lines, err := p.logs.StepLogs(buildRunId, since)
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to read logs for %s: %s", pipelineName, err)))
 		} else {

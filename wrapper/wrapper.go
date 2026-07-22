@@ -153,29 +153,24 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 		return -1, fmt.Errorf("failed to start %s: %v", w.entrypoint, err)
 	}
 
-	sink := newOCILogSink()
-
-	// Both streams are forwarded to the portal and OCI Logging so neither loses
-	// output: unlike CloudWatch/Cloud Logging, which capture a container's stdout
-	// AND stderr natively, OCI has no such capture, so the wrapper is the only way
-	// stderr (terraform detail, errors) reaches the custom log. Each is echoed to
-	// the matching local stream so the OCI console's native view is unchanged.
+	// Each stream is forwarded to the portal and echoed to the matching local
+	// stream (which the DevOps build runner captures into its service log — the
+	// agent reads plan output back from there).
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		w.streamPipe(stdout, w.stdout, sink)
+		w.streamPipe(stdout, w.stdout)
 	}()
 	go func() {
 		defer wg.Done()
-		w.streamPipe(stderr, os.Stderr, sink)
+		w.streamPipe(stderr, os.Stderr)
 	}()
 
 	// Drain both pipes fully before Wait: cmd.Wait closes them on process exit,
 	// so calling it while a scanner is still reading races and fails the scanner
 	// with "file already closed", truncating the output.
 	wg.Wait()
-	sink.close()
 	waitErr := cmd.Wait()
 
 	exitCode := 0
@@ -189,7 +184,7 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 	return exitCode, waitErr
 }
 
-func (w *Wrapper) streamPipe(r io.Reader, echo io.Writer, sink *ociLogSink) {
+func (w *Wrapper) streamPipe(r io.Reader, echo io.Writer) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -200,7 +195,6 @@ func (w *Wrapper) streamPipe(r io.Reader, echo io.Writer, sink *ociLogSink) {
 				slog.Warn("wrapper backend SendLog failed", "err", err)
 			}
 		}
-		sink.write(line)
 	}
 	if err := scanner.Err(); err != nil {
 		slog.Error("wrapper output scanner failed", "err", err)

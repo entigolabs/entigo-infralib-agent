@@ -135,30 +135,21 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	if o.pipeline.Type == string(common.PipelineTypeLocal) {
 		return resources, nil
 	}
-	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+	logs, err := o.ensureLogging()
 	if err != nil {
 		return nil, err
 	}
-	if err = iam.EnsureComputeAccess(o.cloudPrefix); err != nil {
-		return nil, err
-	}
-	subnet, err := o.ensureBootstrapSubnet()
-	if err != nil {
-		return nil, err
-	}
-	logs, logId, err := o.ensureLogging()
-	if err != nil {
-		return nil, err
-	}
-	builder, err := NewBuilder(o.ctx, o.provider, configStorage, o.region, o.compartmentId, resources.BucketName,
+	builder := NewBuilder(o.ctx, configStorage, o.region, o.compartmentId, resources.BucketName,
 		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, config.IsOpenTofuEnabled(),
-		o.terraformCacheEnabled(), o.cloudPrefix, subnet, logId)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create builder: %w", err)
-	}
-	gate, err := NewGate(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+		o.terraformCacheEnabled(), o.cloudPrefix)
+	gate, err := NewGate(o.ctx, o.provider, o.region, o.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create approval gate: %w", err)
+	}
+	// Must run before gate.Ensure: it points the gate at the shared <prefix>-infralib
+	// project so approval and build pipelines co-locate.
+	if err = o.attachDevOpsBuild(builder, gate, configStorage, logs); err != nil {
+		return nil, fmt.Errorf("failed to set up DevOps build execution: %w", err)
 	}
 	if err = gate.Ensure(); err != nil {
 		return nil, fmt.Errorf("failed to set up approval gate: %w", err)
@@ -169,33 +160,48 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	return resources, nil
 }
 
-// ensureBootstrapSubnet returns the OCID of the agent-owned public subnet used by
-// steps that don't attach their own VPC. OCI Container Instances cannot run
-// without a subnet, so unlike AWS/GCloud the first (network-creating) step needs
-// one to exist already; the agent provisions and reuses it, found-or-created by
-// prefixed name so no OCID has to be persisted.
-func (o *oracleService) ensureBootstrapSubnet() (string, error) {
-	network, err := NewNetwork(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+// attachDevOpsBuild wires the DevOps build-pipeline execution backend onto the
+// builder. It provisions the shared <prefix>-infralib project (build pipelines +
+// hosted build-spec repo), grants the build pipeline's dynamic group access,
+// enables the project's service logs, and — so approval and build pipelines
+// share one project — points the gate at it. The gate may be nil
+// (destroy/read-only flows), which skips the co-location.
+func (o *oracleService) attachDevOpsBuild(builder *Builder, gate *Gate, configStorage *Storage, logs *Logging) error {
+	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
-		return "", fmt.Errorf("failed to create network service: %w", err)
+		return err
 	}
-	return network.EnsureBootstrapSubnet()
+	build, err := NewDevOpsBuilder(o.ctx, o.provider, iam, configStorage, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		return err
+	}
+	if err = build.Ensure(o.userId()); err != nil {
+		return err
+	}
+	if err = iam.EnsureDevOpsBuildAccess(o.cloudPrefix); err != nil {
+		return err
+	}
+	if logs != nil {
+		if err = logs.EnsureDevOpsBuildLog(build.ProjectId()); err != nil {
+			return err
+		}
+	}
+	builder.devopsBuild = build
+	if gate != nil {
+		gate.UseProject(build.ProjectId())
+	}
+	return nil
 }
 
-// ensureLogging provisions the OCI custom Log the wrapper pushes container
-// stdout to (Container Instances can't stream to OCI Logging natively), and
-// returns the Logging service the pipeline reads plan output back from plus the
-// Log OCID injected into step containers.
-func (o *oracleService) ensureLogging() (*Logging, string, error) {
+// ensureLogging returns the Logging service the pipeline reads plan output back
+// from. The DevOps service log it searches is provisioned later, by
+// attachDevOpsBuild → EnsureDevOpsBuildLog (which needs the build project id).
+func (o *oracleService) ensureLogging() (*Logging, error) {
 	logs, err := NewLogging(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create logging service: %w", err)
+		return nil, fmt.Errorf("failed to create logging service: %w", err)
 	}
-	logId, err := logs.EnsureLog()
-	if err != nil {
-		return nil, "", err
-	}
-	return logs, logId, nil
+	return logs, nil
 }
 
 func (o *oracleService) terraformCacheEnabled() bool {
@@ -320,22 +326,16 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 	// Best-effort so a destroy execution can authenticate to state; read-only
 	// callers ignore the pipeline/builder.
 	_ = o.provisionBackendCredentials(&resources, configStorage)
-	// Best-effort: destroy of a step that attaches its own VPC needs no bootstrap
-	// subnet, so a failure here (e.g. read-only caller) must not block teardown.
-	subnet, err := o.ensureBootstrapSubnet()
-	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not resolve bootstrap subnet: %s", err)))
-	}
-	logs, logId, err := o.ensureLogging()
+	logs, err := o.ensureLogging()
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not resolve logging: %s", err)))
 	}
-	builder, err := NewBuilder(o.ctx, o.provider, configStorage, o.region, o.compartmentId, resources.BucketName,
-		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, false, o.terraformCacheEnabled(), o.cloudPrefix, subnet, logId)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create builder: %w", err)
-	}
+	builder := NewBuilder(o.ctx, configStorage, o.region, o.compartmentId, resources.BucketName,
+		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, false, o.terraformCacheEnabled(), o.cloudPrefix)
 	// No gate: destroy executions run with ApproveForce and never hit approval.
+	if err = o.attachDevOpsBuild(builder, nil, configStorage, logs); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not set up DevOps build execution: %s", err)))
+	}
 	resources.CodeBuild = builder
 	resources.Pipeline = NewPipeline(o.ctx, builder, nil, logs, o.cloudPrefix, nil)
 	return resources, nil
@@ -348,7 +348,7 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	}
 	if deleteServiceAccount {
 		slog.Warn(common.PrefixWarning("Oracle IAM teardown is not automated; remove the service-account user, " +
-			"group, policy, container-instance dynamic group, devops approval project and notification topic manually"))
+			"group, policy, build-pipeline dynamic group, <prefix>-infralib devops project and notification topic manually"))
 	}
 	if !deleteBucket {
 		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", resources.BucketName)

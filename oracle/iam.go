@@ -150,6 +150,112 @@ func (i *IAM) deleteCustomerSecretKey(userId, keyId string) error {
 	return err
 }
 
+// EnsureAuthToken returns an OCI auth token for the given user, used only on the
+// local bootstrap run that git-pushes the DevOps build-spec (in-container RP runs
+// reference the already-seeded repo). It reuses a token only when it is present
+// on BOTH sides — persisted in the config bucket AND still an active token on the
+// user (matched by our description, since auth tokens have no unique name). The
+// token value is returned by OCI exactly once at creation, so a persisted value
+// is meaningful only while its user-side token exists, and a user-side token is
+// useless to us without the persisted value. If either was deleted (by hand or a
+// failed run) the two have drifted, so the leftover is removed and a fresh token
+// created — which also stops stale tokens accruing against the 2-per-user limit.
+// Mirrors EnsureCustomerSecretKey's persist-and-verify approach.
+func (i *IAM) EnsureAuthToken(store objectStore, userId, description string) (string, error) {
+	existing, err := i.listAuthTokenIds(userId, description)
+	if err != nil {
+		return "", err
+	}
+	stored, err := store.GetFile(devopsAuthTokenObject)
+	if err != nil {
+		return "", err
+	}
+	if len(existing) > 0 && len(stored) > 0 {
+		return string(stored), nil
+	}
+	// Drifted: discard whichever side survives so they can't stay out of sync.
+	for _, id := range existing {
+		if err = i.deleteAuthToken(userId, id); err != nil {
+			return "", fmt.Errorf("failed to delete stale auth token %s: %w", id, err)
+		}
+	}
+	if len(stored) > 0 {
+		if err = store.DeleteFile(devopsAuthTokenObject); err != nil {
+			return "", fmt.Errorf("failed to delete stale persisted auth token: %w", err)
+		}
+	}
+	response, err := i.client.CreateAuthToken(i.ctx, identity.CreateAuthTokenRequest{
+		UserId: &userId,
+		CreateAuthTokenDetails: identity.CreateAuthTokenDetails{
+			Description: &description,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create auth token: %w", err)
+	}
+	if response.Token == nil {
+		return "", fmt.Errorf("auth token response missing token value")
+	}
+	if err = store.PutFile(devopsAuthTokenObject, []byte(*response.Token)); err != nil {
+		return "", fmt.Errorf("failed to persist auth token: %w", err)
+	}
+	log.Printf("Provisioned Oracle auth token %q for DevOps build-spec git push\n", description)
+	return *response.Token, nil
+}
+
+// listAuthTokenIds returns the OCIDs of the user's ACTIVE auth tokens whose
+// description matches (auth tokens carry no unique name, so the description is
+// how we recognise ours).
+func (i *IAM) listAuthTokenIds(userId, description string) ([]string, error) {
+	response, err := i.client.ListAuthTokens(i.ctx, identity.ListAuthTokensRequest{UserId: &userId})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list auth tokens: %w", err)
+	}
+	var ids []string
+	for _, token := range response.Items {
+		if token.Id != nil && token.LifecycleState == identity.AuthTokenLifecycleStateActive &&
+			token.Description != nil && *token.Description == description {
+			ids = append(ids, *token.Id)
+		}
+	}
+	return ids, nil
+}
+
+func (i *IAM) deleteAuthToken(userId, tokenId string) error {
+	_, err := i.client.DeleteAuthToken(i.ctx, identity.DeleteAuthTokenRequest{
+		UserId:      &userId,
+		AuthTokenId: &tokenId,
+	})
+	return err
+}
+
+// TenancyName returns the tenancy's name, the prefix of the OCI code-repository
+// HTTPS git username (<tenancy>/<login>). This is the tenancy NAME, not the
+// object-storage namespace — the two differ.
+func (i *IAM) TenancyName() (string, error) {
+	response, err := i.client.GetTenancy(i.ctx, identity.GetTenancyRequest{TenancyId: &i.tenancyId})
+	if err != nil {
+		return "", fmt.Errorf("failed to get tenancy %s: %w", i.tenancyId, err)
+	}
+	if response.Name == nil {
+		return "", fmt.Errorf("tenancy %s has no name", i.tenancyId)
+	}
+	return *response.Name, nil
+}
+
+// Username returns the login name of the given user OCID, used as the HTTPS
+// basic-auth username for git pushes to OCI code repositories.
+func (i *IAM) Username(userId string) (string, error) {
+	response, err := i.client.GetUser(i.ctx, identity.GetUserRequest{UserId: &userId})
+	if err != nil {
+		return "", fmt.Errorf("failed to get user %s: %w", userId, err)
+	}
+	if response.Name == nil {
+		return "", fmt.Errorf("user %s has no name", userId)
+	}
+	return *response.Name, nil
+}
+
 // getOrCreateUser returns the OCID of the named user, creating it in the tenancy
 // (root compartment) if absent. The bool reports whether it was newly created.
 func (i *IAM) getOrCreateUser(name, description string) (string, bool, error) {
@@ -219,6 +325,23 @@ func (i *IAM) addUserToGroup(userId, groupId string) error {
 	return nil
 }
 
+// sameStatements compares policy statements as an order-insensitive set.
+func sameStatements(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		set[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := set[s]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (i *IAM) ensurePolicy(name, description string, statements []string) error {
 	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{
 		CompartmentId: &i.tenancyId,
@@ -228,6 +351,20 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 		return fmt.Errorf("failed to list policies: %w", err)
 	}
 	if len(list.Items) > 0 {
+		existing := list.Items[0]
+		if sameStatements(existing.Statements, statements) {
+			return nil
+		}
+		// Self-heal: an earlier run may have created this policy with a narrower
+		// statement set (e.g. the build policy started as devops-family before it
+		// needed all-resources). Update it to the desired statements.
+		_, err = i.client.UpdatePolicy(i.ctx, identity.UpdatePolicyRequest{
+			PolicyId:            existing.Id,
+			UpdatePolicyDetails: identity.UpdatePolicyDetails{Statements: statements},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update policy %s: %w", name, err)
+		}
 		return nil
 	}
 	_, err = i.client.CreatePolicy(i.ctx, identity.CreatePolicyRequest{
@@ -245,18 +382,20 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 	return nil
 }
 
-// EnsureComputeAccess grants Container Instances in the compartment permission to
-// manage resources, via a dynamic group (matching container instances in the
-// compartment) plus a policy. This is the resource principal terraform uses
-// inside the execution container.
-func (i *IAM) EnsureComputeAccess(cloudPrefix string) error {
-	dgName := fmt.Sprintf("%s-ci-dg", cloudPrefix)
-	matchingRule := fmt.Sprintf("ALL {resource.type='computecontainerinstance', resource.compartment.id='%s'}", i.compartmentId)
-	if err := i.ensureDynamicGroup(dgName, "Entigo infralib container instances", matchingRule); err != nil {
+// EnsureDevOpsBuildAccess grants the DevOps build pipeline's resource principal
+// the permissions it needs: reading the hosted build-spec repo + fetching the
+// per-run env PAR, and — because the runner's RP is forwarded into the step
+// container where terraform runs — managing the infrastructure the steps create.
+// A dynamic group matches build pipelines in the compartment and is granted
+// manage all-resources over it.
+func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
+	dgName := fmt.Sprintf("%s-infralib", cloudPrefix)
+	matchingRule := fmt.Sprintf("ALL {resource.type='devopsbuildpipeline', resource.compartment.id='%s'}", i.compartmentId)
+	if err := i.ensureDynamicGroup(dgName, "Entigo infralib devops build pipelines", matchingRule); err != nil {
 		return err
 	}
 	statement := fmt.Sprintf("Allow dynamic-group %s to manage all-resources in compartment id %s", dgName, i.compartmentId)
-	return i.ensurePolicy(fmt.Sprintf("%s-ci", cloudPrefix), "Entigo infralib container instance policy", []string{statement})
+	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access", []string{statement})
 }
 
 func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {
@@ -268,6 +407,19 @@ func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {
 		return fmt.Errorf("failed to list dynamic groups: %w", err)
 	}
 	if len(list.Items) > 0 {
+		existing := list.Items[0]
+		if existing.MatchingRule != nil && *existing.MatchingRule == matchingRule {
+			return nil
+		}
+		// Self-heal: an earlier run may have created the group with a different
+		// matching rule. Update it so the intended principals are actually members.
+		_, err = i.client.UpdateDynamicGroup(i.ctx, identity.UpdateDynamicGroupRequest{
+			DynamicGroupId:            existing.Id,
+			UpdateDynamicGroupDetails: identity.UpdateDynamicGroupDetails{MatchingRule: &matchingRule},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update dynamic group %s: %w", name, err)
+		}
 		return nil
 	}
 	_, err = i.client.CreateDynamicGroup(i.ctx, identity.CreateDynamicGroupRequest{

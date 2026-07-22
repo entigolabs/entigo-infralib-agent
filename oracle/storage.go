@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -144,6 +145,37 @@ func (s *Storage) GetFile(file string) ([]byte, error) {
 	}
 	defer func() { _ = response.Content.Close() }()
 	return io.ReadAll(response.Content)
+}
+
+// CreatePreauthenticatedURL mints a short-lived read-only pre-authenticated
+// request (PAR) for a single object and returns a full https URL that needs no
+// credentials to GET. The DevOps managed build runner uses it to fetch the
+// per-run environment file (decision: DevOps-native execution) without being
+// granted any OCI principal. The PAR is named per object and expires after ttl;
+// a fresh PAR is created each call (OCI allows many, and stale ones lapse).
+func (s *Storage) CreatePreauthenticatedURL(objectName string, ttl time.Duration) (string, error) {
+	name := fmt.Sprintf("entigo-run-env-%s", strings.ReplaceAll(objectName, "/", "-"))
+	expires := ocicommon.SDKTime{Time: time.Now().Add(ttl)}
+	response, err := s.client.CreatePreauthenticatedRequest(s.ctx, objectstorage.CreatePreauthenticatedRequestRequest{
+		NamespaceName: &s.namespace,
+		BucketName:    &s.bucket,
+		CreatePreauthenticatedRequestDetails: objectstorage.CreatePreauthenticatedRequestDetails{
+			Name:        &name,
+			ObjectName:  &objectName,
+			AccessType:  objectstorage.CreatePreauthenticatedRequestDetailsAccessTypeObjectread,
+			TimeExpires: &expires,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create pre-authenticated request for %s: %w", objectName, err)
+	}
+	if response.FullPath != nil && *response.FullPath != "" {
+		return *response.FullPath, nil
+	}
+	if response.AccessUri == nil {
+		return "", fmt.Errorf("pre-authenticated request for %s returned no access uri", objectName)
+	}
+	return fmt.Sprintf("https://objectstorage.%s.oraclecloud.com%s", s.region, *response.AccessUri), nil
 }
 
 func (s *Storage) DeleteFile(file string) error {

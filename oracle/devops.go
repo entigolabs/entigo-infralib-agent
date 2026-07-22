@@ -10,7 +10,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/devops"
-	"github.com/oracle/oci-go-sdk/v65/ons"
 )
 
 const approvalStageName = "manual-approval"
@@ -21,55 +20,45 @@ const approvalStageName = "manual-approval"
 // pending approval can stay open for hours, so parallel steps must not share a
 // pipeline. When a step's plan needs human sign-off, the agent creates a
 // deployment on the step's pipeline and blocks until an IAM-authorized user
-// approves or rejects it in the OCI Console. Plan/apply themselves run as
-// Container Instances (DevOps shell stages cannot run custom images), so only
-// the approval decision lives in DevOps.
+// approves or rejects it in the OCI Console. Plan/apply themselves run as DevOps
+// build runs (see DevOpsBuilder); only the approval decision is a deployment.
 type Gate struct {
-	ctx           context.Context
-	client        devops.DevopsClient
-	onsClient     ons.NotificationControlPlaneClient
-	compartmentId string
-	cloudPrefix   string
-	projectId     string
-	mu            sync.Mutex
-	pipelines     map[string]string // step pipeline name → pipeline OCID
+	ctx         context.Context
+	client      devops.DevopsClient
+	cloudPrefix string
+	projectId   string
+	mu          sync.Mutex
+	pipelines   map[string]string // step pipeline name → pipeline OCID
 }
 
-func NewGate(ctx context.Context, provider ocicommon.ConfigurationProvider, region, compartmentId, cloudPrefix string) (*Gate, error) {
+func NewGate(ctx context.Context, provider ocicommon.ConfigurationProvider, region, cloudPrefix string) (*Gate, error) {
 	client, err := devops.NewDevopsClientWithConfigurationProvider(provider)
-	if err != nil {
-		return nil, err
-	}
-	onsClient, err := ons.NewNotificationControlPlaneClientWithConfigurationProvider(provider)
 	if err != nil {
 		return nil, err
 	}
 	if region != "" {
 		client.SetRegion(region)
-		onsClient.SetRegion(region)
 	}
 	return &Gate{
-		ctx:           ctx,
-		client:        client,
-		onsClient:     onsClient,
-		compartmentId: compartmentId,
-		cloudPrefix:   cloudPrefix,
-		pipelines:     map[string]string{},
+		ctx:         ctx,
+		client:      client,
+		cloudPrefix: cloudPrefix,
+		pipelines:   map[string]string{},
 	}, nil
 }
 
-// Ensure gets or creates the shared topic → project chain. Per-step pipelines
-// are created lazily by RequestApproval.
+// UseProject points the gate at the DevOps project that hosts its approval
+// pipelines. The project (shared <prefix>-infralib), its notification topic and
+// the per-step approval pipelines are owned by DevOpsBuilder; the gate only
+// creates deployments in them, so this must be called before Ensure.
+func (g *Gate) UseProject(projectId string) { g.projectId = projectId }
+
+// Ensure verifies the gate has been pointed at a DevOps project via UseProject.
+// Per-step approval pipelines are created lazily by RequestApproval.
 func (g *Gate) Ensure() error {
-	topicId, err := g.ensureTopic(fmt.Sprintf("%s-approvals", g.cloudPrefix))
-	if err != nil {
-		return err
+	if g.projectId == "" {
+		return fmt.Errorf("approval gate has no DevOps project; call UseProject first")
 	}
-	projectId, err := g.ensureProject(fmt.Sprintf("%s-approval", g.cloudPrefix), topicId)
-	if err != nil {
-		return err
-	}
-	g.projectId = projectId
 	return nil
 }
 
@@ -124,7 +113,7 @@ func (g *Gate) ensureStepPipeline(pipelineName string) (string, error) {
 // WaitForApproval blocks until the deployment resolves. Approval → nil;
 // rejection or cancellation → error, which fails the step and halts dependents.
 func (g *Gate) WaitForApproval(deploymentId string) error {
-	log.Printf("Waiting for manual approval of deployment %s in the OCI Console (DevOps project %s-approval)\n",
+	log.Printf("Waiting for manual approval of deployment %s in the OCI Console (DevOps project %s-infralib)\n",
 		deploymentId, g.cloudPrefix)
 	for {
 		response, err := g.client.GetDeployment(g.ctx, devops.GetDeploymentRequest{DeploymentId: &deploymentId})
@@ -143,61 +132,6 @@ func (g *Gate) WaitForApproval(deploymentId string) error {
 		case <-time.After(pollInterval):
 		}
 	}
-}
-
-func (g *Gate) ensureTopic(name string) (string, error) {
-	list, err := g.onsClient.ListTopics(g.ctx, ons.ListTopicsRequest{
-		CompartmentId: &g.compartmentId,
-		Name:          &name,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to list notification topics: %w", err)
-	}
-	for _, topic := range list.Items {
-		if topic.LifecycleState == ons.NotificationTopicSummaryLifecycleStateActive {
-			return *topic.TopicId, nil
-		}
-	}
-	description := "Entigo infralib approval notifications"
-	created, err := g.onsClient.CreateTopic(g.ctx, ons.CreateTopicRequest{
-		CreateTopicDetails: ons.CreateTopicDetails{
-			Name:          &name,
-			CompartmentId: &g.compartmentId,
-			Description:   &description,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create notification topic %s: %w", name, err)
-	}
-	return *created.TopicId, nil
-}
-
-func (g *Gate) ensureProject(name, topicId string) (string, error) {
-	list, err := g.client.ListProjects(g.ctx, devops.ListProjectsRequest{
-		CompartmentId: &g.compartmentId,
-		Name:          &name,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to list devops projects: %w", err)
-	}
-	if len(list.Items) > 0 {
-		return *list.Items[0].Id, nil
-	}
-	description := "Entigo infralib manual approval gate"
-	created, err := g.client.CreateProject(g.ctx, devops.CreateProjectRequest{
-		CreateProjectDetails: devops.CreateProjectDetails{
-			Name:               &name,
-			CompartmentId:      &g.compartmentId,
-			Description:        &description,
-			NotificationConfig: &devops.NotificationConfig{TopicId: &topicId},
-			FreeformTags:       map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create devops project %s: %w", name, err)
-	}
-	return *created.Id, nil
 }
 
 func (g *Gate) ensurePipeline(projectId, displayName string) (string, error) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -14,14 +15,12 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/loggingsearch"
 )
 
-// Container Instances are NOT a supported OCI Logging "service log" source, so
-// there is no toggle that streams their stdout to the Logging service. Instead
-// the in-container wrapper pushes stdout to a custom Log via the ingestion API
-// (see wrapper/oci_log.go), mirroring how the app-side push is the sanctioned
-// pattern for container instances. The agent owns that Log (found-or-created by
-// prefixed name, like the buckets/network) and reads it back with Log Search to
-// parse plan changes for the approval gate — the same role CloudWatch/Cloud
-// Logging play for the AWS/GCloud providers.
+// OCI won't run a DevOps build until the project has a log enabled, and that same
+// service log (`<prefix>-infralib-logs`) captures the build runner's command
+// output — our docker container's stdout. The agent reads it back with Log Search
+// to parse each step's plan change summary for the approval gate — the same role
+// CloudWatch/Cloud Logging play for the AWS/GCloud providers. Found-or-created by
+// prefixed name, like the buckets, so no OCID is persisted.
 const (
 	logRetentionDays  = 180 // matches the AWS CloudWatch retention (aws/cloudwatch.go)
 	workRequestPoll   = 3 * time.Second
@@ -63,23 +62,66 @@ func NewLogging(ctx context.Context, provider ocicommon.ConfigurationProvider, r
 }
 
 func (l *Logging) logGroupName() string { return fmt.Sprintf("%s-logs", l.cloudPrefix) }
-func (l *Logging) logName() string      { return fmt.Sprintf("%s-logs", l.cloudPrefix) }
+func (l *Logging) buildLogName() string { return fmt.Sprintf("%s-infralib-logs", l.cloudPrefix) }
 
-// EnsureLog find-or-creates the log group and custom log, returning the Log OCID
-// the wrapper ingests into. Idempotent across processes (matched by display name)
-// so no OCID is persisted.
-func (l *Logging) EnsureLog() (string, error) {
+// EnsureDevOpsBuildLog enables the OCI service log for the DevOps build project
+// and records its ids (StepLogs reads plan output back from it). OCI refuses to
+// start any build run until the project has logs enabled (CreateBuildRun → 409
+// "Logs need to be enabled"), and that same service log captures the build
+// runner's command output — i.e. our docker container's stdout — so it doubles as
+// the source the agent parses plan changes from. Found-or-created by name.
+func (l *Logging) EnsureDevOpsBuildLog(projectId string) error {
 	groupId, err := l.getOrCreateLogGroup()
 	if err != nil {
-		return "", err
-	}
-	logId, err := l.getOrCreateLog(groupId)
-	if err != nil {
-		return "", err
+		return err
 	}
 	l.logGroupId = groupId
-	l.logId = logId
-	return logId, nil
+	name := l.buildLogName()
+	id, err := l.findLogId(groupId, name)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		l.logId = id
+		return nil
+	}
+	retention := logRetentionDays
+	service := "devops"
+	category := "all"
+	response, err := l.mgmt.CreateLog(l.ctx, logging.CreateLogRequest{
+		LogGroupId: &groupId,
+		CreateLogDetails: logging.CreateLogDetails{
+			DisplayName:       &name,
+			LogType:           logging.CreateLogDetailsLogTypeService,
+			IsEnabled:         ocicommon.Bool(true),
+			RetentionDuration: &retention,
+			Configuration: &logging.Configuration{
+				CompartmentId: &l.compartmentId,
+				Source: logging.OciService{
+					Service:  &service,
+					Resource: &projectId,
+					Category: &category,
+				},
+			},
+			FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create devops build log %s: %w", name, err)
+	}
+	if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
+		return err
+	}
+	id, err = l.findLogId(groupId, name)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return fmt.Errorf("devops build log %s not found after creation", name)
+	}
+	l.logId = id
+	log.Printf("Enabled DevOps build logs (%s) for project\n", name)
+	return nil
 }
 
 func (l *Logging) getOrCreateLogGroup() (string, error) {
@@ -109,7 +151,7 @@ func (l *Logging) getOrCreateLogGroup() (string, error) {
 	if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
 		return "", err
 	}
-	log.Printf("Created log group %s for container execution logs\n", name)
+	log.Printf("Created log group %s for step execution logs\n", name)
 	return l.findLogGroupId(name)
 }
 
@@ -127,39 +169,6 @@ func (l *Logging) findLogGroupId(name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("log group %s not found after creation", name)
-}
-
-func (l *Logging) getOrCreateLog(groupId string) (string, error) {
-	name := l.logName()
-	if id, err := l.findLogId(groupId, name); err != nil || id != "" {
-		return id, err
-	}
-	retention := logRetentionDays
-	response, err := l.mgmt.CreateLog(l.ctx, logging.CreateLogRequest{
-		LogGroupId: &groupId,
-		CreateLogDetails: logging.CreateLogDetails{
-			DisplayName:       &name,
-			LogType:           logging.CreateLogDetailsLogTypeCustom,
-			IsEnabled:         ocicommon.Bool(true),
-			RetentionDuration: &retention,
-			FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create log %s: %w", name, err)
-	}
-	if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
-		return "", err
-	}
-	log.Printf("Created custom log %s (%d-day retention)\n", name, logRetentionDays)
-	id, err := l.findLogId(groupId, name)
-	if err != nil {
-		return "", err
-	}
-	if id == "" {
-		return "", fmt.Errorf("log %s not found after creation", name)
-	}
-	return id, nil
 }
 
 func (l *Logging) findLogId(groupId, name string) (string, error) {
@@ -204,11 +213,11 @@ func (l *Logging) waitForWorkRequest(id *string) error {
 	}
 }
 
-// StepLogs returns the ingested stdout lines for one step execution, isolated by
-// the subject the wrapper stamps (prefixStep/command) so parallel steps sharing
-// the log don't bleed into each other. Ordered oldest-first for change parsing.
-func (l *Logging) StepLogs(prefixStep string, command model.ActionCommand, since time.Time) ([]string, error) {
-	subject := logSubject(prefixStep, command)
+// StepLogs returns the build runner's command-output lines for one build run,
+// isolated by the DevOps service log's `subject` field (which OCI sets to the
+// build run OCID) so parallel steps sharing the log don't bleed into each other.
+// Ordered oldest-first for change parsing.
+func (l *Logging) StepLogs(buildRunId string, since time.Time) ([]string, error) {
 	query := fmt.Sprintf("search %q", fmt.Sprintf("%s/%s/%s", l.compartmentId, l.logGroupId, l.logId))
 	start := ocicommon.SDKTime{Time: since.Add(-logSearchLookback)}
 	end := ocicommon.SDKTime{Time: time.Now().Add(time.Minute)}
@@ -222,30 +231,22 @@ func (l *Logging) StepLogs(prefixStep string, command model.ActionCommand, since
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to search logs for %s: %w", prefixStep, err)
+		return nil, fmt.Errorf("failed to search logs for build run %s: %w", buildRunId, err)
 	}
-	return extractLines(response.Results, subject), nil
+	return extractLines(response.Results, buildRunId), nil
 }
 
-func logSubject(prefixStep string, command model.ActionCommand) string {
-	return fmt.Sprintf("%s/%s", prefixStep, command)
-}
+// execPrefix is the DevOps build runner's prefix on every command-output line in
+// the service log (e.g. "EXEC: Plan: 2 to add, …"). It is stripped before parsing
+// so the shared terraform/argocd parsers — some of which anchor on the line start
+// (`strings.HasPrefix("No changes.")`) — see the raw output.
+const execPrefix = "EXEC: "
 
-// StepLogHint returns an OCI Log Search query that narrows the shared log to a
-// single command execution, so a gitops engineer can paste it into the console's
-// Log Search instead of scrolling the whole log group. The subject is the same
-// tag the wrapper stamps on every line (prefixStep/command).
-func (l *Logging) StepLogHint(prefixStep string, command model.ActionCommand) string {
-	return fmt.Sprintf("search %q | where subject = '%s'",
-		fmt.Sprintf("%s/%s/%s", l.compartmentId, l.logGroupId, l.logId), logSubject(prefixStep, command))
-}
-
-// extractLines pulls the log line out of each matching search result, keeping
-// only records the wrapper tagged with our subject, ordered by time. A result's
-// fields live under "logContent" (siblings: datetime, regionId), and the pushed
-// line is under logContent.data — stored as a raw string for JSON payloads or,
-// for our plain text, wrapped by OCI as {"message": "<line>"}.
-func extractLines(results []loggingsearch.SearchResult, subject string) []string {
+// extractLines pulls the command-output line out of each matching search result,
+// keeping only records whose subject is our build run, ordered by time. A result's
+// fields live under "logContent"; the line is under logContent.data.message and is
+// stripped of the runner's EXEC prefix.
+func extractLines(results []loggingsearch.SearchResult, buildRunId string) []string {
 	type row struct {
 		time time.Time
 		data string
@@ -263,10 +264,10 @@ func extractLines(results []loggingsearch.SearchResult, subject string) []string
 		if !ok {
 			continue
 		}
-		if s, _ := content["subject"].(string); s != subject {
+		if s, _ := content["subject"].(string); s != buildRunId {
 			continue
 		}
-		data := logLineData(content["data"])
+		data := strings.TrimPrefix(logLineData(content["data"]), execPrefix)
 		if data == "" {
 			continue
 		}
