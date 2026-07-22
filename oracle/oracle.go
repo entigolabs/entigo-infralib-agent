@@ -13,6 +13,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
+	"github.com/oracle/oci-go-sdk/v65/common/auth"
 )
 
 type oracleService struct {
@@ -54,9 +55,10 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 }
 
 // GetBackendEnv supplies the terraform s3 backend endpoint and region via env,
-// read natively by the backend (AWS_ENDPOINT_URL_S3 / AWS_REGION). Credentials
-// (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) come from the environment for now;
-// Phase 3 will provision them from an OCI Customer Secret Key.
+// read natively by the backend (AWS_ENDPOINT_URL_S3 / AWS_REGION). The credentials
+// (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) are added when a Customer Secret Key
+// has been provisioned (provisionBackendCredentials); otherwise they fall back to
+// the operator's environment.
 func (r Resources) GetBackendEnv() map[string]string {
 	env := map[string]string{
 		"AWS_ENDPOINT_URL_S3": r.S3Endpoint,
@@ -85,21 +87,19 @@ func NewOracle(ctx context.Context, cloudPrefix string, oracle common.Oracle, pi
 	}, nil
 }
 
-func (o *oracleService) bucketResources() (Resources, *Storage, *Storage, error) {
+// bucketResources builds the single bucket (state + non-secret agent objects) and
+// the Resources shell. SSM is left nil here and wired by setupStore once the KMS
+// vault + key exist, since the Vault-backed store needs them.
+func (o *oracleService) bucketResources() (Resources, *Storage, error) {
 	bucket := getBucketName(o.cloudPrefix, o.region)
 	storage, err := NewStorage(o.ctx, o.provider, o.region, o.compartmentId, bucket)
 	if err != nil {
-		return Resources{}, nil, nil, fmt.Errorf("failed to create object storage service: %w", err)
-	}
-	configStorage, err := NewStorage(o.ctx, o.provider, o.region, o.compartmentId, getConfigBucketName(o.cloudPrefix, o.region))
-	if err != nil {
-		return Resources{}, nil, nil, fmt.Errorf("failed to create config storage service: %w", err)
+		return Resources{}, nil, fmt.Errorf("failed to create object storage service: %w", err)
 	}
 	return Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.ORACLE,
 			Bucket:       storage,
-			SSM:          NewSSM(configStorage),
 			BucketName:   bucket,
 			CloudPrefix:  o.cloudPrefix,
 			Region:       o.region,
@@ -107,29 +107,74 @@ func (o *oracleService) bucketResources() (Resources, *Storage, *Storage, error)
 		},
 		Namespace:  storage.Namespace(),
 		S3Endpoint: s3Endpoint(storage.Namespace(), o.region),
-	}, storage, configStorage, nil
+	}, storage, nil
+}
+
+// setupStore provisions (or loads) the agent-owned KMS vault + key and returns the
+// Vault-backed SSM built on them. The vault + key are the trust root for the whole
+// provider: the bucket is encrypted with the key and every secret lives in the
+// vault under it.
+func (o *oracleService) setupStore() (*KMS, *SSM, error) {
+	kms, err := NewKMS(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create kms service: %w", err)
+	}
+	if err = kms.Ensure(); err != nil {
+		return nil, nil, fmt.Errorf("failed to provision kms vault and key: %w", err)
+	}
+	ssm, err := NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create secret store: %w", err)
+	}
+	return kms, ssm, nil
+}
+
+// encryptBucket points Object Storage at the agent's key for the bucket's at-rest
+// encryption, granting the Object Storage service principal use of the key first.
+func (o *oracleService) encryptBucket(storage *Storage, kms *KMS) error {
+	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+	if err != nil {
+		return err
+	}
+	if err = iam.EnsureObjectStorageKeyAccess(o.cloudPrefix, o.region, kms.KeyId()); err != nil {
+		return fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
+	}
+	return storage.AddEncryption(kms.KeyId())
 }
 
 func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
-	resources, storage, _, err := o.bucketResources()
+	resources, storage, err := o.bucketResources()
 	if err != nil {
 		return nil, err
 	}
 	if err = storage.CreateBucket(o.skipDelay); err != nil {
 		return nil, fmt.Errorf("failed to create object storage bucket: %w", err)
 	}
+	_, ssm, err := o.setupStore()
+	if err != nil {
+		return nil, err
+	}
+	resources.SSM = ssm
 	return resources, nil
 }
 
 func (o *oracleService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
-	resources, storage, configStorage, err := o.bucketResources()
+	resources, storage, err := o.bucketResources()
 	if err != nil {
 		return nil, err
 	}
 	if err = storage.CreateBucket(o.skipDelay); err != nil {
 		return nil, fmt.Errorf("failed to create object storage bucket: %w", err)
 	}
-	if err = o.provisionBackendCredentials(&resources, configStorage); err != nil {
+	kms, ssm, err := o.setupStore()
+	if err != nil {
+		return nil, err
+	}
+	resources.SSM = ssm
+	if err = o.encryptBucket(storage, kms); err != nil {
+		return nil, err
+	}
+	if err = o.provisionBackendCredentials(&resources, ssm); err != nil {
 		return nil, err
 	}
 	if o.pipeline.Type == string(common.PipelineTypeLocal) {
@@ -139,7 +184,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, err
 	}
-	builder := NewBuilder(o.ctx, configStorage, o.region, o.compartmentId, resources.BucketName,
+	builder := NewBuilder(o.ctx, ssm, o.region, o.compartmentId, resources.BucketName,
 		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, config.IsOpenTofuEnabled(),
 		o.terraformCacheEnabled(), o.cloudPrefix)
 	gate, err := NewGate(o.ctx, o.provider, o.region, o.cloudPrefix)
@@ -148,7 +193,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	}
 	// Must run before gate.Ensure: it points the gate at the shared <prefix>-infralib
 	// project so approval and build pipelines co-locate.
-	if err = o.attachDevOpsBuild(builder, gate, configStorage, logs); err != nil {
+	if err = o.attachDevOpsBuild(builder, gate, ssm, logs); err != nil {
 		return nil, fmt.Errorf("failed to set up DevOps build execution: %w", err)
 	}
 	if err = gate.Ensure(); err != nil {
@@ -166,12 +211,12 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 // enables the project's service logs, and — so approval and build pipelines
 // share one project — points the gate at it. The gate may be nil
 // (destroy/read-only flows), which skips the co-location.
-func (o *oracleService) attachDevOpsBuild(builder *Builder, gate *Gate, configStorage *Storage, logs *Logging) error {
+func (o *oracleService) attachDevOpsBuild(builder *Builder, gate *Gate, secrets secretPersistence, logs *Logging) error {
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
 		return err
 	}
-	build, err := NewDevOpsBuilder(o.ctx, o.provider, iam, configStorage, o.region, o.compartmentId, o.cloudPrefix)
+	build, err := NewDevOpsBuilder(o.ctx, o.provider, iam, secrets, o.region, o.compartmentId, o.cloudPrefix)
 	if err != nil {
 		return err
 	}
@@ -224,10 +269,10 @@ func (o *oracleService) warnScheduleUnsupported(schedule model.Schedule) {
 // auth) it is created on that user and persisted to the config bucket. Under
 // resource principals (in-container) there is no user, so a CSK a prior local run
 // persisted is reused; failing that, the operator supplies the credentials via env.
-func (o *oracleService) provisionBackendCredentials(resources *Resources, configStorage *Storage) error {
+func (o *oracleService) provisionBackendCredentials(resources *Resources, secrets secretPersistence) error {
 	userId := o.userId()
 	if userId == "" {
-		accessKey, secretKey, err := loadPersistedCustomerSecretKey(configStorage)
+		accessKey, secretKey, err := loadPersistedCustomerSecretKey(secrets)
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("could not read persisted Customer Secret Key: %v", err)))
 			return nil
@@ -248,14 +293,11 @@ func (o *oracleService) provisionBackendCredentials(resources *Resources, config
 		resources.SecretKey = secretKey
 		return nil
 	}
-	if err := configStorage.CreateBucket(true); err != nil {
-		return fmt.Errorf("failed to create config bucket: %w", err)
-	}
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
 		return err
 	}
-	accessKey, secretKey, created, err := EnsureCustomerSecretKey(iam, configStorage, userId,
+	accessKey, secretKey, created, err := EnsureCustomerSecretKey(iam, secrets, userId,
 		fmt.Sprintf("entigo-infralib-%s-state", o.cloudPrefix))
 	if err != nil {
 		return err
@@ -319,21 +361,26 @@ func subjectFromJWT(token string) string {
 }
 
 func (o *oracleService) GetResources() (model.Resources, error) {
-	resources, _, configStorage, err := o.bucketResources()
+	resources, _, err := o.bucketResources()
 	if err != nil {
 		return nil, err
 	}
+	_, ssm, err := o.setupStore()
+	if err != nil {
+		return nil, err
+	}
+	resources.SSM = ssm
 	// Best-effort so a destroy execution can authenticate to state; read-only
 	// callers ignore the pipeline/builder.
-	_ = o.provisionBackendCredentials(&resources, configStorage)
+	_ = o.provisionBackendCredentials(&resources, ssm)
 	logs, err := o.ensureLogging()
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not resolve logging: %s", err)))
 	}
-	builder := NewBuilder(o.ctx, configStorage, o.region, o.compartmentId, resources.BucketName,
+	builder := NewBuilder(o.ctx, ssm, o.region, o.compartmentId, resources.BucketName,
 		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, false, o.terraformCacheEnabled(), o.cloudPrefix)
 	// No gate: destroy executions run with ApproveForce and never hit approval.
-	if err = o.attachDevOpsBuild(builder, nil, configStorage, logs); err != nil {
+	if err = o.attachDevOpsBuild(builder, nil, ssm, logs); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not set up DevOps build execution: %s", err)))
 	}
 	resources.CodeBuild = builder
@@ -342,7 +389,7 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 }
 
 func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
-	resources, storage, configStorage, err := o.bucketResources()
+	resources, storage, err := o.bucketResources()
 	if err != nil {
 		return err
 	}
@@ -350,15 +397,16 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 		slog.Warn(common.PrefixWarning("Oracle IAM teardown is not automated; remove the service-account user, " +
 			"group, policy, build-pipeline dynamic group, <prefix>-infralib devops project and notification topic manually"))
 	}
+	// The KMS vault + key and the Vault secrets can only be scheduled for deletion
+	// (no hard delete on OCI), so they are never removed automatically.
+	slog.Warn(common.PrefixWarning("Oracle KMS vault, key and Vault secrets are not deleted automatically " +
+		"(OCI only supports scheduled deletion); schedule their deletion manually if needed"))
 	if !deleteBucket {
 		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", resources.BucketName)
 		return nil
 	}
 	if err = storage.Delete(); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete state bucket %s: %s", resources.BucketName, err)))
-	}
-	if err = configStorage.Delete(); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete config bucket: %s", err)))
 	}
 	return nil
 }
@@ -408,11 +456,13 @@ func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) erro
 }
 
 func (o *oracleService) AddEncryption(_ string, _ map[string]model.TFOutput) error {
-	// Not called for Oracle today (runner.setupEncryption is AWS-only); Phase 5.
+	// Intentional no-op: Oracle owns its own KMS key (see KMS) and never consumes a
+	// module-provided key, so there is no module encryption to wire in. Not called
+	// for Oracle today anyway (runner.setupEncryption is AWS-only).
 	slog.Warn(common.PrefixWarning("Encryption is not yet supported for Oracle Cloud"))
 	return nil
 }
 
 func (o *oracleService) IsRunningLocally() bool {
-	return os.Getenv("OCI_RESOURCE_PRINCIPAL_VERSION") == ""
+	return os.Getenv(auth.ResourcePrincipalVersionEnvVar) == ""
 }

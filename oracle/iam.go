@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -11,10 +12,32 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/identity"
 )
 
-// customerSecretKeyObject is the config-bucket key under which the provisioned
+// customerSecretKeyObject is the Vault secret name under which the provisioned
 // S3-compatible credentials are persisted. The secret half is only returned by
 // the Identity API at creation time, so it must be stored to survive restarts.
 const customerSecretKeyObject = "oracle-customer-secret-key"
+
+// secretPersistence is the subset of the Vault-backed SSM that IAM uses to persist
+// the credentials it provisions (Customer Secret Key + DevOps auth token). They
+// are secrets, so they live in the Vault under the agent's key, not in the bucket.
+type secretPersistence interface {
+	GetParameter(name string) (*model.Parameter, error)
+	PutSecret(name, value string) error
+	DeleteSecret(name string) error
+}
+
+// readPersistedSecret returns the stored value, or ("", false) when absent.
+func readPersistedSecret(store secretPersistence, name string) (string, bool, error) {
+	param, err := store.GetParameter(name)
+	if err != nil {
+		var notFound *model.ParameterNotFoundError
+		if errors.As(err, &notFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return *param.Value, true, nil
+}
 
 type IAM struct {
 	ctx           context.Context
@@ -57,16 +80,16 @@ type storedCredentials struct {
 }
 
 // loadPersistedCustomerSecretKey returns the S3-compat pair a prior run persisted
-// to the config bucket, or ("", "") if none is stored. Used when no user OCID is
-// available to (re)provision a key — resource-principal (in-container) runs read
-// the key a local bootstrap wrote, since a resource principal can't own a CSK.
-func loadPersistedCustomerSecretKey(store objectStore) (string, string, error) {
-	content, err := store.GetFile(customerSecretKeyObject)
-	if err != nil || content == nil {
+// to the Vault, or ("", "") if none is stored. Used when no user OCID is available
+// to (re)provision a key — resource-principal (in-container) runs read the key a
+// local bootstrap wrote, since a resource principal can't own a CSK.
+func loadPersistedCustomerSecretKey(store secretPersistence) (string, string, error) {
+	value, found, err := readPersistedSecret(store, customerSecretKeyObject)
+	if err != nil || !found {
 		return "", "", err
 	}
 	var stored storedCredentials
-	if err := json.Unmarshal(content, &stored); err != nil {
+	if err := json.Unmarshal([]byte(value), &stored); err != nil {
 		return "", "", fmt.Errorf("failed to parse persisted customer secret key: %w", err)
 	}
 	return stored.AccessKey, stored.SecretKey, nil
@@ -78,14 +101,14 @@ func loadPersistedCustomerSecretKey(store objectStore) (string, string, error) {
 // config bucket because the Identity API returns it only once. The bool reports
 // whether a new key was created — a fresh key needs to propagate to the bucket
 // region before it's usable, so the caller waits harder for it than a reused one.
-func EnsureCustomerSecretKey(csk customerSecretKeyClient, store objectStore, userId, displayName string) (string, string, bool, error) {
-	content, err := store.GetFile(customerSecretKeyObject)
+func EnsureCustomerSecretKey(csk customerSecretKeyClient, store secretPersistence, userId, displayName string) (string, string, bool, error) {
+	value, found, err := readPersistedSecret(store, customerSecretKeyObject)
 	if err != nil {
 		return "", "", false, err
 	}
-	if content != nil {
+	if found {
 		var stored storedCredentials
-		if json.Unmarshal(content, &stored) == nil && stored.AccessKey != "" {
+		if json.Unmarshal([]byte(value), &stored) == nil && stored.AccessKey != "" {
 			existing, err := csk.listCustomerSecretKeyIds(userId)
 			if err != nil {
 				return "", "", false, err
@@ -103,7 +126,7 @@ func EnsureCustomerSecretKey(csk customerSecretKeyClient, store objectStore, use
 	if err != nil {
 		return "", "", false, err
 	}
-	if err = store.PutFile(customerSecretKeyObject, data); err != nil {
+	if err = store.PutSecret(customerSecretKeyObject, string(data)); err != nil {
 		return "", "", false, err
 	}
 	log.Printf("Provisioned Oracle Customer Secret Key %s for terraform state access\n", id)
@@ -161,17 +184,17 @@ func (i *IAM) deleteCustomerSecretKey(userId, keyId string) error {
 // failed run) the two have drifted, so the leftover is removed and a fresh token
 // created — which also stops stale tokens accruing against the 2-per-user limit.
 // Mirrors EnsureCustomerSecretKey's persist-and-verify approach.
-func (i *IAM) EnsureAuthToken(store objectStore, userId, description string) (string, error) {
+func (i *IAM) EnsureAuthToken(store secretPersistence, userId, description string) (string, error) {
 	existing, err := i.listAuthTokenIds(userId, description)
 	if err != nil {
 		return "", err
 	}
-	stored, err := store.GetFile(devopsAuthTokenObject)
+	stored, found, err := readPersistedSecret(store, devopsAuthTokenObject)
 	if err != nil {
 		return "", err
 	}
-	if len(existing) > 0 && len(stored) > 0 {
-		return string(stored), nil
+	if len(existing) > 0 && found {
+		return stored, nil
 	}
 	// Drifted: discard whichever side survives so they can't stay out of sync.
 	for _, id := range existing {
@@ -179,8 +202,8 @@ func (i *IAM) EnsureAuthToken(store objectStore, userId, description string) (st
 			return "", fmt.Errorf("failed to delete stale auth token %s: %w", id, err)
 		}
 	}
-	if len(stored) > 0 {
-		if err = store.DeleteFile(devopsAuthTokenObject); err != nil {
+	if found {
+		if err = store.DeleteSecret(devopsAuthTokenObject); err != nil {
 			return "", fmt.Errorf("failed to delete stale persisted auth token: %w", err)
 		}
 	}
@@ -196,7 +219,7 @@ func (i *IAM) EnsureAuthToken(store objectStore, userId, description string) (st
 	if response.Token == nil {
 		return "", fmt.Errorf("auth token response missing token value")
 	}
-	if err = store.PutFile(devopsAuthTokenObject, []byte(*response.Token)); err != nil {
+	if err = store.PutSecret(devopsAuthTokenObject, *response.Token); err != nil {
 		return "", fmt.Errorf("failed to persist auth token: %w", err)
 	}
 	log.Printf("Provisioned Oracle auth token %q for DevOps build-spec git push\n", description)
@@ -383,11 +406,11 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 }
 
 // EnsureDevOpsBuildAccess grants the DevOps build pipeline's resource principal
-// the permissions it needs: reading the hosted build-spec repo + fetching the
-// per-run env PAR, and — because the runner's RP is forwarded into the step
-// container where terraform runs — managing the infrastructure the steps create.
-// A dynamic group matches build pipelines in the compartment and is granted
-// manage all-resources over it.
+// the permissions it needs: reading the hosted build-spec repo and fetching the
+// step's Vault secrets (decrypting them with the agent's key), and — because the
+// runner's RP is forwarded into the step container where terraform runs —
+// managing the infrastructure the steps create. A dynamic group matches build
+// pipelines in the compartment and is granted manage all-resources over it.
 func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
 	dgName := fmt.Sprintf("%s-infralib", cloudPrefix)
 	matchingRule := fmt.Sprintf("ALL {resource.type='devopsbuildpipeline', resource.compartment.id='%s'}", i.compartmentId)
@@ -396,6 +419,16 @@ func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
 	}
 	statement := fmt.Sprintf("Allow dynamic-group %s to manage all-resources in compartment id %s", dgName, i.compartmentId)
 	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access", []string{statement})
+}
+
+// EnsureObjectStorageKeyAccess lets the Object Storage service principal use the
+// agent's KMS key so it can encrypt the bucket at rest with a customer-managed
+// key. The service name is region-qualified (objectstorage-<region>), and access
+// is scoped to the single key by target.key.id.
+func (i *IAM) EnsureObjectStorageKeyAccess(cloudPrefix, region, keyId string) error {
+	statement := fmt.Sprintf("Allow service objectstorage-%s to use keys in compartment id %s where target.key.id = '%s'",
+		region, i.compartmentId, keyId)
+	return i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
 }
 
 func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {

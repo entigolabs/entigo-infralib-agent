@@ -49,7 +49,7 @@ func NewPipeline(ctx context.Context, builder *Builder, gate *Gate, logs *Loggin
 }
 
 // SetCampaignId / SetPipelineIndex forward the campaign correlation to the
-// Builder, which bakes it into each step's per-run env file (CAMPAIGN_ID /
+// Builder, which passes it as per-run build-run arguments (CAMPAIGN_ID /
 // PIPELINE_INDEX) for the wrapper to read directly — same as AWS/GCloud.
 func (p *Pipeline) SetCampaignId(campaignId string) {
 	p.builder.SetCampaignId(campaignId)
@@ -60,13 +60,17 @@ func (p *Pipeline) SetPipelineIndex(index int) {
 }
 
 func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, _ model.Bucket, _ map[string]model.SourceAuth) (*string, error) {
+	if err := p.builder.ensureStepPipelines(projectName, step); err != nil {
+		return nil, err
+	}
 	return p.StartPipelineExecution(projectName, stepName, step, "")
 }
 
-func (p *Pipeline) UpdatePipeline(_, _ string, _ model.Step, _ string, _ map[string]model.SourceAuth) error {
-	// No persistent pipeline resource to update — the Builder recreates an
-	// instance on launch whenever its spec (image, env, networking) has changed.
-	return nil
+func (p *Pipeline) UpdatePipeline(projectName, _ string, step model.Step, _ string, _ map[string]model.SourceAuth) error {
+	// Reconcile every command's build pipeline (params drift with image/config/CSK)
+	// so the console-triggerable destroy pipelines stay current; execution itself is
+	// started separately by the updater via StartPipelineExecution.
+	return p.builder.ensureStepPipelines(projectName, step)
 }
 
 func (p *Pipeline) StartPipelineExecution(pipelineName, _ string, step model.Step, _ string) (*string, error) {
@@ -133,15 +137,39 @@ func (p *Pipeline) waitForManualApproval(pipelineName string, step model.Step, c
 	return nil
 }
 
+// StartDestroyExecution runs a step's destroy by triggering its eagerly created
+// -plan-destroy then -apply-destroy build pipelines by name. It relies solely on
+// the pipelines' baked-in parameter defaults, so it works in a fresh process that
+// never registered the run spec (the delete command) and matches a console
+// trigger. A step whose pipelines were never created surfaces as
+// model.NotFoundError, which the delete flow skips.
 func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) error {
 	planCommand, applyCommand := model.GetDestroyCommands(step.Type)
-	if err := p.runToCompletion(projectName, projectName, planCommand, step); err != nil {
+	if err := p.triggerToCompletion(projectName, planCommand); err != nil {
 		return err
 	}
-	return p.runToCompletion(projectName, projectName, applyCommand, step)
+	return p.triggerToCompletion(projectName, applyCommand)
 }
 
-// DeletePipeline removes a removed step's build pipelines.
+// triggerToCompletion triggers an existing pipeline by name and blocks on its
+// build run, mirroring runToCompletion but without the run spec (destroy is
+// agentless). No approval gate: destroy runs with ApproveForce.
+func (p *Pipeline) triggerToCompletion(projectName string, command model.ActionCommand) error {
+	displayName := runName(projectName, command)
+	buildRunId, err := p.builder.trigger(displayName)
+	if err != nil {
+		return err
+	}
+	exitCode, err := p.builder.waitForCompletion(buildRunId)
+	if err != nil {
+		return fmt.Errorf("failed to wait for %s of %s: %w", command, displayName, err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("%s failed for %s (exit code %d)", command, displayName, exitCode)
+	}
+	return nil
+}
+
 func (p *Pipeline) DeletePipeline(projectName string) error {
 	p.builder.devopsBuild.deleteStepPipelines(projectName)
 	return nil

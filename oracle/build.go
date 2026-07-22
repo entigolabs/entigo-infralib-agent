@@ -2,7 +2,8 @@ package oracle
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -38,114 +40,84 @@ import (
 // sandwich: it launches the plan build run, reads the plan from the logs, drives
 // the manual-approval DevOps deployment (Gate), then launches the apply build
 // run.
+//
+// The container environment is delivered without any bucket-side plaintext:
+// non-secret values are build-pipeline PARAMETERS (exported into the build
+// environment as EI_<NAME>), and secret values are the step's own Vault secrets
+// injected via the build spec's `vaultVariables` (each keyed EI_<NAME>, its value
+// the secret's literal OCID — OCI resolves vaultVariables at run-environment
+// build time and does NOT substitute pipeline parameters into that value). A
+// generic runtime loop forwards every EI_<NAME> into `docker run -e <NAME>`.
+// Because the set of
+// secrets/params differs per step, the build spec is generated per (step,command)
+// and committed to the shared hosted repo; the spec + parameter set are
+// reconciled (and the spec re-pushed) only when their content changes.
 const (
 	// pollInterval is how often the DevOps build-run / work-request / approval
 	// polls re-check state. GetBuildRun is cheap and the step count small.
 	pollInterval = 5 * time.Second
-	// runEnvParam is the single build-pipeline parameter the generic build spec
-	// reads: a PAR URL to the per-run environment file in the config bucket.
-	// Keeping the whole (variable, secret-bearing) env out of DevOps arguments
-	// and behind a short-lived PAR means the build definition is static and the
-	// build-run argument carries no secret.
-	runEnvParam = "RUN_ENV_URL"
-	// runEnvImageKey is the env-file key the build spec pulls the image name from
-	// (double-underscore = consumed by the spec, not forwarded into the container).
-	runEnvImageKey = "__IMAGE"
-	// buildSpecPath is the build spec's location in the seeded repository.
-	buildSpecPath   = "build_spec.yaml"
-	buildRunEnvTTL  = 60 * time.Minute
+	// imageParam carries the base image per run (avoids re-pushing the spec /
+	// re-declaring parameters on every version bump). Consumed by the spec, not
+	// forwarded into the container (no EI_ prefix).
+	imageParam = "IMAGE"
+	// envParamPrefix marks a build-pipeline parameter (or vaultVariable) whose
+	// value the spec forwards into the container as `docker run -e <NAME>`, with
+	// the prefix stripped. Keeps our env off the runner's own environment.
+	envParamPrefix = "EI_"
+	// specRepoPrefix locates a step's build spec in the hosted repo — the single
+	// source of truth (no bucket copy). The repo is what the build runner reads.
+	specRepoPrefix = "specs/"
+	// specHashTag is the build-pipeline freeform tag holding the hash of the spec
+	// currently in the repo, so a reconcile pushes only when the spec changed.
+	specHashTag     = "infralib-spec-hash"
+	buildRunTimeout = 60 * time.Minute
 	buildSpecBranch = "main"
 	buildStageName  = "run"
 	// devopsAuthTokenObject persists the OCI auth token used to git-push the
-	// build spec, in the config bucket alongside the CSK. Same trust boundary.
+	// build specs, in the Vault alongside the CSK. Same trust boundary.
 	devopsAuthTokenObject = "oracle-devops-auth-token"
 )
 
-// buildSpecYAML is the generic managed-build spec seeded once into the hosted
-// code repository and shared by every step's build pipeline (the per-step
-// pipelines differ only in name; the command is delivered per run). It fetches
-// the per-run env file via the PAR URL passed as the RUN_ENV_URL parameter,
-// reconstructs the container environment (each value is base64-encoded so
-// multi-line values like WRAPPER_CONFIG survive), then does a single `docker
-// run` of the infralib base image. The env file already carries COMMAND, so the
-// same spec runs plan or apply depending only on which env file the agent wrote.
-// `set -e` + docker's exit-code propagation make a non-zero step exit fail the
-// build run, which is how the agent detects a failed plan/apply. Base images are
-// public on Docker Hub, so no registry login is needed. The build runner has a
-// resource principal; its OCI_RESOURCE_PRINCIPAL_* vars are forwarded into the
-// container so the in-container oci provider authenticates as one.
-const buildSpecYAML = `version: 0.1
-component: build
-timeoutInSeconds: 6000
-shell: bash
-steps:
-  - type: Command
-    name: "Run infralib step in base image"
-    timeoutInSeconds: 6000
-    command: |
-      set -euo pipefail
-      echo "Fetching run environment"
-      curl -fsSL "${RUN_ENV_URL}" -o /tmp/run.env
-      IMAGE=""
-      docker_args=()
-      while IFS=' ' read -r key b64 || [ -n "$key" ]; do
-        [ -z "$key" ] && continue
-        val=$(printf '%s' "$b64" | base64 -d)
-        if [ "$key" = "__IMAGE" ]; then IMAGE="$val"; continue; fi
-        docker_args+=(-e "$key=$val")
-      done < /tmp/run.env
-      # The oci provider in the container authenticates as a resource principal,
-      # but only the build runner has one — forward its RP env vars into the
-      # container, bind-mounting any that are file paths (RPv2.2 token/key) so
-      # they resolve at the same path inside.
-      echo "Runner resource-principal vars present:"; env | grep -o '^OCI_RESOURCE_PRINCIPAL[A-Z_]*' || echo "  (none)"
-      for v in OCI_RESOURCE_PRINCIPAL_VERSION OCI_RESOURCE_PRINCIPAL_REGION OCI_RESOURCE_PRINCIPAL_RPST OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM_PASSPHRASE; do
-        val="${!v:-}"
-        [ -z "$val" ] && continue
-        if [ -f "$val" ]; then docker_args+=(-v "$val:$val:ro"); fi
-        docker_args+=(-e "$v=$val")
-      done
-      echo "Running $IMAGE"
-      docker run --rm "${docker_args[@]}" "$IMAGE"
-`
-
 // DevOpsBuilder executes infralib steps through OCI DevOps build pipelines.
-// One shared project (<prefix>-infralib) holds a
-// single hosted code repo carrying buildSpecYAML plus one build pipeline per
-// (step, command) — e.g. <prefix>-hello-plan, <prefix>-hello-apply — so a gitops
-// engineer sees a uniquely named pipeline for every step action with native
-// build-run logs. The per-step pipelines are created lazily and share the one
-// build spec; per-run data (image + full env, incl. COMMAND) is delivered
-// out-of-band via a PAR'd config-bucket object, so the build definitions never
-// change and steps run concurrently as independent build runs. The project also
-// hosts the manual-approval deployment pipelines (see Gate.UseProject).
+// One shared project (<prefix>-infralib) holds a single hosted code repo carrying
+// the per-step build specs plus one build pipeline per (step, command) — e.g.
+// <prefix>-hello-plan, <prefix>-hello-apply — so a gitops engineer sees a uniquely
+// named pipeline for every step action with native build-run logs. Each pipeline
+// carries its non-secret env as parameters (defaults) and its secret OCIDs as
+// parameters referenced by that step's spec vaultVariables. The project also hosts
+// the manual-approval deployment pipelines (see Gate.UseProject).
 //
-// Setup mirrors the CSK bootstrap: the git seed of the build spec needs a user
-// (auth token), so the FIRST run must be local (session-token or API-key auth);
-// in-container resource-principal runs reference the already-seeded repo.
+// Setup mirrors the CSK bootstrap: the git push of the build specs needs a user
+// (auth token), so the FIRST run (and any run that changes a spec) must be local
+// (session-token or API-key auth); in-container resource-principal runs reference
+// the already-pushed specs.
 type DevOpsBuilder struct {
 	ctx           context.Context
 	client        devops.DevopsClient
 	onsClient     ons.NotificationControlPlaneClient
 	iam           *IAM
-	config        *Storage
+	secrets       secretPersistence
 	compartmentId string
 	region        string
 	cloudPrefix   string
+	userId        string
 	once          sync.Once
 	ensureErr     error
 	projectId     string
 	repoId        string
 	repoURL       string
-	mu            sync.Mutex
-	pipelines     map[string]string // pipeline display name → build pipeline OCID (run stage ensured)
+	mu            sync.Mutex             // guards the maps below; held only for short in-memory sections
+	pipelines     map[string]string      // pipeline display name → build pipeline OCID (reconciled)
+	pushedSpecs   map[string]string      // spec file path → hash pushed this process (dedupes redundant pushes)
+	keyLocks      map[string]*sync.Mutex // per-pipeline reconcile lock, so one pipeline serializes with itself but not with others
+	pushMu        sync.Mutex             // serializes git pushes to the single shared spec repo
 }
 
 // ProjectId returns the shared DevOps project OCID after Ensure has run (needed
 // to enable the project's build logs and to host the approval pipelines).
 func (d *DevOpsBuilder) ProjectId() string { return d.projectId }
 
-func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvider, iam *IAM, config *Storage, region, compartmentId, cloudPrefix string) (*DevOpsBuilder, error) {
+func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvider, iam *IAM, secrets secretPersistence, region, compartmentId, cloudPrefix string) (*DevOpsBuilder, error) {
 	client, err := devops.NewDevopsClientWithConfigurationProvider(provider)
 	if err != nil {
 		return nil, err
@@ -163,27 +135,30 @@ func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvi
 		client:        client,
 		onsClient:     onsClient,
 		iam:           iam,
-		config:        config,
+		secrets:       secrets,
 		compartmentId: compartmentId,
 		region:        region,
 		cloudPrefix:   cloudPrefix,
 		pipelines:     map[string]string{},
+		pushedSpecs:   map[string]string{},
+		keyLocks:      map[string]*sync.Mutex{},
 	}, nil
 }
 
 // Ensure provisions (once) the shared DevOps project, its notification topic and
 // the hosted build-spec repository. userId (empty under in-container resource
-// principals) gates only the git seed of the build spec; everything else is
+// principals) gates only the later git push of build specs; everything else is
 // list-or-create and works from any principal that can manage DevOps. Per-step
-// build pipelines are created lazily by launchBuildRun.
+// build pipelines + their specs are created lazily by launchBuildRun.
 func (d *DevOpsBuilder) Ensure(userId string) error {
 	d.once.Do(func() {
-		d.ensureErr = d.ensure(userId)
+		d.userId = userId
+		d.ensureErr = d.ensure()
 	})
 	return d.ensureErr
 }
 
-func (d *DevOpsBuilder) ensure(userId string) error {
+func (d *DevOpsBuilder) ensure() error {
 	topicId, err := d.ensureTopic(fmt.Sprintf("%s-approvals", d.cloudPrefix))
 	if err != nil {
 		return err
@@ -193,19 +168,12 @@ func (d *DevOpsBuilder) ensure(userId string) error {
 		return err
 	}
 	d.projectId = projectId
-	repoId, repoURL, seeded, err := d.ensureRepository(fmt.Sprintf("%s-infralib-src", d.cloudPrefix))
+	repoId, repoURL, err := d.ensureRepository(fmt.Sprintf("%s-infralib-src", d.cloudPrefix))
 	if err != nil {
 		return err
 	}
 	d.repoId, d.repoURL = repoId, repoURL
-	if seeded {
-		return nil
-	}
-	if userId == "" {
-		return fmt.Errorf("build-spec repository %s-infralib-src is empty and no user is available to seed it; "+
-			"run the agent once locally (session-token or API-key auth) to bootstrap the DevOps build pipelines", d.cloudPrefix)
-	}
-	return d.seedBuildSpec(userId)
+	return nil
 }
 
 // ensureTopic finds or creates the notification topic the shared project (and
@@ -262,22 +230,28 @@ func (d *DevOpsBuilder) ensureProject(name, topicId string) (string, error) {
 	return *created.Id, nil
 }
 
-// ensureRepository gets or creates the hosted code repo holding the build spec.
-// seeded reports whether it already has commits (a fresh hosted repo is empty
-// and must be seeded before any pipeline can read the spec).
-func (d *DevOpsBuilder) ensureRepository(name string) (string, string, bool, error) {
+// ensureRepository gets or creates the hosted code repo holding the build specs.
+func (d *DevOpsBuilder) ensureRepository(name string) (string, string, error) {
 	list, err := d.client.ListRepositories(d.ctx, devops.ListRepositoriesRequest{
 		ProjectId: &d.projectId,
 		Name:      &name,
 	})
 	if err != nil {
-		return "", "", false, fmt.Errorf("failed to list repositories: %w", err)
+		return "", "", fmt.Errorf("failed to list repositories: %w", err)
 	}
 	if len(list.Items) > 0 {
-		return d.resolveRepository(*list.Items[0].Id)
+		response, err := d.client.GetRepository(d.ctx, devops.GetRepositoryRequest{RepositoryId: list.Items[0].Id})
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get repository %s: %w", *list.Items[0].Id, err)
+		}
+		url := ""
+		if response.HttpUrl != nil {
+			url = *response.HttpUrl
+		}
+		return *response.Id, url, nil
 	}
 	defaultBranch := buildSpecBranch
-	description := "Entigo infralib DevOps build spec"
+	description := "Entigo infralib DevOps build specs"
 	created, err := d.client.CreateRepository(d.ctx, devops.CreateRepositoryRequest{
 		CreateRepositoryDetails: devops.CreateRepositoryDetails{
 			Name:           &name,
@@ -289,206 +263,234 @@ func (d *DevOpsBuilder) ensureRepository(name string) (string, string, bool, err
 		},
 	})
 	if err != nil {
-		return "", "", false, fmt.Errorf("failed to create repository %s: %w", name, err)
+		return "", "", fmt.Errorf("failed to create repository %s: %w", name, err)
 	}
 	url := ""
 	if created.HttpUrl != nil {
 		url = *created.HttpUrl
 	}
-	return *created.Id, url, false, nil
+	return *created.Id, url, nil
 }
 
-// resolveRepository reads the full repository (the list summary omits
-// CommitCount) to get its http url and whether it already carries the spec.
-func (d *DevOpsBuilder) resolveRepository(repoId string) (string, string, bool, error) {
-	response, err := d.client.GetRepository(d.ctx, devops.GetRepositoryRequest{RepositoryId: &repoId})
-	if err != nil {
-		return "", "", false, fmt.Errorf("failed to get repository %s: %w", repoId, err)
-	}
-	url := ""
-	if response.HttpUrl != nil {
-		url = *response.HttpUrl
-	}
-	seeded := response.CommitCount != nil && *response.CommitCount > 0
-	return repoId, url, seeded, nil
-}
-
-// seedBuildSpec pushes buildSpecYAML to the hosted repo's default branch using
-// go-git over HTTPS. Basic-auth username is the OCI code-repo username; password
-// is an auth token (persisted, reused).
-func (d *DevOpsBuilder) seedBuildSpec(userId string) error {
-	if d.repoURL == "" {
-		return fmt.Errorf("hosted repository has no http url to push to")
-	}
-	username, err := d.gitUsername(userId)
-	if err != nil {
-		return err
-	}
-	token, err := d.iam.EnsureAuthToken(d.config, userId, fmt.Sprintf("entigo-infralib-%s-devops", d.cloudPrefix))
-	if err != nil {
-		return err
-	}
-	auth := &githttp.BasicAuth{Username: username, Password: token}
-	log.Printf("Seeding DevOps build spec into %s as git user %q\n", d.repoURL, username)
-	if err = seedRepoFile(d.ctx, d.repoURL, auth, buildSpecBranch, buildSpecPath, []byte(buildSpecYAML)); err != nil {
-		return fmt.Errorf("%w; if this is a 401, the git username form may differ for this tenancy — "+
-			"set %s to override it (e.g. \"<tenancy>/<domain>/%s\" when a non-default identity domain is in play)",
-			err, gitUsernameEnv, username)
-	}
-	return nil
-}
-
-// gitUsernameEnv overrides the HTTPS basic-auth username used to push the build
-// spec, for tenancies whose exact form the default doesn't match.
-const gitUsernameEnv = "ORACLE_GIT_USERNAME"
-
-// gitUsername builds the OCI code-repository HTTPS username, which OCI forms as
-// `<tenancy-name>/<login>` (NOT the object-storage namespace — the two differ).
-// Tenancies with a non-default identity domain instead need
-// `<tenancy-name>/<domain>/<login>`; the domain can't be derived from the
-// Identity user alone, so that case falls back to the env override.
-func (d *DevOpsBuilder) gitUsername(userId string) (string, error) {
-	if override := os.Getenv(gitUsernameEnv); override != "" {
-		return override, nil
-	}
-	tenancy, err := d.iam.TenancyName()
+// launchBuildRun ensures the step+command build pipeline exists with the right
+// parameters + spec, then starts a build run, returning its OCID (consumed by
+// waitForBuildRun). Non-secret values ride the pipeline parameters; secret OCIDs
+// ride parameters referenced by the spec's vaultVariables; only IMAGE and the
+// portal campaign correlation are supplied per run. specFile is the shared
+// per-step spec path the pipeline's stage reads.
+func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, params, secretRefs, perRun map[string]string) (string, error) {
+	pipelineId, err := d.ensurePipeline(displayName, specFile, image, params, secretRefs)
 	if err != nil {
 		return "", err
 	}
-	login, err := d.iam.Username(userId)
-	if err != nil {
-		return "", err
+	args := []devops.BuildRunArgument{{Name: strPtr(imageParam), Value: &image}}
+	for name, value := range perRun {
+		paramName := envParamPrefix + name
+		v := value
+		args = append(args, devops.BuildRunArgument{Name: &paramName, Value: &v})
 	}
-	return fmt.Sprintf("%s/%s", tenancy, login), nil
-}
-
-// seedRepoFile initialises a local repo, commits a single file and pushes it to
-// the given branch of a remote that starts empty.
-func seedRepoFile(ctx context.Context, url string, auth transport.AuthMethod, branch, path string, content []byte) error {
-	dir, err := os.MkdirTemp("", "oracle-buildspec-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-
-	repo, err := git.PlainInit(dir, false)
-	if err != nil {
-		return err
-	}
-	if _, err = repo.CreateRemote(&gitconfig.RemoteConfig{Name: git.DefaultRemoteName, URLs: []string{url}}); err != nil {
-		return err
-	}
-	worktree, err := repo.Worktree()
-	if err != nil {
-		return err
-	}
-	file, err := worktree.Filesystem.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	if _, err = file.Write(content); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	if _, err = worktree.Add(path); err != nil {
-		return err
-	}
-	if _, err = worktree.Commit("Add infralib build spec", &git.CommitOptions{
-		Author: &object.Signature{Name: "Entigo Infralib Agent", Email: "no-reply@localhost", When: time.Now().UTC()},
-	}); err != nil {
-		return err
-	}
-	// Push the concrete local branch ref, not "HEAD": go-git can resolve a HEAD
-	// source refspec to nothing and return NoErrAlreadyUpToDate, silently pushing
-	// an empty repo (the "Unable to fetch build_spec" failure).
-	head, err := repo.Head()
-	if err != nil {
-		return err
-	}
-	refSpec := gitconfig.RefSpec(fmt.Sprintf("+%s:refs/heads/%s", head.Name().String(), branch))
-	err = repo.PushContext(ctx, &git.PushOptions{
-		Auth:     auth,
-		RefSpecs: []gitconfig.RefSpec{refSpec},
+	response, err := d.client.CreateBuildRun(d.ctx, devops.CreateBuildRunRequest{
+		CreateBuildRunDetails: devops.CreateBuildRunDetails{
+			BuildPipelineId:   &pipelineId,
+			DisplayName:       &displayName,
+			BuildRunArguments: &devops.BuildRunArgumentCollection{Items: args},
+			FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+		},
 	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("failed to push build spec: %w", err)
+	if err != nil {
+		return "", fmt.Errorf("failed to create build run for %s: %w", displayName, err)
 	}
-	log.Printf("Pushed build spec commit %s to %s\n", head.Hash().String()[:8], branch)
-	return nil
+	return *response.Id, nil
 }
 
-// ensurePipeline gets or creates the build pipeline named displayName (one per
-// step+command, e.g. <prefix>-hello-plan) together with its single `run` stage
-// over the shared build-spec repo. Cached (steps run in parallel goroutines);
-// the get-or-create is serialized, which is fine for a per-pipeline one-time
-// setup call.
-func (d *DevOpsBuilder) ensurePipeline(displayName string) (string, error) {
+// triggerBuildRun starts a build run against an already-created (step,command)
+// pipeline found by display name, relying entirely on the pipeline's baked-in
+// parameter defaults (image + non-secret env + secret OCIDs). Used by
+// agentless/fresh-process flows — console-triggerable destroy — that no longer
+// hold the run spec, so it neither reconciles parameters nor passes IMAGE per run.
+// A missing pipeline returns model.NotFoundError so the destroy flow can skip a
+// step that was never created. perRun carries only the portal campaign
+// correlation, when present.
+func (d *DevOpsBuilder) triggerBuildRun(displayName string, perRun map[string]string) (string, error) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if id, ok := d.pipelines[displayName]; ok {
+	pipelineId, ok := d.pipelines[displayName]
+	d.mu.Unlock()
+	if !ok {
+		list, err := d.client.ListBuildPipelines(d.ctx, devops.ListBuildPipelinesRequest{
+			ProjectId:   &d.projectId,
+			DisplayName: &displayName,
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to list build pipelines: %w", err)
+		}
+		if len(list.Items) == 0 {
+			return "", model.NewNotFoundError(fmt.Sprintf("build pipeline %s", displayName))
+		}
+		pipelineId = *list.Items[0].Id
+	}
+	args := make([]devops.BuildRunArgument, 0, len(perRun))
+	for name, value := range perRun {
+		paramName := envParamPrefix + name
+		v := value
+		args = append(args, devops.BuildRunArgument{Name: &paramName, Value: &v})
+	}
+	response, err := d.client.CreateBuildRun(d.ctx, devops.CreateBuildRunRequest{
+		CreateBuildRunDetails: devops.CreateBuildRunDetails{
+			BuildPipelineId:   &pipelineId,
+			DisplayName:       &displayName,
+			BuildRunArguments: &devops.BuildRunArgumentCollection{Items: args},
+			FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create build run for %s: %w", displayName, err)
+	}
+	return *response.Id, nil
+}
+
+// ensurePipeline reconciles the (step,command) pipeline: creates it with the
+// desired parameters, ensures its stage points at the step's spec file, and
+// (re)pushes the spec when the specs tree changes. Cached per process — a step's
+// params/secrets are stable within one run.
+func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, params, secretRefs map[string]string) (string, error) {
+	// Serialize only this pipeline with itself (idempotent create), so different
+	// steps reconcile — and wait on their async work requests — concurrently.
+	lock := d.keyLock(displayName)
+	lock.Lock()
+	defer lock.Unlock()
+	d.mu.Lock()
+	id, ok := d.pipelines[displayName]
+	d.mu.Unlock()
+	if ok {
 		return id, nil
 	}
-	pipelineId, err := d.getOrCreatePipeline(displayName)
+	desiredParams := buildPipelineParameters(image, params)
+	// The spec is per-STEP, not per-command: it depends only on the env-var key set
+	// and secrets (identical across plan/apply/destroy) — COMMAND is a parameter, not
+	// baked in — so all of a step's command pipelines share one specs/<step>.yaml.
+	spec := buildSpecYAMLFor(forwardNames(params, secretRefs), vaultVariables(secretRefs))
+	specHash := hashSpec(spec)
+	pipelineId, priorHash, err := d.getOrCreatePipeline(displayName, desiredParams)
 	if err != nil {
 		return "", err
 	}
-	if err = d.ensureStage(pipelineId); err != nil {
+	if err = d.ensureStage(pipelineId, specFile); err != nil {
 		return "", err
 	}
+	if err = d.ensureSpecPushed(specFile, spec, specHash, priorHash); err != nil {
+		return "", err
+	}
+	// Reconcile params (non-secret defaults + secret OCIDs drift with config/CSK)
+	// and record the spec hash now living in the repo.
+	if err = d.updatePipeline(pipelineId, desiredParams, specHash); err != nil {
+		return "", err
+	}
+	d.mu.Lock()
 	d.pipelines[displayName] = pipelineId
+	d.mu.Unlock()
 	return pipelineId, nil
 }
 
-func (d *DevOpsBuilder) getOrCreatePipeline(name string) (string, error) {
+// keyLock returns the reconcile mutex for a pipeline display name, creating it on
+// first use, so ensurePipeline serializes each pipeline with itself while letting
+// distinct pipelines run in parallel.
+func (d *DevOpsBuilder) keyLock(displayName string) *sync.Mutex {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	lock, ok := d.keyLocks[displayName]
+	if !ok {
+		lock = &sync.Mutex{}
+		d.keyLocks[displayName] = lock
+	}
+	return lock
+}
+
+// ensureSpecPushed pushes the step's shared spec to the hosted repo when it has
+// changed. The repo is the single source of truth, so it pushes only when this
+// pipeline doesn't already reference the current spec (priorHash) AND a sibling
+// command of the same step hasn't already pushed the shared file this process. A
+// freshly created pipeline (priorHash == "") therefore forces the push, so the
+// shared specs/<step>.yaml always exists before its first stage reads it. All
+// pushes are serialized on pushMu because they target one shared git repo.
+// In-container runs (no user) can't push, so a genuinely changed/new spec there is
+// a loud error from pushSpec — a new or changed step must be introduced locally.
+func (d *DevOpsBuilder) ensureSpecPushed(specFile, spec, specHash, priorHash string) error {
+	d.pushMu.Lock()
+	defer d.pushMu.Unlock()
+	d.mu.Lock()
+	pushed := d.pushedSpecs[specFile]
+	d.mu.Unlock()
+	if priorHash == specHash || pushed == specHash {
+		return nil
+	}
+	if err := d.pushSpec(specFile, spec); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	d.pushedSpecs[specFile] = specHash
+	d.mu.Unlock()
+	return nil
+}
+
+// getOrCreatePipeline returns the pipeline OCID and the spec hash recorded on it
+// (empty for a freshly created one or one predating the tag), without mutating an
+// existing pipeline's parameters — ensurePipeline does that via updatePipeline.
+func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPipelineParameter) (string, string, error) {
 	list, err := d.client.ListBuildPipelines(d.ctx, devops.ListBuildPipelinesRequest{
 		ProjectId:   &d.projectId,
 		DisplayName: &name,
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to list build pipelines: %w", err)
+		return "", "", fmt.Errorf("failed to list build pipelines: %w", err)
 	}
 	if len(list.Items) > 0 {
-		return *list.Items[0].Id, nil
+		return *list.Items[0].Id, list.Items[0].FreeformTags[specHashTag], nil
 	}
-	// OCI rejects an empty defaultValue ("Invalid Parameter"); the real value is
-	// always supplied per run as a build run argument, so this is just a placeholder.
-	defaultValue := "unset"
 	description := "Runs an infralib step by docker-running the base image on a managed build runner"
-	paramDesc := "PAR URL to the per-run environment file"
 	created, err := d.client.CreateBuildPipeline(d.ctx, devops.CreateBuildPipelineRequest{
 		CreateBuildPipelineDetails: devops.CreateBuildPipelineDetails{
-			ProjectId:   &d.projectId,
-			DisplayName: &name,
-			Description: &description,
-			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{
-				Items: []devops.BuildPipelineParameter{{
-					Name:         new(runEnvParam),
-					DefaultValue: &defaultValue,
-					Description:  &paramDesc,
-				}},
-			},
-			FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+			ProjectId:               &d.projectId,
+			DisplayName:             &name,
+			Description:             &description,
+			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
+			FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create build pipeline %s: %w", name, err)
+		return "", "", fmt.Errorf("failed to create build pipeline %s: %w", name, err)
 	}
 	// Creation is async; a build run started before the work request finishes
 	// gets a 404 ("ensure completion of any work request for the Build Pipeline").
 	if err = d.waitForWorkRequest(created.OpcWorkRequestId); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return *created.Id, nil
+	return *created.Id, "", nil
 }
 
-func (d *DevOpsBuilder) ensureStage(pipelineId string) error {
-	displayName := buildStageName
+// updatePipeline refreshes the pipeline's parameters and stamps the spec hash now
+// in the repo onto its freeform tags.
+func (d *DevOpsBuilder) updatePipeline(id string, params []devops.BuildPipelineParameter, specHash string) error {
+	_, err := d.client.UpdateBuildPipeline(d.ctx, devops.UpdateBuildPipelineRequest{
+		BuildPipelineId: &id,
+		UpdateBuildPipelineDetails: devops.UpdateBuildPipelineDetails{
+			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
+			FreeformTags: map[string]string{
+				model.ResourceTagKey: model.ResourceTagValue,
+				specHashTag:          specHash,
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update build pipeline %s: %w", id, err)
+	}
+	return nil
+}
+
+func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
+	stageName := buildStageName
 	list, err := d.client.ListBuildPipelineStages(d.ctx, devops.ListBuildPipelineStagesRequest{
 		BuildPipelineId: &pipelineId,
-		DisplayName:     &displayName,
+		DisplayName:     &stageName,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list build pipeline stages: %w", err)
@@ -497,12 +499,12 @@ func (d *DevOpsBuilder) ensureStage(pipelineId string) error {
 		return nil
 	}
 	sourceName := "build-spec"
-	buildSpec := buildSpecPath
+	buildSpec := specFile
 	branch := buildSpecBranch
 	created, err := d.client.CreateBuildPipelineStage(d.ctx, devops.CreateBuildPipelineStageRequest{
 		CreateBuildPipelineStageDetails: devops.CreateBuildStageDetails{
 			BuildPipelineId: &pipelineId,
-			DisplayName:     &displayName,
+			DisplayName:     &stageName,
 			// First stage's predecessor is the pipeline itself.
 			BuildPipelineStagePredecessorCollection: &devops.BuildPipelineStagePredecessorCollection{
 				Items: []devops.BuildPipelineStagePredecessor{{Id: &pipelineId}},
@@ -527,6 +529,167 @@ func (d *DevOpsBuilder) ensureStage(pipelineId string) error {
 	// Adding the stage updates the pipeline via another async work request; wait
 	// so the first build run doesn't race it (same 404 as pipeline creation).
 	return d.waitForWorkRequest(created.OpcWorkRequestId)
+}
+
+// pushSpec commits the step's build spec to the hosted repo (the single source of
+// truth) at specFile. It needs a user (auth token) — in-container runs (no user)
+// can't push, so a changed spec there is a loud error and must be introduced from a
+// local run.
+func (d *DevOpsBuilder) pushSpec(specFile, spec string) error {
+	if d.repoURL == "" {
+		return fmt.Errorf("hosted repository has no http url to push to")
+	}
+	if d.userId == "" {
+		return fmt.Errorf("build spec %s changed but no user is available to push it; "+
+			"run the agent once locally (session-token or API-key auth) to bootstrap/update the DevOps build pipelines", specFile)
+	}
+	username, err := d.gitUsername(d.userId)
+	if err != nil {
+		return err
+	}
+	token, err := d.iam.EnsureAuthToken(d.secrets, d.userId, fmt.Sprintf("entigo-infralib-%s-devops", d.cloudPrefix))
+	if err != nil {
+		return err
+	}
+	auth := &githttp.BasicAuth{Username: username, Password: token}
+	log.Printf("Pushing DevOps build spec %s into %s as git user %q\n", specFile, d.repoURL, username)
+	if err = commitSpecFile(d.ctx, d.repoURL, auth, buildSpecBranch, specFile, []byte(spec)); err != nil {
+		return fmt.Errorf("%w; if this is a 401, the git username form may differ for this tenancy — "+
+			"set %s to override it (e.g. \"<tenancy>/<domain>/%s\" when a non-default identity domain is in play)",
+			err, gitUsernameEnv, username)
+	}
+	return nil
+}
+
+// gitUsernameEnv overrides the HTTPS basic-auth username used to push the build
+// specs, for tenancies whose exact form the default doesn't match.
+const gitUsernameEnv = "ORACLE_GIT_USERNAME"
+
+// gitUsername builds the OCI code-repository HTTPS username, which OCI forms as
+// `<tenancy-name>/<login>` (NOT the object-storage namespace — the two differ).
+// Tenancies with a non-default identity domain instead need
+// `<tenancy-name>/<domain>/<login>`; the domain can't be derived from the
+// Identity user alone, so that case falls back to the env override.
+func (d *DevOpsBuilder) gitUsername(userId string) (string, error) {
+	if override := os.Getenv(gitUsernameEnv); override != "" {
+		return override, nil
+	}
+	tenancy, err := d.iam.TenancyName()
+	if err != nil {
+		return "", err
+	}
+	login, err := d.iam.Username(userId)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/%s", tenancy, login), nil
+}
+
+// commitSpecFile clones the hosted repo (init-ing a fresh one if the remote is
+// still empty), writes the single spec file, and pushes only if it changed. The
+// repo is the source of truth — cloning preserves every other step's spec, so no
+// bucket copy is needed.
+func commitSpecFile(ctx context.Context, url string, auth transport.AuthMethod, branch, path string, content []byte) error {
+	dir, err := os.MkdirTemp("", "oracle-buildspec-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	repo, fresh, err := cloneOrInit(ctx, dir, url, auth, branch)
+	if err != nil {
+		return err
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	if dir := pathDir(path); dir != "" {
+		if err = worktree.Filesystem.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+	}
+	file, err := worktree.Filesystem.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if _, err = worktree.Add(path); err != nil {
+		return err
+	}
+	status, err := worktree.Status()
+	if err != nil {
+		return err
+	}
+	if status.IsClean() {
+		return nil // already up to date in the repo
+	}
+	if _, err = worktree.Commit("Update infralib build spec "+path, &git.CommitOptions{
+		Author: &object.Signature{Name: "Entigo Infralib Agent", Email: "no-reply@localhost", When: time.Now().UTC()},
+	}); err != nil {
+		return err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return err
+	}
+	// A fresh (empty-remote) repo has an unrelated history, so force-push; a clone
+	// fast-forwards.
+	spec := fmt.Sprintf("%s:refs/heads/%s", head.Name().String(), branch)
+	if fresh {
+		spec = "+" + spec
+	}
+	err = repo.PushContext(ctx, &git.PushOptions{Auth: auth, RefSpecs: []gitconfig.RefSpec{gitconfig.RefSpec(spec)}})
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("failed to push build spec: %w", err)
+	}
+	log.Printf("Pushed build spec commit %s to %s\n", head.Hash().String()[:8], branch)
+	return nil
+}
+
+// cloneOrInit clones the branch, or initialises a fresh repo + remote when the
+// hosted repository is still empty (first-ever push). fresh reports the latter.
+func cloneOrInit(ctx context.Context, dir, url string, auth transport.AuthMethod, branch string) (*git.Repository, bool, error) {
+	repo, err := git.PlainCloneContext(ctx, dir, false, &git.CloneOptions{
+		URL:           url,
+		Auth:          auth,
+		ReferenceName: plumbing.NewBranchReferenceName(branch),
+		SingleBranch:  true,
+	})
+	if err == nil {
+		return repo, false, nil
+	}
+	if !errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return nil, false, fmt.Errorf("failed to clone build spec repo: %w", err)
+	}
+	repo, err = git.PlainInit(dir, false)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err = repo.CreateRemote(&gitconfig.RemoteConfig{Name: git.DefaultRemoteName, URLs: []string{url}}); err != nil {
+		return nil, false, err
+	}
+	return repo, true, nil
+}
+
+func pathDir(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[:i]
+	}
+	return ""
+}
+
+// hashSpec is the content hash of a build spec, stamped on the pipeline's
+// spec-hash tag so a reconcile pushes only when the spec changed.
+func hashSpec(spec string) string {
+	sum := sha256.Sum256([]byte(spec))
+	return hex.EncodeToString(sum[:])
 }
 
 // waitForWorkRequest blocks until a DevOps work request finishes. A nil id (no
@@ -555,63 +718,8 @@ func (d *DevOpsBuilder) waitForWorkRequest(workRequestId *string) error {
 	}
 }
 
-// launchBuildRun ensures the step+command build pipeline exists, writes the
-// per-run env file, mints a PAR for it and starts a build run, returning its
-// OCID (consumed by waitForBuildRun). displayName is the "<prefixStep>-<command>"
-// identity that names both the build pipeline and the build run.
-func (d *DevOpsBuilder) launchBuildRun(displayName, image string, env map[string]string) (string, error) {
-	pipelineId, err := d.ensurePipeline(displayName)
-	if err != nil {
-		return "", err
-	}
-	objectName := fmt.Sprintf("buildenv/%s", displayName)
-	if err = d.config.PutFile(objectName, encodeRunEnv(image, env)); err != nil {
-		return "", fmt.Errorf("failed to write run environment: %w", err)
-	}
-	parURL, err := d.config.CreatePreauthenticatedURL(objectName, buildRunEnvTTL)
-	if err != nil {
-		return "", err
-	}
-	name := displayName
-	if len(name) > 255 {
-		name = name[:255]
-	}
-	response, err := d.client.CreateBuildRun(d.ctx, devops.CreateBuildRunRequest{
-		CreateBuildRunDetails: devops.CreateBuildRunDetails{
-			BuildPipelineId: &pipelineId,
-			DisplayName:     &name,
-			BuildRunArguments: &devops.BuildRunArgumentCollection{
-				Items: []devops.BuildRunArgument{{Name: new(runEnvParam), Value: &parURL}},
-			},
-			FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create build run for %s: %w", displayName, err)
-	}
-	return *response.Id, nil
-}
-
-// encodeRunEnv serialises the container environment as one `KEY BASE64VALUE` line
-// per variable (base64 keeps multi-line values intact), with the image under
-// runEnvImageKey. The build spec decodes it back into `docker run -e` args.
-func encodeRunEnv(image string, env map[string]string) []byte {
-	lines := make([]string, 0, len(env)+1)
-	lines = append(lines, fmt.Sprintf("%s %s", runEnvImageKey, base64.StdEncoding.EncodeToString([]byte(image))))
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys) // deterministic output
-	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("%s %s", k, base64.StdEncoding.EncodeToString([]byte(env[k]))))
-	}
-	return []byte(strings.Join(lines, "\n") + "\n")
-}
-
 // waitForBuildRun polls the build run to completion and returns a process-style
-// exit code (0 = SUCCEEDED, 1 = FAILED/CANCELED) so callers share the Container
-// Instance exit-code contract.
+// exit code (0 = SUCCEEDED, 1 = FAILED/CANCELED).
 func (d *DevOpsBuilder) waitForBuildRun(buildRunId string) (int, error) {
 	for {
 		response, err := d.client.GetBuildRun(d.ctx, devops.GetBuildRunRequest{BuildRunId: &buildRunId})
@@ -660,4 +768,111 @@ func (d *DevOpsBuilder) deleteStepPipelines(step string) {
 			}
 		}
 	}
+}
+
+// --- build spec + parameter generation ---
+
+// forwardNames is the sorted set of container env var names the spec forwards
+// (docker run -e <NAME>): every non-secret parameter and every secret.
+func forwardNames(params, secretRefs map[string]string) []string {
+	names := make([]string, 0, len(params)+len(secretRefs))
+	for name := range params {
+		names = append(names, name)
+	}
+	for name := range secretRefs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// vaultVariables maps each secret's exported env-var name (EI_<NAME>) to the
+// secret's literal OCID. OCI resolves vaultVariables at run-environment build
+// time and requires an OCID value here — it does NOT substitute pipeline
+// parameters (${...}) into this field.
+func vaultVariables(secretRefs map[string]string) map[string]string {
+	vars := make(map[string]string, len(secretRefs))
+	for name, ocid := range secretRefs {
+		vars[envParamPrefix+name] = ocid
+	}
+	return vars
+}
+
+// buildPipelineParameters declares the pipeline's parameters: IMAGE and EI_<NAME>
+// for each non-secret value (default = value). Secrets are NOT parameters — they
+// ride the spec's vaultVariables as literal OCIDs. OCI rejects an empty default,
+// so blanks fall back to a placeholder (the real value always arrives, and empty
+// non-secrets don't occur).
+func buildPipelineParameters(image string, params map[string]string) []devops.BuildPipelineParameter {
+	items := []devops.BuildPipelineParameter{makeParam(imageParam, image)}
+	for name, value := range params {
+		items = append(items, makeParam(envParamPrefix+name, value))
+	}
+	sort.Slice(items, func(i, j int) bool { return *items[i].Name < *items[j].Name })
+	return items
+}
+
+func makeParam(name, defaultValue string) devops.BuildPipelineParameter {
+	if defaultValue == "" {
+		defaultValue = "unset"
+	}
+	n, v := name, defaultValue
+	return devops.BuildPipelineParameter{Name: &n, DefaultValue: &v}
+}
+
+// buildSpecYAMLFor generates a step's build spec: a vaultVariables block for its
+// secrets, then a generic loop that forwards every EI_<NAME> value (pipeline
+// parameter or fetched secret) into `docker run -e <NAME>`, forwards the runner's
+// resource-principal vars (bind-mounting file-path ones), and docker-runs $IMAGE.
+func buildSpecYAMLFor(names []string, vaultVars map[string]string) string {
+	var b strings.Builder
+	b.WriteString("version: 0.1\ncomponent: build\ntimeoutInSeconds: 6000\nshell: bash\n")
+	if len(vaultVars) > 0 {
+		b.WriteString("env:\n  vaultVariables:\n")
+		keys := make([]string, 0, len(vaultVars))
+		for k := range vaultVars {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&b, "    %s: %s\n", k, vaultVars[k])
+		}
+	}
+	b.WriteString("steps:\n  - type: Command\n    name: \"Run infralib step in base image\"\n")
+	fmt.Fprintf(&b, "    timeoutInSeconds: %d\n", int(buildRunTimeout.Seconds()))
+	b.WriteString("    command: |\n")
+	body := []string{
+		"set -euo pipefail",
+		"names=(" + strings.Join(names, " ") + ")",
+		"docker_args=()",
+		`for n in "${names[@]}"; do`,
+		`  ei="` + envParamPrefix + `$n"`,
+		`  docker_args+=(-e "$n=${!ei-}")`,
+		"done",
+		"# Forward the runner's resource-principal vars into the container so the",
+		"# in-container oci provider authenticates as one, bind-mounting file paths.",
+		`echo "Runner resource-principal vars present:"; env | grep -o '^OCI_RESOURCE_PRINCIPAL[A-Z_]*' || echo "  (none)"`,
+		"for v in OCI_RESOURCE_PRINCIPAL_VERSION OCI_RESOURCE_PRINCIPAL_REGION OCI_RESOURCE_PRINCIPAL_RPST OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM_PASSPHRASE; do",
+		`  val="${!v:-}"`,
+		`  [ -z "$val" ] && continue`,
+		`  if [ -f "$val" ]; then docker_args+=(-v "$val:$val:ro"); fi`,
+		`  docker_args+=(-e "$v=$val")`,
+		"done",
+		`echo "Running $` + imageParam + `"`,
+		`docker run --rm "${docker_args[@]}" "$` + imageParam + `"`,
+	}
+	for _, line := range body {
+		b.WriteString("      " + line + "\n")
+	}
+	return b.String()
+}
+
+func strPtr(s string) *string { return &s }
+
+// specFileFor is the hosted-repo path of a step's shared build spec. All of a
+// step's command pipelines (plan/apply and destroy variants) read this one file —
+// the spec is command-independent (COMMAND rides a pipeline parameter, not the
+// spec), so there is no reason to duplicate it per command.
+func specFileFor(projectName string) string {
+	return specRepoPrefix + projectName + ".yaml"
 }

@@ -21,17 +21,12 @@ func newConfigProvider() (ocicommon.ConfigurationProvider, error) {
 	return ocicommon.DefaultConfigProvider(), nil
 }
 
-// getBucketName is the terraform-state bucket. Object Storage bucket names are
-// unique within the tenancy namespace, so the deployment prefix + region is
-// enough to disambiguate parallel deployments.
+// getBucketName is the single bucket holding terraform state and the terraform
+// output JSON; all secrets live in the KMS Vault instead. Object Storage bucket
+// names are unique within the tenancy namespace, so the deployment prefix +
+// region is enough to disambiguate parallel deployments.
 func getBucketName(cloudPrefix, region string) string {
 	return fmt.Sprintf("%s-%s", cloudPrefix, region)
-}
-
-// getConfigBucketName holds agent parameters/secrets (the SSM equivalent),
-// kept separate from terraform state so their lifecycles don't interfere.
-func getConfigBucketName(cloudPrefix, region string) string {
-	return fmt.Sprintf("%s-%s-config", cloudPrefix, region)
 }
 
 // s3Endpoint is the S3-compatible Object Storage endpoint used by the terraform

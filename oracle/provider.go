@@ -36,12 +36,18 @@ func (o *oracleProvider) GetProviderType() model.ProviderType {
 }
 
 func (o *oracleProvider) GetSSM() (model.SSM, error) {
-	configStorage, err := NewStorage(o.ctx, o.provider, o.region, o.compartmentId,
-		getConfigBucketName(o.cloudPrefix, o.region))
+	kms, err := NewKMS(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create config storage service: %w", err)
+		return nil, fmt.Errorf("failed to create kms service: %w", err)
 	}
-	return NewSSM(configStorage), nil
+	if err = kms.Ensure(); err != nil {
+		return nil, fmt.Errorf("failed to provision kms vault and key: %w", err)
+	}
+	ssm, err := NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create secret store: %w", err)
+	}
+	return ssm, nil
 }
 
 func (o *oracleProvider) GetBucket(prefix string) (model.Bucket, error) {

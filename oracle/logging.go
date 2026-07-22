@@ -218,7 +218,11 @@ func (l *Logging) waitForWorkRequest(id *string) error {
 // build run OCID) so parallel steps sharing the log don't bleed into each other.
 // Ordered oldest-first for change parsing.
 func (l *Logging) StepLogs(buildRunId string, since time.Time) ([]string, error) {
-	query := fmt.Sprintf("search %q", fmt.Sprintf("%s/%s/%s", l.compartmentId, l.logGroupId, l.logId))
+	// Sort newest-first so the logSearchLimit cap keeps the most recent entries: a
+	// step's plan change summary ("Plan: N to add, …") is emitted at the tail of the
+	// run, so a large plan whose output exceeds the cap must not have its summary
+	// truncated away. extractLines re-sorts the kept rows oldest-first for parsing.
+	query := fmt.Sprintf("search %q | sort by datetime desc", fmt.Sprintf("%s/%s/%s", l.compartmentId, l.logGroupId, l.logId))
 	start := ocicommon.SDKTime{Time: since.Add(-logSearchLookback)}
 	end := ocicommon.SDKTime{Time: time.Now().Add(time.Minute)}
 	limit := logSearchLimit

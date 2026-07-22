@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
@@ -59,6 +58,7 @@ func (s *Storage) CreateBucket(skipDelay bool) error {
 		return err
 	}
 	if exists {
+		s.bucketCreated = &exists // cache so later BucketExists calls skip the API round-trip
 		return nil
 	}
 	util.DelayBucketCreation(s.bucket, skipDelay)
@@ -96,6 +96,36 @@ func (s *Storage) BucketExists() (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// AddEncryption sets the bucket's default at-rest encryption to the agent-owned
+// customer-managed KMS key, idempotently (skips if already set). Requires the
+// Object Storage service principal to have "use keys" on the key first
+// (IAM.EnsureObjectStorageKeyAccess), or UpdateBucket returns an authorization
+// error. Mirrors the AWS "create bucket, encrypt once the key exists" order.
+func (s *Storage) AddEncryption(keyId string) error {
+	response, err := s.client.GetBucket(s.ctx, objectstorage.GetBucketRequest{
+		NamespaceName: &s.namespace,
+		BucketName:    &s.bucket,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get bucket %s: %w", s.bucket, err)
+	}
+	if response.KmsKeyId != nil && *response.KmsKeyId == keyId {
+		return nil
+	}
+	_, err = s.client.UpdateBucket(s.ctx, objectstorage.UpdateBucketRequest{
+		NamespaceName: &s.namespace,
+		BucketName:    &s.bucket,
+		UpdateBucketDetails: objectstorage.UpdateBucketDetails{
+			KmsKeyId: &keyId,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set kms key on bucket %s: %w", s.bucket, err)
+	}
+	log.Printf("Enabled KMS encryption on bucket %s\n", s.bucket)
+	return nil
 }
 
 func (s *Storage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
@@ -147,37 +177,6 @@ func (s *Storage) GetFile(file string) ([]byte, error) {
 	return io.ReadAll(response.Content)
 }
 
-// CreatePreauthenticatedURL mints a short-lived read-only pre-authenticated
-// request (PAR) for a single object and returns a full https URL that needs no
-// credentials to GET. The DevOps managed build runner uses it to fetch the
-// per-run environment file (decision: DevOps-native execution) without being
-// granted any OCI principal. The PAR is named per object and expires after ttl;
-// a fresh PAR is created each call (OCI allows many, and stale ones lapse).
-func (s *Storage) CreatePreauthenticatedURL(objectName string, ttl time.Duration) (string, error) {
-	name := fmt.Sprintf("entigo-run-env-%s", strings.ReplaceAll(objectName, "/", "-"))
-	expires := ocicommon.SDKTime{Time: time.Now().Add(ttl)}
-	response, err := s.client.CreatePreauthenticatedRequest(s.ctx, objectstorage.CreatePreauthenticatedRequestRequest{
-		NamespaceName: &s.namespace,
-		BucketName:    &s.bucket,
-		CreatePreauthenticatedRequestDetails: objectstorage.CreatePreauthenticatedRequestDetails{
-			Name:        &name,
-			ObjectName:  &objectName,
-			AccessType:  objectstorage.CreatePreauthenticatedRequestDetailsAccessTypeObjectread,
-			TimeExpires: &expires,
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create pre-authenticated request for %s: %w", objectName, err)
-	}
-	if response.FullPath != nil && *response.FullPath != "" {
-		return *response.FullPath, nil
-	}
-	if response.AccessUri == nil {
-		return "", fmt.Errorf("pre-authenticated request for %s returned no access uri", objectName)
-	}
-	return fmt.Sprintf("https://objectstorage.%s.oraclecloud.com%s", s.region, *response.AccessUri), nil
-}
-
 func (s *Storage) DeleteFile(file string) error {
 	_, err := s.client.DeleteObject(s.ctx, objectstorage.DeleteObjectRequest{
 		NamespaceName: &s.namespace,
@@ -200,6 +199,9 @@ func (s *Storage) DeleteFiles(files []string) error {
 }
 
 func (s *Storage) CheckFolderExists(folder string) (bool, error) {
+	if !strings.HasSuffix(folder, "/") {
+		folder = folder + "/" // anchor to the folder so "foo" can't match "foobar/"
+	}
 	limit := 1
 	response, err := s.client.ListObjects(s.ctx, objectstorage.ListObjectsRequest{
 		NamespaceName: &s.namespace,
