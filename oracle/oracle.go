@@ -2,18 +2,16 @@ package oracle
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
+	"golang.org/x/sync/errgroup"
 )
 
 type oracleService struct {
@@ -129,73 +127,113 @@ func (o *oracleService) setupStore() (*KMS, *SSM, error) {
 	return kms, ssm, nil
 }
 
-// encryptBucket points Object Storage at the agent's key for the bucket's at-rest
-// encryption, granting the Object Storage service principal use of the key first.
-func (o *oracleService) encryptBucket(storage *Storage, kms *KMS) error {
-	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+// resolveStore returns the Vault-backed SSM built on the EXISTING vault + key,
+// resolved find-only (no creation) — the read-only counterpart to setupStore, used
+// by GetResources so destroy/delete/read flows never provision the KMS trust root.
+// If the vault/key are absent the SSM still constructs but can only operate on what
+// already exists.
+func (o *oracleService) resolveStore() (*SSM, error) {
+	kms, err := NewKMS(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create kms service: %w", err)
 	}
-	if err = iam.EnsureObjectStorageKeyAccess(o.cloudPrefix, o.region, kms.KeyId()); err != nil {
-		return fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
+	found, err := kms.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve kms vault and key: %w", err)
 	}
-	return storage.AddEncryption(kms.KeyId())
+	if !found {
+		slog.Warn(common.PrefixWarning("agent KMS vault not found; secret store operations are limited to existing secrets"))
+	}
+	return NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())
 }
 
 func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
+	kms, ssm, err := o.setupStore()
+	if err != nil {
+		return nil, err
+	}
+	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+	if err != nil {
+		return nil, err
+	}
+	if err = iam.EnsureObjectStorageKeyAccess(o.cloudPrefix, o.region, kms.KeyId()); err != nil {
+		return nil, fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
+	}
 	resources, storage, err := o.bucketResources()
 	if err != nil {
 		return nil, err
 	}
-	if err = storage.CreateBucket(o.skipDelay); err != nil {
+	if err = storage.CreateBucket(kms, o.skipDelay); err != nil {
 		return nil, fmt.Errorf("failed to create object storage bucket: %w", err)
-	}
-	_, ssm, err := o.setupStore()
-	if err != nil {
-		return nil, err
 	}
 	resources.SSM = ssm
 	return resources, nil
 }
 
 func (o *oracleService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
-	resources, storage, err := o.bucketResources()
+	resources, _, err := o.bucketResources()
 	if err != nil {
 		return nil, err
 	}
-	if err = storage.CreateBucket(o.skipDelay); err != nil {
-		return nil, fmt.Errorf("failed to create object storage bucket: %w", err)
-	}
-	kms, ssm, err := o.setupStore()
-	if err != nil {
-		return nil, err
-	}
-	resources.SSM = ssm
-	if err = o.encryptBucket(storage, kms); err != nil {
-		return nil, err
-	}
-	if err = o.provisionBackendCredentials(&resources, ssm); err != nil {
-		return nil, err
-	}
-	if o.pipeline.Type == string(common.PipelineTypeLocal) {
+	needGit := o.pipeline.Type != string(common.PipelineTypeLocal)
+	if !needGit {
+		// Local runs execute in-process and never push build specs — only KMS/SSM +
+		// state-backend credentials are needed, no DevOps project.
+		_, ssm, err := o.setupStore()
+		if err != nil {
+			return nil, err
+		}
+		resources.SSM = ssm
+		if _, err = o.provisionBackendCredentials(o.ctx, &resources, ssm, false); err != nil {
+			return nil, err
+		}
 		return resources, nil
 	}
+
 	logs, err := o.ensureLogging()
 	if err != nil {
 		return nil, err
 	}
+	// The state/secret credentials and the DevOps project+repo+IAM are independent, so
+	// resolve them concurrently: on a first-run seed the DevOps creation (tens of seconds
+	// of async work requests) hides behind the CSK propagation wait; steady-state saves the
+	// two sets of list calls overlapping. WithContext so either failing cancels the other.
+	var ssm *SSM
+	var git agentGitAuth
+	var build *DevOpsBuilder
+	group, gctx := errgroup.WithContext(o.ctx)
+	group.Go(func() error {
+		var err error
+		if _, ssm, err = o.setupStore(); err != nil {
+			return err
+		}
+		resources.SSM = ssm
+		log.Println("Provisioning terraform state backend credentials")
+		git, err = o.provisionBackendCredentials(gctx, &resources, ssm, true)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		log.Println("Setting up DevOps build project, repository and service log")
+		build, err = o.setupDevOpsBuild(logs)
+		return err
+	})
+	if err = group.Wait(); err != nil {
+		return nil, err
+	}
+
 	builder := NewBuilder(o.ctx, ssm, o.region, o.compartmentId, resources.BucketName,
 		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, config.IsOpenTofuEnabled(),
 		o.terraformCacheEnabled(), o.cloudPrefix)
+	builder.devopsBuild = build
+	// Inject the git push credentials resolved above so pushSpec does no Vault/IAM calls.
+	build.SetGitAuth(git.username, git.token, git.fresh)
 	gate, err := NewGate(o.ctx, o.provider, o.region, o.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create approval gate: %w", err)
 	}
-	// Must run before gate.Ensure: it points the gate at the shared <prefix>-infralib
-	// project so approval and build pipelines co-locate.
-	if err = o.attachDevOpsBuild(builder, gate, ssm, logs); err != nil {
-		return nil, fmt.Errorf("failed to set up DevOps build execution: %w", err)
-	}
+	// UseProject before Ensure so approval and build pipelines co-locate in one project.
+	gate.UseProject(build.ProjectId())
 	if err = gate.Ensure(); err != nil {
 		return nil, fmt.Errorf("failed to set up approval gate: %w", err)
 	}
@@ -205,37 +243,31 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	return resources, nil
 }
 
-// attachDevOpsBuild wires the DevOps build-pipeline execution backend onto the
-// builder. It provisions the shared <prefix>-infralib project (build pipelines +
-// hosted build-spec repo), grants the build pipeline's dynamic group access,
-// enables the project's service logs, and — so approval and build pipelines
-// share one project — points the gate at it. The gate may be nil
-// (destroy/read-only flows), which skips the co-location.
-func (o *oracleService) attachDevOpsBuild(builder *Builder, gate *Gate, secrets secretPersistence, logs *Logging) error {
+// setupDevOpsBuild provisions the shared <prefix>-infralib project (build pipelines +
+// hosted build-spec repo + notification topic), grants the build pipeline's dynamic
+// group access, and enables the project's service log. Independent of the state/secret
+// credentials, so SetupResources runs it concurrently with provisionBackendCredentials.
+func (o *oracleService) setupDevOpsBuild(logs *Logging) (*DevOpsBuilder, error) {
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	build, err := NewDevOpsBuilder(o.ctx, o.provider, iam, secrets, o.region, o.compartmentId, o.cloudPrefix)
+	build, err := NewDevOpsBuilder(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err = build.Ensure(o.userId()); err != nil {
-		return err
+	if err = build.Ensure(); err != nil {
+		return nil, err
 	}
 	if err = iam.EnsureDevOpsBuildAccess(o.cloudPrefix); err != nil {
-		return err
+		return nil, err
 	}
 	if logs != nil {
 		if err = logs.EnsureDevOpsBuildLog(build.ProjectId()); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	builder.devopsBuild = build
-	if gate != nil {
-		gate.UseProject(build.ProjectId())
-	}
-	return nil
+	return build, nil
 }
 
 // ensureLogging returns the Logging service the pipeline reads plan output back
@@ -263,150 +295,310 @@ func (o *oracleService) warnScheduleUnsupported(schedule model.Schedule) {
 	}
 }
 
-// provisionBackendCredentials attaches S3-compatible credentials (an OCI Customer
-// Secret Key) to the resources so the terraform s3 backend can authenticate. The
-// key is user-scoped. When a user OCID is available (API-key or session-token
-// auth) it is created on that user and persisted to the config bucket. Under
-// resource principals (in-container) there is no user, so a CSK a prior local run
-// persisted is reused; failing that, the operator supplies the credentials via env.
-func (o *oracleService) provisionBackendCredentials(resources *Resources, secrets secretPersistence) error {
-	userId := o.userId()
-	if userId == "" {
-		accessKey, secretKey, err := loadPersistedCustomerSecretKey(secrets)
-		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("could not read persisted Customer Secret Key: %v", err)))
-			return nil
-		}
-		if accessKey == "" {
-			slog.Info(common.PrefixWarning("no user OCID and no persisted Customer Secret Key; the terraform s3 " +
-				"backend will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the environment. Run the agent " +
-				"once with session-token or API-key auth to provision and persist one automatically."))
-			return nil
-		}
-		// No user to regenerate with (resource principal in-container); fail fast
-		// with a clear message rather than letting terraform hit SignatureDoesNotMatch.
-		if err = s3CredentialsUsable(o.ctx, resources.S3Endpoint, o.region, resources.BucketName, accessKey, secretKey); err != nil {
-			return fmt.Errorf("persisted Customer Secret Key no longer authenticates to the s3-compatible endpoint: %w; "+
-				"re-run the agent locally with session-token or API-key auth to regenerate it", err)
-		}
-		resources.AccessKey = accessKey
-		resources.SecretKey = secretKey
-		return nil
+// agentGitAuth carries the DevOps build-spec push credentials resolved for the agent
+// service account, fed to the builder via DevOpsBuilder.SetGitAuth. Both strings are
+// empty on a consume run that never bootstrapped them (pushSpec then fails loudly
+// only if a spec actually changed). fresh reports a just-created token that must
+// propagate to the git endpoint before it authenticates.
+type agentGitAuth struct {
+	username string
+	token    string
+	fresh    bool
+}
+
+// provisionBackendCredentials resolves the agent service account's credentials: the
+// S3-compatible Customer Secret Key for the terraform state backend (always) and,
+// when needGit is set (a non-local setup that pushes build specs), the DevOps git
+// auth token + username. Both belong to the agent's dedicated service account
+// (EnsureAgentServiceAccount), not to whoever runs the agent.
+//
+// Two regimes, decided by whether the caller can reconcile the agent SA (has IAM
+// user-management perms):
+//   - Admin/seed-capable: resolve both credentials through their Ensure* funcs, which
+//     REUSE a still-valid credential or RECREATE one whose SA user/key was deleted out
+//     of band (self-heal). A missing CSK and a missing git token each propagate after
+//     creation, so they're resolved concurrently — overlapping the waits.
+//   - Consume (a CI/CD service account or in-container resource principal, Vault-read
+//     only): trust whatever is persisted (probing the CSK to surface a revoked key);
+//     a missing credential can't be minted, so it warns and falls back (env credentials
+//     for the state backend; a loud pushSpec error for git).
+func (o *oracleService) provisionBackendCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, needGit bool) (agentGitAuth, error) {
+	cskAccess, cskSecret, err := loadPersistedCustomerSecretKey(secrets)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not read persisted Customer Secret Key: %v", err)))
+		return agentGitAuth{}, nil
+	}
+	git, err := o.loadPersistedGitAuth(secrets, needGit)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not read persisted DevOps git credentials: %v", err)))
 	}
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
-		return err
+		return agentGitAuth{}, err
 	}
-	accessKey, secretKey, created, err := EnsureCustomerSecretKey(iam, secrets, userId,
-		fmt.Sprintf("entigo-infralib-%s-state", o.cloudPrefix))
+	// Reconcile the agent SA + its resource-scoped policy on EVERY run that has the IAM
+	// perms — not just when seeding — so changes to the policy statements take effect
+	// without deleting the persisted credentials. Best-effort: a Vault-read-only
+	// principal can't, and the persisted credentials still work. (SetupResources already
+	// needs IAM here for EnsureDevOpsBuildAccess, so this adds no privilege requirement.)
+	saUserId := o.reconcileAgentServiceAccount(iam, resources.BucketName)
+
+	// No IAM user-management perms (a CI/CD SA or in-container resource principal): trust
+	// whatever is persisted — can't mint or self-heal.
+	if saUserId == "" {
+		return o.consumeCredentials(ctx, resources, cskAccess, cskSecret, git, needGit)
+	}
+
+	// Admin/seed-capable: resolve both credentials through their Ensure* funcs, which REUSE
+	// a still-valid credential or RECREATE one whose SA user/key was deleted out of band
+	// (self-heal — e.g. the user was deleted while its Vault secrets remained). Run
+	// concurrently: a freshly created CSK and auth token each propagate asynchronously, so
+	// starting both clocks together overlaps the waits.
+	// WithContext so a failure in either goroutine cancels the other — otherwise a fast
+	// git-auth error would stay masked behind the up-to-10-min CSK propagation wait.
+	group, gctx := errgroup.WithContext(ctx)
+	group.Go(func() error { return o.ensureStateCredentials(gctx, resources, secrets, iam, saUserId) })
+	if needGit {
+		group.Go(func() error { return o.ensureGitAuth(secrets, iam, saUserId, &git) })
+	}
+	if err = group.Wait(); err != nil {
+		return agentGitAuth{}, err
+	}
+	return git, nil
+}
+
+// consumeCredentials trusts the Vault-persisted credentials on a run without IAM
+// user-management perms. It cannot mint or self-heal, so a missing credential just warns
+// (env fallback for the state backend; a loud pushSpec error later for git) and a persisted
+// CSK is probed to surface a key revoked out of band.
+func (o *oracleService) consumeCredentials(ctx context.Context, resources *Resources, cskAccess, cskSecret string, git agentGitAuth, needGit bool) (agentGitAuth, error) {
+	if cskAccess != "" {
+		if err := s3CredentialsUsable(ctx, resources.S3Endpoint, o.region, resources.BucketName, cskAccess, cskSecret); err != nil {
+			return agentGitAuth{}, fmt.Errorf("persisted Customer Secret Key no longer authenticates to the s3-compatible endpoint: %w; "+
+				"re-run the bootstrap with an admin (user-management) principal to reseed it", err)
+		}
+		resources.AccessKey, resources.SecretKey = cskAccess, cskSecret
+	} else {
+		slog.Info(common.PrefixWarning("no persisted Customer Secret Key and could not provision the agent service " +
+			"account; the terraform s3 backend will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the environment. " +
+			"Run the agent once as an admin to seed and persist one automatically."))
+	}
+	if needGit && (git.token == "" || git.username == "") {
+		slog.Info(common.PrefixWarning("no persisted DevOps git credentials and could not provision the agent service " +
+			"account; a build-spec push would fail — run the agent once as an admin to bootstrap them."))
+	}
+	return git, nil
+}
+
+// loadPersistedGitAuth reads the previously bootstrapped git token + username from the
+// Vault. Returns the empty struct when needGit is false (destroy/local flows don't push).
+func (o *oracleService) loadPersistedGitAuth(secrets secretPersistence, needGit bool) (agentGitAuth, error) {
+	if !needGit {
+		return agentGitAuth{}, nil
+	}
+	token, _, err := readPersistedSecret(secrets, devopsAuthTokenObject)
+	if err != nil {
+		return agentGitAuth{}, err
+	}
+	username, _, err := readPersistedSecret(secrets, gitUsernameObject)
+	if err != nil {
+		return agentGitAuth{}, err
+	}
+	return agentGitAuth{username: username, token: token}, nil
+}
+
+// ensureStateCredentials resolves the state-backend CSK on an admin run.
+// EnsureCustomerSecretKey reuses the persisted key when it's still active on the SA
+// user, or (re)creates it when the key — or the whole user — was deleted out of band. A
+// freshly created key must propagate to the bucket region before it's broadly usable
+// (OCI does this asynchronously, slower cross-region), so we wait for a stable streak; a
+// reused key is already propagated, so a single probe validates it and surfaces a break.
+func (o *oracleService) ensureStateCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, iam *IAM, saUserId string) error {
+	access, secret, created, err := EnsureCustomerSecretKey(iam, secrets, saUserId, fmt.Sprintf("entigo-infralib-%s-state", o.cloudPrefix))
 	if err != nil {
 		return err
 	}
-	// A newly created key must propagate to the bucket region before it's broadly
-	// usable (OCI does this asynchronously, slower cross-region) — wait for a stable
-	// streak of successes. A reused key is normally already propagated, so try a
-	// single quick probe first and only fall back to the full wait if it's not
-	// (e.g. seeded by an earlier run that was interrupted mid-propagation). We never
-	// regenerate here: a failing probe can't be told apart from propagation and would
-	// reset the clock; a genuinely deleted key is recreated by EnsureCustomerSecretKey.
-	if !created && s3CredentialsUsable(o.ctx, resources.S3Endpoint, o.region, resources.BucketName, accessKey, secretKey) == nil {
-		resources.AccessKey = accessKey
-		resources.SecretKey = secretKey
-		return nil
+	if created {
+		log.Println("Waiting for the new Customer Secret Key to propagate to the state backend (can take a few minutes)")
+		if err = waitForS3Credentials(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
+			return err
+		}
+	} else if err = s3CredentialsUsable(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
+		// A reused key is normally already propagated, but it may have been seeded by an
+		// earlier run interrupted mid-propagation, so a single probe can fail on a key
+		// that's simply not yet consistent. Wait it out before declaring the key broken.
+		log.Println("Persisted Customer Secret Key not yet usable; waiting for it to propagate to the state backend")
+		if err = waitForS3Credentials(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
+			return fmt.Errorf("persisted Customer Secret Key no longer authenticates to the s3-compatible endpoint: %w; "+
+				"delete the %q Vault secret to force a reseed", err, customerSecretKeyObject)
+		}
 	}
-	if err = waitForS3Credentials(o.ctx, resources.S3Endpoint, o.region, resources.BucketName, accessKey, secretKey); err != nil {
-		return err
-	}
-	resources.AccessKey = accessKey
-	resources.SecretKey = secretKey
+	resources.AccessKey, resources.SecretKey = access, secret
 	return nil
 }
 
-// userId returns the OCID of the authenticated user, or "" when there is none
-// (resource principals in-container). API-key auth exposes it directly; session
-// tokens (UPST) carry no user in the config file, so the OCID is read from the
-// token's `sub` claim, which the SDK surfaces via KeyID() as "ST$<jwt>".
-func (o *oracleService) userId() string {
-	if user, err := o.provider.UserOCID(); err == nil && user != "" {
-		return user
-	}
-	if keyID, err := o.provider.KeyID(); err == nil {
-		if token, ok := strings.CutPrefix(keyID, "ST$"); ok {
-			return subjectFromJWT(token)
+// ensureGitAuth resolves the DevOps git credentials on an admin run: the username is
+// derived once (or kept from the Vault — it's deterministic), and EnsureAuthToken reuses
+// a live token or recreates one whose user was deleted out of band (self-heal).
+func (o *oracleService) ensureGitAuth(secrets secretPersistence, iam *IAM, saUserId string, git *agentGitAuth) error {
+	if git.username == "" {
+		username, err := o.deriveGitUsername(iam)
+		if err != nil {
+			return err
 		}
+		if err = secrets.PutSecret(gitUsernameObject, username); err != nil {
+			return fmt.Errorf("failed to persist git username %q: %w", username, err)
+		}
+		git.username = username
 	}
-	return ""
-}
-
-// subjectFromJWT extracts the `sub` claim (the user OCID for an OCI session token)
-// from an unverified JWT. The signature is not checked: the token only names the
-// user a CSK is attached to, and the SDK still authenticates every API call with
-// the token itself.
-func subjectFromJWT(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	log.Println("Provisioning DevOps git auth token for the build-spec push")
+	token, fresh, err := iam.EnsureAuthToken(secrets, saUserId, fmt.Sprintf("entigo-infralib-%s-devops", o.cloudPrefix))
 	if err != nil {
-		return ""
+		return err
 	}
-	var claims struct {
-		Sub string `json:"sub"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return ""
-	}
-	return claims.Sub
+	git.token, git.fresh = token, fresh
+	return nil
 }
 
+// deriveGitUsername builds the OCI code-repository HTTPS username for the build-spec
+// push. OCI forms it as `<tenancy-name>/<login>` (the tenancy NAME, not the object-
+// storage namespace — the two differ); the login is the agent service account user,
+// whose name the agent picks (<prefix>-infralib-agent), so only the tenancy name needs
+// a lookup. Identity-domain tenancies instead need `<tenancy>/<domain>/<login>`; if that
+// ever needs supporting, change the derivation here rather than via an env override.
+func (o *oracleService) deriveGitUsername(iam *IAM) (string, error) {
+	tenancy, err := iam.TenancyName()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/%s-infralib-agent", tenancy, o.cloudPrefix), nil
+}
+
+// reconcileAgentServiceAccount ensures the agent SA user + group + resource-scoped
+// policy and returns its user OCID, or "" when the principal lacks IAM
+// user-management perms — best-effort so a consume/Vault-only run isn't blocked, but
+// on an admin run it re-applies the current policy statements (so tightening/scoping
+// them in code takes effect without deleting the persisted credentials).
+func (o *oracleService) reconcileAgentServiceAccount(iam *IAM, bucketName string) string {
+	saUserId, err := iam.EnsureAgentServiceAccount(o.cloudPrefix, bucketName, repositoryName(o.cloudPrefix))
+	if err != nil {
+		slog.Info(common.PrefixWarning(fmt.Sprintf("could not reconcile the agent service account policy (%v); "+
+			"relying on already-persisted credentials", err)))
+		return ""
+	}
+	return saUserId
+}
+
+// GetResources returns clients wired to the ALREADY-provisioned resources, for
+// read-only, destroy and delete flows. Like the AWS/GCloud implementations it must
+// NOT create or enable anything (that is SetupResources' job): a prior version wired
+// in the full DevOps setup here, which wrongly re-enabled the build log the moment
+// the deleter called GetResources. It only resolves the existing DevOps project (by
+// name, no creation) so destroy executions can trigger its pipelines.
 func (o *oracleService) GetResources() (model.Resources, error) {
 	resources, _, err := o.bucketResources()
 	if err != nil {
 		return nil, err
 	}
-	_, ssm, err := o.setupStore()
+	ssm, err := o.resolveStore()
 	if err != nil {
 		return nil, err
 	}
 	resources.SSM = ssm
-	// Best-effort so a destroy execution can authenticate to state; read-only
-	// callers ignore the pipeline/builder.
-	_ = o.provisionBackendCredentials(&resources, ssm)
 	logs, err := o.ensureLogging()
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not resolve logging: %s", err)))
 	}
 	builder := NewBuilder(o.ctx, ssm, o.region, o.compartmentId, resources.BucketName,
 		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, false, o.terraformCacheEnabled(), o.cloudPrefix)
-	// No gate: destroy executions run with ApproveForce and never hit approval.
-	if err = o.attachDevOpsBuild(builder, nil, ssm, logs); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not set up DevOps build execution: %s", err)))
+	if build, err := NewDevOpsBuilder(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("could not create DevOps builder: %s", err)))
+	} else {
+		build.Resolve() // find-only: no project/log/IAM/git creation
+		builder.devopsBuild = build
 	}
 	resources.CodeBuild = builder
+	// No gate: destroy executions run with ApproveForce and never hit approval.
 	resources.Pipeline = NewPipeline(o.ctx, builder, nil, logs, o.cloudPrefix, nil)
 	return resources, nil
 }
 
+// PrepareDestroy resolves the state-backend Customer Secret Key so a local destroy
+// execution can reach the s3-compatible backend — GetResources deliberately skips
+// credential provisioning (it must not create/enable anything during teardown), so
+// without this the resources it returns carry no AccessKey and terraform destroy
+// fails "AWS_ACCESS_KEY_ID is not set". Returns a copy of resources with the CSK
+// populated (the concrete Resources is a value boxed in the interface, so it can't
+// be mutated in place). needGit is false — destroy never pushes build specs.
+func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resources, error) {
+	res := resources.(Resources)
+	if _, err := o.provisionBackendCredentials(o.ctx, &res, resources.GetSSM(), false); err != nil {
+		return resources, err
+	}
+	return res, nil
+}
+
+// DeleteResources tears down the provider-level resources the agent owns. Per-step
+// build pipelines and the git-source/wrapper Vault secrets are already removed by
+// the delete command executor (service/delete.go); this covers everything else:
+// the shared DevOps project (cascading to its repo and pipelines), the approval
+// topic, the service log group, the agent's IAM scaffolding, the state bucket and
+// — last, because it encrypts the bucket — the agent-owned KMS vault/key.
+//
+// Only what OCI cannot remove via the SDK is left to the user: the KMS vault, key
+// and Vault secrets have no hard delete (they are SCHEDULED for deletion at the
+// earliest allowed time, ~7 days, and can be reverted in the console until then),
+// and the bucket is kept when deleteBucket is false.
 func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
 	resources, storage, err := o.bucketResources()
 	if err != nil {
 		return err
 	}
-	if deleteServiceAccount {
-		slog.Warn(common.PrefixWarning("Oracle IAM teardown is not automated; remove the service-account user, " +
-			"group, policy, build-pipeline dynamic group, <prefix>-infralib devops project and notification topic manually"))
+	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+	if err != nil {
+		return err
 	}
-	// The KMS vault + key and the Vault secrets can only be scheduled for deletion
-	// (no hard delete on OCI), so they are never removed automatically.
-	slog.Warn(common.PrefixWarning("Oracle KMS vault, key and Vault secrets are not deleted automatically " +
-		"(OCI only supports scheduled deletion); schedule their deletion manually if needed"))
+	// DevOps project (cascades to its build-spec repo, build pipelines and approval
+	// deployment pipelines) plus the approval notification topic.
+	if build, err := NewDevOpsBuilder(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to create DevOps builder for teardown: %s", err)))
+	} else {
+		build.DeleteBuildResources()
+	}
+	// Service log + log group the agent reads plan output back from.
+	if logs, err := NewLogging(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to create logging service for teardown: %s", err)))
+	} else {
+		logs.Delete()
+	}
+	// The agent's own IAM scaffolding (service account with its state Customer Secret
+	// Key and DevOps auth token, group, build-pipeline dynamic group, policies).
+	iam.DeleteAgentServiceAccount(o.cloudPrefix)
+	if deleteServiceAccount {
+		iam.DeleteCICDServiceAccount(o.cloudPrefix)
+	}
+	// The KMS key encrypts the bucket, so it must outlive it: schedule the vault (and
+	// thus the key + secrets) for deletion only after the bucket is gone. If the
+	// bucket is kept, keep the key too.
 	if !deleteBucket {
-		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", resources.BucketName)
+		log.Printf("Terraform state bucket %s and the KMS vault/key that encrypts it will not be deleted; "+
+			"delete the bucket and schedule the KMS vault deletion manually if needed\n", resources.BucketName)
 		return nil
 	}
 	if err = storage.Delete(); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete state bucket %s: %s", resources.BucketName, err)))
+		slog.Warn(common.PrefixWarning("state bucket deletion failed, so the KMS vault/key that encrypts it is left " +
+			"intact; schedule its deletion manually once the bucket is removed"))
+		return nil
+	}
+	iam.deletePolicyByName(fmt.Sprintf("%s-infralib-kms", o.cloudPrefix))
+	kms, err := NewKMS(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to create kms service for teardown: %s", err)))
+		return nil
+	}
+	if err = kms.ScheduleDeletion(); err != nil {
+		slog.Warn(common.PrefixWarning(err.Error()))
 	}
 	return nil
 }

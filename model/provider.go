@@ -66,6 +66,7 @@ type CloudProvider interface {
 	SetupResources(manager NotificationManager, config Config) (Resources, error)
 	SetupMinimalResources() (Resources, error)
 	GetResources() (Resources, error)
+	PrepareDestroy(resources Resources) (Resources, error)
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool) error
 	CreateServiceAccount(SAFlags common.ServiceAccount) error
 	AddEncryption(moduleName string, outputs map[string]TFOutput) error

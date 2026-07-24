@@ -11,6 +11,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
+	"golang.org/x/sync/errgroup"
 )
 
 // Builder is the Oracle implementation of the agent's project/run-spec registry
@@ -197,14 +198,21 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 		return err
 	}
 	specFile := specFileFor(projectName)
+	log.Printf("Reconciling DevOps build pipelines for step %s\n", projectName)
+	// A step's plan/apply/destroy pipelines are independent (distinct display names →
+	// distinct keyLocks) and share one spec (pushMu + pushedSpecs dedupe the single git
+	// push), so reconcile them concurrently — each blocks ~20s on OCI's async provisioning
+	// work requests, which otherwise serialize into ~100s per step.
+	var group errgroup.Group
 	for _, command := range stepCommands(step.Type) {
 		displayName := runName(projectName, command)
 		params := b.nonSecretParams(projectName, command, step, project)
-		if _, err = b.devopsBuild.ensurePipeline(displayName, specFile, project.Image, params, secretRefs); err != nil {
+		group.Go(func() error {
+			_, err := b.devopsBuild.ensurePipeline(displayName, specFile, project.Image, params, secretRefs)
 			return err
-		}
+		})
 	}
-	return nil
+	return group.Wait()
 }
 
 // stepCommands lists every action command a step of the given type can execute:

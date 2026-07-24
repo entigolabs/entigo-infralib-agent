@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/identity"
@@ -16,6 +18,15 @@ import (
 // S3-compatible credentials are persisted. The secret half is only returned by
 // the Identity API at creation time, so it must be stored to survive restarts.
 const customerSecretKeyObject = "oracle-customer-secret-key"
+
+// devopsAuthTokenObject persists the OCI auth token used to git-push the build
+// specs, in the Vault alongside the CSK. Same trust boundary.
+const devopsAuthTokenObject = "oracle-devops-auth-token"
+
+// gitUsernameObject persists the HTTPS basic-auth username that successfully pushed
+// the build specs, so later runs need no Identity lookup to reconstruct the
+// <tenancy>/<login> (or domain-qualified) form.
+const gitUsernameObject = "oracle-git-username"
 
 // secretPersistence is the subset of the Vault-backed SSM that IAM uses to persist
 // the credentials it provisions (Customer Secret Key + DevOps auth token). They
@@ -184,27 +195,28 @@ func (i *IAM) deleteCustomerSecretKey(userId, keyId string) error {
 // failed run) the two have drifted, so the leftover is removed and a fresh token
 // created — which also stops stale tokens accruing against the 2-per-user limit.
 // Mirrors EnsureCustomerSecretKey's persist-and-verify approach.
-func (i *IAM) EnsureAuthToken(store secretPersistence, userId, description string) (string, error) {
+// The bool reports whether a NEW token was created — like a fresh Customer Secret
+// Key, a new auth token propagates to the git endpoint asynchronously and is not
+// usable for the first moments, so the caller retries the git push while it settles.
+func (i *IAM) EnsureAuthToken(store secretPersistence, userId, description string) (string, bool, error) {
 	existing, err := i.listAuthTokenIds(userId, description)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	stored, found, err := readPersistedSecret(store, devopsAuthTokenObject)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if len(existing) > 0 && found {
-		return stored, nil
+		return stored, false, nil
 	}
-	// Drifted: discard whichever side survives so they can't stay out of sync.
+	// Drifted: delete the stale OCI-side token(s) so a fresh one can be created (an auth
+	// token's value can't be updated, and the user is capped at 2). The persisted Vault
+	// secret is NOT deleted — the PutSecret below overwrites it in place, so there's no
+	// need to schedule its deletion (which would also linger for the OCI minimum window).
 	for _, id := range existing {
 		if err = i.deleteAuthToken(userId, id); err != nil {
-			return "", fmt.Errorf("failed to delete stale auth token %s: %w", id, err)
-		}
-	}
-	if found {
-		if err = store.DeleteSecret(devopsAuthTokenObject); err != nil {
-			return "", fmt.Errorf("failed to delete stale persisted auth token: %w", err)
+			return "", false, fmt.Errorf("failed to delete stale auth token %s: %w", id, err)
 		}
 	}
 	response, err := i.client.CreateAuthToken(i.ctx, identity.CreateAuthTokenRequest{
@@ -214,16 +226,16 @@ func (i *IAM) EnsureAuthToken(store secretPersistence, userId, description strin
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create auth token: %w", err)
+		return "", false, fmt.Errorf("failed to create auth token: %w", err)
 	}
 	if response.Token == nil {
-		return "", fmt.Errorf("auth token response missing token value")
+		return "", false, fmt.Errorf("auth token response missing token value")
 	}
 	if err = store.PutSecret(devopsAuthTokenObject, *response.Token); err != nil {
-		return "", fmt.Errorf("failed to persist auth token: %w", err)
+		return "", false, fmt.Errorf("failed to persist auth token: %w", err)
 	}
 	log.Printf("Provisioned Oracle auth token %q for DevOps build-spec git push\n", description)
-	return *response.Token, nil
+	return *response.Token, true, nil
 }
 
 // listAuthTokenIds returns the OCIDs of the user's ACTIVE auth tokens whose
@@ -292,11 +304,17 @@ func (i *IAM) getOrCreateUser(name, description string) (string, bool, error) {
 	if len(list.Items) > 0 {
 		return *list.Items[0].Id, false, nil
 	}
+	// Identity-domain (IDCS) tenancies reject user creation without a primary email
+	// ("error.identity.user.primaryEmailNotSpecified"); legacy tenancies ignore it.
+	// This is a machine service account that never receives mail — the entigo.com
+	// address just marks the account as ours.
+	email := fmt.Sprintf("%s@entigo.com", name)
 	created, err := i.client.CreateUser(i.ctx, identity.CreateUserRequest{
 		CreateUserDetails: identity.CreateUserDetails{
 			CompartmentId: &i.tenancyId,
 			Name:          &name,
 			Description:   &description,
+			Email:         &email,
 			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
@@ -431,6 +449,54 @@ func (i *IAM) EnsureObjectStorageKeyAccess(cloudPrefix, region, keyId string) er
 	return i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
 }
 
+// EnsureAgentServiceAccount find-or-creates the agent's own dedicated IAM user,
+// its group and the policy granting the two things the agent's persisted
+// credentials actually use: object-storage (the S3-compatible terraform-state
+// bucket, signed with the Customer Secret Key) and DevOps code repositories (the
+// build-spec git push, authenticated with the auth token). It returns the user
+// OCID.
+//
+// NOTE the DevOps grant is `use devops-repository`, NOT `manage repos` — `repos` is
+// the Container Registry (OCIR) resource-type, so it yields a git 401 "not
+// authorized". `use` (not `manage`) is enough to push git content while denying the
+// SA repo lifecycle actions (create/delete), keeping it least-privilege.
+//
+// This user is deliberately separate from the CI/CD service account the `sa`
+// command mints (<prefix>-sa): rotating, leaking or deleting that externally-used
+// SA never disturbs the agent's own state/git credentials. It is find-or-create and
+// idempotent, and the caller (reconcileAgentServiceAccount) invokes it best-effort on
+// every run that has IAM user-management perms, so tightening the policy statements in
+// code re-applies without deleting the persisted credentials. A principal without
+// those perms (a Vault-read-only consume run) gets an error the caller tolerates,
+// relying on the already-persisted secrets.
+func (i *IAM) EnsureAgentServiceAccount(cloudPrefix, bucketName, repoName string) (string, error) {
+	name := fmt.Sprintf("%s-infralib-agent", cloudPrefix)
+	userId, _, err := i.getOrCreateUser(name, "Entigo infralib agent service account (owns the terraform-state Customer Secret Key and the DevOps git auth token)")
+	if err != nil {
+		return "", err
+	}
+	groupId, err := i.getOrCreateGroup(name, "Entigo infralib agent service account group")
+	if err != nil {
+		return "", err
+	}
+	if err = i.addUserToGroup(userId, groupId); err != nil {
+		return "", err
+	}
+	// Scoped to the exact bucket and repo the agent's credentials touch: `manage
+	// objects` for terraform state, `inspect buckets` for the s3 backend's bucket-level
+	// probes, and `use devops-repository` (git content push, not repo lifecycle) on the
+	// single build-spec repo by name.
+	statements := []string{
+		fmt.Sprintf("Allow group %s to manage objects in compartment id %s where target.bucket.name='%s'", name, i.compartmentId, bucketName),
+		fmt.Sprintf("Allow group %s to inspect buckets in compartment id %s", name, i.compartmentId),
+		fmt.Sprintf("Allow group %s to use devops-repository in compartment id %s where target.repository.name='%s'", name, i.compartmentId, repoName),
+	}
+	if err = i.ensurePolicy(name, "Entigo infralib agent service account access", statements); err != nil {
+		return "", err
+	}
+	return userId, nil
+}
+
 func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {
 	list, err := i.client.ListDynamicGroups(i.ctx, identity.ListDynamicGroupsRequest{
 		CompartmentId: &i.tenancyId,
@@ -468,6 +534,158 @@ func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {
 		return fmt.Errorf("failed to create dynamic group %s: %w", name, err)
 	}
 	return nil
+}
+
+// DeleteAgentServiceAccount removes the agent's own IAM scaffolding, mirror image
+// of EnsureAgentServiceAccount + EnsureDevOpsBuildAccess: the agent service account
+// user (with its state Customer Secret Key and DevOps auth token), its group, the
+// build-pipeline dynamic group, and the <prefix>-infralib-agent/<prefix>-infralib
+// policies. The <prefix>-infralib-kms policy is deleted separately by the caller AFTER
+// the bucket, since the Object Storage service principal needs it to keep the bucket's
+// CMK usable until the bucket is gone. Best-effort — each step warns and continues so
+// one stuck resource can't strand the rest.
+func (i *IAM) DeleteAgentServiceAccount(cloudPrefix string) {
+	name := fmt.Sprintf("%s-infralib-agent", cloudPrefix)
+	i.deleteUserByName(name)
+	i.deleteGroupByName(name)
+	i.deletePolicyByName(name)
+	i.deletePolicyByName(fmt.Sprintf("%s-infralib", cloudPrefix))
+	i.deleteDynamicGroupByName(fmt.Sprintf("%s-infralib", cloudPrefix))
+}
+
+// DeleteCICDServiceAccount removes the external CI/CD service account minted by
+// CreateServiceAccount (<prefix>-sa user, <prefix>-sa-group group, <prefix>-sa
+// policy). Deliberately separate from the agent's own SA — only removed when the
+// delete flag opts in. Best-effort.
+func (i *IAM) DeleteCICDServiceAccount(cloudPrefix string) {
+	username := fmt.Sprintf("%s-sa", cloudPrefix)
+	i.deleteUserByName(username)
+	i.deleteGroupByName(fmt.Sprintf("%s-group", username))
+	i.deletePolicyByName(username)
+}
+
+// deleteUserByName fully removes the named user: OCI refuses to delete a user that
+// still has Customer Secret Keys, auth tokens or group memberships, so those are
+// purged first. A missing user is a no-op.
+func (i *IAM) deleteUserByName(name string) {
+	userId, err := i.findUser(name)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up IAM user %s: %s", name, err)))
+		return
+	}
+	if userId == "" {
+		return
+	}
+	i.purgeUserCredentials(userId, name)
+	if _, err = i.client.DeleteUser(i.ctx, identity.DeleteUserRequest{UserId: &userId}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete IAM user %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted IAM user %s\n", name)
+}
+
+// purgeUserCredentials removes everything that blocks a user deletion: its Customer
+// Secret Keys, auth tokens and group memberships. Best-effort per item.
+func (i *IAM) purgeUserCredentials(userId, name string) {
+	keys, err := i.listCustomerSecretKeyIds(userId)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list customer secret keys of %s: %s", name, err)))
+	}
+	for id := range keys {
+		if err = i.deleteCustomerSecretKey(userId, id); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete customer secret key %s: %s", id, err)))
+		}
+	}
+	tokens, err := i.client.ListAuthTokens(i.ctx, identity.ListAuthTokensRequest{UserId: &userId})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list auth tokens of %s: %s", name, err)))
+	} else {
+		for _, token := range tokens.Items {
+			if token.Id == nil {
+				continue
+			}
+			if err = i.deleteAuthToken(userId, *token.Id); err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete auth token %s: %s", *token.Id, err)))
+			}
+		}
+	}
+	memberships, err := i.client.ListUserGroupMemberships(i.ctx, identity.ListUserGroupMembershipsRequest{
+		CompartmentId: &i.tenancyId,
+		UserId:        &userId,
+	})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list group memberships of %s: %s", name, err)))
+		return
+	}
+	for _, membership := range memberships.Items {
+		if membership.Id == nil {
+			continue
+		}
+		if _, err = i.client.RemoveUserFromGroup(i.ctx, identity.RemoveUserFromGroupRequest{
+			UserGroupMembershipId: membership.Id,
+		}); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to remove %s from a group: %s", name, err)))
+		}
+	}
+}
+
+func (i *IAM) findUser(name string) (string, error) {
+	list, err := i.client.ListUsers(i.ctx, identity.ListUsersRequest{CompartmentId: &i.tenancyId, Name: &name})
+	if err != nil {
+		return "", fmt.Errorf("failed to list users: %w", err)
+	}
+	if len(list.Items) > 0 {
+		return *list.Items[0].Id, nil
+	}
+	return "", nil
+}
+
+func (i *IAM) deleteGroupByName(name string) {
+	list, err := i.client.ListGroups(i.ctx, identity.ListGroupsRequest{CompartmentId: &i.tenancyId, Name: &name})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up IAM group %s: %s", name, err)))
+		return
+	}
+	if len(list.Items) == 0 {
+		return
+	}
+	if _, err = i.client.DeleteGroup(i.ctx, identity.DeleteGroupRequest{GroupId: list.Items[0].Id}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete IAM group %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted IAM group %s\n", name)
+}
+
+func (i *IAM) deletePolicyByName(name string) {
+	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{CompartmentId: &i.tenancyId, Name: &name})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up IAM policy %s: %s", name, err)))
+		return
+	}
+	if len(list.Items) == 0 {
+		return
+	}
+	if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete IAM policy %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted IAM policy %s\n", name)
+}
+
+func (i *IAM) deleteDynamicGroupByName(name string) {
+	list, err := i.client.ListDynamicGroups(i.ctx, identity.ListDynamicGroupsRequest{CompartmentId: &i.tenancyId, Name: &name})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up dynamic group %s: %s", name, err)))
+		return
+	}
+	if len(list.Items) == 0 {
+		return
+	}
+	if _, err = i.client.DeleteDynamicGroup(i.ctx, identity.DeleteDynamicGroupRequest{DynamicGroupId: list.Items[0].Id}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete dynamic group %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted dynamic group %s\n", name)
 }
 
 func (i *IAM) rotateCustomerSecretKeys(userId string) error {

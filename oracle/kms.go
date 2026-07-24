@@ -70,6 +70,41 @@ func NewKMS(ctx context.Context, provider ocicommon.ConfigurationProvider, regio
 
 func (k *KMS) resourceName() string { return fmt.Sprintf("%s-infralib", k.cloudPrefix) }
 
+// scheduleDeletionDelay is the earliest OCI allows a vault/key deletion to be
+// scheduled (the minimum of the 7–30 day window).
+const scheduleDeletionDelay = 7 * 24 * time.Hour
+
+// ScheduleDeletion schedules the agent-owned vault for deletion at the earliest
+// allowed time; OCI cascades this to the vault's master key and every secret it
+// holds. There is no hard delete — the vault lingers until the scheduled time and
+// can be reverted before then in the console. The vault/key encrypt the state
+// bucket, so the caller must delete (or knowingly keep) the bucket first. A vault
+// that is absent or already scheduled for deletion is a no-op.
+func (k *KMS) ScheduleDeletion() error {
+	name := k.resourceName()
+	existing, err := k.findVault(name)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		log.Printf("No active KMS vault %s found; skipping (already scheduled for deletion or never created)\n", name)
+		return nil
+	}
+	when := ocicommon.SDKTime{Time: time.Now().Add(scheduleDeletionDelay)}
+	_, err = k.vaultClient.ScheduleVaultDeletion(k.ctx, keymanagement.ScheduleVaultDeletionRequest{
+		VaultId: existing.Id,
+		ScheduleVaultDeletionDetails: keymanagement.ScheduleVaultDeletionDetails{
+			TimeOfDeletion: &when,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to schedule deletion of kms vault %s: %w", name, err)
+	}
+	log.Printf("Scheduled Oracle KMS vault %s (and its key + secrets) for deletion on %s\n",
+		name, when.Format("2006-01-02"))
+	return nil
+}
+
 // Ensure resolves the vault + master key once per process (found-or-created by name).
 func (k *KMS) Ensure() error {
 	k.once.Do(func() { k.err = k.ensure() })
@@ -78,6 +113,43 @@ func (k *KMS) Ensure() error {
 
 func (k *KMS) KeyId() string   { return k.state.KeyId }
 func (k *KMS) VaultId() string { return k.state.VaultId }
+
+// Resolve looks up the agent's existing vault + master key by name WITHOUT creating
+// them, for read-only / destroy / delete flows that must not provision anything. It
+// reports whether the vault was found; if not, the ids stay empty and a Vault-backed
+// SSM built on them operates only best-effort (acceptable when the store is being
+// torn down or doesn't exist yet). VaultSummary already carries the management
+// endpoint, so no GetVault/creation call is made. Callers use Resolve OR Ensure on a
+// given KMS, never both.
+func (k *KMS) Resolve() (bool, error) {
+	name := k.resourceName()
+	vault, err := k.findVault(name)
+	if err != nil {
+		return false, err
+	}
+	if vault == nil {
+		return false, nil
+	}
+	// findVault also returns a vault still being created (Creating/Updating), whose
+	// management endpoint isn't populated yet. Resolve is find-only and must not wait or
+	// panic, so treat a not-yet-ready vault as unresolved — the read/destroy paths that
+	// call Resolve degrade best-effort just as they do when the vault is absent.
+	if vault.ManagementEndpoint == nil {
+		return false, nil
+	}
+	mgmt, err := keymanagement.NewKmsManagementClientWithConfigurationProvider(k.provider, *vault.ManagementEndpoint)
+	if err != nil {
+		return false, err
+	}
+	// A key scheduled for deletion returns "" (findKey skips it); the state still
+	// carries the vault id, which is all the read/schedule-delete paths need.
+	keyId, err := k.findKey(mgmt, name)
+	if err != nil {
+		return false, err
+	}
+	k.state = kmsState{VaultId: *vault.Id, KeyId: keyId, ManagementEndpoint: *vault.ManagementEndpoint}
+	return true, nil
+}
 
 func (k *KMS) ensure() error {
 	vault, err := k.ensureVault()

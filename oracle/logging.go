@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/logging"
@@ -122,6 +124,85 @@ func (l *Logging) EnsureDevOpsBuildLog(projectId string) error {
 	l.logId = id
 	log.Printf("Enabled DevOps build logs (%s) for project\n", name)
 	return nil
+}
+
+// Delete removes the agent's service log (<prefix>-infralib-logs) and then its
+// log group (<prefix>-logs). Deletions are asynchronous work requests, so the log
+// is removed and awaited before its group. Best-effort: each failure warns and
+// continues, and a missing group is a no-op.
+func (l *Logging) Delete() {
+	groupName := l.logGroupName()
+	groupId, err := l.lookupLogGroup(groupName)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up log group %s: %s", groupName, err)))
+		return
+	}
+	if groupId == "" {
+		return
+	}
+	// Delete every log in the group, not just the agent's <prefix>-infralib-logs: OCI
+	// rejects DeleteLogGroup with 409 ("Log group not empty") while any log remains,
+	// and the group is agent-owned (named by prefix), so anything in it is ours to clear.
+	l.deleteAllLogs(groupId)
+	response, err := l.mgmt.DeleteLogGroup(l.ctx, logging.DeleteLogGroupRequest{LogGroupId: &groupId})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete log group %s: %s", groupName, err)))
+		return
+	}
+	if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed waiting for log group %s deletion: %s", groupName, err)))
+		return
+	}
+	log.Printf("Deleted log group %s\n", groupName)
+}
+
+// deleteAllLogs removes every log in the group, waiting on each deletion's work
+// request so the group is empty before the caller deletes it. Best-effort and
+// paginated.
+func (l *Logging) deleteAllLogs(groupId string) {
+	var page *string
+	for {
+		list, err := l.mgmt.ListLogs(l.ctx, logging.ListLogsRequest{LogGroupId: &groupId, Page: page})
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list logs in group %s: %s", groupId, err)))
+			return
+		}
+		for _, item := range list.Items {
+			if item.Id == nil {
+				continue
+			}
+			response, err := l.mgmt.DeleteLog(l.ctx, logging.DeleteLogRequest{LogGroupId: &groupId, LogId: item.Id})
+			if err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete log %s: %s", *item.Id, err)))
+				continue
+			}
+			if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed waiting for log %s deletion: %s", *item.Id, err)))
+			}
+		}
+		if list.OpcNextPage == nil {
+			return
+		}
+		page = list.OpcNextPage
+	}
+}
+
+// lookupLogGroup returns the log group OCID for the given name, or "" when absent
+// (unlike findLogGroupId, which treats absence as an error).
+func (l *Logging) lookupLogGroup(name string) (string, error) {
+	list, err := l.mgmt.ListLogGroups(l.ctx, logging.ListLogGroupsRequest{
+		CompartmentId: &l.compartmentId,
+		DisplayName:   &name,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list log groups: %w", err)
+	}
+	for _, group := range list.Items {
+		if group.DisplayName != nil && *group.DisplayName == name {
+			return *group.Id, nil
+		}
+	}
+	return "", nil
 }
 
 func (l *Logging) getOrCreateLogGroup() (string, error) {

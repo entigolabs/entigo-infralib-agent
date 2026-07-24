@@ -73,9 +73,6 @@ const (
 	buildRunTimeout = 60 * time.Minute
 	buildSpecBranch = "main"
 	buildStageName  = "run"
-	// devopsAuthTokenObject persists the OCI auth token used to git-push the
-	// build specs, in the Vault alongside the CSK. Same trust boundary.
-	devopsAuthTokenObject = "oracle-devops-auth-token"
 )
 
 // DevOpsBuilder executes infralib steps through OCI DevOps build pipelines.
@@ -92,32 +89,32 @@ const (
 // (session-token or API-key auth); in-container resource-principal runs reference
 // the already-pushed specs.
 type DevOpsBuilder struct {
-	ctx           context.Context
-	client        devops.DevopsClient
-	onsClient     ons.NotificationControlPlaneClient
-	iam           *IAM
-	secrets       secretPersistence
-	compartmentId string
-	region        string
-	cloudPrefix   string
-	userId        string
-	once          sync.Once
-	ensureErr     error
-	projectId     string
-	repoId        string
-	repoURL       string
-	mu            sync.Mutex             // guards the maps below; held only for short in-memory sections
-	pipelines     map[string]string      // pipeline display name → build pipeline OCID (reconciled)
-	pushedSpecs   map[string]string      // spec file path → hash pushed this process (dedupes redundant pushes)
-	keyLocks      map[string]*sync.Mutex // per-pipeline reconcile lock, so one pipeline serializes with itself but not with others
-	pushMu        sync.Mutex             // serializes git pushes to the single shared spec repo
+	ctx            context.Context
+	client         devops.DevopsClient
+	onsClient      ons.NotificationControlPlaneClient
+	compartmentId  string
+	region         string
+	cloudPrefix    string
+	once           sync.Once
+	ensureErr      error
+	projectId      string
+	repoId         string
+	repoURL        string
+	gitUsername    string                 // HTTPS basic-auth username for the spec push; injected by SetGitAuth (no IAM/Vault reads here)
+	gitToken       string                 // OCI auth token used as the git password; injected by SetGitAuth
+	authTokenFresh bool                   // true when the injected token was just created, so pushSpec retries while it propagates
+	mu             sync.Mutex             // guards the maps below; held only for short in-memory sections
+	pipelines      map[string]string      // pipeline display name → build pipeline OCID (reconciled)
+	pushedSpecs    map[string]string      // spec file path → hash pushed this process (dedupes redundant pushes)
+	keyLocks       map[string]*sync.Mutex // per-pipeline reconcile lock, so one pipeline serializes with itself but not with others
+	pushMu         sync.Mutex             // serializes git pushes to the single shared spec repo
 }
 
 // ProjectId returns the shared DevOps project OCID after Ensure has run (needed
 // to enable the project's build logs and to host the approval pipelines).
 func (d *DevOpsBuilder) ProjectId() string { return d.projectId }
 
-func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvider, iam *IAM, secrets secretPersistence, region, compartmentId, cloudPrefix string) (*DevOpsBuilder, error) {
+func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvider, region, compartmentId, cloudPrefix string) (*DevOpsBuilder, error) {
 	client, err := devops.NewDevopsClientWithConfigurationProvider(provider)
 	if err != nil {
 		return nil, err
@@ -134,8 +131,6 @@ func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvi
 		ctx:           ctx,
 		client:        client,
 		onsClient:     onsClient,
-		iam:           iam,
-		secrets:       secrets,
 		compartmentId: compartmentId,
 		region:        region,
 		cloudPrefix:   cloudPrefix,
@@ -146,13 +141,12 @@ func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvi
 }
 
 // Ensure provisions (once) the shared DevOps project, its notification topic and
-// the hosted build-spec repository. userId (empty under in-container resource
-// principals) gates only the later git push of build specs; everything else is
-// list-or-create and works from any principal that can manage DevOps. Per-step
-// build pipelines + their specs are created lazily by launchBuildRun.
-func (d *DevOpsBuilder) Ensure(userId string) error {
+// the hosted build-spec repository — all list-or-create, working from any principal
+// that can manage DevOps. The later git push of build specs (pushSpec) is what needs
+// a user; it resolves the agent service account on demand. Per-step build pipelines +
+// their specs are created lazily by launchBuildRun.
+func (d *DevOpsBuilder) Ensure() error {
 	d.once.Do(func() {
-		d.userId = userId
 		d.ensureErr = d.ensure()
 	})
 	return d.ensureErr
@@ -168,12 +162,18 @@ func (d *DevOpsBuilder) ensure() error {
 		return err
 	}
 	d.projectId = projectId
-	repoId, repoURL, err := d.ensureRepository(fmt.Sprintf("%s-infralib-src", d.cloudPrefix))
+	repoId, repoURL, err := d.ensureRepository(repositoryName(d.cloudPrefix))
 	if err != nil {
 		return err
 	}
 	d.repoId, d.repoURL = repoId, repoURL
 	return nil
+}
+
+// repositoryName is the shared hosted build-spec repo's name, referenced both when
+// creating it and when scoping the agent SA's devops-repository grant to it.
+func repositoryName(cloudPrefix string) string {
+	return fmt.Sprintf("%s-infralib-src", cloudPrefix)
 }
 
 // ensureTopic finds or creates the notification topic the shared project (and
@@ -283,7 +283,7 @@ func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, para
 	if err != nil {
 		return "", err
 	}
-	args := []devops.BuildRunArgument{{Name: strPtr(imageParam), Value: &image}}
+	args := []devops.BuildRunArgument{{Name: new(imageParam), Value: &image}}
 	for name, value := range perRun {
 		paramName := envParamPrefix + name
 		v := value
@@ -531,58 +531,76 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
 	return d.waitForWorkRequest(created.OpcWorkRequestId)
 }
 
+// SetGitAuth injects the build-spec push credentials the agent resolved once at
+// startup (provisionBackendCredentials), so pushSpec neither reads the Vault nor
+// makes IAM calls. Both values are empty on a non-admin/consume run that never
+// bootstrapped them; pushSpec then fails loudly only if a spec actually changed.
+// fresh is true when the token was just created, so the push retries while it
+// propagates to the git endpoint.
+func (d *DevOpsBuilder) SetGitAuth(username, token string, fresh bool) {
+	d.gitUsername, d.gitToken, d.authTokenFresh = username, token, fresh
+}
+
 // pushSpec commits the step's build spec to the hosted repo (the single source of
-// truth) at specFile. It needs a user (auth token) — in-container runs (no user)
-// can't push, so a changed spec there is a loud error and must be introduced from a
-// local run.
+// truth) at specFile, authenticating as the agent SA with credentials injected at
+// startup by SetGitAuth — no Vault or IAM calls here.
+// A genuine spec change on a run without those provisioned (a non-admin/consume run
+// that never bootstrapped) is a loud error and must be introduced from an admin run.
 func (d *DevOpsBuilder) pushSpec(specFile, spec string) error {
 	if d.repoURL == "" {
 		return fmt.Errorf("hosted repository has no http url to push to")
 	}
-	if d.userId == "" {
-		return fmt.Errorf("build spec %s changed but no user is available to push it; "+
-			"run the agent once locally (session-token or API-key auth) to bootstrap/update the DevOps build pipelines", specFile)
+	if d.gitUsername == "" || d.gitToken == "" {
+		return fmt.Errorf("build spec %s changed but no DevOps git credentials are provisioned; "+
+			"run the agent once as an admin to bootstrap them", specFile)
 	}
-	username, err := d.gitUsername(d.userId)
-	if err != nil {
-		return err
-	}
-	token, err := d.iam.EnsureAuthToken(d.secrets, d.userId, fmt.Sprintf("entigo-infralib-%s-devops", d.cloudPrefix))
-	if err != nil {
-		return err
-	}
-	auth := &githttp.BasicAuth{Username: username, Password: token}
-	log.Printf("Pushing DevOps build spec %s into %s as git user %q\n", specFile, d.repoURL, username)
-	if err = commitSpecFile(d.ctx, d.repoURL, auth, buildSpecBranch, specFile, []byte(spec)); err != nil {
-		return fmt.Errorf("%w; if this is a 401, the git username form may differ for this tenancy — "+
-			"set %s to override it (e.g. \"<tenancy>/<domain>/%s\" when a non-default identity domain is in play)",
-			err, gitUsernameEnv, username)
+	auth := &githttp.BasicAuth{Username: d.gitUsername, Password: d.gitToken}
+	log.Printf("Pushing DevOps build spec %s into %s as git user %q\n", specFile, d.repoURL, d.gitUsername)
+	if err := d.commitSpecWithRetry(specFile, spec, auth, d.authTokenFresh); err != nil {
+		return fmt.Errorf("%w; if this is a 401, the git username form may differ for this tenancy "+
+			"(e.g. identity-domain tenancies need \"<tenancy>/<domain>/%s\") — adjust deriveGitUsername",
+			err, d.gitUsername)
 	}
 	return nil
 }
 
-// gitUsernameEnv overrides the HTTPS basic-auth username used to push the build
-// specs, for tenancies whose exact form the default doesn't match.
-const gitUsernameEnv = "ORACLE_GIT_USERNAME"
+const (
+	// gitAuthPropagationTimeout bounds how long a freshly created auth token is given
+	// to propagate to the DevOps git endpoint (like the CSK, it's eventually consistent).
+	gitAuthPropagationTimeout = 5 * time.Minute
+	gitAuthRetryInterval      = 15 * time.Second
+)
 
-// gitUsername builds the OCI code-repository HTTPS username, which OCI forms as
-// `<tenancy-name>/<login>` (NOT the object-storage namespace — the two differ).
-// Tenancies with a non-default identity domain instead need
-// `<tenancy-name>/<domain>/<login>`; the domain can't be derived from the
-// Identity user alone, so that case falls back to the env override.
-func (d *DevOpsBuilder) gitUsername(userId string) (string, error) {
-	if override := os.Getenv(gitUsernameEnv); override != "" {
-		return override, nil
+// commitSpecWithRetry pushes the spec, tolerating the propagation delay of a
+// just-created auth token: OCI returns the token immediately but the git endpoint
+// only accepts it after an asynchronous delay, so an initial 401 is expected and we
+// retry until it takes. A REUSED token is already propagated, so a 401 there is a
+// genuine auth problem (wrong username form, revoked token) — fail fast.
+func (d *DevOpsBuilder) commitSpecWithRetry(specFile, spec string, auth transport.AuthMethod, freshToken bool) error {
+	deadline := time.Now().Add(gitAuthPropagationTimeout)
+	for {
+		err := commitSpecFile(d.ctx, d.repoURL, auth, buildSpecBranch, specFile, []byte(spec))
+		if err == nil {
+			return nil
+		}
+		if !freshToken || !isGitAuthError(err) || time.Now().After(deadline) {
+			return err
+		}
+		log.Printf("DevOps git rejected the new auth token (not yet propagated); retrying in %s\n", gitAuthRetryInterval)
+		select {
+		case <-d.ctx.Done():
+			return d.ctx.Err()
+		case <-time.After(gitAuthRetryInterval):
+		}
 	}
-	tenancy, err := d.iam.TenancyName()
-	if err != nil {
-		return "", err
-	}
-	login, err := d.iam.Username(userId)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s/%s", tenancy, login), nil
+}
+
+// isGitAuthError reports a 401/403 from the git endpoint (go-git wraps the transport
+// sentinels with %w, so errors.Is sees them through commitSpecFile's wrapping). A
+// still-propagating fresh token can surface as either, so both must be retried.
+func isGitAuthError(err error) bool {
+	return errors.Is(err, transport.ErrAuthenticationRequired) ||
+		errors.Is(err, transport.ErrAuthorizationFailed)
 }
 
 // commitSpecFile clones the hosted repo (init-ing a fresh one if the remote is
@@ -740,6 +758,72 @@ func (d *DevOpsBuilder) waitForBuildRun(buildRunId string) (int, error) {
 	}
 }
 
+func (d *DevOpsBuilder) DeleteBuildResources() {
+	name := fmt.Sprintf("%s-infralib", d.cloudPrefix)
+	projectId := d.findProject(name)
+	if projectId != "" {
+		d.deleteRepositories(projectId)
+		if _, err := d.client.DeleteProject(d.ctx, devops.DeleteProjectRequest{ProjectId: &projectId}); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf(
+				"failed to delete DevOps project %s, if caused by child resources, try again: %s", name, err)))
+		}
+	}
+	d.deleteTopic(fmt.Sprintf("%s-approvals", d.cloudPrefix))
+}
+
+// Resolve locates the shared project by name WITHOUT creating or enabling anything,
+// so read-only / destroy flows (GetResources) can trigger already-provisioned
+// pipelines. Unlike Ensure it enables no logs, grants no IAM and pushes no specs;
+// if the project doesn't exist the id stays empty and triggers return NotFoundError.
+func (d *DevOpsBuilder) Resolve() {
+	d.projectId = d.findProject(fmt.Sprintf("%s-infralib", d.cloudPrefix))
+}
+
+func (d *DevOpsBuilder) findProject(name string) string {
+	list, err := d.client.ListProjects(d.ctx, devops.ListProjectsRequest{CompartmentId: &d.compartmentId, Name: &name})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up DevOps project %s: %s", name, err)))
+		return ""
+	}
+	if len(list.Items) == 0 {
+		return ""
+	}
+	return *list.Items[0].Id
+}
+
+func (d *DevOpsBuilder) deleteRepositories(projectId string) {
+	list, err := d.client.ListRepositories(d.ctx, devops.ListRepositoriesRequest{ProjectId: &projectId})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list DevOps repositories: %s", err)))
+		return
+	}
+	for _, repo := range list.Items {
+		if repo.Id == nil {
+			continue
+		}
+		if _, err = d.client.DeleteRepository(d.ctx, devops.DeleteRepositoryRequest{RepositoryId: repo.Id}); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete DevOps repository %s: %s", *repo.Id, err)))
+			continue
+		}
+		log.Printf("Deleted DevOps code repository %s\n", repositoryName(d.cloudPrefix))
+	}
+}
+
+func (d *DevOpsBuilder) deleteTopic(name string) {
+	list, err := d.onsClient.ListTopics(d.ctx, ons.ListTopicsRequest{CompartmentId: &d.compartmentId, Name: &name})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up notification topic %s: %s", name, err)))
+		return
+	}
+	for _, topic := range list.Items {
+		if _, err = d.onsClient.DeleteTopic(d.ctx, ons.DeleteTopicRequest{TopicId: topic.TopicId}); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete notification topic %s: %s", name, err)))
+			continue
+		}
+		log.Printf("Deleted notification topic %s\n", name)
+	}
+}
+
 // deleteStepPipelines removes a removed step's build pipelines — one per action
 // command it may have run. The step type is unknown here, so every command's
 // pipeline name is tried. Best-effort so a removed step never blocks the delete
@@ -763,10 +847,31 @@ func (d *DevOpsBuilder) deleteStepPipelines(step string) {
 			continue
 		}
 		for _, item := range list.Items {
-			if _, err = d.client.DeleteBuildPipeline(d.ctx, devops.DeleteBuildPipelineRequest{BuildPipelineId: item.Id}); err != nil {
-				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete build pipeline %s: %s", *item.Id, err)))
+			d.deleteBuildPipeline(*item.Id)
+		}
+	}
+}
+
+// deleteBuildPipeline removes a build pipeline, first deleting its stages — OCI
+// rejects DeleteBuildPipeline with 409 ("has active stages") while any remain.
+// Best-effort per stage.
+func (d *DevOpsBuilder) deleteBuildPipeline(pipelineId string) {
+	stages, err := d.client.ListBuildPipelineStages(d.ctx, devops.ListBuildPipelineStagesRequest{
+		BuildPipelineId: &pipelineId,
+	})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list stages of build pipeline %s: %s", pipelineId, err)))
+	} else {
+		for _, stage := range stages.Items {
+			if _, err = d.client.DeleteBuildPipelineStage(d.ctx, devops.DeleteBuildPipelineStageRequest{
+				BuildPipelineStageId: stage.GetId(),
+			}); err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete build pipeline stage %s: %s", *stage.GetId(), err)))
 			}
 		}
+	}
+	if _, err = d.client.DeleteBuildPipeline(d.ctx, devops.DeleteBuildPipelineRequest{BuildPipelineId: &pipelineId}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete build pipeline %s: %s", pipelineId, err)))
 	}
 }
 
@@ -866,8 +971,6 @@ func buildSpecYAMLFor(names []string, vaultVars map[string]string) string {
 	}
 	return b.String()
 }
-
-func strPtr(s string) *string { return &s }
 
 // specFileFor is the hosted-repo path of a step's shared build spec. All of a
 // step's command pipelines (plan/apply and destroy variants) read this one file —

@@ -195,6 +195,10 @@ func (a *awsService) GetResources() (model.Resources, error) {
 	return a.resources, nil
 }
 
+func (a *awsService) PrepareDestroy(resources model.Resources) (model.Resources, error) {
+	return resources, nil
+}
+
 func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
 	scheduler := NewScheduler(a.ctx, a.awsConfig, a.cloudPrefix)
 	err := scheduler.deleteUpdateSchedule()

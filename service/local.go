@@ -207,12 +207,12 @@ func dedupeEnv(env []string) []string {
 	index := make(map[string]int, len(env))
 	result := make([]string, 0, len(env))
 	for _, kv := range env {
-		eq := strings.IndexByte(kv, '=')
-		if eq < 0 {
+		before, _, ok := strings.Cut(kv, "=")
+		if !ok {
 			result = append(result, kv)
 			continue
 		}
-		key := kv[:eq]
+		key := before
 		if i, ok := index[key]; ok {
 			result[i] = kv
 			continue

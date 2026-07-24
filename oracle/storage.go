@@ -52,7 +52,7 @@ func (s *Storage) Namespace() string {
 	return s.namespace
 }
 
-func (s *Storage) CreateBucket(skipDelay bool) error {
+func (s *Storage) CreateBucket(kms *KMS, skipDelay bool) error {
 	exists, err := s.BucketExists()
 	if err != nil {
 		return err
@@ -70,14 +70,14 @@ func (s *Storage) CreateBucket(skipDelay bool) error {
 			PublicAccessType: objectstorage.CreateBucketDetailsPublicAccessTypeNopublicaccess,
 			Versioning:       objectstorage.CreateBucketDetailsVersioningEnabled,
 			FreeformTags:     map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+			KmsKeyId:         new(kms.KeyId()),
 		},
 	})
 	if err != nil {
 		return err
 	}
 	log.Printf("Created Oracle Object Storage bucket %s\n", s.bucket)
-	created := true
-	s.bucketCreated = &created
+	s.bucketCreated = new(true)
 	return nil
 }
 
@@ -98,51 +98,26 @@ func (s *Storage) BucketExists() (bool, error) {
 	return false, err
 }
 
-// AddEncryption sets the bucket's default at-rest encryption to the agent-owned
-// customer-managed KMS key, idempotently (skips if already set). Requires the
-// Object Storage service principal to have "use keys" on the key first
-// (IAM.EnsureObjectStorageKeyAccess), or UpdateBucket returns an authorization
-// error. Mirrors the AWS "create bucket, encrypt once the key exists" order.
-func (s *Storage) AddEncryption(keyId string) error {
-	response, err := s.client.GetBucket(s.ctx, objectstorage.GetBucketRequest{
-		NamespaceName: &s.namespace,
-		BucketName:    &s.bucket,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get bucket %s: %w", s.bucket, err)
-	}
-	if response.KmsKeyId != nil && *response.KmsKeyId == keyId {
-		return nil
-	}
-	_, err = s.client.UpdateBucket(s.ctx, objectstorage.UpdateBucketRequest{
-		NamespaceName: &s.namespace,
-		BucketName:    &s.bucket,
-		UpdateBucketDetails: objectstorage.UpdateBucketDetails{
-			KmsKeyId: &keyId,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to set kms key on bucket %s: %w", s.bucket, err)
-	}
-	log.Printf("Enabled KMS encryption on bucket %s\n", s.bucket)
-	return nil
-}
-
 func (s *Storage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 	if s.repoMetadata != nil {
 		return s.repoMetadata, nil
 	}
+	metadata := &model.RepositoryMetadata{
+		Name: s.bucket,
+		URL:  s.bucket,
+	}
 	exists, err := s.BucketExists()
 	if err != nil {
+		// Exclusion for the Delete command, other processes should cause an error due to an unusable bucket.
+		if isConflict(err, "KmsKeyDisabled") {
+			return metadata, nil
+		}
 		return nil, err
 	}
 	if !exists {
 		return nil, nil
 	}
-	s.repoMetadata = &model.RepositoryMetadata{
-		Name: s.bucket,
-		URL:  s.bucket,
-	}
+	s.repoMetadata = metadata
 	return s.repoMetadata, nil
 }
 
@@ -292,12 +267,21 @@ func (s *Storage) listPrefixes(prefix string) ([]string, error) {
 func (s *Storage) Delete() error {
 	exists, err := s.BucketExists()
 	if err != nil {
-		return err
+		if isConflict(err, "KmsKeyDisabled") {
+			exists = true
+		} else {
+			return err
+		}
 	}
 	if !exists {
 		return nil
 	}
 	log.Printf("Emptying bucket %s...\n", s.bucket)
+	// In-progress multipart uploads (terraform writes large state via multipart) keep
+	// the bucket non-empty even after every object version is gone, so abort them too.
+	if err = s.abortMultipartUploads(); err != nil {
+		return err
+	}
 	if err = s.deleteAllVersions(); err != nil {
 		return err
 	}
@@ -341,7 +325,43 @@ func (s *Storage) deleteAllVersions() error {
 	return nil
 }
 
+func (s *Storage) abortMultipartUploads() error {
+	var page *string
+	for {
+		response, err := s.client.ListMultipartUploads(s.ctx, objectstorage.ListMultipartUploadsRequest{
+			NamespaceName: &s.namespace,
+			BucketName:    &s.bucket,
+			Page:          page,
+		})
+		if err != nil {
+			return err
+		}
+		for _, upload := range response.Items {
+			_, err = s.client.AbortMultipartUpload(s.ctx, objectstorage.AbortMultipartUploadRequest{
+				NamespaceName: &s.namespace,
+				BucketName:    &s.bucket,
+				ObjectName:    upload.Object,
+				UploadId:      upload.UploadId,
+			})
+			if err != nil && !isNotFound(err) {
+				return err
+			}
+		}
+		if response.OpcNextPage == nil {
+			break
+		}
+		page = response.OpcNextPage
+	}
+	return nil
+}
+
 func isNotFound(err error) bool {
 	failure, ok := ocicommon.IsServiceError(err)
 	return ok && failure.GetHTTPStatusCode() == http.StatusNotFound
+}
+
+func isConflict(err error, message string) bool {
+	failure, ok := ocicommon.IsServiceError(err)
+	return ok && failure.GetHTTPStatusCode() == http.StatusConflict &&
+		(message == "" || strings.Contains(strings.ToLower(failure.GetMessage()), strings.ToLower(message)))
 }
