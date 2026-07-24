@@ -762,10 +762,18 @@ func (d *DevOpsBuilder) DeleteBuildResources() {
 	name := fmt.Sprintf("%s-infralib", d.cloudPrefix)
 	projectId := d.findProject(name)
 	if projectId != "" {
+		// Repository deletion is asynchronous; DeleteProject 409s ("still contains
+		// child resources") while a repo lingers in DELETING. Wait for the repos to
+		// finish deleting before removing the project.
 		d.deleteRepositories(projectId)
-		if _, err := d.client.DeleteProject(d.ctx, devops.DeleteProjectRequest{ProjectId: &projectId}); err != nil {
+		response, err := d.client.DeleteProject(d.ctx, devops.DeleteProjectRequest{ProjectId: &projectId})
+		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf(
 				"failed to delete DevOps project %s, if caused by child resources, try again: %s", name, err)))
+		} else if err = d.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed while deleting DevOps project %s: %s", name, err)))
+		} else {
+			log.Printf("Deleted DevOps project %s\n", name)
 		}
 	}
 	d.deleteTopic(fmt.Sprintf("%s-approvals", d.cloudPrefix))
@@ -797,14 +805,26 @@ func (d *DevOpsBuilder) deleteRepositories(projectId string) {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list DevOps repositories: %s", err)))
 		return
 	}
+	// Delete every repo and collect its async work request, then wait for all of
+	// them so the subsequent DeleteProject doesn't race a repo still in DELETING.
+	workRequests := make([]*string, 0, len(list.Items))
 	for _, repo := range list.Items {
 		if repo.Id == nil {
 			continue
 		}
-		if _, err = d.client.DeleteRepository(d.ctx, devops.DeleteRepositoryRequest{RepositoryId: repo.Id}); err != nil {
+		response, err := d.client.DeleteRepository(d.ctx, devops.DeleteRepositoryRequest{RepositoryId: repo.Id})
+		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete DevOps repository %s: %s", *repo.Id, err)))
 			continue
 		}
+		workRequests = append(workRequests, response.OpcWorkRequestId)
+	}
+	for _, workRequestId := range workRequests {
+		if err = d.waitForWorkRequest(workRequestId); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed while deleting DevOps repository: %s", err)))
+		}
+	}
+	if len(workRequests) > 0 {
 		log.Printf("Deleted DevOps code repository %s\n", repositoryName(d.cloudPrefix))
 	}
 }

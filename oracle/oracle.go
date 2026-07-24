@@ -341,6 +341,10 @@ func (o *oracleService) provisionBackendCredentials(ctx context.Context, resourc
 	// without deleting the persisted credentials. Best-effort: a Vault-read-only
 	// principal can't, and the persisted credentials still work. (SetupResources already
 	// needs IAM here for EnsureDevOpsBuildAccess, so this adds no privilege requirement.)
+	// On a first-run seed in a non-home region this reconcile (user → group → policy,
+	// each waiting for IAM replication) is several minutes, so announce it — otherwise
+	// it's a silent gap before the next log line.
+	log.Println("Reconciling the agent service account (user, group and access policy)")
 	saUserId := o.reconcileAgentServiceAccount(iam, resources.BucketName)
 
 	// No IAM user-management perms (a CI/CD SA or in-container resource principal): trust
