@@ -358,7 +358,7 @@ func (i *IAM) addUserToGroup(userId, groupId string) error {
 		},
 	})
 	if err != nil {
-		if failure, ok := ocicommon.IsServiceError(err); ok && failure.GetHTTPStatusCode() == 409 {
+		if failure, ok := asServiceError(err); ok && failure.GetHTTPStatusCode() == 409 {
 			return nil
 		}
 		return fmt.Errorf("failed to add user to group: %w", err)
@@ -389,7 +389,7 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 		Name:          &name,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list policies: %w", err)
+		return err
 	}
 	if len(list.Items) > 0 {
 		existing := list.Items[0]

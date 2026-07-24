@@ -15,7 +15,7 @@ import (
 // OCI_CONFIG_FILE) plus config env vars. Region is applied separately via
 // SetRegion on each client, so a resource-principal run needs no region here.
 func newConfigProvider() (ocicommon.ConfigurationProvider, error) {
-	if os.Getenv(auth.ResourcePrincipalVersionEnvVar) != "" {
+	if os.Getenv(auth.ResourcePrincipalRPSTEnvVar) != "" {
 		return auth.ResourcePrincipalConfigurationProvider()
 	}
 	return ocicommon.DefaultConfigProvider(), nil

@@ -175,11 +175,17 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 	return nil
 }
 
+// CreateAgentPipelines eagerly creates the agent's own run + update build pipelines
+// (so a gitops engineer can trigger the agent from the OCI console with no local
+// agent) and, when run is set, starts a run execution. projectName is the agent
+// prefix (<cloudPrefix>-agent); its run/update projects carry the command suffix.
 func (p *Pipeline) CreateAgentPipelines(_, projectName, _ string, run bool) error {
+	if err := p.builder.ensureAgentPipelines(projectName); err != nil {
+		return err
+	}
 	if !run {
 		return nil
 	}
-	// Mirrors gcloud: the registered agent project name carries the command suffix.
 	return p.StartAgentExecution(model.GetAgentProjectName(projectName, common.RunCommand))
 }
 

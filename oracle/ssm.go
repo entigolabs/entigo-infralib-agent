@@ -3,7 +3,6 @@ package oracle
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -327,12 +326,11 @@ func (s *SSM) cancelDeletion(name, id string) error {
 }
 
 // isIncorrectState reports the OCI 409 "IncorrectState" a mutation returns while the
-// secret is still transitioning from a previous (asynchronous) mutation. errors.As
+// secret is still transitioning from a previous (asynchronous) mutation. asServiceError
 // unwraps the fmt-wrapped error updateSecret returns.
 func isIncorrectState(err error) bool {
-	var failure ocicommon.ServiceError
-	return errors.As(err, &failure) &&
-		failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == "IncorrectState"
+	failure, ok := asServiceError(err)
+	return ok && failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == "IncorrectState"
 }
 
 // secretPendingDeletion reports whether a scheduled deletion can still be cancelled

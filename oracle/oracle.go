@@ -10,7 +10,6 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
-	"github.com/oracle/oci-go-sdk/v65/common/auth"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -156,8 +155,20 @@ func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Seed-only: this grants the Object Storage SERVICE principal the right to use the
+	// agent's KMS key for the bucket's CMK — a one-time setup concern needed only when the
+	// bucket is first created. Policies live in the tenancy, so an in-container resource
+	// principal (or a CI/CD SA) scoped to `manage all-resources in compartment` can't read
+	// them and this returns NotAuthorizedOrNotFound; that's a consume run, where the policy
+	// already exists and the bucket below is just found, so warn and continue rather than
+	// failing — mirroring reconcileAgentServiceAccount's admin-vs-consume split. Any other
+	// error is real and propagates.
 	if err = iam.EnsureObjectStorageKeyAccess(o.cloudPrefix, o.region, kms.KeyId()); err != nil {
-		return nil, fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
+		if !isNotAuthorized(err) {
+			return nil, fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
+		}
+		slog.Info(fmt.Sprintf("Skipping Object Storage KMS access policy reconcile (no IAM permissions — expected on a "+
+			"non-admin run); using the existing bucket and policy (%s)", errSummary(err)))
 	}
 	resources, storage, err := o.bucketResources()
 	if err != nil {
@@ -259,8 +270,17 @@ func (o *oracleService) setupDevOpsBuild(logs *Logging) (*DevOpsBuilder, error) 
 	if err = build.Ensure(); err != nil {
 		return nil, err
 	}
+	// Seed-only like EnsureObjectStorageKeyAccess: reconciles the build pipeline's dynamic
+	// group + its tenancy-level access policy. An in-container resource principal (or CI/CD
+	// SA) scoped to `manage all-resources in compartment` can't read tenancy policies and
+	// this returns NotAuthorizedOrNotFound — a consume run, where the group and policy
+	// already exist, so warn and continue. Any other error is real and propagates.
 	if err = iam.EnsureDevOpsBuildAccess(o.cloudPrefix); err != nil {
-		return nil, err
+		if !isNotAuthorized(err) {
+			return nil, err
+		}
+		slog.Info(fmt.Sprintf("Skipping DevOps build access policy reconcile (no IAM permissions — expected on a "+
+			"non-admin run); using the existing dynamic group and policy (%s)", errSummary(err)))
 	}
 	if logs != nil {
 		if err = logs.EnsureDevOpsBuildLog(build.ProjectId()); err != nil {
@@ -486,8 +506,8 @@ func (o *oracleService) deriveGitUsername(iam *IAM) (string, error) {
 func (o *oracleService) reconcileAgentServiceAccount(iam *IAM, bucketName string) string {
 	saUserId, err := iam.EnsureAgentServiceAccount(o.cloudPrefix, bucketName, repositoryName(o.cloudPrefix))
 	if err != nil {
-		slog.Info(common.PrefixWarning(fmt.Sprintf("could not reconcile the agent service account policy (%v); "+
-			"relying on already-persisted credentials", err)))
+		slog.Info(fmt.Sprintf("Skipping agent service account reconcile (no IAM permissions — expected on a "+
+			"non-admin run); using the already-persisted credentials (%s)", errSummary(err)))
 		return ""
 	}
 	return saUserId
@@ -660,5 +680,5 @@ func (o *oracleService) AddEncryption(_ string, _ map[string]model.TFOutput) err
 }
 
 func (o *oracleService) IsRunningLocally() bool {
-	return os.Getenv(auth.ResourcePrincipalVersionEnvVar) == ""
+	return os.Getenv("OCI_BUILD_RUN_ID") == ""
 }

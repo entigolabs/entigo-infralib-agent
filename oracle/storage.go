@@ -3,16 +3,23 @@ package oracle
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
+)
+
+const (
+	bucketKmsPropagationTimeout = time.Minute
+	bucketKmsPropagationPoll    = 5 * time.Second
 )
 
 type Storage struct {
@@ -62,7 +69,7 @@ func (s *Storage) CreateBucket(kms *KMS, skipDelay bool) error {
 		return nil
 	}
 	util.DelayBucketCreation(s.bucket, skipDelay)
-	_, err = s.client.CreateBucket(s.ctx, objectstorage.CreateBucketRequest{
+	request := objectstorage.CreateBucketRequest{
 		NamespaceName: &s.namespace,
 		CreateBucketDetails: objectstorage.CreateBucketDetails{
 			Name:             &s.bucket,
@@ -72,9 +79,25 @@ func (s *Storage) CreateBucket(kms *KMS, skipDelay bool) error {
 			FreeformTags:     map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 			KmsKeyId:         new(kms.KeyId()),
 		},
-	})
-	if err != nil {
-		return err
+	}
+	// The KMS key-access policy granted just before this call is eventually
+	// consistent, so Object Storage may briefly reject the key with
+	// NotAuthorizedOrFoundKmsKey. Retry until the policy propagates.
+	deadline := time.Now().Add(bucketKmsPropagationTimeout)
+	for {
+		_, err = s.client.CreateBucket(s.ctx, request)
+		if err == nil {
+			break
+		}
+		if !isKmsKeyNotAuthorized(err) || time.Now().After(deadline) {
+			return err
+		}
+		log.Printf("KMS key not yet authorized for Object Storage, retrying bucket %s creation\n", s.bucket)
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-time.After(bucketKmsPropagationPoll):
+		}
 	}
 	log.Printf("Created Oracle Object Storage bucket %s\n", s.bucket)
 	s.bucketCreated = new(true)
@@ -355,13 +378,51 @@ func (s *Storage) abortMultipartUploads() error {
 	return nil
 }
 
+// asServiceError extracts an OCI ServiceError from anywhere in the error chain.
+// ocicommon.IsServiceError does a bare type assertion, so it misses errors that
+// have been fmt.Errorf("...: %w")-wrapped before reaching a predicate; errors.As
+// walks the chain and matches the ServiceError interface. All the code-inspecting
+// predicates below go through this so wrapping never hides a service error's code.
+func asServiceError(err error) (ocicommon.ServiceError, bool) {
+	var failure ocicommon.ServiceError
+	if errors.As(err, &failure) {
+		return failure, true
+	}
+	return nil, false
+}
+
+// errSummary condenses an error to a single line for logging. OCI SDK errors
+// stringify to a ~10-line block (message, then operation name, timestamp, client
+// version, endpoint, and several troubleshooting/doc-link lines) which is alarming
+// in a log even when the agent handled the error; for a ServiceError we keep just
+// the code and message, which is all a reader needs.
+func errSummary(err error) string {
+	if failure, ok := asServiceError(err); ok {
+		return fmt.Sprintf("%s: %s", failure.GetCode(), strings.TrimSpace(failure.GetMessage()))
+	}
+	return err.Error()
+}
+
 func isNotFound(err error) bool {
-	failure, ok := ocicommon.IsServiceError(err)
+	failure, ok := asServiceError(err)
 	return ok && failure.GetHTTPStatusCode() == http.StatusNotFound
 }
 
-func isConflict(err error, message string) bool {
-	failure, ok := ocicommon.IsServiceError(err)
-	return ok && failure.GetHTTPStatusCode() == http.StatusConflict &&
-		(message == "" || strings.Contains(strings.ToLower(failure.GetMessage()), strings.ToLower(message)))
+func isKmsKeyNotAuthorized(err error) bool {
+	failure, ok := asServiceError(err)
+	return ok && failure.GetCode() == "NotAuthorizedOrFoundKmsKey"
+}
+
+// isNotAuthorized reports whether err is OCI's authorization failure — the code a
+// principal gets when it lacks the permission (or the resource is scoped away from
+// it). Tenancy-level policy reads return this to a compartment-scoped resource
+// principal; other codes (throttling, service faults) are real and must propagate.
+func isNotAuthorized(err error) bool {
+	failure, ok := asServiceError(err)
+	return ok && failure.GetCode() == "NotAuthorizedOrNotFound"
+}
+
+func isConflict(err error, code string) bool {
+	failure, ok := asServiceError(err)
+	return ok && failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == code
 }

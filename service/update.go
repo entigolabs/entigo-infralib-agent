@@ -1692,7 +1692,7 @@ func moduleSourceChanged(previous, current string) bool {
 	if previous == current {
 		return false
 	}
-	return !(isEntigoReleaseSource(previous) && isEntigoReleaseSource(current))
+	return !isEntigoReleaseSource(previous) || !isEntigoReleaseSource(current)
 }
 
 func isEntigoReleaseSource(url string) bool {

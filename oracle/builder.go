@@ -215,6 +215,43 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 	return group.Wait()
 }
 
+// ensureAgentPipelines eagerly creates (or reconciles) the agent's own run and
+// update build pipelines so a gitops engineer can trigger the agent — a re-run or a
+// self-update — from the OCI console with no local agent, mirroring the eager
+// per-step pipelines. Both share one spec (agentSpecFile): COMMAND rides a pipeline
+// parameter, so run and update forward the identical env set. The agent projects
+// must already be registered (CreateAgentProject).
+func (b *Builder) ensureAgentPipelines(agentPrefix string) error {
+	specFile := agentSpecFile(b.cloudPrefix)
+	log.Printf("Reconciling DevOps agent build pipelines for %s\n", agentPrefix)
+	var group errgroup.Group
+	for _, cmd := range []common.Command{common.RunCommand, common.UpdateCommand} {
+		projectName := model.GetAgentProjectName(agentPrefix, cmd)
+		project, err := b.getProject(projectName)
+		if err != nil {
+			return err
+		}
+		if project == nil {
+			return fmt.Errorf("no agent project registered for %s", projectName)
+		}
+		params := b.nonSecretParams(projectName, "", model.Step{}, project)
+		group.Go(func() error {
+			_, err := b.devopsBuild.ensurePipeline(projectName, specFile, project.Image, params, nil)
+			return err
+		})
+	}
+	return group.Wait()
+}
+
+// specFile returns the hosted-repo build-spec path for a project: the shared agent
+// spec for the agent's own run/update projects, else the per-step spec.
+func (b *Builder) specFile(projectName string, project *containerProject) string {
+	if project.AgentCmd != "" {
+		return agentSpecFile(b.cloudPrefix)
+	}
+	return specFileFor(projectName)
+}
+
 // stepCommands lists every action command a step of the given type can execute:
 // the plan/apply pair plus their destroy counterparts. Eager pipeline creation
 // walks this so the destroy pipelines exist before any destroy is requested.
@@ -263,7 +300,7 @@ func (b *Builder) launch(projectName, prefixStep string, command model.ActionCom
 		perRun["PIPELINE_INDEX"] = strconv.Itoa(b.pipelineIndex)
 	}
 	log.Printf("Executing build run %s\n", displayName)
-	return b.devopsBuild.launchBuildRun(displayName, specFileFor(projectName), project.Image, params, secretRefs, perRun)
+	return b.devopsBuild.launchBuildRun(displayName, b.specFile(projectName, project), project.Image, params, secretRefs, perRun)
 }
 
 // runName is the display name shared by a step+command's build pipeline and its

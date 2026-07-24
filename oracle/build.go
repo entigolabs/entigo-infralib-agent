@@ -766,6 +766,10 @@ func (d *DevOpsBuilder) DeleteBuildResources() {
 		// child resources") while a repo lingers in DELETING. Wait for the repos to
 		// finish deleting before removing the project.
 		d.deleteRepositories(projectId)
+		// DeleteProject does not reliably cascade build pipelines, so remove every one
+		// in the project explicitly — this guarantees the per-step AND the agent
+		// (run/update) pipelines are gone regardless of which steps this process knew.
+		d.deleteAllBuildPipelines(projectId)
 		response, err := d.client.DeleteProject(d.ctx, devops.DeleteProjectRequest{ProjectId: &projectId})
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf(
@@ -841,6 +845,31 @@ func (d *DevOpsBuilder) deleteTopic(name string) {
 			continue
 		}
 		log.Printf("Deleted notification topic %s\n", name)
+	}
+}
+
+// deleteAllBuildPipelines removes every build pipeline in the project (stages
+// first, like deleteBuildPipeline). Used at teardown so the shared project's
+// per-step AND agent (run/update) pipelines are all gone before DeleteProject,
+// which does not reliably cascade them. Best-effort and paginated.
+func (d *DevOpsBuilder) deleteAllBuildPipelines(projectId string) {
+	var page *string
+	for {
+		list, err := d.client.ListBuildPipelines(d.ctx, devops.ListBuildPipelinesRequest{
+			ProjectId: &projectId,
+			Page:      page,
+		})
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list build pipelines for deletion: %s", err)))
+			return
+		}
+		for _, item := range list.Items {
+			d.deleteBuildPipeline(*item.Id)
+		}
+		if list.OpcNextPage == nil {
+			return
+		}
+		page = list.OpcNextPage
 	}
 }
 
@@ -998,4 +1027,11 @@ func buildSpecYAMLFor(names []string, vaultVars map[string]string) string {
 // spec), so there is no reason to duplicate it per command.
 func specFileFor(projectName string) string {
 	return specRepoPrefix + projectName + ".yaml"
+}
+
+// agentSpecFile is the shared hosted-repo path of the agent's own build spec. The
+// run and update agent pipelines share it: the spec is command-independent (COMMAND
+// rides a pipeline parameter), so both forward the identical env set.
+func agentSpecFile(cloudPrefix string) string {
+	return specRepoPrefix + model.GetAgentPrefix(cloudPrefix) + ".yaml"
 }
