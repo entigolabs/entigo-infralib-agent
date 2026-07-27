@@ -426,3 +426,15 @@ func isConflict(err error, code string) bool {
 	failure, ok := asServiceError(err)
 	return ok && failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == code
 }
+
+// isTransactionConflict reports OCI's optimistic-locking failure ("... cannot be
+// created due to transaction conflict"): a 409 Conflict raised when two writes
+// against the same parent resource (e.g. concurrent CreateBuildPipeline calls on
+// one DevOps project) overlap at the service's transaction layer. Transient —
+// the loser should simply retry once the winner commits, distinct from a genuine
+// already-exists conflict.
+func isTransactionConflict(err error) bool {
+	failure, ok := asServiceError(err)
+	return ok && failure.GetHTTPStatusCode() == http.StatusConflict &&
+		strings.Contains(strings.ToLower(failure.GetMessage()), "transaction conflict")
+}

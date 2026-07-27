@@ -2,7 +2,11 @@ package oracle
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
@@ -688,14 +692,107 @@ func (i *IAM) deleteDynamicGroupByName(name string) {
 	log.Printf("Deleted dynamic group %s\n", name)
 }
 
-func (i *IAM) rotateCustomerSecretKeys(userId string) error {
-	ids, err := i.listCustomerSecretKeyIds(userId)
-	if err != nil {
-		return err
+// cicdServiceAccountStatements returns the least-privilege policy for the external
+// CI/CD service account minted by CreateServiceAccount — the credentials a gitops
+// engineer drops into their pipeline to run the agent (run/update) AFTER an admin
+// bootstrap. It deliberately grants NONE of the bootstrap's own privileges:
+//   - no identity management (users/groups/policies/dynamic-groups) — it can't mint
+//     or rotate service accounts or widen its own access;
+//   - no KMS/vault/bucket CREATION — the agent-owned trust root already exists, so the
+//     SA only finds+uses it.
+//
+// It grants exactly what a steady-state run mutates or reads. Everything is
+// compartment-scoped (the compartment is the OCI isolation boundary, the analogue of
+// the AWS policy's per-prefix ARNs). The terraform-state S3 traffic is NOT covered
+// here: it is signed with the agent SA's Customer Secret Key (decision #3), a separate
+// identity; this SA only touches state indirectly via the object-storage grant below
+// for terraform-output.json and custom-param objects.
+func cicdServiceAccountStatements(group, compartmentId, bucketName string) []string {
+	return []string{
+		// DevOps: create/update/delete the build & deployment pipelines and push the
+		// hosted build-spec repo content that config changes drive, and trigger build
+		// runs / deployments. This is the "dynamically changed through config" surface.
+		fmt.Sprintf("Allow group %s to manage devops-family in compartment id %s", group, compartmentId),
+		// Vault secrets: read the bootstrapped CSK / git token and upsert per-source,
+		// wrapper and custom secrets. `manage` covers create/update/read-bundle/delete;
+		// the family aggregates secrets + secret-versions + secret-bundles.
+		fmt.Sprintf("Allow group %s to manage secret-family in compartment id %s", group, compartmentId),
+		// Find the agent-owned vault + key by name (KMS.Ensure's find path) and use the
+		// key — never manage it, so rotation/scheduling deletion stay with the admin.
+		fmt.Sprintf("Allow group %s to read vaults in compartment id %s", group, compartmentId),
+		fmt.Sprintf("Allow group %s to use keys in compartment id %s", group, compartmentId),
+		// Object Storage: find the state bucket and read/write its objects
+		// (terraform-output.json + custom params via this identity; state itself via CSK).
+		fmt.Sprintf("Allow group %s to read buckets in compartment id %s", group, compartmentId),
+		fmt.Sprintf("Allow group %s to manage objects in compartment id %s where target.bucket.name='%s'", group, compartmentId, bucketName),
+		// Logging: find and search the DevOps service log to parse terraform plan changes.
+		fmt.Sprintf("Allow group %s to read log-groups in compartment id %s", group, compartmentId),
+		fmt.Sprintf("Allow group %s to read log-content in compartment id %s", group, compartmentId),
+		// Notifications: publish manual-approval messages to the approvals topic.
+		fmt.Sprintf("Allow group %s to use ons-topics in compartment id %s", group, compartmentId),
 	}
-	for id := range ids {
-		if err = i.deleteCustomerSecretKey(userId, id); err != nil {
-			return fmt.Errorf("failed to delete customer secret key %s: %w", id, err)
+}
+
+// apiKeyCredentials is a ready-to-use OCI API signing key pair: the PEM private key
+// the caller must keep, plus the fingerprint OCI assigned its uploaded public half.
+// API keys never expire, so this is a durable credential for OCI SDK authentication.
+type apiKeyCredentials struct {
+	PrivateKeyPEM string
+	Fingerprint   string
+}
+
+// EnsureApiKey generates a fresh RSA-2048 API signing key, uploads its public half to
+// the user and returns the PEM private key + OCI-assigned fingerprint. When rotate is
+// set it first deletes the user's existing API keys (OCI caps them at 3/user) so a
+// re-run can't exhaust the limit. The private key is only ever held in memory here —
+// OCI stores only the public half — so the caller MUST surface it to the user; it
+// cannot be retrieved again.
+func (i *IAM) EnsureApiKey(userId string, rotate bool) (apiKeyCredentials, error) {
+	if rotate {
+		if err := i.deleteApiKeys(userId); err != nil {
+			return apiKeyCredentials{}, err
+		}
+	}
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return apiKeyCredentials{}, fmt.Errorf("failed to generate api signing key: %w", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		return apiKeyCredentials{}, fmt.Errorf("failed to encode api public key: %w", err)
+	}
+	publicPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))
+	response, err := i.client.UploadApiKey(i.ctx, identity.UploadApiKeyRequest{
+		UserId:              &userId,
+		CreateApiKeyDetails: identity.CreateApiKeyDetails{Key: &publicPEM},
+	})
+	if err != nil {
+		return apiKeyCredentials{}, fmt.Errorf("failed to upload api signing key: %w", err)
+	}
+	if response.Fingerprint == nil {
+		return apiKeyCredentials{}, fmt.Errorf("api key response missing fingerprint")
+	}
+	privatePEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}))
+	return apiKeyCredentials{PrivateKeyPEM: privatePEM, Fingerprint: *response.Fingerprint}, nil
+}
+
+// deleteApiKeys removes every API signing key on the user (identified by fingerprint,
+// their unique key). Best-effort would strand the 3-key limit, so a delete failure is
+// surfaced.
+func (i *IAM) deleteApiKeys(userId string) error {
+	response, err := i.client.ListApiKeys(i.ctx, identity.ListApiKeysRequest{UserId: &userId})
+	if err != nil {
+		return fmt.Errorf("failed to list api keys: %w", err)
+	}
+	for _, key := range response.Items {
+		if key.Fingerprint == nil {
+			continue
+		}
+		if _, err = i.client.DeleteApiKey(i.ctx, identity.DeleteApiKeyRequest{
+			UserId:      &userId,
+			Fingerprint: key.Fingerprint,
+		}); err != nil {
+			return fmt.Errorf("failed to delete api key %s: %w", *key.Fingerprint, err)
 		}
 	}
 	return nil

@@ -2,13 +2,12 @@ package oracle
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -66,13 +65,16 @@ const (
 	envParamPrefix = "EI_"
 	// specRepoPrefix locates a step's build spec in the hosted repo — the single
 	// source of truth (no bucket copy). The repo is what the build runner reads.
-	specRepoPrefix = "specs/"
-	// specHashTag is the build-pipeline freeform tag holding the hash of the spec
-	// currently in the repo, so a reconcile pushes only when the spec changed.
-	specHashTag     = "infralib-spec-hash"
+	specRepoPrefix  = "specs/"
 	buildRunTimeout = 60 * time.Minute
 	buildSpecBranch = "main"
 	buildStageName  = "run"
+	// pipelineConflictRetries/-Interval bound the retry on OCI's transaction-conflict
+	// 409: ensureStepPipelines creates a step's plan/apply/destroy pipelines
+	// concurrently against one project, and OCI serializes writes to a project at its
+	// transaction layer, rejecting the losers. Retry lets each eventually commit.
+	pipelineConflictRetries  = 8
+	pipelineConflictInterval = 3 * time.Second
 )
 
 // DevOpsBuilder executes infralib steps through OCI DevOps build pipelines.
@@ -102,12 +104,15 @@ type DevOpsBuilder struct {
 	repoURL        string
 	gitUsername    string                 // HTTPS basic-auth username for the spec push; injected by SetGitAuth (no IAM/Vault reads here)
 	gitToken       string                 // OCI auth token used as the git password; injected by SetGitAuth
-	authTokenFresh bool                   // true when the injected token was just created, so pushSpec retries while it propagates
+	authTokenFresh bool                   // true when the injected token was just created, so the clone/push retries while it propagates
 	mu             sync.Mutex             // guards the maps below; held only for short in-memory sections
 	pipelines      map[string]string      // pipeline display name → build pipeline OCID (reconciled)
-	pushedSpecs    map[string]string      // spec file path → hash pushed this process (dedupes redundant pushes)
 	keyLocks       map[string]*sync.Mutex // per-pipeline reconcile lock, so one pipeline serializes with itself but not with others
-	pushMu         sync.Mutex             // serializes git pushes to the single shared spec repo
+	pushMu         sync.Mutex             // serializes spec writes/pushes: all callers share the one clone below
+	gitAuth        transport.AuthMethod   // basic-auth built once in specClone, reused for every push
+	specRepo       *git.Repository        // persistent local clone of the hosted spec repo (cloned once, lazily)
+	specWorktree   *git.Worktree          // its worktree; nil until the first push clones it
+	specFresh      bool                   // remote was empty at clone time, so pushes force-push (single writer)
 }
 
 // ProjectId returns the shared DevOps project OCID after Ensure has run (needed
@@ -135,7 +140,6 @@ func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvi
 		region:        region,
 		cloudPrefix:   cloudPrefix,
 		pipelines:     map[string]string{},
-		pushedSpecs:   map[string]string{},
 		keyLocks:      map[string]*sync.Mutex{},
 	}, nil
 }
@@ -369,20 +373,18 @@ func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, para
 	// and secrets (identical across plan/apply/destroy) — COMMAND is a parameter, not
 	// baked in — so all of a step's command pipelines share one specs/<step>.yaml.
 	spec := buildSpecYAMLFor(forwardNames(params, secretRefs), vaultVariables(secretRefs))
-	specHash := hashSpec(spec)
-	pipelineId, priorHash, err := d.getOrCreatePipeline(displayName, desiredParams)
+	pipelineId, err := d.getOrCreatePipeline(displayName, desiredParams)
 	if err != nil {
 		return "", err
 	}
 	if err = d.ensureStage(pipelineId, specFile); err != nil {
 		return "", err
 	}
-	if err = d.ensureSpecPushed(specFile, spec, specHash, priorHash); err != nil {
+	if err = d.ensureSpecPushed(specFile, spec); err != nil {
 		return "", err
 	}
-	// Reconcile params (non-secret defaults + secret OCIDs drift with config/CSK)
-	// and record the spec hash now living in the repo.
-	if err = d.updatePipeline(pipelineId, desiredParams, specHash); err != nil {
+	// Reconcile params (non-secret defaults + secret OCIDs drift with config/CSK).
+	if err = d.updatePipeline(pipelineId, desiredParams); err != nil {
 		return "", err
 	}
 	d.mu.Lock()
@@ -405,80 +407,74 @@ func (d *DevOpsBuilder) keyLock(displayName string) *sync.Mutex {
 	return lock
 }
 
-// ensureSpecPushed pushes the step's shared spec to the hosted repo when it has
-// changed. The repo is the single source of truth, so it pushes only when this
-// pipeline doesn't already reference the current spec (priorHash) AND a sibling
-// command of the same step hasn't already pushed the shared file this process. A
-// freshly created pipeline (priorHash == "") therefore forces the push, so the
-// shared specs/<step>.yaml always exists before its first stage reads it. All
-// pushes are serialized on pushMu because they target one shared git repo.
-// In-container runs (no user) can't push, so a genuinely changed/new spec there is
-// a loud error from pushSpec — a new or changed step must be introduced locally.
-func (d *DevOpsBuilder) ensureSpecPushed(specFile, spec, specHash, priorHash string) error {
-	d.pushMu.Lock()
-	defer d.pushMu.Unlock()
-	d.mu.Lock()
-	pushed := d.pushedSpecs[specFile]
-	d.mu.Unlock()
-	if priorHash == specHash || pushed == specHash {
-		return nil
-	}
-	if err := d.pushSpec(specFile, spec); err != nil {
-		return err
-	}
-	d.mu.Lock()
-	d.pushedSpecs[specFile] = specHash
-	d.mu.Unlock()
-	return nil
-}
-
-// getOrCreatePipeline returns the pipeline OCID and the spec hash recorded on it
-// (empty for a freshly created one or one predating the tag), without mutating an
-// existing pipeline's parameters — ensurePipeline does that via updatePipeline.
-func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPipelineParameter) (string, string, error) {
+// getOrCreatePipeline returns the pipeline OCID, without mutating an existing
+// pipeline's parameters — ensurePipeline does that via updatePipeline.
+func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPipelineParameter) (string, error) {
 	list, err := d.client.ListBuildPipelines(d.ctx, devops.ListBuildPipelinesRequest{
 		ProjectId:   &d.projectId,
 		DisplayName: &name,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to list build pipelines: %w", err)
+		return "", fmt.Errorf("failed to list build pipelines: %w", err)
 	}
 	if len(list.Items) > 0 {
-		return *list.Items[0].Id, list.Items[0].FreeformTags[specHashTag], nil
+		return *list.Items[0].Id, nil
 	}
 	description := "Runs an infralib step by docker-running the base image on a managed build runner"
-	created, err := d.client.CreateBuildPipeline(d.ctx, devops.CreateBuildPipelineRequest{
-		CreateBuildPipelineDetails: devops.CreateBuildPipelineDetails{
-			ProjectId:               &d.projectId,
-			DisplayName:             &name,
-			Description:             &description,
-			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
-			FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+	var created devops.CreateBuildPipelineResponse
+	err = d.withConflictRetry(fmt.Sprintf("create build pipeline %s", name), func() error {
+		created, err = d.client.CreateBuildPipeline(d.ctx, devops.CreateBuildPipelineRequest{
+			CreateBuildPipelineDetails: devops.CreateBuildPipelineDetails{
+				ProjectId:               &d.projectId,
+				DisplayName:             &name,
+				Description:             &description,
+				BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
+				FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+			},
+		})
+		return err
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create build pipeline %s: %w", name, err)
+		return "", fmt.Errorf("failed to create build pipeline %s: %w", name, err)
 	}
 	// Creation is async; a build run started before the work request finishes
 	// gets a 404 ("ensure completion of any work request for the Build Pipeline").
 	if err = d.waitForWorkRequest(created.OpcWorkRequestId); err != nil {
-		return "", "", err
+		return "", err
 	}
-	return *created.Id, "", nil
+	return *created.Id, nil
 }
 
-// updatePipeline refreshes the pipeline's parameters and stamps the spec hash now
-// in the repo onto its freeform tags.
-func (d *DevOpsBuilder) updatePipeline(id string, params []devops.BuildPipelineParameter, specHash string) error {
-	_, err := d.client.UpdateBuildPipeline(d.ctx, devops.UpdateBuildPipelineRequest{
-		BuildPipelineId: &id,
-		UpdateBuildPipelineDetails: devops.UpdateBuildPipelineDetails{
-			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
-			FreeformTags: map[string]string{
-				model.ResourceTagKey: model.ResourceTagValue,
-				specHashTag:          specHash,
+// withConflictRetry runs a project-scoped DevOps write, retrying OCI's transaction
+// conflict (concurrent writes to one project serialize at the service layer, and the
+// losers 409). Non-conflict errors and a nil result return immediately.
+func (d *DevOpsBuilder) withConflictRetry(desc string, op func() error) error {
+	for attempt := 0; ; attempt++ {
+		err := op()
+		if err == nil || !isTransactionConflict(err) || attempt >= pipelineConflictRetries {
+			return err
+		}
+		log.Printf("%s hit a transaction conflict; retrying in %s\n", desc, pipelineConflictInterval)
+		select {
+		case <-d.ctx.Done():
+			return d.ctx.Err()
+		case <-time.After(pipelineConflictInterval):
+		}
+	}
+}
+
+// updatePipeline refreshes the pipeline's parameters (non-secret defaults + secret
+// OCIDs drift with config/CSK).
+func (d *DevOpsBuilder) updatePipeline(id string, params []devops.BuildPipelineParameter) error {
+	err := d.withConflictRetry(fmt.Sprintf("update build pipeline %s", id), func() error {
+		_, err := d.client.UpdateBuildPipeline(d.ctx, devops.UpdateBuildPipelineRequest{
+			BuildPipelineId: &id,
+			UpdateBuildPipelineDetails: devops.UpdateBuildPipelineDetails{
+				BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
+				FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 			},
-		},
+		})
+		return err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update build pipeline %s: %w", id, err)
@@ -501,27 +497,31 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
 	sourceName := "build-spec"
 	buildSpec := specFile
 	branch := buildSpecBranch
-	created, err := d.client.CreateBuildPipelineStage(d.ctx, devops.CreateBuildPipelineStageRequest{
-		CreateBuildPipelineStageDetails: devops.CreateBuildStageDetails{
-			BuildPipelineId: &pipelineId,
-			DisplayName:     &stageName,
-			// First stage's predecessor is the pipeline itself.
-			BuildPipelineStagePredecessorCollection: &devops.BuildPipelineStagePredecessorCollection{
-				Items: []devops.BuildPipelineStagePredecessor{{Id: &pipelineId}},
+	var created devops.CreateBuildPipelineStageResponse
+	err = d.withConflictRetry("create build pipeline stage", func() error {
+		created, err = d.client.CreateBuildPipelineStage(d.ctx, devops.CreateBuildPipelineStageRequest{
+			CreateBuildPipelineStageDetails: devops.CreateBuildStageDetails{
+				BuildPipelineId: &pipelineId,
+				DisplayName:     &stageName,
+				// First stage's predecessor is the pipeline itself.
+				BuildPipelineStagePredecessorCollection: &devops.BuildPipelineStagePredecessorCollection{
+					Items: []devops.BuildPipelineStagePredecessor{{Id: &pipelineId}},
+				},
+				Image:              devops.BuildStageImageOl8X8664Standard10,
+				BuildSpecFile:      &buildSpec,
+				PrimaryBuildSource: &sourceName,
+				BuildSourceCollection: &devops.BuildSourceCollection{
+					Items: []devops.BuildSource{devops.DevopsCodeRepositoryBuildSource{
+						Name:          &sourceName,
+						RepositoryUrl: &d.repoURL,
+						RepositoryId:  &d.repoId,
+						Branch:        &branch,
+					}},
+				},
+				FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 			},
-			Image:              devops.BuildStageImageOl8X8664Standard10,
-			BuildSpecFile:      &buildSpec,
-			PrimaryBuildSource: &sourceName,
-			BuildSourceCollection: &devops.BuildSourceCollection{
-				Items: []devops.BuildSource{devops.DevopsCodeRepositoryBuildSource{
-					Name:          &sourceName,
-					RepositoryUrl: &d.repoURL,
-					RepositoryId:  &d.repoId,
-					Branch:        &branch,
-				}},
-			},
-			FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		})
+		return err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create build pipeline stage: %w", err)
@@ -532,36 +532,13 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
 }
 
 // SetGitAuth injects the build-spec push credentials the agent resolved once at
-// startup (provisionBackendCredentials), so pushSpec neither reads the Vault nor
-// makes IAM calls. Both values are empty on a non-admin/consume run that never
-// bootstrapped them; pushSpec then fails loudly only if a spec actually changed.
-// fresh is true when the token was just created, so the push retries while it
+// startup (provisionBackendCredentials), so the clone/push neither reads the Vault
+// nor makes IAM calls. Both values are empty on a non-admin/consume run that never
+// bootstrapped them; specClone then fails loudly only if a spec actually changed.
+// fresh is true when the token was just created, so the clone/push retries while it
 // propagates to the git endpoint.
 func (d *DevOpsBuilder) SetGitAuth(username, token string, fresh bool) {
 	d.gitUsername, d.gitToken, d.authTokenFresh = username, token, fresh
-}
-
-// pushSpec commits the step's build spec to the hosted repo (the single source of
-// truth) at specFile, authenticating as the agent SA with credentials injected at
-// startup by SetGitAuth — no Vault or IAM calls here.
-// A genuine spec change on a run without those provisioned (a non-admin/consume run
-// that never bootstrapped) is a loud error and must be introduced from an admin run.
-func (d *DevOpsBuilder) pushSpec(specFile, spec string) error {
-	if d.repoURL == "" {
-		return fmt.Errorf("hosted repository has no http url to push to")
-	}
-	if d.gitUsername == "" || d.gitToken == "" {
-		return fmt.Errorf("build spec %s changed but no DevOps git credentials are provisioned; "+
-			"run the agent once as an admin to bootstrap them", specFile)
-	}
-	auth := &githttp.BasicAuth{Username: d.gitUsername, Password: d.gitToken}
-	log.Printf("Pushing DevOps build spec %s into %s as git user %q\n", specFile, d.repoURL, d.gitUsername)
-	if err := d.commitSpecWithRetry(specFile, spec, auth, d.authTokenFresh); err != nil {
-		return fmt.Errorf("%w; if this is a 401, the git username form may differ for this tenancy "+
-			"(e.g. identity-domain tenancies need \"<tenancy>/<domain>/%s\") — adjust deriveGitUsername",
-			err, d.gitUsername)
-	}
-	return nil
 }
 
 const (
@@ -571,19 +548,125 @@ const (
 	gitAuthRetryInterval      = 15 * time.Second
 )
 
-// commitSpecWithRetry pushes the spec, tolerating the propagation delay of a
+// ensureSpecPushed writes the step's shared build spec into the persistent local
+// clone of the hosted repo and pushes it only when git reports the content changed.
+// git status is the single source of truth — so a spec deleted or edited out of band
+// in the repo is restored on the next reconcile, with no external hash to keep in
+// sync. Serialized on pushMu since all callers share the one clone/worktree.
+// A genuine change on a run without git credentials (a consume run that never
+// bootstrapped them) is a loud error from specClone — a new or changed spec must be
+// introduced from an admin run.
+func (d *DevOpsBuilder) ensureSpecPushed(specFile, spec string) error {
+	d.pushMu.Lock()
+	defer d.pushMu.Unlock()
+
+	worktree, err := d.specClone()
+	if err != nil {
+		return err
+	}
+	if err = updateSpecFile(worktree, specFile, []byte(spec)); err != nil {
+		return err
+	}
+	status, err := worktree.Status()
+	if err != nil {
+		return err
+	}
+	if status.IsClean() {
+		return nil // spec already current in the repo
+	}
+	if _, err = worktree.Commit("Update infralib build spec "+specFile, &git.CommitOptions{
+		Author: &object.Signature{Name: "Entigo Infralib Agent", Email: "no-reply@localhost", When: time.Now().UTC()},
+	}); err != nil {
+		return err
+	}
+	return d.pushSpecRepo()
+}
+
+// specClone lazily clones the hosted build-spec repo into a persistent working
+// directory under the OS temp dir (init-ing a fresh repo + remote when the remote is
+// still empty), returning its worktree — reused for every push this process rather
+// than re-cloned per spec. Callers hold pushMu. Credentials are the ones injected by
+// SetGitAuth: both empty on a consume run that never bootstrapped them, which is a
+// loud error here since a changed spec can't be pushed without a user.
+func (d *DevOpsBuilder) specClone() (*git.Worktree, error) {
+	if d.specWorktree != nil {
+		return d.specWorktree, nil
+	}
+	if d.repoURL == "" {
+		return nil, fmt.Errorf("hosted repository has no http url to push to")
+	}
+	if d.gitUsername == "" || d.gitToken == "" {
+		return nil, fmt.Errorf("build spec changed but no DevOps git credentials are provisioned; " +
+			"run the agent once as an admin to bootstrap them")
+	}
+	dir := filepath.Join(os.TempDir(), repositoryName(d.cloudPrefix))
+	if err := os.RemoveAll(dir); err != nil { // start each process from a clean checkout
+		return nil, err
+	}
+	d.gitAuth = &githttp.BasicAuth{Username: d.gitUsername, Password: d.gitToken}
+	log.Printf("Cloning DevOps build-spec repo %s as git user %q\n", d.repoURL, d.gitUsername)
+	var (
+		repo  *git.Repository
+		fresh bool
+	)
+	if err := d.withGitAuthRetry(func() error {
+		var err error
+		repo, fresh, err = cloneOrInit(d.ctx, dir, d.repoURL, d.gitAuth, buildSpecBranch)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil, err
+	}
+	d.specRepo, d.specWorktree, d.specFresh = repo, worktree, fresh
+	return worktree, nil
+}
+
+// pushSpecRepo pushes the committed spec change to the hosted repo. A fresh
+// (empty-remote) repo has an unrelated history, so force-push; a clone fast-forwards
+// (safe as force too — this agent is the only writer).
+func (d *DevOpsBuilder) pushSpecRepo() error {
+	head, err := d.specRepo.Head()
+	if err != nil {
+		return err
+	}
+	refspec := fmt.Sprintf("%s:refs/heads/%s", head.Name().String(), buildSpecBranch)
+	if d.specFresh {
+		refspec = "+" + refspec
+	}
+	if err = d.withGitAuthRetry(func() error {
+		pushErr := d.specRepo.PushContext(d.ctx, &git.PushOptions{
+			Auth:     d.gitAuth,
+			RefSpecs: []gitconfig.RefSpec{gitconfig.RefSpec(refspec)},
+		})
+		if pushErr != nil && !errors.Is(pushErr, git.NoErrAlreadyUpToDate) {
+			return pushErr
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to push build spec: %w; if this is a 401, the git username form may differ "+
+			"for this tenancy (e.g. identity-domain tenancies need \"<tenancy>/<domain>/%s\") — adjust deriveGitUsername",
+			err, d.gitUsername)
+	}
+	log.Printf("Pushed build spec commit %s to %s\n", head.Hash().String()[:8], buildSpecBranch)
+	return nil
+}
+
+// withGitAuthRetry runs a git network op, tolerating the propagation delay of a
 // just-created auth token: OCI returns the token immediately but the git endpoint
-// only accepts it after an asynchronous delay, so an initial 401 is expected and we
-// retry until it takes. A REUSED token is already propagated, so a 401 there is a
-// genuine auth problem (wrong username form, revoked token) — fail fast.
-func (d *DevOpsBuilder) commitSpecWithRetry(specFile, spec string, auth transport.AuthMethod, freshToken bool) error {
+// accepts it only after an asynchronous delay, so an initial 401/403 is expected and
+// retried until it takes. A REUSED token is already propagated, so an auth error
+// there is genuine (wrong username form, revoked token) — fail fast.
+func (d *DevOpsBuilder) withGitAuthRetry(op func() error) error {
 	deadline := time.Now().Add(gitAuthPropagationTimeout)
 	for {
-		err := commitSpecFile(d.ctx, d.repoURL, auth, buildSpecBranch, specFile, []byte(spec))
+		err := op()
 		if err == nil {
 			return nil
 		}
-		if !freshToken || !isGitAuthError(err) || time.Now().After(deadline) {
+		if !d.authTokenFresh || !isGitAuthError(err) || time.Now().After(deadline) {
 			return err
 		}
 		log.Printf("DevOps git rejected the new auth token (not yet propagated); retrying in %s\n", gitAuthRetryInterval)
@@ -596,34 +679,19 @@ func (d *DevOpsBuilder) commitSpecWithRetry(specFile, spec string, auth transpor
 }
 
 // isGitAuthError reports a 401/403 from the git endpoint (go-git wraps the transport
-// sentinels with %w, so errors.Is sees them through commitSpecFile's wrapping). A
-// still-propagating fresh token can surface as either, so both must be retried.
+// sentinels with %w, so errors.Is sees them through the wrapping). A still-propagating
+// fresh token can surface as either, so both must be retried.
 func isGitAuthError(err error) bool {
 	return errors.Is(err, transport.ErrAuthenticationRequired) ||
 		errors.Is(err, transport.ErrAuthorizationFailed)
 }
 
-// commitSpecFile clones the hosted repo (init-ing a fresh one if the remote is
-// still empty), writes the single spec file, and pushes only if it changed. The
-// repo is the source of truth — cloning preserves every other step's spec, so no
-// bucket copy is needed.
-func commitSpecFile(ctx context.Context, url string, auth transport.AuthMethod, branch, path string, content []byte) error {
-	dir, err := os.MkdirTemp("", "oracle-buildspec-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-
-	repo, fresh, err := cloneOrInit(ctx, dir, url, auth, branch)
-	if err != nil {
-		return err
-	}
-	worktree, err := repo.Worktree()
-	if err != nil {
-		return err
-	}
+// updateSpecFile writes content to path in the worktree (creating parent dirs) and
+// stages it, so a following Status/Commit sees the change. Writing identical content
+// leaves the worktree clean, which is how a re-push is skipped.
+func updateSpecFile(worktree *git.Worktree, path string, content []byte) error {
 	if dir := pathDir(path); dir != "" {
-		if err = worktree.Filesystem.MkdirAll(dir, 0700); err != nil {
+		if err := worktree.Filesystem.MkdirAll(dir, 0700); err != nil {
 			return err
 		}
 	}
@@ -638,37 +706,8 @@ func commitSpecFile(ctx context.Context, url string, auth transport.AuthMethod, 
 	if err = file.Close(); err != nil {
 		return err
 	}
-	if _, err = worktree.Add(path); err != nil {
-		return err
-	}
-	status, err := worktree.Status()
-	if err != nil {
-		return err
-	}
-	if status.IsClean() {
-		return nil // already up to date in the repo
-	}
-	if _, err = worktree.Commit("Update infralib build spec "+path, &git.CommitOptions{
-		Author: &object.Signature{Name: "Entigo Infralib Agent", Email: "no-reply@localhost", When: time.Now().UTC()},
-	}); err != nil {
-		return err
-	}
-	head, err := repo.Head()
-	if err != nil {
-		return err
-	}
-	// A fresh (empty-remote) repo has an unrelated history, so force-push; a clone
-	// fast-forwards.
-	spec := fmt.Sprintf("%s:refs/heads/%s", head.Name().String(), branch)
-	if fresh {
-		spec = "+" + spec
-	}
-	err = repo.PushContext(ctx, &git.PushOptions{Auth: auth, RefSpecs: []gitconfig.RefSpec{gitconfig.RefSpec(spec)}})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("failed to push build spec: %w", err)
-	}
-	log.Printf("Pushed build spec commit %s to %s\n", head.Hash().String()[:8], branch)
-	return nil
+	_, err = worktree.Add(path)
+	return err
 }
 
 // cloneOrInit clones the branch, or initialises a fresh repo + remote when the
@@ -701,13 +740,6 @@ func pathDir(path string) string {
 		return path[:i]
 	}
 	return ""
-}
-
-// hashSpec is the content hash of a build spec, stamped on the pipeline's
-// spec-hash tag so a reconcile pushes only when the spec changed.
-func hashSpec(spec string) string {
-	sum := sha256.Sum256([]byte(spec))
-	return hex.EncodeToString(sum[:])
 }
 
 // waitForWorkRequest blocks until a DevOps work request finishes. A nil id (no

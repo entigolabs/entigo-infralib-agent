@@ -627,10 +627,15 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	return nil
 }
 
-// CreateServiceAccount provisions a CI/CD user with an OCI Customer Secret Key
-// (S3-compatible credentials for terraform state) and a group/policy granting it
-// management of the compartment. OCI has no cross-account impersonation, so the
-// TrustRole flag is not applicable; RotateCredentials replaces existing keys.
+// CreateServiceAccount provisions the external CI/CD service account a gitops engineer
+// uses to run the agent (run/update) from their pipeline AFTER an admin bootstrap. It
+// gets an OCI Customer Secret Key (S3-compatible credentials) and a group/policy scoped
+// to only what a steady-state run needs — DevOps pipelines/repo content, Vault secrets,
+// object storage and log reads (cicdServiceAccountStatements) — NOT the bootstrap's own
+// identity-management or KMS/bucket-creation privileges. OCI has no cross-account
+// impersonation, so the TrustRole flag is not applicable; RotateCredentials replaces
+// existing keys. The policy is reconciled on every invocation (ensurePolicy self-heals),
+// so re-running `service-account` tightens a previously all-resources policy in place.
 func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) error {
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
@@ -649,26 +654,53 @@ func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) erro
 	if err = iam.addUserToGroup(userId, groupId); err != nil {
 		return err
 	}
-	statement := fmt.Sprintf("Allow group %s to manage all-resources in compartment id %s", groupName, o.compartmentId)
-	if err = iam.ensurePolicy(username, "Entigo infralib CI/CD policy", []string{statement}); err != nil {
+	statements := cicdServiceAccountStatements(groupName, o.compartmentId, getBucketName(o.cloudPrefix, o.region))
+	if err = iam.ensurePolicy(username, "Entigo infralib CI/CD policy", statements); err != nil {
 		return err
 	}
 	if !created && !saFlags.RotateCredentials {
 		log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
 		return nil
 	}
-	if !created {
-		if err = iam.rotateCustomerSecretKeys(userId); err != nil {
-			return err
-		}
+	tenancyId, err := o.provider.TenancyOCID()
+	if err != nil {
+		return fmt.Errorf("failed to resolve tenancy ocid: %w", err)
 	}
-	accessKey, secretKey, err := iam.createCustomerSecretKey(userId, fmt.Sprintf("entigo-infralib-%s-sa", o.cloudPrefix))
+	// An API signing key (not a Customer Secret Key) is what authenticates the OCI SDK
+	// calls the agent makes as this service account; it never expires. The state-backend
+	// CSK is owned by the agent's OWN service account and read from the Vault at run time
+	// (decision #3), so this SA needs none. On a rotate, replace the existing key.
+	key, err := iam.EnsureApiKey(userId, !created)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Customer Secret Key credentials for service account %s:\nAWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n",
-		username, accessKey, secretKey)
+	printServiceAccountCredentials(username, userId, tenancyId, o.region, key)
 	return nil
+}
+
+// printServiceAccountCredentials writes ready-to-use OCI API signing key credentials to
+// stdout: a config-file block a gitops engineer pastes into ~/.oci/config plus the PEM
+// private key it references. No further setup is required — pointing OCI_CONFIG_FILE (or
+// the default ~/.oci/config) at this runs the agent as the service account.
+func printServiceAccountCredentials(username, userId, tenancyId, region string, key apiKeyCredentials) {
+	keyFile := fmt.Sprintf("~/.oci/%s.pem", username)
+	fmt.Printf(`Service account %s is ready. API signing key credentials (no expiry) follow.
+
+1. Save the private key below to %s (chmod 600):
+%s
+2. Add this profile to ~/.oci/config (or your CI/CD's OCI config file):
+
+[DEFAULT]
+user=%s
+fingerprint=%s
+tenancy=%s
+region=%s
+key_file=%s
+
+Run the agent with this config (default ~/.oci/config, or set OCI_CONFIG_FILE) to execute as the service account.
+OCI_CONFIG_FILE environment variable only works if .oci/config doesn't exist and the value must be absolute path.
+Generated credentials take a bit of time to propagate.
+`, username, keyFile, key.PrivateKeyPEM, userId, key.Fingerprint, tenancyId, region, keyFile)
 }
 
 func (o *oracleService) AddEncryption(_ string, _ map[string]model.TFOutput) error {

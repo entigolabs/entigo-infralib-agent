@@ -249,7 +249,8 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return nil, err
 	}
 	log.Printf("Created CodePipeline %s\n", pipelineName)
-	err = p.disableStageTransition(pipelineName, planName)
+	err = p.disableStageTransition(pipelineName, planName,
+		"Disabled plan transition to avoid running with incorrect wrapper variables. Please disable it")
 	if err != nil {
 		return nil, err
 	}
@@ -387,19 +388,19 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Created destroy CodePipeline %s\n", pipelineName)
-	err = p.disableStageTransition(pipelineName, destroyName)
-	if err != nil {
-		return err
-	}
-	err = p.disableStageTransition(pipelineName, approveStageName)
-	if err != nil {
-		return err
-	}
-	err = p.disableStageTransition(pipelineName, applyDestroyName)
-	if err != nil {
-		return err
-	}
+
 	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
+}
+
+func (p *Pipeline) disableDestroyTransitions(pipelineName string) error {
+	reason := "Disable pipeline transition to prevent accidental destruction of infrastructure"
+	for _, stage := range []string{destroyName, approveStageName, applyDestroyName} {
+		err := p.disableStageTransition(pipelineName, stage, reason)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
@@ -946,11 +947,11 @@ func (p *Pipeline) approveStage(pipelineName string) (approvalStatus, error) {
 	return approvalStatusApproved, nil
 }
 
-func (p *Pipeline) disableStageTransition(pipelineName string, stage string) error {
+func (p *Pipeline) disableStageTransition(pipelineName, stage, reason string) error {
 	_, err := p.codePipeline.DisableStageTransition(p.ctx, &codepipeline.DisableStageTransitionInput{
 		PipelineName:   aws.String(pipelineName),
 		StageName:      aws.String(stage),
-		Reason:         aws.String("Disable pipeline transition to prevent accidental destruction of infrastructure"),
+		Reason:         &reason,
 		TransitionType: types.StageTransitionTypeInbound,
 	})
 	return err

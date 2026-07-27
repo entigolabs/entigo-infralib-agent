@@ -200,9 +200,10 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 	specFile := specFileFor(projectName)
 	log.Printf("Reconciling DevOps build pipelines for step %s\n", projectName)
 	// A step's plan/apply/destroy pipelines are independent (distinct display names →
-	// distinct keyLocks) and share one spec (pushMu + pushedSpecs dedupe the single git
-	// push), so reconcile them concurrently — each blocks ~20s on OCI's async provisioning
-	// work requests, which otherwise serialize into ~100s per step.
+	// distinct keyLocks) and share one spec (serialized on pushMu; an unchanged spec
+	// leaves the shared worktree clean, so only the first push commits), so reconcile
+	// them concurrently — each blocks ~20s on OCI's async provisioning work requests,
+	// which otherwise serialize into ~100s per step.
 	var group errgroup.Group
 	for _, command := range stepCommands(step.Type) {
 		displayName := runName(projectName, command)
