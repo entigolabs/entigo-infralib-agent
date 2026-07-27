@@ -282,8 +282,8 @@ func (d *DevOpsBuilder) ensureRepository(name string) (string, string, error) {
 // ride parameters referenced by the spec's vaultVariables; only IMAGE and the
 // portal campaign correlation are supplied per run. specFile is the shared
 // per-step spec path the pipeline's stage reads.
-func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, params, secretRefs, perRun map[string]string) (string, error) {
-	pipelineId, err := d.ensurePipeline(displayName, specFile, image, params, secretRefs)
+func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, params, secretRefs, perRun map[string]string, vpcConfig *model.VpcConfig) (string, error) {
+	pipelineId, err := d.ensurePipeline(displayName, specFile, image, params, secretRefs, vpcConfig)
 	if err != nil {
 		return "", err
 	}
@@ -356,7 +356,7 @@ func (d *DevOpsBuilder) triggerBuildRun(displayName string, perRun map[string]st
 // desired parameters, ensures its stage points at the step's spec file, and
 // (re)pushes the spec when the specs tree changes. Cached per process — a step's
 // params/secrets are stable within one run.
-func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, params, secretRefs map[string]string) (string, error) {
+func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, params, secretRefs map[string]string, vpcConfig *model.VpcConfig) (string, error) {
 	// Serialize only this pipeline with itself (idempotent create), so different
 	// steps reconcile — and wait on their async work requests — concurrently.
 	lock := d.keyLock(displayName)
@@ -377,7 +377,7 @@ func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, para
 	if err != nil {
 		return "", err
 	}
-	if err = d.ensureStage(pipelineId, specFile); err != nil {
+	if err = d.ensureStage(pipelineId, specFile, vpcConfig); err != nil {
 		return "", err
 	}
 	if err = d.ensureSpecPushed(specFile, spec); err != nil {
@@ -482,7 +482,7 @@ func (d *DevOpsBuilder) updatePipeline(id string, params []devops.BuildPipelineP
 	return nil
 }
 
-func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
+func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string, vpcConfig *model.VpcConfig) error {
 	stageName := buildStageName
 	list, err := d.client.ListBuildPipelineStages(d.ctx, devops.ListBuildPipelineStagesRequest{
 		BuildPipelineId: &pipelineId,
@@ -491,8 +491,9 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
 	if err != nil {
 		return fmt.Errorf("failed to list build pipeline stages: %w", err)
 	}
+	channel := privateAccessConfig(vpcConfig)
 	if len(list.Items) > 0 {
-		return nil
+		return d.reconcileStageNetwork(list.Items[0], channel)
 	}
 	sourceName := "build-spec"
 	buildSpec := specFile
@@ -507,9 +508,10 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
 				BuildPipelineStagePredecessorCollection: &devops.BuildPipelineStagePredecessorCollection{
 					Items: []devops.BuildPipelineStagePredecessor{{Id: &pipelineId}},
 				},
-				Image:              devops.BuildStageImageOl8X8664Standard10,
-				BuildSpecFile:      &buildSpec,
-				PrimaryBuildSource: &sourceName,
+				Image:               devops.BuildStageImageOl8X8664Standard10,
+				BuildSpecFile:       &buildSpec,
+				PrimaryBuildSource:  &sourceName,
+				PrivateAccessConfig: channel,
 				BuildSourceCollection: &devops.BuildSourceCollection{
 					Items: []devops.BuildSource{devops.DevopsCodeRepositoryBuildSource{
 						Name:          &sourceName,
@@ -529,6 +531,89 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string) error {
 	// Adding the stage updates the pipeline via another async work request; wait
 	// so the first build run doesn't race it (same 404 as pipeline creation).
 	return d.waitForWorkRequest(created.OpcWorkRequestId)
+}
+
+// privateAccessConfig maps a step's VpcConfig to the build stage's private-access
+// network channel — the OCI analogue of AWS CodeBuild's VpcConfig — so the managed
+// build runner gets a service-managed VNIC inside the customer's VCN and can reach
+// private resources. Subnets carries the single subnet OCID to attach to (its VCN is
+// implicit, so VpcId is not passed separately) and SecurityGroupIds, when present, are
+// the NSG OCIDs (optional). Nil when the step doesn't attach a VCN.
+func privateAccessConfig(vpcConfig *model.VpcConfig) devops.NetworkChannel {
+	if vpcConfig == nil || len(vpcConfig.Subnets) == 0 || vpcConfig.Subnets[0] == "" {
+		return nil
+	}
+	subnet := vpcConfig.Subnets[0]
+	// An empty (non-nil) NsgIds marshals to `nsgIds: []`, which OCI rejects as an
+	// invalid parameter, so send nil when there are no security groups.
+	var nsgIds []string
+	if len(vpcConfig.SecurityGroupIds) > 0 {
+		nsgIds = vpcConfig.SecurityGroupIds
+	}
+	return devops.ServiceVnicChannel{SubnetId: &subnet, NsgIds: nsgIds}
+}
+
+// reconcileStageNetwork updates an existing build stage's private-access config when
+// the step's VpcConfig changed (attached, detached, or a different subnet/NSG set),
+// mirroring how the pipeline parameters are reconciled on every run. Detaching relies
+// on OCI clearing the field when a nil channel is sent.
+func (d *DevOpsBuilder) reconcileStageNetwork(stage devops.BuildPipelineStageSummary, desired devops.NetworkChannel) error {
+	summary, ok := stage.(devops.BuildStageSummary)
+	if !ok || sameNetworkChannel(summary.PrivateAccessConfig, desired) {
+		return nil
+	}
+	stageId := summary.Id
+	err := d.withConflictRetry(fmt.Sprintf("update build pipeline stage %s", *stageId), func() error {
+		_, err := d.client.UpdateBuildPipelineStage(d.ctx, devops.UpdateBuildPipelineStageRequest{
+			BuildPipelineStageId: stageId,
+			UpdateBuildPipelineStageDetails: devops.UpdateBuildStageDetails{
+				PrivateAccessConfig: desired,
+			},
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update build pipeline stage %s network: %w", *stageId, err)
+	}
+	return nil
+}
+
+// sameNetworkChannel reports whether two private-access channels target the same
+// subnet and NSG set (order-insensitive), so reconciliation skips a no-op update.
+func sameNetworkChannel(a, b devops.NetworkChannel) bool {
+	aSubnet, aNsgs := networkChannelTarget(a)
+	bSubnet, bNsgs := networkChannelTarget(b)
+	if aSubnet != bSubnet || len(aNsgs) != len(bNsgs) {
+		return false
+	}
+	aSorted, bSorted := append([]string(nil), aNsgs...), append([]string(nil), bNsgs...)
+	sort.Strings(aSorted)
+	sort.Strings(bSorted)
+	for i := range aSorted {
+		if aSorted[i] != bSorted[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// networkChannelTarget extracts the subnet OCID and NSG OCIDs from either channel
+// type, returning empty values for a nil channel (no VCN attached).
+func networkChannelTarget(ch devops.NetworkChannel) (string, []string) {
+	switch c := ch.(type) {
+	case devops.PrivateEndpointChannel:
+		return derefStr(c.SubnetId), c.NsgIds
+	case devops.ServiceVnicChannel:
+		return derefStr(c.SubnetId), c.NsgIds
+	}
+	return "", nil
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // SetGitAuth injects the build-spec push credentials the agent resolved once at

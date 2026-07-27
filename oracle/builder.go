@@ -209,7 +209,7 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 		displayName := runName(projectName, command)
 		params := b.nonSecretParams(projectName, command, step, project)
 		group.Go(func() error {
-			_, err := b.devopsBuild.ensurePipeline(displayName, specFile, project.Image, params, secretRefs)
+			_, err := b.devopsBuild.ensurePipeline(displayName, specFile, project.Image, params, secretRefs, project.VpcConfig)
 			return err
 		})
 	}
@@ -237,7 +237,7 @@ func (b *Builder) ensureAgentPipelines(agentPrefix string) error {
 		}
 		params := b.nonSecretParams(projectName, "", model.Step{}, project)
 		group.Go(func() error {
-			_, err := b.devopsBuild.ensurePipeline(projectName, specFile, project.Image, params, nil)
+			_, err := b.devopsBuild.ensurePipeline(projectName, specFile, project.Image, params, nil, nil)
 			return err
 		})
 	}
@@ -301,7 +301,7 @@ func (b *Builder) launch(projectName, prefixStep string, command model.ActionCom
 		perRun["PIPELINE_INDEX"] = strconv.Itoa(b.pipelineIndex)
 	}
 	log.Printf("Executing build run %s\n", displayName)
-	return b.devopsBuild.launchBuildRun(displayName, b.specFile(projectName, project), project.Image, params, secretRefs, perRun)
+	return b.devopsBuild.launchBuildRun(displayName, b.specFile(projectName, project), project.Image, params, secretRefs, perRun, project.VpcConfig)
 }
 
 // runName is the display name shared by a step+command's build pipeline and its
