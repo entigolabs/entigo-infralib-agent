@@ -2062,6 +2062,8 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 		providerType = "aws"
 	case model.GCLOUD:
 		providerType = "google"
+	case model.ORACLE:
+		providerType = "oracle"
 	}
 	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
 	providerInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
