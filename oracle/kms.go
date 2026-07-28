@@ -19,25 +19,20 @@ const (
 	kmsKeyLengthBytes = 32
 )
 
-// kmsState is the in-memory pointer to the agent-owned vault + master key,
-// resolved once per process (no bucket cache — the vault/key are found by name).
+// kmsState holds the agent-owned vault + master key, resolved once per process
+// (found by name, nothing persisted).
 type kmsState struct {
 	VaultId            string
 	KeyId              string
 	ManagementEndpoint string
 }
 
-// KMS provisions and owns the agent's own KMS vault and master encryption key,
-// deliberately independent of any terraform kms module. The agent creates the key
-// for its own resources (bucket at-rest encryption + the Vault secret store) so
-// that destroying a module never leaves the agent pointing at a deleted key — the
-// race the AWS provider suffers when the kms module is removed.
-//
-// One DEFAULT (shared-partition) vault and one AES-256 key, both named
-// <prefix>-infralib, found-or-created by name each process (nothing persisted).
-// Bootstrapping mirrors the CSK / auth-token flow: any principal that can manage
-// KMS works (the in-container resource principal has manage all-resources), so a
-// local first run creates them and every later run just looks them up by name.
+// KMS provisions and owns the agent's own KMS vault and master key, deliberately
+// independent of any terraform kms module: the agent's resources (bucket
+// encryption + the Vault secret store) point at a key no module can delete out
+// from under them (the race AWS suffers when its kms module is removed). One
+// DEFAULT vault and one AES-256 key, both named <prefix>-infralib, found-or-created
+// by name each process.
 type KMS struct {
 	ctx           context.Context
 	provider      ocicommon.ConfigurationProvider
@@ -75,11 +70,10 @@ func (k *KMS) resourceName() string { return fmt.Sprintf("%s-infralib", k.cloudP
 const scheduleDeletionDelay = 7 * 24 * time.Hour
 
 // ScheduleDeletion schedules the agent-owned vault for deletion at the earliest
-// allowed time; OCI cascades this to the vault's master key and every secret it
-// holds. There is no hard delete — the vault lingers until the scheduled time and
-// can be reverted before then in the console. The vault/key encrypt the state
-// bucket, so the caller must delete (or knowingly keep) the bucket first. A vault
-// that is absent or already scheduled for deletion is a no-op.
+// allowed time; OCI cascades to the master key and every secret. There is no hard
+// delete — it can be reverted in the console until the scheduled time. The vault
+// encrypts the state bucket, so the caller must delete (or keep) the bucket first.
+// A vault that is absent or already scheduled is a no-op.
 func (k *KMS) ScheduleDeletion() error {
 	name := k.resourceName()
 	existing, err := k.findVault(name)
@@ -114,13 +108,10 @@ func (k *KMS) Ensure() error {
 func (k *KMS) KeyId() string   { return k.state.KeyId }
 func (k *KMS) VaultId() string { return k.state.VaultId }
 
-// Resolve looks up the agent's existing vault + master key by name WITHOUT creating
-// them, for read-only / destroy / delete flows that must not provision anything. It
-// reports whether the vault was found; if not, the ids stay empty and a Vault-backed
-// SSM built on them operates only best-effort (acceptable when the store is being
-// torn down or doesn't exist yet). VaultSummary already carries the management
-// endpoint, so no GetVault/creation call is made. Callers use Resolve OR Ensure on a
-// given KMS, never both.
+// Resolve looks up the existing vault + master key by name WITHOUT creating them,
+// for read-only / destroy / delete flows that must not provision anything. Reports
+// whether the vault was found; if not, the ids stay empty and a Vault-backed SSM
+// on them operates best-effort. Callers use Resolve OR Ensure, never both.
 func (k *KMS) Resolve() (bool, error) {
 	name := k.resourceName()
 	vault, err := k.findVault(name)
@@ -130,10 +121,8 @@ func (k *KMS) Resolve() (bool, error) {
 	if vault == nil {
 		return false, nil
 	}
-	// findVault also returns a vault still being created (Creating/Updating), whose
-	// management endpoint isn't populated yet. Resolve is find-only and must not wait or
-	// panic, so treat a not-yet-ready vault as unresolved — the read/destroy paths that
-	// call Resolve degrade best-effort just as they do when the vault is absent.
+	// A vault still being created has no management endpoint yet; Resolve is
+	// find-only and must not wait, so treat it as unresolved (best-effort).
 	if vault.ManagementEndpoint == nil {
 		return false, nil
 	}
@@ -141,8 +130,8 @@ func (k *KMS) Resolve() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// A key scheduled for deletion returns "" (findKey skips it); the state still
-	// carries the vault id, which is all the read/schedule-delete paths need.
+	// A key scheduled for deletion returns "" (findKey skips it); the vault id in
+	// the state is all the read/schedule-delete paths need.
 	keyId, err := k.findKey(mgmt, name)
 	if err != nil {
 		return false, err
@@ -156,8 +145,8 @@ func (k *KMS) ensure() error {
 	if err != nil {
 		return err
 	}
-	// The management client is scoped to the vault's own endpoint, which already
-	// encodes the region — no SetRegion.
+	// The management client is scoped to the vault's endpoint, which encodes the
+	// region — no SetRegion.
 	mgmt, err := keymanagement.NewKmsManagementClientWithConfigurationProvider(k.provider, *vault.ManagementEndpoint)
 	if err != nil {
 		return err
@@ -197,9 +186,8 @@ func (k *KMS) ensureVault() (*keymanagement.Vault, error) {
 }
 
 // findVault returns the first non-deleted vault with the given display name.
-// ListVaults has no server-side name filter and pages, so every page is scanned —
-// otherwise an existing vault past page one would be missed and a duplicate (slow,
-// quota-limited) DEFAULT vault created.
+// ListVaults has no name filter, so every page is scanned to avoid missing an
+// existing vault and creating a duplicate.
 func (k *KMS) findVault(name string) (*keymanagement.VaultSummary, error) {
 	var page *string
 	for {
@@ -293,10 +281,9 @@ func (k *KMS) ensureKey(mgmt keymanagement.KmsManagementClient, vaultId string) 
 }
 
 // findKey returns the OCID of the first non-deleted key with the given display
-// name, or "" if none exists. ListKeys has no server-side name filter and pages,
-// so every page is scanned — otherwise an existing key past page one would be
-// missed and a duplicate created, potentially diverging from the key the bucket
-// and secrets were encrypted with.
+// name, or "" if none exists. ListKeys has no name filter, so every page is
+// scanned to avoid creating a duplicate that diverges from the key the bucket and
+// secrets were encrypted with.
 func (k *KMS) findKey(mgmt keymanagement.KmsManagementClient, name string) (string, error) {
 	var page *string
 	for {

@@ -21,13 +21,10 @@ const (
 	logSearchPoll = 10 * time.Second
 )
 
-// Pipeline orchestrates a step's plan → approve → apply cycle by launching
-// DevOps build runs through the Builder, mirroring the local pipeline flow.
-// Manual approval is a DevOps deployment gate (Gate): when the change set is not
-// auto-approvable the agent blocks until an IAM-authorized user approves or
-// rejects the deployment in the OCI Console; rejection fails the step so
-// dependent steps never run. Build-run logs stay reviewable in the console
-// during the approval wait and afterwards.
+// Pipeline orchestrates a step's plan → approve → apply cycle by launching DevOps
+// build runs through the Builder, mirroring the local pipeline flow. Manual
+// approval is a DevOps deployment gate (Gate); rejection fails the step so
+// dependents never run.
 type Pipeline struct {
 	ctx         context.Context
 	builder     *Builder
@@ -48,9 +45,8 @@ func NewPipeline(ctx context.Context, builder *Builder, gate *Gate, logs *Loggin
 	}
 }
 
-// SetCampaignId / SetPipelineIndex forward the campaign correlation to the
-// Builder, which passes it as per-run build-run arguments (CAMPAIGN_ID /
-// PIPELINE_INDEX) for the wrapper to read directly — same as AWS/GCloud.
+// SetCampaignId / SetPipelineIndex forward the campaign correlation to the Builder,
+// which passes it as per-run build-run arguments for the wrapper to read.
 func (p *Pipeline) SetCampaignId(campaignId string) {
 	p.builder.SetCampaignId(campaignId)
 }
@@ -67,9 +63,8 @@ func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step,
 }
 
 func (p *Pipeline) UpdatePipeline(projectName, _ string, step model.Step, _ string, _ map[string]model.SourceAuth) error {
-	// Reconcile every command's build pipeline (params drift with image/config/CSK)
-	// so the console-triggerable destroy pipelines stay current; execution itself is
-	// started separately by the updater via StartPipelineExecution.
+	// Reconcile every command's build pipeline so the console-triggerable destroy
+	// pipelines stay current; execution is started separately via StartPipelineExecution.
 	return p.builder.ensureStepPipelines(projectName, step)
 }
 
@@ -141,11 +136,9 @@ func (p *Pipeline) waitForManualApproval(pipelineName string, step model.Step, c
 }
 
 // StartDestroyExecution runs a step's destroy by triggering its eagerly created
-// -plan-destroy then -apply-destroy build pipelines by name. It relies solely on
-// the pipelines' baked-in parameter defaults, so it works in a fresh process that
-// never registered the run spec (the delete command) and matches a console
-// trigger. A step whose pipelines were never created surfaces as
-// model.NotFoundError, which the delete flow skips.
+// -plan-destroy then -apply-destroy pipelines by name, relying on their baked-in
+// parameter defaults, so it works in a fresh process that never registered the run
+// spec. A step whose pipelines were never created surfaces as model.NotFoundError.
 func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) error {
 	planCommand, applyCommand := model.GetDestroyCommands(step.Type)
 	if err := p.triggerToCompletion(projectName, planCommand); err != nil {
@@ -154,9 +147,8 @@ func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) er
 	return p.triggerToCompletion(projectName, applyCommand)
 }
 
-// triggerToCompletion triggers an existing pipeline by name and blocks on its
-// build run, mirroring runToCompletion but without the run spec (destroy is
-// agentless). No approval gate: destroy runs with ApproveForce.
+// triggerToCompletion triggers an existing pipeline by name and blocks on its build
+// run, like runToCompletion but without the run spec (destroy is agentless).
 func (p *Pipeline) triggerToCompletion(projectName string, command model.ActionCommand) error {
 	displayName := runName(projectName, command)
 	buildRunId, err := p.builder.trigger(displayName)
@@ -179,9 +171,8 @@ func (p *Pipeline) DeletePipeline(projectName string) error {
 }
 
 // CreateAgentPipelines eagerly creates the agent's own run + update build pipelines
-// (so a gitops engineer can trigger the agent from the OCI console with no local
-// agent) and, when run is set, starts a run execution. projectName is the agent
-// prefix (<cloudPrefix>-agent); its run/update projects carry the command suffix.
+// (so a gitops engineer can trigger the agent from the console with no local agent)
+// and, when run is set, starts a run execution.
 func (p *Pipeline) CreateAgentPipelines(_, projectName, _ string, run bool) error {
 	if err := p.builder.ensureAgentPipelines(projectName); err != nil {
 		return err
@@ -212,10 +203,9 @@ func (p *Pipeline) runToCompletion(projectName, pipelineName string, command mod
 	return nil
 }
 
-// planChanges reads the plan build run's stdout back from the DevOps service log
-// and parses the terraform/helm change summary. Because log ingestion is
-// asynchronous, the summary may not be searchable the instant the build run
-// exits, so it polls until the summary appears or the deadline passes.
+// planChanges reads the plan build run's stdout back from the DevOps service log and
+// parses the change summary. Log ingestion is asynchronous, so it polls until the
+// summary appears or the deadline passes.
 func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, buildRunId string, since time.Time) (*model.PipelineChanges, error) {
 	if p.logs == nil {
 		return nil, fmt.Errorf("no logging service available to read plan output for %s", pipelineName)
@@ -224,7 +214,7 @@ func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, bui
 	for {
 		lines, err := p.logs.StepLogs(buildRunId, since)
 		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to read logs for %s: %s", pipelineName, err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to read logs for %s: %s", pipelineName, err)))
 		} else {
 			changes, err := parseChanges(pipelineName, stepType, lines)
 			if err != nil {
@@ -244,9 +234,8 @@ func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, bui
 	}
 }
 
-// parseChanges scans plan stdout lines for the terraform/helm change summary,
-// reusing the same line parsers the local and cloud pipelines of other providers
-// use.
+// parseChanges scans plan stdout lines for the change summary, reusing the same line
+// parsers the other providers use.
 func parseChanges(pipelineName string, stepType model.StepType, lines []string) (*model.PipelineChanges, error) {
 	var parser func(string, string) (*model.PipelineChanges, error)
 	switch stepType {

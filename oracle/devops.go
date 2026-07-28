@@ -14,14 +14,11 @@ import (
 
 const approvalStageName = "manual-approval"
 
-// Gate is the durable manual-approval gate for cloud pipeline executions. Each
-// step gets its own DevOps deployment pipeline containing a single Manual
-// Approval stage — OCI allows only one running deployment per pipeline, and a
-// pending approval can stay open for hours, so parallel steps must not share a
-// pipeline. When a step's plan needs human sign-off, the agent creates a
-// deployment on the step's pipeline and blocks until an IAM-authorized user
-// approves or rejects it in the OCI Console. Plan/apply themselves run as DevOps
-// build runs (see DevOpsBuilder); only the approval decision is a deployment.
+// Gate is the manual-approval gate for cloud pipeline executions. Each step gets
+// its own DevOps deployment pipeline with a single Manual Approval stage — OCI
+// allows only one running deployment per pipeline, so parallel steps can't share
+// one. Plan/apply run as build runs (DevOpsBuilder); only the approval is a
+// deployment.
 type Gate struct {
 	ctx         context.Context
 	client      devops.DevopsClient
@@ -47,14 +44,10 @@ func NewGate(ctx context.Context, provider ocicommon.ConfigurationProvider, regi
 	}, nil
 }
 
-// UseProject points the gate at the DevOps project that hosts its approval
-// pipelines. The project (shared <prefix>-infralib), its notification topic and
-// the per-step approval pipelines are owned by DevOpsBuilder; the gate only
-// creates deployments in them, so this must be called before Ensure.
+// UseProject points the gate at the DevOps project (owned by DevOpsBuilder) that
+// hosts its approval pipelines. Must be called before Ensure.
 func (g *Gate) UseProject(projectId string) { g.projectId = projectId }
 
-// Ensure verifies the gate has been pointed at a DevOps project via UseProject.
-// Per-step approval pipelines are created lazily by RequestApproval.
 func (g *Gate) Ensure() error {
 	if g.projectId == "" {
 		return fmt.Errorf("approval gate has no DevOps project; call UseProject first")
@@ -62,10 +55,9 @@ func (g *Gate) Ensure() error {
 	return nil
 }
 
-// RequestApproval creates a deployment that pauses at the approval stage of the
-// step's own pipeline. The summary (step name + plan changes) becomes the
-// deployment display name so the approver sees what they are deciding on in the
-// console list.
+// RequestApproval creates a deployment that pauses at the step pipeline's approval
+// stage. The summary becomes the deployment display name so the approver sees what
+// they are deciding on in the console list.
 func (g *Gate) RequestApproval(pipelineName, summary string) (string, error) {
 	pipelineId, err := g.ensureStepPipeline(pipelineName)
 	if err != nil {
@@ -87,9 +79,8 @@ func (g *Gate) RequestApproval(pipelineName, summary string) (string, error) {
 	return *response.GetId(), nil
 }
 
-// ensureStepPipeline gets or creates the step's approval pipeline. Steps run in
-// parallel goroutines, so the id cache is mutex-guarded; the whole get-or-create
-// is serialized, which is fine for a per-step one-time setup call.
+// ensureStepPipeline gets or creates the step's approval pipeline; the id cache is
+// mutex-guarded because steps run in parallel goroutines.
 func (g *Gate) ensureStepPipeline(pipelineName string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

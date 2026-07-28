@@ -379,10 +379,8 @@ func (s *Storage) abortMultipartUploads() error {
 }
 
 // asServiceError extracts an OCI ServiceError from anywhere in the error chain.
-// ocicommon.IsServiceError does a bare type assertion, so it misses errors that
-// have been fmt.Errorf("...: %w")-wrapped before reaching a predicate; errors.As
-// walks the chain and matches the ServiceError interface. All the code-inspecting
-// predicates below go through this so wrapping never hides a service error's code.
+// Unlike ocicommon.IsServiceError (a bare type assertion), errors.As walks past
+// fmt.Errorf wrapping, so the predicates below never miss a wrapped service code.
 func asServiceError(err error) (ocicommon.ServiceError, bool) {
 	var failure ocicommon.ServiceError
 	if errors.As(err, &failure) {
@@ -391,11 +389,8 @@ func asServiceError(err error) (ocicommon.ServiceError, bool) {
 	return nil, false
 }
 
-// errSummary condenses an error to a single line for logging. OCI SDK errors
-// stringify to a ~10-line block (message, then operation name, timestamp, client
-// version, endpoint, and several troubleshooting/doc-link lines) which is alarming
-// in a log even when the agent handled the error; for a ServiceError we keep just
-// the code and message, which is all a reader needs.
+// errSummary condenses an error to a single line for logging: OCI SDK errors
+// stringify to a ~10-line block, so for a ServiceError keep just code and message.
 func errSummary(err error) string {
 	if failure, ok := asServiceError(err); ok {
 		return fmt.Sprintf("%s: %s", failure.GetCode(), strings.TrimSpace(failure.GetMessage()))
@@ -413,10 +408,8 @@ func isKmsKeyNotAuthorized(err error) bool {
 	return ok && failure.GetCode() == "NotAuthorizedOrFoundKmsKey"
 }
 
-// isNotAuthorized reports whether err is OCI's authorization failure — the code a
-// principal gets when it lacks the permission (or the resource is scoped away from
-// it). Tenancy-level policy reads return this to a compartment-scoped resource
-// principal; other codes (throttling, service faults) are real and must propagate.
+// isNotAuthorized reports OCI's authorization failure (missing permission or a
+// resource scoped away). Other codes (throttling, service faults) must propagate.
 func isNotAuthorized(err error) bool {
 	failure, ok := asServiceError(err)
 	return ok && failure.GetCode() == "NotAuthorizedOrNotFound"
@@ -427,12 +420,9 @@ func isConflict(err error, code string) bool {
 	return ok && failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == code
 }
 
-// isTransactionConflict reports OCI's optimistic-locking failure ("... cannot be
-// created due to transaction conflict"): a 409 Conflict raised when two writes
-// against the same parent resource (e.g. concurrent CreateBuildPipeline calls on
-// one DevOps project) overlap at the service's transaction layer. Transient —
-// the loser should simply retry once the winner commits, distinct from a genuine
-// already-exists conflict.
+// isTransactionConflict reports OCI's optimistic-locking failure: a 409 raised when
+// concurrent writes to one parent (e.g. CreateBuildPipeline calls on one DevOps
+// project) overlap. Transient — the loser retries, unlike an already-exists conflict.
 func isTransactionConflict(err error) bool {
 	failure, ok := asServiceError(err)
 	return ok && failure.GetHTTPStatusCode() == http.StatusConflict &&

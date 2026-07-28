@@ -16,16 +16,12 @@ import (
 
 // Builder is the Oracle implementation of the agent's project/run-spec registry
 // (the model.Builder role AWS fills with CodeBuild). OCI has no persistent job
-// definition, so CreateProject/UpdateProject record the run spec (image,
-// networking, auth) that the Pipeline replays when it launches an execution.
-// The spec is cached in-memory only (behind a mutex, because steps run in
-// parallel goroutines) and NEVER written to the bucket: the eagerly created,
-// self-describing build pipelines (their parameters bake the image + non-secret
-// env + secret OCIDs) are the durable record, so a fresh-process/agentless run
-// (console-triggerable destroy) triggers them by name without any persisted spec.
-// Execution itself runs through OCI DevOps build pipelines (DevOpsBuilder);
-// Builder owns the run spec and the container environment and delegates
-// launch/wait to that backend.
+// definition, so CreateProject/UpdateProject record the run spec (image, auth)
+// in-memory only, mutex-guarded because steps run in parallel goroutines. The
+// durable record is the eagerly created build pipelines (their parameters bake the
+// image + non-secret env + secret OCIDs), so a fresh-process/agentless run triggers
+// them by name. Builder owns the container environment and delegates launch/wait to
+// DevOpsBuilder.
 type Builder struct {
 	ctx            context.Context
 	secrets        secretResolver
@@ -45,10 +41,8 @@ type Builder struct {
 	projects       map[string]*containerProject
 }
 
-// SetCampaignId / SetPipelineIndex store the portal campaign correlation that
-// launch/trigger pass as per-run build-run arguments (CAMPAIGN_ID /
-// PIPELINE_INDEX), where the wrapper reads them like every other provider. Empty
-// campaignId means no active campaign — the wrapper then runs transparently.
+// SetCampaignId / SetPipelineIndex store the campaign correlation that launch/trigger
+// pass as per-run build-run arguments. Empty campaignId means no active campaign.
 func (b *Builder) SetCampaignId(id string) {
 	b.campaignId = id
 }
@@ -57,9 +51,9 @@ func (b *Builder) SetPipelineIndex(index int) {
 	b.pipelineIndex = index
 }
 
-// containerProject is the in-memory run spec (never serialised to the bucket).
-// AuthSources carries only the NON-secret git source + username; the password is
-// a Vault secret resolved by name at launch (secretRefs).
+// containerProject is the in-memory run spec. AuthSources carries only the
+// non-secret git source + username; the password is a Vault secret resolved by name
+// at launch (secretRefs).
 type containerProject struct {
 	Image       string
 	StepType    model.StepType
@@ -102,9 +96,8 @@ func (b *Builder) CreateProject(projectName, _, _ string, step model.Step, image
 	return nil
 }
 
-// withoutSecrets strips git passwords from the auth sources before they are
-// persisted; the password is a Vault secret (written by upsertSourceCredentials)
-// resolved by name at launch, so it must never land in the bucket.
+// withoutSecrets strips git passwords from the auth sources; the password is a Vault
+// secret resolved by name at launch, so it must never be cached in the run spec.
 func withoutSecrets(authSources map[string]model.SourceAuth) map[string]model.SourceAuth {
 	if authSources == nil {
 		return nil
@@ -169,10 +162,8 @@ func (b *Builder) storeProject(projectName string, project *containerProject) {
 	b.mu.Unlock()
 }
 
-// getProject returns the in-memory spec, or nil if this process never registered
-// it. A fresh destroy/agentless process has no spec — it triggers the eagerly
-// created pipelines by name instead (see Pipeline.StartDestroyExecution), so the
-// spec is only ever needed in the same process that created the project.
+// getProject returns the in-memory spec, or nil if this process never registered it
+// (a fresh destroy/agentless process triggers pipelines by name instead).
 func (b *Builder) getProject(projectName string) (*containerProject, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -180,11 +171,9 @@ func (b *Builder) getProject(projectName string) (*containerProject, error) {
 }
 
 // ensureStepPipelines eagerly creates (or reconciles) every build pipeline a step
-// can run — plan, apply and their destroy variants — so a gitops engineer can
-// trigger any of them, destroy included, from the OCI console with no agent. Each
-// pipeline bakes the step's full non-secret env + secret OCIDs + image as
-// parameter defaults and carries its own spec in the repo, so a later
-// fresh-process/agentless run just triggers it by name (see Pipeline.trigger).
+// can run — plan, apply and their destroy variants — so any of them, destroy
+// included, is triggerable from the OCI console with no agent. Each pipeline bakes
+// the step's env + secret OCIDs + image as parameter defaults.
 func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error {
 	project, err := b.getProject(projectName)
 	if err != nil {
@@ -199,11 +188,8 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 	}
 	specFile := specFileFor(projectName)
 	log.Printf("Reconciling DevOps build pipelines for step %s\n", projectName)
-	// A step's plan/apply/destroy pipelines are independent (distinct display names →
-	// distinct keyLocks) and share one spec (serialized on pushMu; an unchanged spec
-	// leaves the shared worktree clean, so only the first push commits), so reconcile
-	// them concurrently — each blocks ~20s on OCI's async provisioning work requests,
-	// which otherwise serialize into ~100s per step.
+	// Reconcile the commands concurrently — each blocks ~20s on OCI's async
+	// provisioning work request, which would otherwise serialize into ~100s per step.
 	var group errgroup.Group
 	for _, command := range stepCommands(step.Type) {
 		displayName := runName(projectName, command)
@@ -216,12 +202,10 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 	return group.Wait()
 }
 
-// ensureAgentPipelines eagerly creates (or reconciles) the agent's own run and
-// update build pipelines so a gitops engineer can trigger the agent — a re-run or a
-// self-update — from the OCI console with no local agent, mirroring the eager
-// per-step pipelines. Both share one spec (agentSpecFile): COMMAND rides a pipeline
-// parameter, so run and update forward the identical env set. The agent projects
-// must already be registered (CreateAgentProject).
+// ensureAgentPipelines eagerly creates (or reconciles) the agent's own run and update
+// build pipelines so the agent is triggerable from the console with no local agent.
+// Both share one spec (agentSpecFile): COMMAND rides a pipeline parameter. The agent
+// projects must already be registered (CreateAgentProject).
 func (b *Builder) ensureAgentPipelines(agentPrefix string) error {
 	specFile := agentSpecFile(b.cloudPrefix)
 	log.Printf("Reconciling DevOps agent build pipelines for %s\n", agentPrefix)
@@ -253,20 +237,17 @@ func (b *Builder) specFile(projectName string, project *containerProject) string
 	return specFileFor(projectName)
 }
 
-// stepCommands lists every action command a step of the given type can execute:
-// the plan/apply pair plus their destroy counterparts. Eager pipeline creation
-// walks this so the destroy pipelines exist before any destroy is requested.
+// stepCommands lists every action command a step can execute: the plan/apply pair
+// plus their destroy counterparts.
 func stepCommands(stepType model.StepType) []model.ActionCommand {
 	plan, apply := model.GetCommands(stepType)
 	planDestroy, applyDestroy := model.GetDestroyCommands(stepType)
 	return []model.ActionCommand{plan, apply, planDestroy, applyDestroy}
 }
 
-// trigger starts a build run against an already-created (step,command) pipeline by
-// display name, relying on its baked-in parameter defaults (image + env + secret
-// OCIDs). Used by the destroy flow, which runs in a fresh process that never
-// registered the run spec. A never-created step surfaces as model.NotFoundError so
-// the caller can skip it.
+// trigger starts a build run against an already-created pipeline by display name,
+// relying on its baked-in parameter defaults. Used by the destroy flow, which runs in
+// a fresh process that never registered the run spec.
 func (b *Builder) trigger(displayName string) (string, error) {
 	perRun := map[string]string{}
 	if b.campaignId != "" {
@@ -276,11 +257,10 @@ func (b *Builder) trigger(displayName string) (string, error) {
 	return b.devopsBuild.triggerBuildRun(displayName, perRun)
 }
 
-// launch runs the given command for a step as an OCI DevOps build run and returns
-// its OCID (consumed by waitForCompletion). The container environment is split:
-// non-secret values become build-pipeline parameters (see nonSecretParams) and
-// secret values are injected from the Vault via the build spec's vaultVariables
-// (see secretRefs); only the portal campaign correlation is supplied per run.
+// launch runs the given command for a step as an OCI DevOps build run and returns its
+// OCID. The container environment is split: non-secret values become build-pipeline
+// parameters (nonSecretParams), secret values are injected from the Vault via the
+// spec's vaultVariables (secretRefs); only the campaign correlation is per-run.
 func (b *Builder) launch(projectName, prefixStep string, command model.ActionCommand, step model.Step) (string, error) {
 	displayName := runName(projectName, command)
 	project, err := b.getProject(projectName)
@@ -304,11 +284,9 @@ func (b *Builder) launch(projectName, prefixStep string, command model.ActionCom
 	return b.devopsBuild.launchBuildRun(displayName, b.specFile(projectName, project), project.Image, params, secretRefs, perRun, project.VpcConfig)
 }
 
-// runName is the display name shared by a step+command's build pipeline and its
-// build runs. Agent projects already carry the command suffix in their name and
-// launch with an empty command. It caps to maxNameLen here — the one place the
-// name is formed — so the pipeline, the list-by-name lookups and the build-run
-// name are always the identical string (a per-call cap would desync them).
+// runName is the display name shared by a step+command's build pipeline and its build
+// runs. It caps to maxNameLen here — the one place the name is formed — so the
+// pipeline, the list-by-name lookups and the build-run name stay identical.
 func runName(projectName string, command model.ActionCommand) string {
 	name := projectName
 	if command != "" {
@@ -320,8 +298,7 @@ func runName(projectName string, command model.ActionCommand) string {
 	return name
 }
 
-// maxNameLen is the OCI DevOps display-name limit shared by build pipelines and
-// build runs.
+// maxNameLen is the OCI DevOps display-name limit for build pipelines and runs.
 const maxNameLen = 255
 
 // waitForCompletion waits for a step's build run to finish and returns its
@@ -330,12 +307,10 @@ func (b *Builder) waitForCompletion(buildRunId string) (int, error) {
 	return b.devopsBuild.waitForBuildRun(buildRunId)
 }
 
-// nonSecretParams returns the non-secret container environment. These become
-// build-pipeline parameters (defaults baked at pipeline creation); the values
-// mirror service.LocalPipeline.getEnv so the base image behaves identically
-// locally and in a DevOps build run. Secret values are handled by secretRefs.
-// CAMPAIGN_ID/PIPELINE_INDEX carry placeholder defaults and are overridden per
-// run (the wrapper treats "none" as transparent, model.CampaignSentinelNone).
+// nonSecretParams returns the non-secret container environment, baked as build-pipeline
+// parameter defaults. The values mirror service.LocalPipeline.getEnv so the base image
+// behaves identically locally and in a DevOps build run; secrets are handled by
+// secretRefs. CAMPAIGN_ID/PIPELINE_INDEX carry placeholders overridden per run.
 func (b *Builder) nonSecretParams(prefixStep string, command model.ActionCommand, step model.Step, project *containerProject) map[string]string {
 	env := map[string]string{
 		"COMMAND":                     string(command),
@@ -345,29 +320,23 @@ func (b *Builder) nonSecretParams(prefixStep string, command model.ActionCommand
 		common.OracleCompartmentIdEnv: b.compartmentId,
 		"AWS_REGION":                  b.region,
 		"AWS_ENDPOINT_URL_S3":         b.s3Endpoint,
-		// The OpenTofu/Terraform oci provider defaults its `auth` argument to
-		// ApiKey (env MultiEnvDefaultFunc over TF_VAR_auth/OCI_AUTH), which in the
-		// step container finds no ~/.oci/config and fails with "did not find a
-		// proper configuration for tenancy". In-container the only credential is
-		// the build runner's resource principal (its OCI_RESOURCE_PRINCIPAL_* vars
-		// are forwarded into the container by the build spec), so select it
-		// explicitly. Region comes from OCI_REGION, set above via
-		// model.OracleRegion — without it RP auth pins the provider to the tenancy
-		// home region.
+		// The oci provider defaults `auth` to ApiKey, which finds no ~/.oci/config in
+		// the container and fails "did not find a proper configuration for tenancy".
+		// The only in-container credential is the build runner's resource principal
+		// (its OCI_RESOURCE_PRINCIPAL_* vars are forwarded by the spec), so select it.
 		"OCI_AUTH": "ResourcePrincipal",
 	}
 	if step.Name != "" {
 		env["INFRALIB_STEP"] = step.Name
 	}
-	// AWS_ACCESS_KEY_ID is an identifier, not the secret half (that is a Vault
-	// secret, see secretRefs), so it is a plain non-secret parameter.
+	// AWS_ACCESS_KEY_ID is an identifier, not the secret half (that is a Vault secret,
+	// see secretRefs), so it is a plain non-secret parameter.
 	if b.accessKey != "" {
 		env["AWS_ACCESS_KEY_ID"] = b.accessKey
 	}
 	if project.AgentCmd != "" {
-		// The relaunched agent selects the Oracle provider via the compartment id
-		// and derives every bucket name from the prefix; without these it would
-		// fall through to the AWS provider.
+		// The relaunched agent selects the Oracle provider via the compartment id and
+		// derives bucket names from the prefix; without these it falls through to AWS.
 		env["COMMAND"] = string(project.AgentCmd)
 		env[common.PrefixEnv] = b.cloudPrefix
 		return env
@@ -405,14 +374,12 @@ func (b *Builder) nonSecretParams(prefixStep string, command model.ActionCommand
 	return env
 }
 
-// secretRefs maps each secret container env var this step needs to the OCID of
-// its Vault secret. The build spec's vaultVariables reference these OCIDs (via
-// per-run parameters) so the build runner fetches the secret with its resource
-// principal — the value never touches the bucket or a build argument. A step only
-// gets the secrets it actually uses. Agent projects need none (they authenticate
-// as a resource principal). Values already in the Vault (git source passwords,
-// wrapper config) are resolved by name; values the Builder holds in memory (the
-// CSK secret half, client-module passwords) are upserted on demand.
+// secretRefs maps each secret container env var this step needs to its Vault secret
+// OCID. The spec's vaultVariables reference these OCIDs so the build runner fetches
+// the value with its resource principal — it never touches the bucket or a build
+// argument. Agent projects need none. Values already in the Vault (git source
+// passwords, wrapper config) are resolved by name; in-memory values (the CSK secret
+// half, client-module passwords) are upserted on demand.
 func (b *Builder) secretRefs(step model.Step, project *containerProject) (map[string]string, error) {
 	refs := map[string]string{}
 	if project.AgentCmd != "" {
@@ -458,7 +425,7 @@ func (b *Builder) secretRefs(step model.Step, project *containerProject) (map[st
 	return refs, nil
 }
 
-// awsSecretAccessKeySecret is the Vault secret name for the CSK secret half that
-// the terraform s3 backend consumes as AWS_SECRET_ACCESS_KEY (distinct from the
-// full CSK JSON persisted under customerSecretKeyObject).
+// awsSecretAccessKeySecret is the Vault secret name for the CSK secret half the
+// terraform s3 backend consumes as AWS_SECRET_ACCESS_KEY (distinct from the full CSK
+// JSON persisted under customerSecretKeyObject).
 const awsSecretAccessKeySecret = "oracle-aws-secret-access-key"

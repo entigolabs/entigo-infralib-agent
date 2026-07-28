@@ -26,70 +26,48 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/ons"
 )
 
-// Each step runs through an OCI DevOps *build* pipeline: a managed OL8 build
-// runner (the only OCI DevOps runner with a Docker daemon) does
-// `docker run <base image>`.
+// Each step runs through an OCI DevOps *build* pipeline: a managed OL8 runner (the
+// only OCI DevOps runner with a Docker daemon) does `docker run <base image>`.
 //
-// Why build pipelines rather than a single native plan→approve→apply pipeline:
-// OCI can host "run an arbitrary container" only in BUILD pipelines (Docker, and
-// native build-run logs — the good UX) and "manual approval" only in DEPLOYMENT
-// pipelines (no Docker). Neither can host the other's capability, and a build
-// pipeline's TRIGGER_DEPLOYMENT stage fires-and-forgets (verified live — it does
-// not block on the triggered deployment). So the agent orchestrates the
-// sandwich: it launches the plan build run, reads the plan from the logs, drives
-// the manual-approval DevOps deployment (Gate), then launches the apply build
-// run.
+// Why build, not a single native plan→approve→apply pipeline: OCI hosts arbitrary
+// containers only in BUILD pipelines and manual approval only in DEPLOYMENT pipelines
+// (no Docker), and a build pipeline's TRIGGER_DEPLOYMENT stage fires-and-forgets. So
+// the agent orchestrates the sandwich: launch the plan build run, read the plan from
+// the logs, drive the manual-approval deployment (Gate), then launch the apply build run.
 //
-// The container environment is delivered without any bucket-side plaintext:
-// non-secret values are build-pipeline PARAMETERS (exported into the build
-// environment as EI_<NAME>), and secret values are the step's own Vault secrets
-// injected via the build spec's `vaultVariables` (each keyed EI_<NAME>, its value
-// the secret's literal OCID — OCI resolves vaultVariables at run-environment
-// build time and does NOT substitute pipeline parameters into that value). A
-// generic runtime loop forwards every EI_<NAME> into `docker run -e <NAME>`.
-// Because the set of
-// secrets/params differs per step, the build spec is generated per (step,command)
-// and committed to the shared hosted repo; the spec + parameter set are
-// reconciled (and the spec re-pushed) only when their content changes.
+// The container environment carries no bucket-side plaintext: non-secret values are
+// build-pipeline PARAMETERS (exported as EI_<NAME>), secret values ride the spec's
+// vaultVariables (keyed EI_<NAME>, value = the secret's literal OCID). A generic runtime
+// loop forwards every EI_<NAME> into `docker run -e <NAME>`. The spec is generated per
+// step and pushed to the shared hosted repo only when its content changes.
 const (
-	// pollInterval is how often the DevOps build-run / work-request / approval
-	// polls re-check state. GetBuildRun is cheap and the step count small.
 	pollInterval = 5 * time.Second
-	// imageParam carries the base image per run (avoids re-pushing the spec /
-	// re-declaring parameters on every version bump). Consumed by the spec, not
-	// forwarded into the container (no EI_ prefix).
+	// imageParam carries the base image per run (avoids re-pushing the spec on every
+	// version bump). Consumed by the spec, not forwarded into the container.
 	imageParam = "IMAGE"
-	// envParamPrefix marks a build-pipeline parameter (or vaultVariable) whose
-	// value the spec forwards into the container as `docker run -e <NAME>`, with
-	// the prefix stripped. Keeps our env off the runner's own environment.
+	// envParamPrefix marks a parameter (or vaultVariable) whose value the spec forwards
+	// into the container as `docker run -e <NAME>`, prefix stripped.
 	envParamPrefix = "EI_"
-	// specRepoPrefix locates a step's build spec in the hosted repo — the single
-	// source of truth (no bucket copy). The repo is what the build runner reads.
+	// specRepoPrefix locates a step's build spec in the hosted repo — the single source
+	// of truth (no bucket copy), read by the build runner.
 	specRepoPrefix  = "specs/"
 	buildRunTimeout = 60 * time.Minute
 	buildSpecBranch = "main"
 	buildStageName  = "run"
 	// pipelineConflictRetries/-Interval bound the retry on OCI's transaction-conflict
-	// 409: ensureStepPipelines creates a step's plan/apply/destroy pipelines
-	// concurrently against one project, and OCI serializes writes to a project at its
-	// transaction layer, rejecting the losers. Retry lets each eventually commit.
+	// 409: OCI serializes concurrent writes to one project, rejecting the losers.
 	pipelineConflictRetries  = 8
 	pipelineConflictInterval = 3 * time.Second
 )
 
-// DevOpsBuilder executes infralib steps through OCI DevOps build pipelines.
-// One shared project (<prefix>-infralib) holds a single hosted code repo carrying
-// the per-step build specs plus one build pipeline per (step, command) — e.g.
-// <prefix>-hello-plan, <prefix>-hello-apply — so a gitops engineer sees a uniquely
-// named pipeline for every step action with native build-run logs. Each pipeline
-// carries its non-secret env as parameters (defaults) and its secret OCIDs as
-// parameters referenced by that step's spec vaultVariables. The project also hosts
-// the manual-approval deployment pipelines (see Gate.UseProject).
+// DevOpsBuilder executes infralib steps through OCI DevOps build pipelines. One shared
+// project (<prefix>-infralib) holds a single hosted repo carrying the per-step build
+// specs plus one build pipeline per (step, command) — e.g. <prefix>-hello-plan — so every
+// step action has a uniquely named pipeline with native build-run logs. The project also
+// hosts the manual-approval deployment pipelines (see Gate.UseProject).
 //
-// Setup mirrors the CSK bootstrap: the git push of the build specs needs a user
-// (auth token), so the FIRST run (and any run that changes a spec) must be local
-// (session-token or API-key auth); in-container resource-principal runs reference
-// the already-pushed specs.
+// The git push of the specs needs a user (auth token), so the FIRST run (and any run that
+// changes a spec) must be an admin bootstrap; in-container RP runs reference the pushed specs.
 type DevOpsBuilder struct {
 	ctx            context.Context
 	client         devops.DevopsClient
@@ -115,8 +93,7 @@ type DevOpsBuilder struct {
 	specFresh      bool                   // remote was empty at clone time, so pushes force-push (single writer)
 }
 
-// ProjectId returns the shared DevOps project OCID after Ensure has run (needed
-// to enable the project's build logs and to host the approval pipelines).
+// ProjectId returns the shared DevOps project OCID after Ensure has run.
 func (d *DevOpsBuilder) ProjectId() string { return d.projectId }
 
 func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvider, region, compartmentId, cloudPrefix string) (*DevOpsBuilder, error) {
@@ -144,11 +121,9 @@ func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvi
 	}, nil
 }
 
-// Ensure provisions (once) the shared DevOps project, its notification topic and
-// the hosted build-spec repository — all list-or-create, working from any principal
-// that can manage DevOps. The later git push of build specs (pushSpec) is what needs
-// a user; it resolves the agent service account on demand. Per-step build pipelines +
-// their specs are created lazily by launchBuildRun.
+// Ensure provisions (once) the shared DevOps project, its notification topic and the
+// hosted build-spec repository — all list-or-create from any principal that can manage
+// DevOps. Per-step build pipelines + their specs are created lazily by launchBuildRun.
 func (d *DevOpsBuilder) Ensure() error {
 	d.once.Do(func() {
 		d.ensureErr = d.ensure()
@@ -174,14 +149,14 @@ func (d *DevOpsBuilder) ensure() error {
 	return nil
 }
 
-// repositoryName is the shared hosted build-spec repo's name, referenced both when
-// creating it and when scoping the agent SA's devops-repository grant to it.
+// repositoryName is the shared hosted build-spec repo's name, referenced when creating it
+// and when scoping the agent SA's devops-repository grant to it.
 func repositoryName(cloudPrefix string) string {
 	return fmt.Sprintf("%s-infralib-src", cloudPrefix)
 }
 
-// ensureTopic finds or creates the notification topic the shared project (and
-// thus the approval deployments hosted in it) publish to.
+// ensureTopic finds or creates the notification topic the shared project's approval
+// deployments publish to.
 func (d *DevOpsBuilder) ensureTopic(name string) (string, error) {
 	list, err := d.onsClient.ListTopics(d.ctx, ons.ListTopicsRequest{CompartmentId: &d.compartmentId, Name: &name})
 	if err != nil {
@@ -276,12 +251,9 @@ func (d *DevOpsBuilder) ensureRepository(name string) (string, string, error) {
 	return *created.Id, url, nil
 }
 
-// launchBuildRun ensures the step+command build pipeline exists with the right
-// parameters + spec, then starts a build run, returning its OCID (consumed by
-// waitForBuildRun). Non-secret values ride the pipeline parameters; secret OCIDs
-// ride parameters referenced by the spec's vaultVariables; only IMAGE and the
-// portal campaign correlation are supplied per run. specFile is the shared
-// per-step spec path the pipeline's stage reads.
+// launchBuildRun ensures the step+command build pipeline exists with the right parameters
+// + spec, then starts a build run, returning its OCID. Only IMAGE and the campaign
+// correlation are supplied per run; everything else rides the pipeline's baked defaults.
 func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, params, secretRefs, perRun map[string]string, vpcConfig *model.VpcConfig) (string, error) {
 	pipelineId, err := d.ensurePipeline(displayName, specFile, image, params, secretRefs, vpcConfig)
 	if err != nil {
@@ -307,14 +279,10 @@ func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, para
 	return *response.Id, nil
 }
 
-// triggerBuildRun starts a build run against an already-created (step,command)
-// pipeline found by display name, relying entirely on the pipeline's baked-in
-// parameter defaults (image + non-secret env + secret OCIDs). Used by
-// agentless/fresh-process flows — console-triggerable destroy — that no longer
-// hold the run spec, so it neither reconciles parameters nor passes IMAGE per run.
-// A missing pipeline returns model.NotFoundError so the destroy flow can skip a
-// step that was never created. perRun carries only the portal campaign
-// correlation, when present.
+// triggerBuildRun starts a build run against an already-created pipeline found by display
+// name, relying entirely on its baked-in parameter defaults. Used by agentless/fresh-process
+// flows (console-triggerable destroy) that no longer hold the run spec. A missing pipeline
+// returns model.NotFoundError so the destroy flow can skip a step that was never created.
 func (d *DevOpsBuilder) triggerBuildRun(displayName string, perRun map[string]string) (string, error) {
 	d.mu.Lock()
 	pipelineId, ok := d.pipelines[displayName]
@@ -352,13 +320,12 @@ func (d *DevOpsBuilder) triggerBuildRun(displayName string, perRun map[string]st
 	return *response.Id, nil
 }
 
-// ensurePipeline reconciles the (step,command) pipeline: creates it with the
-// desired parameters, ensures its stage points at the step's spec file, and
-// (re)pushes the spec when the specs tree changes. Cached per process — a step's
-// params/secrets are stable within one run.
+// ensurePipeline reconciles the (step,command) pipeline: creates it with the desired
+// parameters, points its stage at the step's spec file, and (re)pushes the spec when it
+// changes. Cached per process.
 func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, params, secretRefs map[string]string, vpcConfig *model.VpcConfig) (string, error) {
-	// Serialize only this pipeline with itself (idempotent create), so different
-	// steps reconcile — and wait on their async work requests — concurrently.
+	// Serialize only this pipeline with itself, so different steps reconcile (and wait on
+	// their async work requests) concurrently.
 	lock := d.keyLock(displayName)
 	lock.Lock()
 	defer lock.Unlock()
@@ -369,9 +336,9 @@ func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, para
 		return id, nil
 	}
 	desiredParams := buildPipelineParameters(image, params)
-	// The spec is per-STEP, not per-command: it depends only on the env-var key set
-	// and secrets (identical across plan/apply/destroy) — COMMAND is a parameter, not
-	// baked in — so all of a step's command pipelines share one specs/<step>.yaml.
+	// The spec is per-STEP, not per-command: it depends only on the env-var key set and
+	// secrets (identical across plan/apply/destroy, since COMMAND is a parameter), so all
+	// of a step's command pipelines share one specs/<step>.yaml.
 	spec := buildSpecYAMLFor(forwardNames(params, secretRefs), vaultVariables(secretRefs))
 	pipelineId, err := d.getOrCreatePipeline(displayName, desiredParams)
 	if err != nil {
@@ -393,9 +360,8 @@ func (d *DevOpsBuilder) ensurePipeline(displayName, specFile, image string, para
 	return pipelineId, nil
 }
 
-// keyLock returns the reconcile mutex for a pipeline display name, creating it on
-// first use, so ensurePipeline serializes each pipeline with itself while letting
-// distinct pipelines run in parallel.
+// keyLock returns the reconcile mutex for a pipeline display name, so ensurePipeline
+// serializes each pipeline with itself while letting distinct pipelines run in parallel.
 func (d *DevOpsBuilder) keyLock(displayName string) *sync.Mutex {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -437,8 +403,7 @@ func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPi
 	if err != nil {
 		return "", fmt.Errorf("failed to create build pipeline %s: %w", name, err)
 	}
-	// Creation is async; a build run started before the work request finishes
-	// gets a 404 ("ensure completion of any work request for the Build Pipeline").
+	// Creation is async; a build run started before the work request finishes gets a 404.
 	if err = d.waitForWorkRequest(created.OpcWorkRequestId); err != nil {
 		return "", err
 	}
@@ -446,8 +411,7 @@ func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPi
 }
 
 // withConflictRetry runs a project-scoped DevOps write, retrying OCI's transaction
-// conflict (concurrent writes to one project serialize at the service layer, and the
-// losers 409). Non-conflict errors and a nil result return immediately.
+// conflict (concurrent writes to one project 409). Other errors return immediately.
 func (d *DevOpsBuilder) withConflictRetry(desc string, op func() error) error {
 	for attempt := 0; ; attempt++ {
 		err := op()
@@ -533,12 +497,10 @@ func (d *DevOpsBuilder) ensureStage(pipelineId, specFile string, vpcConfig *mode
 	return d.waitForWorkRequest(created.OpcWorkRequestId)
 }
 
-// privateAccessConfig maps a step's VpcConfig to the build stage's private-access
-// network channel — the OCI analogue of AWS CodeBuild's VpcConfig — so the managed
-// build runner gets a service-managed VNIC inside the customer's VCN and can reach
-// private resources. Subnets carries the single subnet OCID to attach to (its VCN is
-// implicit, so VpcId is not passed separately) and SecurityGroupIds, when present, are
-// the NSG OCIDs (optional). Nil when the step doesn't attach a VCN.
+// privateAccessConfig maps a step's VpcConfig to the build stage's private-access network
+// channel (the OCI analogue of AWS CodeBuild's VpcConfig), so the runner gets a VNIC inside
+// the customer's VCN. Subnets[0] is the subnet OCID (its VCN is implicit) and
+// SecurityGroupIds the optional NSG OCIDs. Nil when the step doesn't attach a VCN.
 func privateAccessConfig(vpcConfig *model.VpcConfig) devops.NetworkChannel {
 	if vpcConfig == nil || len(vpcConfig.Subnets) == 0 || vpcConfig.Subnets[0] == "" {
 		return nil
@@ -553,10 +515,8 @@ func privateAccessConfig(vpcConfig *model.VpcConfig) devops.NetworkChannel {
 	return devops.ServiceVnicChannel{SubnetId: &subnet, NsgIds: nsgIds}
 }
 
-// reconcileStageNetwork updates an existing build stage's private-access config when
-// the step's VpcConfig changed (attached, detached, or a different subnet/NSG set),
-// mirroring how the pipeline parameters are reconciled on every run. Detaching relies
-// on OCI clearing the field when a nil channel is sent.
+// reconcileStageNetwork updates an existing build stage's private-access config when the
+// step's VpcConfig changed. Detaching relies on OCI clearing the field for a nil channel.
 func (d *DevOpsBuilder) reconcileStageNetwork(stage devops.BuildPipelineStageSummary, desired devops.NetworkChannel) error {
 	summary, ok := stage.(devops.BuildStageSummary)
 	if !ok || sameNetworkChannel(summary.PrivateAccessConfig, desired) {
@@ -616,12 +576,10 @@ func derefStr(s *string) string {
 	return *s
 }
 
-// SetGitAuth injects the build-spec push credentials the agent resolved once at
-// startup (provisionBackendCredentials), so the clone/push neither reads the Vault
-// nor makes IAM calls. Both values are empty on a non-admin/consume run that never
-// bootstrapped them; specClone then fails loudly only if a spec actually changed.
-// fresh is true when the token was just created, so the clone/push retries while it
-// propagates to the git endpoint.
+// SetGitAuth injects the build-spec push credentials the agent resolved once at startup, so
+// the clone/push makes no Vault/IAM calls. Both values are empty on a consume run that never
+// bootstrapped them (specClone then fails loudly only if a spec changed). fresh is true when
+// the token was just created, so the clone/push retries while it propagates.
 func (d *DevOpsBuilder) SetGitAuth(username, token string, fresh bool) {
 	d.gitUsername, d.gitToken, d.authTokenFresh = username, token, fresh
 }
@@ -633,14 +591,11 @@ const (
 	gitAuthRetryInterval      = 15 * time.Second
 )
 
-// ensureSpecPushed writes the step's shared build spec into the persistent local
-// clone of the hosted repo and pushes it only when git reports the content changed.
-// git status is the single source of truth — so a spec deleted or edited out of band
-// in the repo is restored on the next reconcile, with no external hash to keep in
-// sync. Serialized on pushMu since all callers share the one clone/worktree.
-// A genuine change on a run without git credentials (a consume run that never
-// bootstrapped them) is a loud error from specClone — a new or changed spec must be
-// introduced from an admin run.
+// ensureSpecPushed writes the step's build spec into the persistent local clone and pushes
+// it only when git reports the content changed — git status is the single source of truth,
+// so a spec deleted or edited out of band is restored, with no external hash to keep in
+// sync. Serialized on pushMu since all callers share the one clone. A genuine change on a
+// run without git credentials is a loud error from specClone (admin run required).
 func (d *DevOpsBuilder) ensureSpecPushed(specFile, spec string) error {
 	d.pushMu.Lock()
 	defer d.pushMu.Unlock()
@@ -667,12 +622,10 @@ func (d *DevOpsBuilder) ensureSpecPushed(specFile, spec string) error {
 	return d.pushSpecRepo()
 }
 
-// specClone lazily clones the hosted build-spec repo into a persistent working
-// directory under the OS temp dir (init-ing a fresh repo + remote when the remote is
-// still empty), returning its worktree — reused for every push this process rather
-// than re-cloned per spec. Callers hold pushMu. Credentials are the ones injected by
-// SetGitAuth: both empty on a consume run that never bootstrapped them, which is a
-// loud error here since a changed spec can't be pushed without a user.
+// specClone lazily clones the hosted build-spec repo into a persistent temp-dir working
+// directory (init-ing a fresh repo + remote when the remote is empty), returning its
+// worktree — reused for every push this process. Callers hold pushMu. Missing credentials
+// (a consume run) are a loud error here, since a changed spec can't be pushed without a user.
 func (d *DevOpsBuilder) specClone() (*git.Worktree, error) {
 	if d.specWorktree != nil {
 		return d.specWorktree, nil
@@ -739,11 +692,9 @@ func (d *DevOpsBuilder) pushSpecRepo() error {
 	return nil
 }
 
-// withGitAuthRetry runs a git network op, tolerating the propagation delay of a
-// just-created auth token: OCI returns the token immediately but the git endpoint
-// accepts it only after an asynchronous delay, so an initial 401/403 is expected and
-// retried until it takes. A REUSED token is already propagated, so an auth error
-// there is genuine (wrong username form, revoked token) — fail fast.
+// withGitAuthRetry runs a git network op, tolerating the propagation delay of a just-created
+// auth token: an initial 401/403 is expected and retried until it takes. A reused token is
+// already propagated, so an auth error there is genuine (wrong username, revoked) — fail fast.
 func (d *DevOpsBuilder) withGitAuthRetry(op func() error) error {
 	deadline := time.Now().Add(gitAuthPropagationTimeout)
 	for {
@@ -763,17 +714,15 @@ func (d *DevOpsBuilder) withGitAuthRetry(op func() error) error {
 	}
 }
 
-// isGitAuthError reports a 401/403 from the git endpoint (go-git wraps the transport
-// sentinels with %w, so errors.Is sees them through the wrapping). A still-propagating
-// fresh token can surface as either, so both must be retried.
+// isGitAuthError reports a 401/403 from the git endpoint. A still-propagating fresh token
+// can surface as either, so both are matched.
 func isGitAuthError(err error) bool {
 	return errors.Is(err, transport.ErrAuthenticationRequired) ||
 		errors.Is(err, transport.ErrAuthorizationFailed)
 }
 
-// updateSpecFile writes content to path in the worktree (creating parent dirs) and
-// stages it, so a following Status/Commit sees the change. Writing identical content
-// leaves the worktree clean, which is how a re-push is skipped.
+// updateSpecFile writes content to path in the worktree (creating parent dirs) and stages
+// it. Writing identical content leaves the worktree clean, which is how a re-push is skipped.
 func updateSpecFile(worktree *git.Worktree, path string, content []byte) error {
 	if dir := pathDir(path); dir != "" {
 		if err := worktree.Filesystem.MkdirAll(dir, 0700); err != nil {
@@ -879,20 +828,18 @@ func (d *DevOpsBuilder) DeleteBuildResources() {
 	name := fmt.Sprintf("%s-infralib", d.cloudPrefix)
 	projectId := d.findProject(name)
 	if projectId != "" {
-		// Repository deletion is asynchronous; DeleteProject 409s ("still contains
-		// child resources") while a repo lingers in DELETING. Wait for the repos to
-		// finish deleting before removing the project.
+		// Repository deletion is async; DeleteProject 409s while a repo lingers in
+		// DELETING, so wait for the repos before removing the project.
 		d.deleteRepositories(projectId)
-		// DeleteProject does not reliably cascade build pipelines, so remove every one
-		// in the project explicitly — this guarantees the per-step AND the agent
-		// (run/update) pipelines are gone regardless of which steps this process knew.
+		// DeleteProject does not reliably cascade build pipelines, so remove every one in
+		// the project explicitly (both per-step and agent run/update pipelines).
 		d.deleteAllBuildPipelines(projectId)
 		response, err := d.client.DeleteProject(d.ctx, devops.DeleteProjectRequest{ProjectId: &projectId})
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf(
-				"failed to delete DevOps project %s, if caused by child resources, try again: %s", name, err)))
+				"Failed to delete DevOps project %s, if caused by child resources, try again: %s", name, err)))
 		} else if err = d.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed while deleting DevOps project %s: %s", name, err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed while deleting DevOps project %s: %s", name, err)))
 		} else {
 			log.Printf("Deleted DevOps project %s\n", name)
 		}
@@ -900,10 +847,9 @@ func (d *DevOpsBuilder) DeleteBuildResources() {
 	d.deleteTopic(fmt.Sprintf("%s-approvals", d.cloudPrefix))
 }
 
-// Resolve locates the shared project by name WITHOUT creating or enabling anything,
-// so read-only / destroy flows (GetResources) can trigger already-provisioned
-// pipelines. Unlike Ensure it enables no logs, grants no IAM and pushes no specs;
-// if the project doesn't exist the id stays empty and triggers return NotFoundError.
+// Resolve locates the shared project by name WITHOUT creating or enabling anything, so
+// read-only / destroy flows (GetResources) can trigger already-provisioned pipelines. If
+// the project doesn't exist the id stays empty and triggers return NotFoundError.
 func (d *DevOpsBuilder) Resolve() {
 	d.projectId = d.findProject(fmt.Sprintf("%s-infralib", d.cloudPrefix))
 }
@@ -911,7 +857,7 @@ func (d *DevOpsBuilder) Resolve() {
 func (d *DevOpsBuilder) findProject(name string) string {
 	list, err := d.client.ListProjects(d.ctx, devops.ListProjectsRequest{CompartmentId: &d.compartmentId, Name: &name})
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up DevOps project %s: %s", name, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to look up DevOps project %s: %s", name, err)))
 		return ""
 	}
 	if len(list.Items) == 0 {
@@ -923,11 +869,11 @@ func (d *DevOpsBuilder) findProject(name string) string {
 func (d *DevOpsBuilder) deleteRepositories(projectId string) {
 	list, err := d.client.ListRepositories(d.ctx, devops.ListRepositoriesRequest{ProjectId: &projectId})
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list DevOps repositories: %s", err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list DevOps repositories: %s", err)))
 		return
 	}
-	// Delete every repo and collect its async work request, then wait for all of
-	// them so the subsequent DeleteProject doesn't race a repo still in DELETING.
+	// Delete every repo, collecting its async work request, then wait for all of them so
+	// the subsequent DeleteProject doesn't race a repo still in DELETING.
 	workRequests := make([]*string, 0, len(list.Items))
 	for _, repo := range list.Items {
 		if repo.Id == nil {
@@ -935,14 +881,14 @@ func (d *DevOpsBuilder) deleteRepositories(projectId string) {
 		}
 		response, err := d.client.DeleteRepository(d.ctx, devops.DeleteRepositoryRequest{RepositoryId: repo.Id})
 		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete DevOps repository %s: %s", *repo.Id, err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete DevOps repository %s: %s", *repo.Id, err)))
 			continue
 		}
 		workRequests = append(workRequests, response.OpcWorkRequestId)
 	}
 	for _, workRequestId := range workRequests {
 		if err = d.waitForWorkRequest(workRequestId); err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed while deleting DevOps repository: %s", err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed while deleting DevOps repository: %s", err)))
 		}
 	}
 	if len(workRequests) > 0 {
@@ -953,22 +899,20 @@ func (d *DevOpsBuilder) deleteRepositories(projectId string) {
 func (d *DevOpsBuilder) deleteTopic(name string) {
 	list, err := d.onsClient.ListTopics(d.ctx, ons.ListTopicsRequest{CompartmentId: &d.compartmentId, Name: &name})
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up notification topic %s: %s", name, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to look up notification topic %s: %s", name, err)))
 		return
 	}
 	for _, topic := range list.Items {
 		if _, err = d.onsClient.DeleteTopic(d.ctx, ons.DeleteTopicRequest{TopicId: topic.TopicId}); err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete notification topic %s: %s", name, err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete notification topic %s: %s", name, err)))
 			continue
 		}
 		log.Printf("Deleted notification topic %s\n", name)
 	}
 }
 
-// deleteAllBuildPipelines removes every build pipeline in the project (stages
-// first, like deleteBuildPipeline). Used at teardown so the shared project's
-// per-step AND agent (run/update) pipelines are all gone before DeleteProject,
-// which does not reliably cascade them. Best-effort and paginated.
+// deleteAllBuildPipelines removes every build pipeline in the project (stages first),
+// used at teardown since DeleteProject does not reliably cascade them. Best-effort.
 func (d *DevOpsBuilder) deleteAllBuildPipelines(projectId string) {
 	var page *string
 	for {
@@ -977,7 +921,7 @@ func (d *DevOpsBuilder) deleteAllBuildPipelines(projectId string) {
 			Page:      page,
 		})
 		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list build pipelines for deletion: %s", err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list build pipelines for deletion: %s", err)))
 			return
 		}
 		for _, item := range list.Items {
@@ -990,11 +934,8 @@ func (d *DevOpsBuilder) deleteAllBuildPipelines(projectId string) {
 	}
 }
 
-// deleteStepPipelines removes a removed step's build pipelines — one per action
-// command it may have run. The step type is unknown here, so every command's
-// pipeline name is tried. Best-effort so a removed step never blocks the delete
-// flow. (The step's approval deployment pipeline is a separate, documented
-// cleanup gap.)
+// deleteStepPipelines removes a removed step's build pipelines — one per action command.
+// The step type is unknown here, so every command's pipeline name is tried. Best-effort.
 func (d *DevOpsBuilder) deleteStepPipelines(step string) {
 	for _, command := range []model.ActionCommand{
 		model.PlanCommand, model.ApplyCommand, model.PlanDestroyCommand, model.ApplyDestroyCommand,
@@ -1009,7 +950,7 @@ func (d *DevOpsBuilder) deleteStepPipelines(step string) {
 			DisplayName: &name,
 		})
 		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list build pipelines for %s: %s", name, err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list build pipelines for %s: %s", name, err)))
 			continue
 		}
 		for _, item := range list.Items {
@@ -1018,26 +959,25 @@ func (d *DevOpsBuilder) deleteStepPipelines(step string) {
 	}
 }
 
-// deleteBuildPipeline removes a build pipeline, first deleting its stages — OCI
-// rejects DeleteBuildPipeline with 409 ("has active stages") while any remain.
-// Best-effort per stage.
+// deleteBuildPipeline removes a build pipeline, first deleting its stages — OCI rejects
+// DeleteBuildPipeline with 409 while any stage remains. Best-effort per stage.
 func (d *DevOpsBuilder) deleteBuildPipeline(pipelineId string) {
 	stages, err := d.client.ListBuildPipelineStages(d.ctx, devops.ListBuildPipelineStagesRequest{
 		BuildPipelineId: &pipelineId,
 	})
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list stages of build pipeline %s: %s", pipelineId, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list stages of build pipeline %s: %s", pipelineId, err)))
 	} else {
 		for _, stage := range stages.Items {
 			if _, err = d.client.DeleteBuildPipelineStage(d.ctx, devops.DeleteBuildPipelineStageRequest{
 				BuildPipelineStageId: stage.GetId(),
 			}); err != nil {
-				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete build pipeline stage %s: %s", *stage.GetId(), err)))
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete build pipeline stage %s: %s", *stage.GetId(), err)))
 			}
 		}
 	}
 	if _, err = d.client.DeleteBuildPipeline(d.ctx, devops.DeleteBuildPipelineRequest{BuildPipelineId: &pipelineId}); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete build pipeline %s: %s", pipelineId, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete build pipeline %s: %s", pipelineId, err)))
 	}
 }
 
@@ -1057,10 +997,8 @@ func forwardNames(params, secretRefs map[string]string) []string {
 	return names
 }
 
-// vaultVariables maps each secret's exported env-var name (EI_<NAME>) to the
-// secret's literal OCID. OCI resolves vaultVariables at run-environment build
-// time and requires an OCID value here — it does NOT substitute pipeline
-// parameters (${...}) into this field.
+// vaultVariables maps each secret's exported env-var name (EI_<NAME>) to its literal OCID.
+// OCI requires an OCID value here — it does NOT substitute pipeline parameters into this field.
 func vaultVariables(secretRefs map[string]string) map[string]string {
 	vars := make(map[string]string, len(secretRefs))
 	for name, ocid := range secretRefs {
@@ -1069,11 +1007,9 @@ func vaultVariables(secretRefs map[string]string) map[string]string {
 	return vars
 }
 
-// buildPipelineParameters declares the pipeline's parameters: IMAGE and EI_<NAME>
-// for each non-secret value (default = value). Secrets are NOT parameters — they
-// ride the spec's vaultVariables as literal OCIDs. OCI rejects an empty default,
-// so blanks fall back to a placeholder (the real value always arrives, and empty
-// non-secrets don't occur).
+// buildPipelineParameters declares the pipeline's parameters: IMAGE and EI_<NAME> for each
+// non-secret value (default = value). Secrets are NOT parameters — they ride the spec's
+// vaultVariables. OCI rejects an empty default, so blanks fall back to a placeholder.
 func buildPipelineParameters(image string, params map[string]string) []devops.BuildPipelineParameter {
 	items := []devops.BuildPipelineParameter{makeParam(imageParam, image)}
 	for name, value := range params {
@@ -1091,10 +1027,9 @@ func makeParam(name, defaultValue string) devops.BuildPipelineParameter {
 	return devops.BuildPipelineParameter{Name: &n, DefaultValue: &v}
 }
 
-// buildSpecYAMLFor generates a step's build spec: a vaultVariables block for its
-// secrets, then a generic loop that forwards every EI_<NAME> value (pipeline
-// parameter or fetched secret) into `docker run -e <NAME>`, forwards the runner's
-// resource-principal vars (bind-mounting file-path ones), and docker-runs $IMAGE.
+// buildSpecYAMLFor generates a step's build spec: a vaultVariables block for its secrets,
+// then a generic loop that forwards every EI_<NAME> value into `docker run -e <NAME>`,
+// forwards the runner's resource-principal vars (bind-mounting file-path ones), and runs $IMAGE.
 func buildSpecYAMLFor(names []string, vaultVars map[string]string) string {
 	var b strings.Builder
 	b.WriteString("version: 0.1\ncomponent: build\ntimeoutInSeconds: 6000\nshell: bash\n")
@@ -1138,17 +1073,15 @@ func buildSpecYAMLFor(names []string, vaultVars map[string]string) string {
 	return b.String()
 }
 
-// specFileFor is the hosted-repo path of a step's shared build spec. All of a
-// step's command pipelines (plan/apply and destroy variants) read this one file —
-// the spec is command-independent (COMMAND rides a pipeline parameter, not the
-// spec), so there is no reason to duplicate it per command.
+// specFileFor is the hosted-repo path of a step's shared build spec. All of a step's
+// command pipelines read this one file — the spec is command-independent (COMMAND rides a
+// pipeline parameter).
 func specFileFor(projectName string) string {
 	return specRepoPrefix + projectName + ".yaml"
 }
 
-// agentSpecFile is the shared hosted-repo path of the agent's own build spec. The
-// run and update agent pipelines share it: the spec is command-independent (COMMAND
-// rides a pipeline parameter), so both forward the identical env set.
+// agentSpecFile is the hosted-repo path of the agent's own build spec, shared by the run
+// and update agent pipelines (command-independent, COMMAND rides a pipeline parameter).
 func agentSpecFile(cloudPrefix string) string {
 	return specRepoPrefix + model.GetAgentPrefix(cloudPrefix) + ".yaml"
 }

@@ -17,12 +17,6 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/loggingsearch"
 )
 
-// OCI won't run a DevOps build until the project has a log enabled, and that same
-// service log (`<prefix>-infralib-logs`) captures the build runner's command
-// output — our docker container's stdout. The agent reads it back with Log Search
-// to parse each step's plan change summary for the approval gate — the same role
-// CloudWatch/Cloud Logging play for the AWS/GCloud providers. Found-or-created by
-// prefixed name, like the buckets, so no OCID is persisted.
 const (
 	logRetentionDays  = 180 // matches the AWS CloudWatch retention (aws/cloudwatch.go)
 	workRequestPoll   = 3 * time.Second
@@ -66,12 +60,10 @@ func NewLogging(ctx context.Context, provider ocicommon.ConfigurationProvider, r
 func (l *Logging) logGroupName() string { return fmt.Sprintf("%s-logs", l.cloudPrefix) }
 func (l *Logging) buildLogName() string { return fmt.Sprintf("%s-infralib-logs", l.cloudPrefix) }
 
-// EnsureDevOpsBuildLog enables the OCI service log for the DevOps build project
-// and records its ids (StepLogs reads plan output back from it). OCI refuses to
-// start any build run until the project has logs enabled (CreateBuildRun → 409
-// "Logs need to be enabled"), and that same service log captures the build
-// runner's command output — i.e. our docker container's stdout — so it doubles as
-// the source the agent parses plan changes from. Found-or-created by name.
+// EnsureDevOpsBuildLog enables the OCI service log for the DevOps build project.
+// OCI refuses to start a build run until the project has logs enabled, and that same
+// log captures the runner's command output (our container's stdout), so StepLogs
+// reads plan changes back from it. Found-or-created by name.
 func (l *Logging) EnsureDevOpsBuildLog(projectId string) error {
 	groupId, err := l.getOrCreateLogGroup()
 	if err != nil {
@@ -126,45 +118,42 @@ func (l *Logging) EnsureDevOpsBuildLog(projectId string) error {
 	return nil
 }
 
-// Delete removes the agent's service log (<prefix>-infralib-logs) and then its
-// log group (<prefix>-logs). Deletions are asynchronous work requests, so the log
-// is removed and awaited before its group. Best-effort: each failure warns and
-// continues, and a missing group is a no-op.
+// Delete removes the agent's service log and then its log group. Deletions are
+// asynchronous work requests, so the logs are removed and awaited before the group.
+// Best-effort: each failure warns and continues, and a missing group is a no-op.
 func (l *Logging) Delete() {
 	groupName := l.logGroupName()
 	groupId, err := l.lookupLogGroup(groupName)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to look up log group %s: %s", groupName, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to look up log group %s: %s", groupName, err)))
 		return
 	}
 	if groupId == "" {
 		return
 	}
-	// Delete every log in the group, not just the agent's <prefix>-infralib-logs: OCI
-	// rejects DeleteLogGroup with 409 ("Log group not empty") while any log remains,
-	// and the group is agent-owned (named by prefix), so anything in it is ours to clear.
+	// Delete every log in the group, not just <prefix>-infralib-logs: OCI rejects
+	// DeleteLogGroup with 409 while any log remains, and the group is agent-owned.
 	l.deleteAllLogs(groupId)
 	response, err := l.mgmt.DeleteLogGroup(l.ctx, logging.DeleteLogGroupRequest{LogGroupId: &groupId})
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete log group %s: %s", groupName, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete log group %s: %s", groupName, err)))
 		return
 	}
 	if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed waiting for log group %s deletion: %s", groupName, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed waiting for log group %s deletion: %s", groupName, err)))
 		return
 	}
 	log.Printf("Deleted log group %s\n", groupName)
 }
 
 // deleteAllLogs removes every log in the group, waiting on each deletion's work
-// request so the group is empty before the caller deletes it. Best-effort and
-// paginated.
+// request so the group is empty before the caller deletes it. Best-effort.
 func (l *Logging) deleteAllLogs(groupId string) {
 	var page *string
 	for {
 		list, err := l.mgmt.ListLogs(l.ctx, logging.ListLogsRequest{LogGroupId: &groupId, Page: page})
 		if err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to list logs in group %s: %s", groupId, err)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list logs in group %s: %s", groupId, err)))
 			return
 		}
 		for _, item := range list.Items {
@@ -173,11 +162,11 @@ func (l *Logging) deleteAllLogs(groupId string) {
 			}
 			response, err := l.mgmt.DeleteLog(l.ctx, logging.DeleteLogRequest{LogGroupId: &groupId, LogId: item.Id})
 			if err != nil {
-				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to delete log %s: %s", *item.Id, err)))
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete log %s: %s", *item.Id, err)))
 				continue
 			}
 			if err = l.waitForWorkRequest(response.OpcWorkRequestId); err != nil {
-				slog.Warn(common.PrefixWarning(fmt.Sprintf("failed waiting for log %s deletion: %s", *item.Id, err)))
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed waiting for log %s deletion: %s", *item.Id, err)))
 			}
 		}
 		if list.OpcNextPage == nil {
@@ -295,14 +284,11 @@ func (l *Logging) waitForWorkRequest(id *string) error {
 }
 
 // StepLogs returns the build runner's command-output lines for one build run,
-// isolated by the DevOps service log's `subject` field (which OCI sets to the
-// build run OCID) so parallel steps sharing the log don't bleed into each other.
-// Ordered oldest-first for change parsing.
+// isolated by the service log's `subject` field (the build run OCID) so parallel
+// steps sharing the log don't bleed into each other. Ordered oldest-first.
 func (l *Logging) StepLogs(buildRunId string, since time.Time) ([]string, error) {
-	// Sort newest-first so the logSearchLimit cap keeps the most recent entries: a
-	// step's plan change summary ("Plan: N to add, …") is emitted at the tail of the
-	// run, so a large plan whose output exceeds the cap must not have its summary
-	// truncated away. extractLines re-sorts the kept rows oldest-first for parsing.
+	// Sort newest-first so the logSearchLimit cap keeps the tail, where the plan
+	// change summary is emitted; extractLines re-sorts oldest-first for parsing.
 	query := fmt.Sprintf("search %q | sort by datetime desc", fmt.Sprintf("%s/%s/%s", l.compartmentId, l.logGroupId, l.logId))
 	start := ocicommon.SDKTime{Time: since.Add(-logSearchLookback)}
 	end := ocicommon.SDKTime{Time: time.Now().Add(time.Minute)}
@@ -321,16 +307,14 @@ func (l *Logging) StepLogs(buildRunId string, since time.Time) ([]string, error)
 	return extractLines(response.Results, buildRunId), nil
 }
 
-// execPrefix is the DevOps build runner's prefix on every command-output line in
-// the service log (e.g. "EXEC: Plan: 2 to add, …"). It is stripped before parsing
-// so the shared terraform/argocd parsers — some of which anchor on the line start
-// (`strings.HasPrefix("No changes.")`) — see the raw output.
+// execPrefix is the DevOps build runner's prefix on every command-output line
+// (e.g. "EXEC: Plan: 2 to add, …"), stripped before parsing so the shared parsers,
+// some of which anchor on the line start, see the raw output.
 const execPrefix = "EXEC: "
 
 // extractLines pulls the command-output line out of each matching search result,
-// keeping only records whose subject is our build run, ordered by time. A result's
-// fields live under "logContent"; the line is under logContent.data.message and is
-// stripped of the runner's EXEC prefix.
+// keeping only records whose subject is our build run, ordered by time. The line
+// lives under logContent.data.message, stripped of the EXEC prefix.
 func extractLines(results []loggingsearch.SearchResult, buildRunId string) []string {
 	type row struct {
 		time time.Time
@@ -368,10 +352,9 @@ func extractLines(results []loggingsearch.SearchResult, buildRunId string) []str
 	return lines
 }
 
-// logLineData recovers the pushed line from a search result's data field: OCI
-// keeps it as a raw string when the entry was JSON, but wraps plain text (our
-// case) as {"message": "<line>"}. Any other object is re-encoded so no line is
-// silently dropped.
+// logLineData recovers the line from a search result's data field: OCI keeps a raw
+// string, but wraps plain text (our case) as {"message": "<line>"}. Any other object
+// is re-encoded so no line is silently dropped.
 func logLineData(data interface{}) string {
 	switch d := data.(type) {
 	case string:

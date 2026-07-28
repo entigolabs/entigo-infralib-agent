@@ -16,26 +16,19 @@ import (
 )
 
 const (
-	// OCI secret mutations (create/update/cancel-deletion) are ASYNCHRONOUS: the
-	// secret sits in a transient state (UPDATING/CREATING) after the call returns and
-	// a second mutation before it settles is rejected 409 IncorrectState. So every
-	// write waits for ACTIVE first (up to secretActiveTimeout) and retries the write a
-	// few times if it still races the transition.
+	// OCI secret mutations are ASYNCHRONOUS: the secret sits in a transient state
+	// after the call returns and a second mutation before it settles is rejected 409
+	// IncorrectState. So every write waits for ACTIVE first (up to secretActiveTimeout)
+	// and retries a few times if it still races the transition.
 	secretActiveTimeout = 2 * time.Minute
 	defaultSecretPoll   = 3 * time.Second
 	secretUpdateRetries = 5
 )
 
 // SSM implements model.SSM over OCI Vault secrets, encrypted with the agent-owned
-// master key (see KMS). Both parameters and secrets are stored as Vault secrets —
-// custom parameters are few, and terraform module outputs are read bucket-first
-// (service/replace.go), so the parameter path is effectively a rarely-hit
-// fallback. Storing everything in the Vault keeps all sensitive material off the
-// (now single) bucket and under the customer-managed key.
-//
-// Caveat inherited from OCI: a Vault secret cannot be hard-deleted — deletion is
-// scheduled — so Delete* schedules deletion at the earliest allowed time. Updates
-// create a new secret version, so rewriting an existing value never deletes.
+// master key (see KMS). Both parameters and secrets are stored as Vault secrets,
+// keeping all sensitive material off the bucket and under the customer-managed key.
+// A Vault secret cannot be hard-deleted, so Delete* schedules deletion.
 type SSM struct {
 	ctx           context.Context
 	vaultClient   vaultSecretsAPI
@@ -182,14 +175,10 @@ func (s *SSM) ListParameters() ([]string, error) {
 	return names, nil
 }
 
-// ensureSecret upserts a Vault secret and returns its OCID. A no-op write (value
-// unchanged) skips the update but still returns the OCID, so callers can use it as
-// a resolve-or-create for build-spec vaultVariables.
-//
-// A secret scheduled for deletion still occupies its name — OCI rejects a fresh
-// CreateSecret with "name already exists" and does not free the name until the
-// scheduled time — so ensureSecret must recognise that state (which secretOCID
-// hides) and REVIVE the secret by cancelling the deletion, then write the new value.
+// ensureSecret upserts a Vault secret and returns its OCID (a no-op write still
+// returns the OCID, so it doubles as resolve-or-create for build-spec vaultVariables).
+// A secret scheduled for deletion still occupies its name — CreateSecret would fail
+// "name already exists" — so it's revived by cancelling the deletion before writing.
 func (s *SSM) ensureSecret(name, value string) (string, error) {
 	key := sanitizeKey(name)
 	id, state, found, err := s.findSecret(key)
@@ -221,10 +210,9 @@ func (s *SSM) ensureSecret(name, value string) (string, error) {
 	return id, s.applyUpdate(key, id, content)
 }
 
-// applyUpdate writes the secret content, tolerating OCI's asynchronous state
-// machine: it waits for the secret to settle into ACTIVE before writing, and retries
-// if a still-in-flight mutation makes UpdateSecret fail 409 IncorrectState (e.g. the
-// secret was created/revived moments earlier and is still UPDATING).
+// applyUpdate writes the secret content, tolerating OCI's asynchronous state machine:
+// it waits for ACTIVE before writing and retries if a still-in-flight mutation makes
+// UpdateSecret fail 409 IncorrectState.
 func (s *SSM) applyUpdate(name, id, content string) error {
 	var lastErr error
 	for attempt := 0; attempt < secretUpdateRetries; attempt++ {
@@ -283,10 +271,9 @@ func (s *SSM) sleep() error {
 	}
 }
 
-// findSecret locates the secret with the given (already sanitized) name regardless
-// of lifecycle state — unlike secretOCID, which hides any secret scheduled for
-// deletion. It returns the OCID, the lifecycle state and whether such a secret
-// exists at all; a fully deleted secret has freed its name, so it counts as absent.
+// findSecret locates the secret with the given name regardless of lifecycle state —
+// unlike secretOCID, which hides any secret scheduled for deletion. Returns the OCID,
+// the state and whether it exists; a fully deleted secret has freed its name (absent).
 func (s *SSM) findSecret(name string) (string, vault.SecretSummaryLifecycleStateEnum, bool, error) {
 	response, err := s.vaultClient.ListSecrets(s.ctx, vault.ListSecretsRequest{
 		CompartmentId: &s.compartmentId,
@@ -300,11 +287,9 @@ func (s *SSM) findSecret(name string) (string, vault.SecretSummaryLifecycleState
 		if item.Id == nil || item.SecretName == nil || *item.SecretName != name {
 			continue
 		}
-		// Deleting is a one-way transient toward Deleted (the name frees, the deletion
-		// can't be cancelled), so treat it as absent like Deleted — otherwise ensureSecret
-		// would spin waitForSecretActive to its timeout on a secret that can never settle.
-		// PendingDeletion/SchedulingDeletion are kept: they still occupy the name and are
-		// revivable, which ensureSecret relies on.
+		// Deleting is a one-way transient toward Deleted, so treat it as absent —
+		// else ensureSecret would spin to its timeout on a secret that can never
+		// settle. PendingDeletion/SchedulingDeletion are kept: still named, revivable.
 		switch item.LifecycleState {
 		case vault.SecretSummaryLifecycleStateDeleted,
 			vault.SecretSummaryLifecycleStateDeleting:
@@ -326,8 +311,7 @@ func (s *SSM) cancelDeletion(name, id string) error {
 }
 
 // isIncorrectState reports the OCI 409 "IncorrectState" a mutation returns while the
-// secret is still transitioning from a previous (asynchronous) mutation. asServiceError
-// unwraps the fmt-wrapped error updateSecret returns.
+// secret is still transitioning from a previous mutation.
 func isIncorrectState(err error) bool {
 	failure, ok := asServiceError(err)
 	return ok && failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == "IncorrectState"
@@ -425,10 +409,8 @@ func (s *SSM) scheduleDeletion(name string) error {
 	if id == "" {
 		return nil
 	}
-	// OCI requires ScheduledTimeOfDeletion at least 1 day out; scheduling exactly now+24h
-	// lands just under that once request latency is counted (400 InvalidParameter, "invalid
-	// range"), so leave a day of margin. It's a soft delete — the secret is recoverable
-	// until this time — and the agent never relies on the actual removal happening sooner.
+	// OCI requires ScheduledTimeOfDeletion at least 1 day out; now+24h lands just under
+	// that once request latency counts (400 InvalidParameter), so leave a day of margin.
 	when := ocicommon.SDKTime{Time: time.Now().Add(48 * time.Hour)}
 	_, err = s.vaultClient.ScheduleSecretDeletion(s.ctx, vault.ScheduleSecretDeletionRequest{
 		SecretId: &id,

@@ -51,7 +51,7 @@ Google Cloud Service Account with owner access, credentials provided by GCP or g
 
 or
 
-Oracle Cloud user with compartment manage access. Credentials are resolved ambiently like the `oci` CLI: a resource principal when running in-container, otherwise the OCI configuration (`~/.oci/config`, `OCI_CONFIG_FILE`, or config env vars). The first local run must use an API-key or session-token profile: it seeds both the Object Storage credentials used by the terraform state backend and the hosted DevOps build-spec repository (a one-time git push). If that git push fails with a 401 on an identity-domain tenancy, set `ORACLE_GIT_USERNAME` to the correct `<tenancy>/<domain>/<username>` form. Subsequent in-container runs reuse the seeded resources.
+Oracle Cloud user with compartment manage access. Credentials are resolved ambiently like the `oci` CLI: a resource principal when running in-container, otherwise the OCI configuration (`~/.oci/config`, `OCI_CONFIG_FILE`, or config env vars). The first local run must use an API-key or session-token profile with user-management permissions: it seeds a dedicated agent service account that owns the Object Storage credentials used by the terraform state backend and the auth token used to git-push the hosted DevOps build-spec repository (a one-time push). The git username is derived automatically as `<tenancy-name>/<prefix>-infralib-agent`; identity-domain tenancies, which require a domain-qualified username (`<tenancy>/<domain>/<login>`), are not yet auto-detected. Subsequent in-container runs (resource principal) reuse the seeded resources and need only read access to the Vault.
 
 ## Compiling Source
 
@@ -269,7 +269,7 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
-* delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]
+* delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]. For Oracle, the agent-owned KMS vault and key that encrypt the bucket are scheduled for deletion (revertible in the console for ~7 days) only when the bucket is deleted.
 * delete-service-account - delete the service account created by service-account command (default: **false**) [$DELETE_SERVICE_ACCOUNT]
 
 Example
@@ -295,7 +295,7 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
-* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. [$TRUST_ROLE]
+* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. Not supported on Oracle Cloud (no impersonation), where the command always outputs an API signing key and a ready-to-paste `~/.oci/config` profile. [$TRUST_ROLE]
 * remove-user - optional, used with trust-role, removes an existing service account user in AWS or credentials in GCloud, default **false**. [$REMOVE_USER]
 
 Example
@@ -305,7 +305,7 @@ bin/ei-agent service-account --prefix=infralib
 
 ### pull
 
-Pulls agent config yaml and the config folders from the S3/GCloud bucket. Use the `force` flag to overwrite existing local files.
+Pulls agent config yaml and the config folders from the S3, Cloud Storage, or Oracle Object Storage bucket. Use the `force` flag to overwrite existing local files.
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
@@ -603,7 +603,7 @@ Step, module and input field values can be overwritten by using replacement tags
 |                 | source                      | `.module.source`                | Source of the module itself (for module inputs and input files only).                     |
 | `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn` | Optional value from Terraform output from specific step/module. Defaults to empty string. |
 | `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn` | Value from Terraform output from specific step/module.                                    |
-| `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter, GCloud SM, or Oracle Object Storage config bucket.          |
+| `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter, GCloud SM, or OCI Vault.                                     |
 | `step`          | name                        | `.step.name`                    | Name of the step containing the module.                                                   |
 | `tmodule`       | type                        | `.tmodule.eks`                  | Name of the module with a specified type.                                                 |
 | `toptmodule`    | type                        | `.toptmodule.eks`               | Optional name of the module with a specified type.                                        |
@@ -611,7 +611,7 @@ Step, module and input field values can be overwritten by using replacement tags
 | `toutput`       | type.key                    | `.toutput.eks.cluster_arn`      | Value from Terraform output based on module type.                                         |
 | `tsmodule`      | type                        | `.tsmodule.eks`                 | Name of the typed module in the current step.                                             |
 
-For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or the Oracle Cloud Object Storage config bucket.
+For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or OCI Vault.
 
 For example, `{{ .output.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
 
@@ -680,6 +680,8 @@ When configuring API notifications, the agent will send requests to the specifie
 Agent uses default cloud provider encryption settings if no encryption module is present in config.
 
 Currently, infralib only supports customer provided encryption in AWS with KMS. When KMS module is present in the config file, agent will use the KMS arn from the module terraform output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets. Agent applies those changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in S3 after the KMS module was applied will be encrypted with it.
+
+Oracle Cloud manages encryption differently: the agent provisions and owns its own KMS vault and key automatically and uses it to encrypt the state bucket and every Vault-stored parameter and secret. It does not consume a KMS module from the config (the encryption module and customer-provided key apply to AWS only), so no encryption configuration is required.
 
 ### Scheduling
 

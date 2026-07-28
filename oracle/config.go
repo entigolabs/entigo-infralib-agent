@@ -8,12 +8,9 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
 )
 
-// newConfigProvider builds an OCI SDK configuration provider, mirroring how the
-// oci CLI resolves credentials. In-container runs authenticate via resource
-// principal, signalled by the injected version env var;
-// every other run uses the SDK default chain — ~/.oci/config (or the path in
-// OCI_CONFIG_FILE) plus config env vars. Region is applied separately via
-// SetRegion on each client, so a resource-principal run needs no region here.
+// newConfigProvider resolves OCI credentials like the oci CLI: resource principal
+// in-container (signalled by the env var), else the SDK default chain
+// (~/.oci/config or OCI_CONFIG_FILE). Region is applied per client via SetRegion.
 func newConfigProvider() (ocicommon.ConfigurationProvider, error) {
 	if os.Getenv(auth.ResourcePrincipalRPSTEnvVar) != "" {
 		return auth.ResourcePrincipalConfigurationProvider()
@@ -21,10 +18,6 @@ func newConfigProvider() (ocicommon.ConfigurationProvider, error) {
 	return ocicommon.DefaultConfigProvider(), nil
 }
 
-// getBucketName is the single bucket holding terraform state and the terraform
-// output JSON; all secrets live in the KMS Vault instead. Object Storage bucket
-// names are unique within the tenancy namespace, so the deployment prefix +
-// region is enough to disambiguate parallel deployments.
 func getBucketName(cloudPrefix, region string) string {
 	return fmt.Sprintf("%s-%s", cloudPrefix, region)
 }
