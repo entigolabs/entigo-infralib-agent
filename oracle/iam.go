@@ -453,6 +453,34 @@ func (i *IAM) EnsureObjectStorageKeyAccess(cloudPrefix, region, keyId string) er
 	return i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
 }
 
+// EnsureSchedulerAccess grants the two principals in the cron chain
+// (Resource Scheduler → Function → agent-update build run):
+//   - the Resource Scheduler service principal to invoke the function
+//     (request.principal.type='resourceschedule' → use fn-function), and
+//   - the function (a dynamic group over fnfunc resources) to trigger the DevOps
+//     build run (manage devops-family), using its resource principal.
+//
+// Both are scoped to the agent's compartment. Reconciled on every setup run.
+func (i *IAM) EnsureSchedulerAccess(cloudPrefix string) error {
+	dgName := fmt.Sprintf("%s-infralib-fn", cloudPrefix)
+	matchingRule := fmt.Sprintf("ALL {resource.type='fnfunc', resource.compartment.id='%s'}", i.compartmentId)
+	if err := i.ensureDynamicGroup(dgName, "Entigo infralib scheduler function", matchingRule); err != nil {
+		return err
+	}
+	statements := []string{
+		fmt.Sprintf("Allow any-user to use fn-function in compartment id %s where request.principal.type='resourceschedule'", i.compartmentId),
+		fmt.Sprintf("Allow dynamic-group %s to manage devops-family in compartment id %s", dgName, i.compartmentId),
+	}
+	return i.ensurePolicy(fmt.Sprintf("%s-infralib-scheduler", cloudPrefix), "Entigo infralib scheduler access", statements)
+}
+
+// DeleteSchedulerAccess removes the scheduler policy and the function dynamic group
+// created by EnsureSchedulerAccess. Best-effort.
+func (i *IAM) DeleteSchedulerAccess(cloudPrefix string) {
+	i.deletePolicyByName(fmt.Sprintf("%s-infralib-scheduler", cloudPrefix))
+	i.deleteDynamicGroupByName(fmt.Sprintf("%s-infralib-fn", cloudPrefix))
+}
+
 // EnsureAgentServiceAccount find-or-creates the agent's own dedicated IAM user,
 // its group and the policy granting the two things the agent's persisted
 // credentials actually use: object-storage (the S3-compatible terraform-state

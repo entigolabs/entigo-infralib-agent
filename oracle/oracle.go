@@ -250,7 +250,13 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	}
 	resources.CodeBuild = builder
 	resources.Pipeline = NewPipeline(o.ctx, builder, gate, logs, o.cloudPrefix, manager)
-	o.warnScheduleUnsupported(config.Schedule)
+	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IAM service: %w", err)
+	}
+	if err = o.createSchedule(config.Schedule, build, iam, manager); err != nil {
+		return nil, err
+	}
 	return resources, nil
 }
 
@@ -305,14 +311,137 @@ func (o *oracleService) terraformCacheEnabled() bool {
 	return o.pipeline.TerraformCache.Value != nil && *o.pipeline.TerraformCache.Value
 }
 
-// warnScheduleUnsupported reports that cron-scheduled updates are not yet wired
-// for Oracle. OCI Resource Scheduler targets resource lifecycle actions, not
-// "run the agent update job", so a proper trigger (Events+Functions or an OKE
-// CronJob) is a follow-up.
-func (o *oracleService) warnScheduleUnsupported(schedule model.Schedule) {
-	if schedule.UpdateCron != "" {
-		slog.Warn(common.PrefixWarning("scheduled updates are not yet supported on Oracle Cloud; ignoring update cron"))
+// createSchedule reconciles the cron that periodically re-runs the agent-update
+// build pipeline, mirroring the AWS/GCloud flow. OCI has no direct cron→pipeline
+// trigger, so the chain is Resource Scheduler --(START_RESOURCE, cron)--> Function
+// --(CreateBuildRun)--> <prefix>-agent-update. An empty cron tears the chain down.
+func (o *oracleService) createSchedule(schedule model.Schedule, build *DevOpsBuilder, iam *IAM, manager model.NotificationManager) error {
+	scheduler, err := NewScheduler(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to create scheduler service: %w", err)
 	}
+	existing, err := scheduler.getUpdateSchedule()
+	if err != nil {
+		if schedule.UpdateCron == "" {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get resource schedule %s: %s", getScheduleName(o.cloudPrefix), err)))
+			return nil
+		}
+		return err
+	}
+	if schedule.UpdateCron == "" {
+		if existing == nil {
+			return nil
+		}
+		if err = scheduler.deleteUpdateSchedule(*existing.Id); err != nil {
+			return err
+		}
+		o.teardownScheduleInfra(iam)
+		manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, "")
+		return nil
+	}
+	// The Function triggers the agent-update pipeline, which the bootstrap command
+	// creates. Without it there is nothing to schedule — warn and skip rather than
+	// build the chain around a missing target.
+	pipelineId, err := build.FindBuildPipelineId(getScheduleName(o.cloudPrefix))
+	if err != nil {
+		return err
+	}
+	if pipelineId == "" {
+		slog.Warn(common.PrefixWarning("agent-update build pipeline not found; run the bootstrap command before scheduling — ignoring update cron"))
+		return nil
+	}
+	functionId, err := o.ensureScheduleFunction(iam, pipelineId)
+	if err != nil {
+		// Provisioning the schedule chain (VCN, Function, IAM policy) needs admin
+		// perms. A steady-state consume run (RP / CI-CD SA, Vault-read only) can't
+		// create it — but an admin run already did, so an unchanged schedule short-
+		// circuits above and never reaches here. Reaching here without perms means a
+		// first-time or changed cron on a non-admin run: warn and skip rather than
+		// fail the whole setup.
+		if isNotAuthorized(err) {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Skipping schedule provisioning (no IAM permissions — "+
+				"expected on a non-admin run); run an admin bootstrap to set the update cron (%s)", errSummary(err))))
+			return nil
+		}
+		return err
+	}
+	if existing == nil {
+		if err = scheduler.createUpdateSchedule(schedule.UpdateCron, functionId); err == nil {
+			manager.Schedule(common.UpdateCommand, model.ScheduleAdded, schedule.UpdateCron)
+		}
+		return err
+	}
+	if existing.RecurrenceDetails == nil || *existing.RecurrenceDetails != schedule.UpdateCron {
+		if err = scheduler.updateUpdateSchedule(*existing.Id, schedule.UpdateCron, functionId); err == nil {
+			manager.Schedule(common.UpdateCommand, model.ScheduleModified, schedule.UpdateCron)
+		}
+		return err
+	}
+	return nil
+}
+
+// ensureScheduleFunction provisions the invoke chain's resource side: a minimal VCN
+// + subnet (Functions require one), the Function Application + Function pointing at
+// the pre-published OCIR image and carrying the update pipeline OCID, and the IAM
+// policies that let the Resource Scheduler invoke it and the Function trigger the
+// build run. Returns the function OCID the schedule targets.
+func (o *oracleService) ensureScheduleFunction(iam *IAM, pipelineId string) (string, error) {
+	network, err := NewNetwork(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		return "", err
+	}
+	subnetId, err := network.EnsureFunctionSubnet()
+	if err != nil {
+		return "", err
+	}
+	fns, err := NewFunctions(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		return "", err
+	}
+	appId, err := fns.EnsureApplication(subnetId)
+	if err != nil {
+		return "", err
+	}
+	if err = iam.EnsureSchedulerAccess(o.cloudPrefix); err != nil {
+		return "", err
+	}
+	return fns.EnsureFunction(appId, SchedulerFunctionImage(o.region), FunctionConfig(pipelineId, o.region))
+}
+
+// teardownScheduleInfra removes the Function, its Application, the VCN and the
+// scheduler IAM — everything ensureScheduleFunction created except the schedule
+// itself. Best-effort (each step warns and continues). Shared by the empty-cron
+// path and DeleteResources.
+func (o *oracleService) teardownScheduleInfra(iam *IAM) {
+	if fns, err := NewFunctions(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to create functions service for teardown: %s", err)))
+	} else if appId, err := fns.ApplicationId(); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to resolve function application for teardown: %s", err)))
+	} else if appId != "" {
+		fns.DeleteFunction(appId)
+		fns.DeleteApplication()
+	}
+	if network, err := NewNetwork(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to create network service for teardown: %s", err)))
+	} else {
+		network.DeleteNetwork()
+	}
+	iam.DeleteSchedulerAccess(o.cloudPrefix)
+}
+
+// teardownSchedule removes the schedule (if any) then its Function/VCN/IAM. Called
+// from DeleteResources; best-effort throughout.
+func (o *oracleService) teardownSchedule(iam *IAM) {
+	if scheduler, err := NewScheduler(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to create scheduler service for teardown: %s", err)))
+	} else if existing, err := scheduler.getUpdateSchedule(); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("failed to get resource schedule for teardown: %s", err)))
+	} else if existing != nil {
+		if err = scheduler.deleteUpdateSchedule(*existing.Id); err != nil {
+			slog.Warn(common.PrefixWarning(err.Error()))
+		}
+	}
+	o.teardownScheduleInfra(iam)
 }
 
 // agentGitAuth carries the DevOps build-spec push credentials resolved for the agent
@@ -595,6 +724,9 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	} else {
 		logs.Delete()
 	}
+	// The cron scheduling chain: Resource Schedule, the invoking Function + its
+	// Application, the Function's VCN, and the scheduler IAM policy/dynamic group.
+	o.teardownSchedule(iam)
 	// The agent's own IAM scaffolding (service account with its state Customer Secret
 	// Key and DevOps auth token, group, build-pipeline dynamic group, policies).
 	iam.DeleteAgentServiceAccount(o.cloudPrefix)

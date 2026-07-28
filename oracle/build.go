@@ -119,6 +119,29 @@ type DevOpsBuilder struct {
 // to enable the project's build logs and to host the approval pipelines).
 func (d *DevOpsBuilder) ProjectId() string { return d.projectId }
 
+// FindBuildPipelineId resolves a build pipeline OCID by display name in the shared
+// project, or "" if none exists (e.g. the agent pipelines were never bootstrapped).
+// Used by the scheduler setup to target the agent-update pipeline from the Function.
+func (d *DevOpsBuilder) FindBuildPipelineId(displayName string) (string, error) {
+	d.mu.Lock()
+	if id, ok := d.pipelines[displayName]; ok {
+		d.mu.Unlock()
+		return id, nil
+	}
+	d.mu.Unlock()
+	list, err := d.client.ListBuildPipelines(d.ctx, devops.ListBuildPipelinesRequest{
+		ProjectId:   &d.projectId,
+		DisplayName: &displayName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list build pipelines: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return "", nil
+	}
+	return *list.Items[0].Id, nil
+}
+
 func NewDevOpsBuilder(ctx context.Context, provider ocicommon.ConfigurationProvider, region, compartmentId, cloudPrefix string) (*DevOpsBuilder, error) {
 	client, err := devops.NewDevopsClientWithConfigurationProvider(provider)
 	if err != nil {

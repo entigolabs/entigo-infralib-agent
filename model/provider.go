@@ -18,6 +18,13 @@ const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigola
 
 // AgentImageOracle is provisional; final home is OCIR once the oracle base image build lands.
 const AgentImageOracle = "docker.io/entigolabs/entigo-infralib-agent"
+
+// SchedulerFunctionImageOracle is the OCI Function image invoked by the Resource
+// Scheduler to trigger the agent-update build pipeline on cron. OCI Functions can
+// only run images hosted in the tenancy's regional OCIR, so this is a region-key
+// format string (e.g. fra.ocir.io/...); the region key is substituted at the call
+// site. Provisional until the Entigo CI publishes the image per region.
+const SchedulerFunctionImageOracle = "%s.ocir.io/entigolabs/entigo-infralib-scheduler:latest"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
