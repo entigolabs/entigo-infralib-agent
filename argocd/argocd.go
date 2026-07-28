@@ -63,6 +63,8 @@ func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, 
 	var cloudProvider string
 	if a.provider == model.GCLOUD {
 		cloudProvider = "google"
+	} else if a.provider == model.ORACLE {
+		cloudProvider = "oracle"
 	} else {
 		cloudProvider = "aws"
 	}

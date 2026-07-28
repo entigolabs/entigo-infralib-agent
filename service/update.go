@@ -1543,6 +1543,8 @@ func (u *updater) getProxySource(source string, step model.Step) (string, error)
 func (u *updater) proxyModuleType() string {
 	if u.resources.GetProviderType() == model.GCLOUD {
 		return "gar-proxy"
+	} else if u.resources.GetProviderType() == model.ORACLE {
+		return "ocir-proxy"
 	}
 	return "ecr-proxy"
 }

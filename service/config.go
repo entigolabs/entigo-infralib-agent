@@ -504,6 +504,8 @@ func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
 func getKubernetesClusterName(providerType model.ProviderType) string {
 	if providerType == model.GCLOUD {
 		return "{{ .toutput.gke.cluster_name }}"
+	} else if providerType == model.ORACLE {
+		return "{{ .toutput.oke.cluster_name }}"
 	}
 	return "{{ .toutput.eks.cluster_name }}"
 }
