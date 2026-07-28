@@ -133,6 +133,9 @@ func (p *Pipeline) waitForManualApproval(pipelineName string, step model.Step, c
 	if err = p.gate.WaitForApproval(deploymentId); err != nil {
 		return fmt.Errorf("manual approval for %s: %w", pipelineName, err)
 	}
+	if p.manager != nil {
+		p.manager.Approval(pipelineName, step.Name, "")
+	}
 	log.Printf("Approved %s\n", pipelineName)
 	return nil
 }
