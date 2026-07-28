@@ -274,7 +274,7 @@ components:
 
     ProviderType:
       type: string
-      enum: [ AWS, GCLOUD ]
+      enum: [ AWS, GCLOUD, ORACLE ]
 
     PlanEntity:
       type: object
