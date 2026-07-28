@@ -253,11 +253,15 @@ func upsertWrapperConfig(notifiers []model.ConfigNotification, prefix string, ss
 		}
 		return false, nil
 	}
-	notifierYaml, err := yaml.Marshal(notifierApi)
+	// Marshal as single-line JSON, not YAML: the value is stored as a cloud secret
+	// and, on Oracle, delivered through an OCI DevOps vaultVariable that is truncated
+	// at the first newline. Multi-line YAML value would reach the container missing
+	// wrapper_url. JSON is a YAML subset, so the wrapper still parses it with yaml.Unmarshal.
+	notifierJSON, err := json.Marshal(notifierApi)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal wrapper notifier config: %v", err)
 	}
-	if err = ssm.PutSecret(model.WrapperConfigSecretName(prefix), string(notifierYaml)); err != nil {
+	if err = ssm.PutSecret(model.WrapperConfigSecretName(prefix), string(notifierJSON)); err != nil {
 		return false, fmt.Errorf("failed to upsert wrapper config secret: %v", err)
 	}
 	return true, nil

@@ -100,17 +100,17 @@ type Teams struct {
 }
 
 type NotificationApi struct {
-	URL        string            `yaml:"url,omitempty"`
-	WrapperURL string            `yaml:"wrapper_url,omitempty"`
-	Headers    map[string]string `yaml:"headers,omitempty"`
-	OAuth      *ApiOauth         `yaml:"oauth,omitempty"`
+	URL        string            `yaml:"url,omitempty" json:"url,omitempty"`
+	WrapperURL string            `yaml:"wrapper_url,omitempty" json:"wrapper_url,omitempty"`
+	Headers    map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	OAuth      *ApiOauth         `yaml:"oauth,omitempty" json:"oauth,omitempty"`
 }
 
 type ApiOauth struct {
-	ClientId     string   `yaml:"client_id"`
-	ClientSecret string   `yaml:"client_secret"`
-	TokenURL     string   `yaml:"token_url"`
-	Scopes       []string `yaml:"scopes,omitempty"`
+	ClientId     string   `yaml:"client_id" json:"client_id"`
+	ClientSecret string   `yaml:"client_secret" json:"client_secret"`
+	TokenURL     string   `yaml:"token_url" json:"token_url"`
+	Scopes       []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
 }
 
 type Schedule struct {

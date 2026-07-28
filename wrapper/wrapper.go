@@ -83,7 +83,11 @@ func parsePipelineIndex(raw string) int32 {
 }
 
 func getBackendClient(config *model.NotificationApi, campaignId string, insecure bool) (BackendClient, error) {
-	if config == nil || config.WrapperURL == "" {
+	if config == nil {
+		return nil, nil
+	}
+	if config.WrapperURL == "" {
+		slog.Warn("wrapper config supplied but wrapper_url is empty, running transparently")
 		return nil, nil
 	}
 	if campaignId == "" {
