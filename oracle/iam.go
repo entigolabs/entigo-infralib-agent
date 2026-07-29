@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -414,15 +415,147 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 // permissions it needs: reading the build-spec repo, fetching+decrypting the step's Vault
 // secrets, and — because the RP is forwarded into the step container where terraform runs
 // — managing the infrastructure the steps create. A dynamic group matches build pipelines
-// in the compartment and is granted manage all-resources over it.
+// in the compartment carrying the agent's Infralib.created-by defined tag (so unrelated
+// build pipelines sharing the compartment don't inherit the grant) and is granted manage
+// all-resources over it.
 func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
+	if err := i.EnsureTagNamespace(cloudPrefix); err != nil {
+		return err
+	}
 	dgName := fmt.Sprintf("%s-infralib", cloudPrefix)
-	matchingRule := fmt.Sprintf("ALL {resource.type='devopsbuildpipeline', resource.compartment.id='%s'}", i.compartmentId)
+	matchingRule := fmt.Sprintf("ALL {resource.type='devopsbuildpipeline', resource.compartment.id='%s', tag.%s.%s.value='%s'}",
+		i.compartmentId, tagNamespaceName(cloudPrefix), model.ResourceTagKey, model.ResourceTagValue)
 	if err := i.ensureDynamicGroup(dgName, "Entigo infralib devops build pipelines", matchingRule); err != nil {
 		return err
 	}
-	statement := fmt.Sprintf("Allow dynamic-group %s to manage all-resources in compartment id %s", dgName, i.compartmentId)
-	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access", []string{statement})
+	statements := []string{
+		fmt.Sprintf("Allow dynamic-group %s to manage all-resources in compartment id %s", dgName, i.compartmentId),
+		fmt.Sprintf("Allow dynamic-group %s to use tag-namespaces in tenancy where target.tag-namespace.name='%s'", dgName, tagNamespaceName(cloudPrefix)),
+		fmt.Sprintf("Allow dynamic-group %s to manage dynamic-groups in tenancy", dgName),
+		fmt.Sprintf("Allow dynamic-group %s to manage policies in tenancy", dgName),
+	}
+	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access", statements)
+}
+
+// tagNamespaceName is the per-prefix defined-tag namespace the agent owns
+// (<prefix>-infralib). Its created-by key drives the build-pipeline dynamic group's
+// matching rule (EnsureDevOpsBuildAccess) — only defined tags, never freeform, can gate a
+// dynamic group. Per-prefix rather than a shared tenancy-wide name so exactly one
+// deployment owns it and teardown can cleanly delete it (DeleteTagNamespace); the name is
+// unique per tenancy. Created at the tenancy root so its tags apply in any compartment.
+func tagNamespaceName(cloudPrefix string) string {
+	return fmt.Sprintf("%s-infralib", cloudPrefix)
+}
+
+// definedTags is the defined-tag map applied to resources whose type feeds a dynamic
+// group (build pipelines), mirroring the freeform created-by convention.
+func definedTags(cloudPrefix string) map[string]map[string]interface{} {
+	return map[string]map[string]interface{}{
+		tagNamespaceName(cloudPrefix): {model.ResourceTagKey: model.ResourceTagValue},
+	}
+}
+
+// EnsureTagNamespace find-or-creates the <prefix>-infralib defined-tag namespace and its
+// created-by key. Needs manage tag-namespaces in tenancy (an admin bootstrap privilege); a
+// compartment-scoped consume run gets NotAuthorizedOrNotFound and relies on a prior
+// bootstrap having created it (the caller warn-skips, like the dynamic-group reconcile).
+func (i *IAM) EnsureTagNamespace(cloudPrefix string) error {
+	nsId, err := i.ensureTagNamespace(tagNamespaceName(cloudPrefix), "Entigo infralib agent-owned defined tags")
+	if err != nil {
+		return err
+	}
+	return i.ensureTag(nsId, model.ResourceTagKey, "Identifies resources the agent created")
+}
+
+// DeleteTagNamespace retires and cascade-deletes the agent's per-prefix tag namespace.
+// OCI requires retiring a namespace before deletion; cascade delete then removes the
+// namespace and its tag definitions (async, via a work request). Best-effort — teardown
+// runs after the build pipelines that reference the tag are already deleted.
+func (i *IAM) DeleteTagNamespace(cloudPrefix string) {
+	name := tagNamespaceName(cloudPrefix)
+	id, err := i.findTagNamespace(name)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to find tag namespace %s for deletion: %s", name, errSummary(err))))
+		return
+	}
+	if id == "" {
+		return
+	}
+	retire := true
+	if _, err = i.client.UpdateTagNamespace(i.ctx, identity.UpdateTagNamespaceRequest{
+		TagNamespaceId:            &id,
+		UpdateTagNamespaceDetails: identity.UpdateTagNamespaceDetails{IsRetired: &retire},
+	}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to retire tag namespace %s (delete it manually): %s", name, errSummary(err))))
+		return
+	}
+	if _, err = i.client.CascadeDeleteTagNamespace(i.ctx, identity.CascadeDeleteTagNamespaceRequest{
+		TagNamespaceId: &id,
+	}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete retired tag namespace %s (delete it manually): %s", name, errSummary(err))))
+	}
+}
+
+func (i *IAM) ensureTagNamespace(name, description string) (string, error) {
+	id, err := i.findTagNamespace(name)
+	if err != nil || id != "" {
+		return id, err
+	}
+	created, err := i.client.CreateTagNamespace(i.ctx, identity.CreateTagNamespaceRequest{
+		CreateTagNamespaceDetails: identity.CreateTagNamespaceDetails{
+			CompartmentId: &i.tenancyId,
+			Name:          &name,
+			Description:   &description,
+			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+		},
+	})
+	if err != nil {
+		// A concurrent bootstrap of another prefix (this namespace is tenancy-wide) may
+		// have created it between the list and the create.
+		if isConflictStatus(err) {
+			return i.findTagNamespace(name)
+		}
+		return "", fmt.Errorf("failed to create tag namespace %s: %w", name, err)
+	}
+	return *created.Id, nil
+}
+
+func (i *IAM) findTagNamespace(name string) (string, error) {
+	list, err := i.client.ListTagNamespaces(i.ctx, identity.ListTagNamespacesRequest{
+		CompartmentId: &i.tenancyId,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list tag namespaces: %w", err)
+	}
+	for _, ns := range list.Items {
+		if ns.Name != nil && strings.EqualFold(*ns.Name, name) {
+			return *ns.Id, nil
+		}
+	}
+	return "", nil
+}
+
+func (i *IAM) ensureTag(namespaceId, name, description string) error {
+	list, err := i.client.ListTags(i.ctx, identity.ListTagsRequest{TagNamespaceId: &namespaceId})
+	if err != nil {
+		return fmt.Errorf("failed to list tags in namespace: %w", err)
+	}
+	for _, t := range list.Items {
+		if t.Name != nil && strings.EqualFold(*t.Name, name) {
+			return nil
+		}
+	}
+	_, err = i.client.CreateTag(i.ctx, identity.CreateTagRequest{
+		TagNamespaceId: &namespaceId,
+		CreateTagDetails: identity.CreateTagDetails{
+			Name:        &name,
+			Description: &description,
+		},
+	})
+	if err != nil && !isConflictStatus(err) {
+		return fmt.Errorf("failed to create tag %s: %w", name, err)
+	}
+	return nil
 }
 
 // EnsureObjectStorageKeyAccess lets the Object Storage service principal use the agent's
@@ -514,8 +647,10 @@ func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {
 
 // DeleteAgentServiceAccount removes the agent's own IAM scaffolding, mirroring
 // EnsureAgentServiceAccount + EnsureDevOpsBuildAccess: the SA user (with its CSK and auth
-// token), its group, the build-pipeline dynamic group and the -infralib-agent/-infralib
-// policies. The -infralib-kms policy is deleted separately by the caller AFTER the bucket
+// token), its group, the build-pipeline dynamic group, the -infralib-agent/-infralib
+// policies and the <prefix>-infralib defined-tag namespace (retired + cascade-deleted; the
+// tag's only consumers, the build pipelines, are already gone by teardown order). The
+// -infralib-kms policy is deleted separately by the caller AFTER the bucket
 // (the Object Storage principal needs it until the bucket is gone). Best-effort.
 func (i *IAM) DeleteAgentServiceAccount(cloudPrefix string) {
 	name := fmt.Sprintf("%s-infralib-agent", cloudPrefix)
@@ -524,6 +659,7 @@ func (i *IAM) DeleteAgentServiceAccount(cloudPrefix string) {
 	i.deletePolicyByName(name)
 	i.deletePolicyByName(fmt.Sprintf("%s-infralib", cloudPrefix))
 	i.deleteDynamicGroupByName(fmt.Sprintf("%s-infralib", cloudPrefix))
+	i.DeleteTagNamespace(cloudPrefix)
 }
 
 // DeleteCICDServiceAccount removes the external CI/CD service account minted by
@@ -667,12 +803,16 @@ func (i *IAM) deleteDynamicGroupByName(name string) {
 // (can't mint/rotate SAs or widen its own access) and no KMS/vault/bucket creation (the
 // trust root already exists, so it only finds+uses it). Everything is compartment-scoped.
 // The terraform-state S3 traffic is signed with the agent SA's own CSK, not this identity.
-func cicdServiceAccountStatements(group, compartmentId, bucketName string) []string {
+func cicdServiceAccountStatements(group, compartmentId, bucketName, cloudPrefix string) []string {
 	return []string{
 		// DevOps: create/update/delete the build & deployment pipelines and push the
 		// hosted build-spec repo content that config changes drive, and trigger build
 		// runs / deployments. This is the "dynamically changed through config" surface.
 		fmt.Sprintf("Allow group %s to manage devops-family in compartment id %s", group, compartmentId),
+		// Apply the <prefix>-infralib defined tag to the build pipelines this SA creates
+		// (the tag drives the build dynamic group). `use`, not `manage` — tag application
+		// only, scoped to the one namespace; namespace lifecycle stays with the admin bootstrap.
+		fmt.Sprintf("Allow group %s to use tag-namespaces in tenancy where target.tag-namespace.name='%s'", group, tagNamespaceName(cloudPrefix)),
 		// Vault secrets: read the bootstrapped CSK / git token and upsert per-source,
 		// wrapper and custom secrets. `manage` covers create/update/read-bundle/delete;
 		// the family aggregates secrets + secret-versions + secret-bundles.

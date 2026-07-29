@@ -420,6 +420,14 @@ func isConflict(err error, code string) bool {
 	return ok && failure.GetHTTPStatusCode() == http.StatusConflict && failure.GetCode() == code
 }
 
+// isConflictStatus reports any 409, regardless of the specific code — used where the
+// concrete code is irrelevant (e.g. a tag namespace/tag already exists from a concurrent
+// bootstrap and the find-or-create just needs to fall back to the existing resource).
+func isConflictStatus(err error) bool {
+	failure, ok := asServiceError(err)
+	return ok && failure.GetHTTPStatusCode() == http.StatusConflict
+}
+
 // isTransactionConflict reports OCI's optimistic-locking failure: a 409 raised when
 // concurrent writes to one parent (e.g. CreateBuildPipeline calls on one DevOps
 // project) overlap. Transient — the loser retries, unlike an already-exists conflict.

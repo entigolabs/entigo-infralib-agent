@@ -605,7 +605,7 @@ func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) erro
 	if err = iam.addUserToGroup(userId, groupId); err != nil {
 		return err
 	}
-	statements := cicdServiceAccountStatements(groupName, o.compartmentId, getBucketName(o.cloudPrefix, o.region))
+	statements := cicdServiceAccountStatements(groupName, o.compartmentId, getBucketName(o.cloudPrefix, o.region), o.cloudPrefix)
 	if err = iam.ensurePolicy(username, "Entigo infralib CI/CD policy", statements); err != nil {
 		return err
 	}
