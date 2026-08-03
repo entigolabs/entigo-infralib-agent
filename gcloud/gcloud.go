@@ -163,7 +163,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, err
 	}
-	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value, config.EnableOpenTofu, g.cloudPrefix)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), g.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}

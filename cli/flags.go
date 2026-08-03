@@ -23,10 +23,11 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(append(baseFlags, getProviderFlags()...), &yesFlag, &deleteBucketFlag, &deleteSAFlag)
 	case common.UpdateCommand:
 		return append(append(baseFlags, getProviderFlags()...), &stepsFlag, &pipelineTypeFlag,
-			&logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag)
+			&logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag, &offlineTrustBundleFlag)
 	case common.RunCommand:
 		return append(append(baseFlags, getProviderFlags()...), &allowParallelFlag, &stepsFlag,
-			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag)
+			&pipelineTypeFlag, &logsPathFlag, &printLogsFlag, &terraformCacheFlag, &skipBucketDelayFlag,
+			&offlineTrustBundleFlag)
 	case common.PullCommand:
 		return append(append(baseFlags, getProviderFlags()...), &forceFlag)
 	case common.SACommand:
@@ -66,6 +67,17 @@ func getProviderFlags() []cli.Flag {
 		&gcloudCredentialsJsonFlag,
 		&awsRoleArnFlag,
 	}
+}
+
+var offlineTrustBundleFlag = cli.StringFlag{
+	Name:        "offline-trust-bundle",
+	Aliases:     []string{"otb"},
+	Sources:     cli.EnvVars("OFFLINE_TRUST_BUNDLE"),
+	DefaultText: "",
+	Value:       "",
+	Usage:       "path to a sigstore trusted root JSON for offline OCI signature verification; empty fetches it via TUF",
+	Destination: &flags.OfflineTrustBundle,
+	Required:    false,
 }
 
 var loggingFlag = cli.StringFlag{

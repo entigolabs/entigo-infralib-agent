@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,17 +19,20 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/oci"
 	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"golang.org/x/sync/singleflight"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	stateFile = "state.yaml"
-	ssmPrefix = "/entigo-infralib"
+	stateFile       = "state.yaml"
+	ssmPrefix       = "/entigo-infralib"
+	ociManifestFile = "manifest.json"
 )
 
 type Updater interface {
@@ -43,6 +47,7 @@ type updater struct {
 	stepChecksums model.StepsChecksums
 	resources     model.Resources
 	terraform     terraform.Terraform
+	argocd        argocd.ArgoCD
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -52,6 +57,16 @@ type updater struct {
 	moduleSources map[string]model.SourceKey
 	sources       map[model.SourceKey]*model.Source
 	firstRunDone  map[string]bool
+
+	proxyRegistries sync.Map
+	proxyGroup      singleflight.Group
+
+	manifests     sync.Map
+	manifestGroup singleflight.Group
+
+	verifier    oci.Verifier
+	verified    sync.Map
+	verifyGroup singleflight.Group
 }
 
 func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
@@ -96,6 +111,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		stepChecksums: model.NewStepsChecksums(),
 		resources:     resources,
 		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
+		argocd:        argocd.NewArgoCD(resources.GetProviderType()),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
@@ -105,6 +121,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
 		cmd:           command,
+		verifier:      oci.NewCosignVerifier(flags.OfflineTrustBundle),
 	}, nil
 }
 
@@ -162,14 +179,16 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 			forcedVersion = source.Version
 		}
 		sources[model.SourceKey{URL: source.URL, ForcedVersion: forcedVersion}] = &model.Source{
-			URL:           source.URL,
-			StableVersion: stableVersion,
-			ForcedVersion: forcedVersion,
-			Modules:       model.NewSet[string](),
-			Includes:      model.ToSet(source.Include),
-			Excludes:      model.ToSet(source.Exclude),
-			Storage:       storage,
-			Auth:          model.SourceAuth{Username: source.Username, Password: source.Password},
+			URL:             source.URL,
+			StableVersion:   stableVersion,
+			ForcedVersion:   forcedVersion,
+			Modules:         model.NewSet[string](),
+			Includes:        model.ToSet(source.Include),
+			Excludes:        model.ToSet(source.Exclude),
+			Storage:         storage,
+			Auth:            model.SourceAuth{Username: source.Username, Password: source.Password},
+			UseOCIDigests:   source.UseOCIDigests,
+			VerifySignature: source.VerifySignature,
 		}
 	}
 	moduleSources, err := addSourceModules(steps, config.Sources, sources, state)
@@ -181,14 +200,26 @@ func createSources(ctx context.Context, steps []model.Step, config model.Config,
 }
 
 func getSourceStorage(ctx context.Context, source model.ConfigSource, certs []model.File) (model.Storage, *version.Version, error) {
-	if util.IsLocalSource(source.URL) {
+	switch util.GetSourceType(source.URL) {
+	case model.SourceTypeLocal:
 		return git.NewLocalPath(source.URL), nil, nil
+	case model.SourceTypeOCI:
+		return newRemoteStorage(source, certs, func(CABundle []byte) (model.SourceRepository, error) {
+			return oci.NewSourceClient(ctx, source, CABundle)
+		})
+	default:
+		return newRemoteStorage(source, certs, func(CABundle []byte) (model.SourceRepository, error) {
+			return git.NewSourceClient(ctx, source, CABundle)
+		})
 	}
+}
+
+func newRemoteStorage(source model.ConfigSource, certs []model.File, newClient func(CABundle []byte) (model.SourceRepository, error)) (model.Storage, *version.Version, error) {
 	CABundle, err := getCABundle(source.CAFile, certs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get CABundle for source %s: %v", source.CAFile, err)
 	}
-	sourceClient, err := git.NewSourceClient(ctx, source, CABundle)
+	sourceClient, err := newClient(CABundle)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create source client %s: %v", source.URL, err)
 	}
@@ -873,6 +904,9 @@ func (u *updater) appliedVersionMatchesRelease(step model.Step, stepState model.
 			return false
 		}
 		module := getModule(moduleState.Name, step.Modules)
+		if module == nil {
+			return false
+		}
 		moduleSource := u.getModuleSource(module.Source)
 		if moduleSource.ForcedVersion != "" {
 			return true // Always allow parallel execution for forced versions
@@ -1101,7 +1135,10 @@ func getAutoApprove(state model.StateStep) bool {
 }
 
 func getSourceReleases(steps []model.Step, source *model.Source, state *model.State) (*version.Version, []*version.Version, error) {
-	sourceClient := source.Storage.(*git.SourceClient)
+	sourceClient, ok := source.Storage.(model.SourceRepository)
+	if !ok {
+		return nil, nil, fmt.Errorf("source %s storage does not support release enumeration", source.URL)
+	}
 	oldestVersion, err := getOldestVersion(steps, source, state)
 	if err != nil {
 		return nil, nil, err
@@ -1443,7 +1480,15 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 		if moduleVersion.Changed {
 			changed = true
 		}
-		err := u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion)
+		source, err := u.getProxySource(moduleVersion.Source.URL, step)
+		if err != nil {
+			return false, "", nil, err
+		}
+		ociVersion, err := u.getOCIModuleVersion(step.Type, moduleVersion.Source, module.Source, moduleVersion.Version)
+		if err != nil {
+			return false, "", nil, err
+		}
+		err = u.terraform.AddModule(u.resources.GetCloudPrefix(), body, step, module, moduleVersion, source, ociVersion)
 		if err != nil {
 			return false, "", nil, err
 		}
@@ -1457,13 +1502,292 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 
 func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVersion string, values []byte) (string, []byte, error) {
 	moduleSource := u.getModuleSource(module.Source)
-	appBytes, err := argocd.GetApplicationFile(moduleSource.Storage, module, moduleSource.URL, moduleVersion, values,
-		u.resources.GetProviderType())
+	source, err := u.getProxySource(moduleSource.URL, step)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to resolve OCI proxy source: %w", err)
+	}
+	ociVersion, err := u.getOCIModuleVersion(step.Type, u.moduleSources[module.Source], fmt.Sprintf("k8s/%s", module.Source), moduleVersion)
+	if err != nil {
+		return "", nil, err
+	}
+	appBytes, err := u.argocd.GetApplicationFile(moduleSource.Storage, module, source, moduleVersion, ociVersion, values)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create application file: %w", err)
 	}
 	filePath := fmt.Sprintf("steps/%s-%s/%s.yaml", u.resources.GetCloudPrefix(), step.Name, module.Name)
 	return filePath, appBytes, u.resources.GetBucket().PutFile(filePath, appBytes)
+}
+
+// getProxySource keeps the oci scheme prefix intact so ArgoCD can still apply
+// its OCI-specific logic to the returned source. Modules in the same step as the
+// proxy itself are left unproxied, so a broken proxy can't fail its own step and
+// prevent self-healing.
+func (u *updater) getProxySource(source string, step model.Step) (string, error) {
+	if !u.config.UseOCIProxy || !util.IsOCISource(source) {
+		return source, nil
+	}
+	proxyStep, _ := getModuleByType(u.config, u.proxyModuleType())
+	if proxyStep == nil || proxyStep.Name == step.Name {
+		return source, nil
+	}
+	registry, err := u.getProxyRegistry(util.TrimOCIScheme(source))
+	if err != nil {
+		return "", err
+	}
+	if registry == "" {
+		return source, nil
+	}
+	return replaceOCIRegistry(source, registry), nil
+}
+
+func (u *updater) proxyModuleType() string {
+	if u.resources.GetProviderType() == model.GCLOUD {
+		return "gar-proxy"
+	}
+	return "ecr-proxy"
+}
+
+// getProxyRegistry expects a bare (scheme-trimmed) OCI source. An empty string
+// is a valid cached result meaning "no proxy applies".
+func (u *updater) getProxyRegistry(source string) (string, error) {
+	if val, ok := u.proxyRegistries.Load(source); ok {
+		return val.(string), nil
+	}
+	registry, err, _ := u.proxyGroup.Do(source, func() (interface{}, error) {
+		if val, ok := u.proxyRegistries.Load(source); ok {
+			return val.(string), nil
+		}
+		registry, err := u.resolveProxyRegistry(source)
+		if err != nil {
+			return nil, err
+		}
+		u.proxyRegistries.Store(source, registry)
+		return registry, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return registry.(string), nil
+}
+
+func (u *updater) resolveProxyRegistry(source string) (string, error) {
+	isGHCRSource := util.IsGHCRSource(source)
+	if !util.IsPublicECRSource(source) && !isGHCRSource {
+		return "", nil
+	}
+	step, module := getModuleByType(u.config, u.proxyModuleType())
+	if step == nil || module == nil {
+		return "", nil
+	}
+	outputs, err := getModuleOutputs(*step, u.resources.GetCloudPrefix(), u.resources.GetBucket())
+	if err != nil {
+		return "", err
+	}
+	outputName := "ecr_registry"
+	if isGHCRSource {
+		outputName = "ghcr_registry"
+	}
+	return util.GetOutputStringValue(outputs, fmt.Sprintf("%s__%s", module.Name, outputName))
+}
+
+func replaceOCIRegistry(source, newRegistry string) string {
+	newRegistry = strings.Trim(strings.TrimSpace(newRegistry), "/")
+	prefix := ""
+	for _, p := range []string{"oci://", "oci:", "oci@"} {
+		if strings.HasPrefix(source, p) {
+			prefix = p
+			source = source[len(p):]
+			break
+		}
+	}
+	parts := strings.SplitN(strings.TrimSuffix(source, "/"), "/", 2)
+	if len(parts) == 1 {
+		return prefix + newRegistry
+	}
+	return prefix + newRegistry + "/" + parts[1]
+}
+
+// getOCIModuleVersion returns the reference to embed in a module's OCI source:
+// the module's sha256 digest when digest mode applies and resolves, otherwise
+// the release unchanged. Digest mode is on when the config source opts in with
+// use_oci_digests or when the release is already a digest. The release stays the
+// version used for storage lookups (outputs.tf, argo-apps.yaml); only the
+// emitted reference switches to a digest.
+func (u *updater) getOCIModuleVersion(stepType model.StepType, sourceKey model.SourceKey, moduleSourcePath, release string) (string, error) {
+	// ArgoCD can't resolve an OCI Helm chart by digest, so apps steps stay on
+	// tags regardless of digest mode: https://github.com/argoproj/argo-cd/issues/25078
+	if stepType == model.StepTypeArgoCD {
+		return release, nil
+	}
+	if !util.IsOCISource(sourceKey.URL) {
+		return release, nil
+	}
+	source := u.sources[sourceKey]
+	if source == nil {
+		return release, nil
+	}
+	if !source.UseOCIDigests && !util.IsOCIDigest(release) {
+		return release, nil
+	}
+	manifest, err := u.getModuleManifest(sourceKey, release)
+	if err != nil {
+		return "", err
+	}
+	if module, ok := manifest[moduleSourcePath]; ok {
+		if digest := moduleDigest(module, sourceKey.URL); digest != "" {
+			return digest, nil
+		}
+	}
+	// No digest for this module in its own registry. Fall back to the release; a
+	// wrong reference fails at apply and the user clears the image to recover.
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("no OCI digest for module %s in %s, using %s",
+		moduleSourcePath, sourceKey, release)))
+	return release, nil
+}
+
+// moduleDigest returns the module's package digest for the source's own
+// registry, matched first by the ecr/ghcr label, then by the registry whose
+// repository host equals the source host (so custom mirrors that publish their
+// own repository URL resolve too). It never returns a different registry's
+// digest.
+func moduleDigest(module model.OCIManifestModule, sourceURL string) string {
+	if registry := ociRegistryKind(sourceURL); registry != "" {
+		if ref, ok := module.Registries[registry]; ok && ref.Package != "" {
+			return ref.Package
+		}
+	}
+	host := ociHost(sourceURL)
+	for _, ref := range module.Registries {
+		if ref.Package != "" && ociHost(ref.Repository) == host {
+			return ref.Package
+		}
+	}
+	return ""
+}
+
+func ociRegistryKind(source string) string {
+	trimmed := util.TrimOCIScheme(source)
+	switch {
+	case util.IsPublicECRSource(trimmed):
+		return "ecr"
+	case util.IsGHCRSource(trimmed):
+		return "ghcr"
+	default:
+		return ""
+	}
+}
+
+func ociHost(ref string) string {
+	trimmed := util.TrimOCIScheme(ref)
+	if i := strings.IndexByte(trimmed, '/'); i != -1 {
+		return trimmed[:i]
+	}
+	return trimmed
+}
+
+// moduleSourceChanged reports whether a module's source moved in a way that
+// should reset its applied version. Switching between infralib release sources
+// (git <-> oci, or between them) preserves the version instead.
+func moduleSourceChanged(previous, current string) bool {
+	if previous == current {
+		return false
+	}
+	return !(isEntigoReleaseSource(previous) && isEntigoReleaseSource(current))
+}
+
+func isEntigoReleaseSource(url string) bool {
+	if util.GetSourceType(url) == model.SourceTypeOCI {
+		return isVerifiableSource(url)
+	}
+	return strings.Contains(url, EntigoSource)
+}
+
+func isVerifiableSource(url string) bool {
+	trimmed := util.TrimOCIScheme(url)
+	return trimmed == "public.ecr.aws/"+EntigoRepo || trimmed == "ghcr.io/"+EntigoRepo
+}
+
+// verifyIndexSignature validates the source's index image signature once per
+// resolved image (deduped across steps/modules). Only official entigolabs
+// release sources are verifiable; other sources with the flag set are skipped
+// with a one-time warning.
+func (u *updater) verifyIndexSignature(source *model.Source, release string) error {
+	if !source.VerifySignature {
+		return nil
+	}
+	if !isVerifiableSource(source.URL) {
+		if _, loaded := u.verified.LoadOrStore("unverifiable:"+source.URL, struct{}{}); !loaded {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("verify_signature is only supported for entigolabs release sources, skipping %s", source.URL)))
+		}
+		return nil
+	}
+	resolver, ok := source.Storage.(model.OCIImageResolver)
+	if !ok {
+		return fmt.Errorf("source %s does not support signature verification", source.URL)
+	}
+	image, err := resolver.GetImageReference(release)
+	if err != nil {
+		return err
+	}
+	if _, ok := u.verified.Load(image); ok {
+		return nil
+	}
+	_, err, _ = u.verifyGroup.Do(image, func() (interface{}, error) {
+		if _, ok := u.verified.Load(image); ok {
+			return nil, nil
+		}
+		if err := u.verifier.Verify(u.ctx, image); err != nil {
+			return nil, err
+		}
+		log.Printf("Verified OCI index image signature %s", image)
+		u.verified.Store(image, struct{}{})
+		return nil, nil
+	})
+	return err
+}
+
+// getModuleManifest parses manifest.json from the source's index for a release
+// into a map keyed by module source path (type/name), caching per source+release.
+func (u *updater) getModuleManifest(sourceKey model.SourceKey, release string) (map[string]model.OCIManifestModule, error) {
+	cacheKey := fmt.Sprintf("%s|%s", sourceKey, release)
+	if val, ok := u.manifests.Load(cacheKey); ok {
+		return val.(map[string]model.OCIManifestModule), nil
+	}
+	result, err, _ := u.manifestGroup.Do(cacheKey, func() (interface{}, error) {
+		if val, ok := u.manifests.Load(cacheKey); ok {
+			return val, nil
+		}
+		source := u.sources[sourceKey]
+		if source == nil {
+			return nil, fmt.Errorf("source %s not found", sourceKey)
+		}
+		data, err := source.Storage.GetFile(ociManifestFile, release)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read OCI manifest for %s@%s: %w", sourceKey, release, err)
+		}
+		modules, err := parseOCIManifest(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse OCI manifest for %s@%s: %w", sourceKey, release, err)
+		}
+		u.manifests.Store(cacheKey, modules)
+		return modules, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(map[string]model.OCIManifestModule), nil
+}
+
+func parseOCIManifest(data []byte) (map[string]model.OCIManifestModule, error) {
+	var manifest model.OCIManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	modules := make(map[string]model.OCIManifestModule, len(manifest.Modules))
+	for _, module := range manifest.Modules {
+		modules[fmt.Sprintf("%s/%s", module.Type, module.Name)] = module
+	}
+	return modules, nil
 }
 
 func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
@@ -1476,10 +1800,15 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 		if err != nil {
 			return nil, err
 		}
-		if changed && !util.IsClientModule(module) {
-			err = moduleMustExist(u.getModuleSource(module.Source), step.Type, module, moduleVersion)
-			if err != nil {
+		if !util.IsClientModule(module) {
+			source := u.getModuleSource(module.Source)
+			if err = u.verifyIndexSignature(source, moduleVersion); err != nil {
 				return nil, err
+			}
+			if changed {
+				if err = moduleMustExist(source, step.Type, module, moduleVersion); err != nil {
+					return nil, err
+				}
 			}
 		}
 		moduleVersions[module.Name] = model.ModuleVersion{
@@ -1531,8 +1860,9 @@ func (u *updater) getModuleVersion(module model.Module, stepState *model.StateSt
 		return getFormattedVersion(moduleSemver), false, nil
 	}
 	releaseTag := moduleSource.Releases[index]
-	if moduleState.AppliedVersion == nil || moduleState.Source != moduleSource.URL {
-		moduleState.Source = moduleSource.URL
+	sourceChanged := moduleSourceChanged(moduleState.Source, moduleSource.URL)
+	moduleState.Source = moduleSource.URL
+	if moduleState.AppliedVersion == nil || sourceChanged {
 		moduleState.AppliedVersion = nil
 		if moduleSemver.GreaterThan(releaseTag) {
 			moduleState.Version = getFormattedVersion(releaseTag)
@@ -1623,7 +1953,7 @@ func (u *updater) getBaseImageVersion(step model.Step, index int) string {
 				continue
 			}
 			source := u.getModuleSource(module.Source)
-			if !strings.Contains(source.URL, EntigoSource) {
+			if !isEntigoReleaseSource(source.URL) {
 				continue
 			}
 			if source.ForcedVersion != "" {

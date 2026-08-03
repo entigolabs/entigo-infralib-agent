@@ -31,6 +31,8 @@ var (
 	repoMutex = sync.Mutex{}
 )
 
+var _ model.SourceRepository = (*SourceClient)(nil)
+
 type SourceClient struct {
 	ctx            context.Context
 	auth           transport.AuthMethod
@@ -95,7 +97,6 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 	}
 	var releases []*version.Version
 	var releaseSet = model.NewSet[string]()
-	var invalidTags = model.NewSet[string]()
 	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
 		if !t.Name().IsTag() {
 			return nil
@@ -104,15 +105,11 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 		releaseSet.Add(tag)
 		tagVersion, err := version.NewVersion(tag)
 		if err != nil {
-			invalidTags.Add(tag)
 			return nil
 		}
 		releases = append(releases, tagVersion)
 		return nil
 	})
-	if len(invalidTags) > 0 {
-		slog.Debug(fmt.Sprintf("Tags are not a valid semversion: %s", strings.Join(invalidTags.ToSlice(), ", ")))
-	}
 	sort.Sort(version.Collection(releases))
 	return releases, releaseSet, err
 }
