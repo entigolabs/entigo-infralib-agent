@@ -15,12 +15,11 @@ import (
 	"time"
 
 	"dario.cat/mergo"
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/oci"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-version"
@@ -46,8 +45,8 @@ type updater struct {
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
 	resources     model.Resources
-	terraform     terraform.Terraform
-	argocd        argocd.ArgoCD
+	terraform     generator.Terraform
+	argocd        generator.ArgoCD
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -110,8 +109,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		steps:         steps,
 		stepChecksums: model.NewStepsChecksums(),
 		resources:     resources,
-		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
-		argocd:        argocd.NewArgoCD(resources.GetProviderType()),
+		terraform:     generator.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
+		argocd:        generator.NewArgoCD(resources.GetProviderType()),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,

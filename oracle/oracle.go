@@ -237,7 +237,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 		return nil, fmt.Errorf("failed to set up approval gate: %w", err)
 	}
 	resources.CodeBuild = builder
-	resources.Pipeline = NewPipeline(o.ctx, builder, gate, logs, o.cloudPrefix, manager)
+	resources.Pipeline = NewPipeline(o.ctx, builder, gate, logs, resources.Bucket, o.cloudPrefix, manager)
 	o.warnScheduleUnsupported(config.Schedule)
 	return resources, nil
 }
@@ -504,7 +504,7 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 	}
 	resources.CodeBuild = builder
 	// No gate: destroy executions run with ApproveForce and never hit approval.
-	resources.Pipeline = NewPipeline(o.ctx, builder, nil, logs, o.cloudPrefix, nil)
+	resources.Pipeline = NewPipeline(o.ctx, builder, nil, logs, resources.Bucket, o.cloudPrefix, nil)
 	return resources, nil
 }
 

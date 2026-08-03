@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,15 +16,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/entigolabs/entigo-infralib-agent/wrapper"
 )
 
 const executeScript = "entrypoint-core.sh"
+
+const localPlanPath = "/tmp/project"
 
 type LocalPipeline struct {
 	ctx            context.Context
@@ -126,7 +128,7 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		Command:       string(command),
 		Entrypoint:    executeScript,
 		PrefixStep:    prefixStep,
-		PlanPath:      "/tmp/project",
+		PlanPath:      localPlanPath,
 		CampaignId:    l.campaignId,
 		PipelineIndex: strconv.Itoa(l.pipelineIndex),
 		//		Insecure:      true, // Development only
@@ -260,18 +262,19 @@ func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoAp
 }
 
 func getPipelineChanges(pipelineName string, stepType model.StepType, output []byte) (*model.PipelineChanges, error) {
-	var logParser func(string, string) (*model.PipelineChanges, error)
-	switch stepType {
-	case model.StepTypeTerraform:
-		logParser = terraform.ParseLogChanges
-	case model.StepTypeArgoCD:
-		logParser = argocd.ParseLogChanges
+	changes, err := planChangesFromFile(pipelineName, stepType)
+	if err != nil {
+		return nil, err
 	}
-
+	if changes != nil {
+		return changes, nil
+	}
+	// Fall back to parsing the captured stdout for older base images that don't
+	// write a JSON plan file.
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
 		logRow := scanner.Text()
-		changes, err := logParser(pipelineName, logRow)
+		changes, err := generator.ParseLogChanges(pipelineName, stepType, logRow)
 		if err != nil {
 			return nil, err
 		}
@@ -280,6 +283,17 @@ func getPipelineChanges(pipelineName string, stepType model.StepType, output []b
 		}
 	}
 	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
+}
+
+func planChangesFromFile(prefixStep string, stepType model.StepType) (*model.PipelineChanges, error) {
+	data, err := os.ReadFile(wrapper.PlanFilePath(localPlanPath, prefixStep))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return generator.ParsePlanChanges(prefixStep, stepType, data)
 }
 
 func (l *LocalPipeline) getManualApproval(pipelineName, step string, changes *model.PipelineChanges) (bool, error) {

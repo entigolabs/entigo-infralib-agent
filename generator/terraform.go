@@ -1,4 +1,4 @@
-package terraform
+package generator
 
 import (
 	"encoding/json"
@@ -31,7 +31,7 @@ const (
 	outputType     = "output"
 )
 
-var planRegex = regexp.MustCompile(`Plan: (?:(?P<import>\d+) to import, )?(?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
+var tfPlanRegex = regexp.MustCompile(`Plan: (?:(?P<import>\d+) to import, )?(?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
 
 type Terraform interface {
 	GetTerraformProvider(step model.Step, moduleVersions map[string]model.ModuleVersion, sourceVersions map[model.SourceKey]string) ([]byte, map[model.SourceKey]model.Set[string], error)
@@ -545,7 +545,34 @@ func UnmarshalTerraformFile(fileName string, fileContent []byte) (*hclwrite.File
 	return hclFile, nil
 }
 
-func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, error) {
+func ParseTfChanges(pipelineName string, data []byte) (*model.PipelineChanges, error) {
+	var plan model.Plan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("failed to parse plan json for %s: %w", pipelineName, err)
+	}
+	changes := plan.Changes()
+	logTfChanges(pipelineName, changes)
+	return &changes, nil
+}
+
+func logTfChanges(pipelineName string, changes model.PipelineChanges) {
+	if changes.NoChanges {
+		log.Printf("Pipeline %s: No changes. Your infrastructure matches the configuration.", pipelineName)
+		return
+	}
+	if changes.Imported == 0 && changes.Added == 0 && changes.Changed == 0 && changes.Destroyed == 0 {
+		log.Printf("Pipeline %s: You can apply this plan to save these new output values", pipelineName)
+		return
+	}
+	var imported string
+	if changes.Imported > 0 {
+		imported = fmt.Sprintf("%d to import, ", changes.Imported)
+	}
+	log.Printf("Pipeline %s: %s%d to add, %d to change, %d to destroy", pipelineName, imported, changes.Added,
+		changes.Changed, changes.Destroyed)
+}
+
+func ParseTfLog(pipelineName, message string) (*model.PipelineChanges, error) {
 	tfChanges := model.PipelineChanges{}
 	if strings.HasPrefix(message, "No changes. Your infrastructure matches the configuration.") ||
 		strings.HasPrefix(message, "No changes. No objects need to be destroyed.") {
@@ -557,9 +584,9 @@ func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, erro
 		return &tfChanges, nil
 	}
 
-	matches := planRegex.FindStringSubmatch(message)
+	matches := tfPlanRegex.FindStringSubmatch(message)
 	if matches == nil {
 		return nil, nil
 	}
-	return util.GetChangesFromMatches(pipelineName, message, matches, planRegex.SubexpNames())
+	return util.GetChangesFromMatches(pipelineName, message, matches, tfPlanRegex.SubexpNames())
 }

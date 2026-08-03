@@ -7,10 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
@@ -30,16 +29,18 @@ type Pipeline struct {
 	builder     *Builder
 	gate        *Gate
 	logs        *Logging
+	bucket      model.Bucket
 	manager     model.NotificationManager
 	cloudPrefix string
 }
 
-func NewPipeline(ctx context.Context, builder *Builder, gate *Gate, logs *Logging, cloudPrefix string, manager model.NotificationManager) *Pipeline {
+func NewPipeline(ctx context.Context, builder *Builder, gate *Gate, logs *Logging, bucket model.Bucket, cloudPrefix string, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:         ctx,
 		builder:     builder,
 		gate:        gate,
 		logs:        logs,
+		bucket:      bucket,
 		manager:     manager,
 		cloudPrefix: cloudPrefix,
 	}
@@ -89,7 +90,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, execu
 	if exitCode != 0 {
 		return fmt.Errorf("plan failed for %s (exit code %d)", pipelineName, exitCode)
 	}
-	changes, err := p.planChanges(pipelineName, step.Type, *executionId, since)
+	changes, err := p.planChanges(pipelineName, step, *executionId, since)
 	if err != nil {
 		return err
 	}
@@ -203,10 +204,17 @@ func (p *Pipeline) runToCompletion(projectName, pipelineName string, command mod
 	return nil
 }
 
-// planChanges reads the plan build run's stdout back from the DevOps service log and
-// parses the change summary. Log ingestion is asynchronous, so it polls until the
-// summary appears or the deadline passes.
-func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, buildRunId string, since time.Time) (*model.PipelineChanges, error) {
+func (p *Pipeline) planChanges(pipelineName string, step model.Step, buildRunId string, since time.Time) (*model.PipelineChanges, error) {
+	if p.bucket != nil {
+		data, err := p.bucket.GetFile(model.PlanBucketKey(pipelineName))
+		if err != nil {
+			return nil, err
+		}
+		if data != nil {
+			return generator.ParsePlanChanges(pipelineName, step.Type, data)
+		}
+	}
+	// Log ingestion is asynchronous, so it polls until the summary appears or the deadline passes.
 	if p.logs == nil {
 		return nil, fmt.Errorf("no logging service available to read plan output for %s", pipelineName)
 	}
@@ -216,7 +224,7 @@ func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, bui
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to read logs for %s: %s", pipelineName, err)))
 		} else {
-			changes, err := parseChanges(pipelineName, stepType, lines)
+			changes, err := parseChanges(pipelineName, step.Type, lines)
 			if err != nil {
 				return nil, err
 			}
@@ -234,20 +242,9 @@ func (p *Pipeline) planChanges(pipelineName string, stepType model.StepType, bui
 	}
 }
 
-// parseChanges scans plan stdout lines for the change summary, reusing the same line
-// parsers the other providers use.
 func parseChanges(pipelineName string, stepType model.StepType, lines []string) (*model.PipelineChanges, error) {
-	var parser func(string, string) (*model.PipelineChanges, error)
-	switch stepType {
-	case model.StepTypeTerraform:
-		parser = terraform.ParseLogChanges
-	case model.StepTypeArgoCD:
-		parser = argocd.ParseLogChanges
-	default:
-		return nil, fmt.Errorf("unsupported step type %s", stepType)
-	}
 	for _, line := range lines {
-		changes, err := parser(pipelineName, line)
+		changes, err := generator.ParseLogChanges(pipelineName, stepType, line)
 		if err != nil {
 			return nil, err
 		}

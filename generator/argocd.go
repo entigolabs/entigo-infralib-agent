@@ -1,7 +1,8 @@
-package argocd
+package generator
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -23,8 +24,15 @@ var appYaml []byte
 // survives the YAML round-trip in mergeAppFiles regardless of quote style.
 var ociChartLineRegex = regexp.MustCompile(`(?m)^(\s*)path:.*\{\{moduleSource\}\}.*$`)
 
-var planRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
-var newPlanRegex = regexp.MustCompile(`ArgoCD Applications: (?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
+var argoCDPlanRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
+var argoCDNewPlanRegex = regexp.MustCompile(`ArgoCD Applications: (?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
+
+type planFile struct {
+	Type    string `json:"type"`
+	Add     int    `json:"add"`
+	Change  int    `json:"change"`
+	Destroy int    `json:"destroy"`
+}
 
 type ArgoCD struct {
 	provider model.ProviderType
@@ -194,12 +202,25 @@ func deduplicateSyncOptions(app map[string]interface{}) {
 	policy["syncOptions"] = newOptions
 }
 
-func ParseLogChanges(pipelineName, message string) (*model.PipelineChanges, error) {
-	matches := newPlanRegex.FindStringSubmatch(message)
-	if matches != nil {
-		return util.GetChangesFromMatches(pipelineName, message, matches, newPlanRegex.SubexpNames())
+func ParseArgoCDPlan(pipelineName string, data []byte) (*model.PipelineChanges, error) {
+	var plan planFile
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("failed to parse argocd plan json for %s: %w", pipelineName, err)
 	}
-	matches = planRegex.FindStringSubmatch(message)
+	log.Printf("Pipeline %s: %d to add, %d to change, %d to destroy", pipelineName, plan.Add, plan.Change, plan.Destroy)
+	changes := model.PipelineChanges{Added: plan.Add, Changed: plan.Change, Destroyed: plan.Destroy}
+	if plan.Add == 0 && plan.Change == 0 && plan.Destroy == 0 {
+		changes.NoChanges = true
+	}
+	return &changes, nil
+}
+
+func ParseArgoCDLog(pipelineName, message string) (*model.PipelineChanges, error) {
+	matches := argoCDNewPlanRegex.FindStringSubmatch(message)
+	if matches != nil {
+		return util.GetChangesFromMatches(pipelineName, message, matches, argoCDNewPlanRegex.SubexpNames())
+	}
+	matches = argoCDPlanRegex.FindStringSubmatch(message)
 	if matches == nil {
 		return nil, nil
 	}

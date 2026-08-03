@@ -18,7 +18,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
-const tfPlan = "steps/%s/%s-plan.json"
+const planFile = "steps/%s/plan.json"
 
 const disconnectTimeout = 10 * time.Second
 
@@ -205,12 +205,19 @@ func (w *Wrapper) streamPipe(r io.Reader, echo io.Writer) {
 	}
 }
 
+func PlanFilePath(planPath, prefixStep string) string {
+	return path.Join(planPath, fmt.Sprintf(planFile, prefixStep))
+}
+
 func (w *Wrapper) sendPlan() {
+	if w.stepType != model.StepTypeTerraform {
+		return // only terraform produces the terraform show -json plan
+	}
 	if w.prefixStep == "" {
 		slog.Warn("TF_VAR_prefix flag not set, can't find the plan")
 		return
 	}
-	planFile := path.Join(w.getPlanPath(), fmt.Sprintf(tfPlan, w.prefixStep, w.prefixStep))
+	planFile := PlanFilePath(w.getPlanPath(), w.prefixStep)
 	summary, err := readPlanSummary(planFile)
 	if err != nil {
 		slog.Warn("wrapper plan summary unavailable", "err", err)
