@@ -152,6 +152,7 @@ func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) er
 // run, like runToCompletion but without the run spec (destroy is agentless).
 func (p *Pipeline) triggerToCompletion(projectName string, command model.ActionCommand) error {
 	displayName := runName(projectName, command)
+	log.Printf("Executing build pipeline %s\n", displayName)
 	buildRunId, err := p.builder.trigger(displayName)
 	if err != nil {
 		return err
