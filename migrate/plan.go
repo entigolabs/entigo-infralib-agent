@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,7 +31,7 @@ type planner struct {
 	ctx    context.Context
 	types  map[string]typeIdentification
 	state  stateV4
-	plan   plan
+	plan   model.Plan
 	config importConfig
 }
 
@@ -112,15 +113,15 @@ func getState(stateFile string) (stateV4, error) {
 	return state, nil
 }
 
-func getPlan(planFile string) (plan, error) {
+func getPlan(planFile string) (model.Plan, error) {
 	fileBytes, err := os.ReadFile(planFile)
 	if err != nil {
-		return plan{}, err
+		return model.Plan{}, err
 	}
-	var tfPlan plan
+	var tfPlan model.Plan
 	err = json.Unmarshal(fileBytes, &tfPlan)
 	if err != nil {
-		return plan{}, err
+		return model.Plan{}, err
 	}
 	return tfPlan, nil
 }
@@ -236,7 +237,7 @@ func processItem(item *importItem) error {
 	return err
 }
 
-func getDestination(item importItem, rootModule modulePlan, rsName string) (string, string, interface{}, error) {
+func getDestination(item importItem, rootModule model.PlanModule, rsName string) (string, string, interface{}, error) {
 	name := item.Destination.Name
 	if name == "" {
 		name = rsName
@@ -369,8 +370,8 @@ func (p *planner) getResources(rsType string, module module) ([]resourceStateV4,
 	return matching, nil
 }
 
-func getPlannedResource(item importItem, module modulePlan) (*resourcePlan, []string, error) {
-	var found *resourcePlan
+func getPlannedResource(item importItem, module model.PlanModule) (*model.PlanResource, []string, error) {
+	var found *model.PlanResource
 	var names []string
 	for _, resource := range module.Resources {
 		if resource.Mode != "managed" {

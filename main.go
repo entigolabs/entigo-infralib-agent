@@ -2,27 +2,38 @@ package main
 
 import (
 	"context"
-	"github.com/entigolabs/entigo-infralib-agent/cli"
-	"github.com/entigolabs/entigo-infralib-agent/common"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"github.com/entigolabs/entigo-infralib-agent/cli"
+	"github.com/entigolabs/entigo-infralib-agent/common"
 )
 
-func main() {
-	terminated := make(chan os.Signal, 1)
-	signal.Notify(terminated, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+const shutdownGrace = 20 * time.Second
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	done := make(chan struct{})
 	go func() {
 		cli.Run(ctx)
-		close(terminated)
+		close(done)
 	}()
 
-	sig := <-terminated
-	if sig != nil {
-		slog.Warn(common.PrefixWarning("agent was terminated, exiting"))
+	select {
+	case <-done:
+		return
+	case <-ctx.Done():
+		slog.Warn(common.PrefixWarning("agent was terminated, waiting for shutdown"))
+	}
+
+	select {
+	case <-done:
+	case <-time.After(shutdownGrace):
+		slog.Warn(common.PrefixWarning("shutdown grace period exceeded, exiting"))
 	}
 }

@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package wrapper.v1alpha1;
+option go_package = "github.com/entigolabs/entigo-infralib-agent/gen/wrapper/v1alpha1;v1alpha1";
+
+service WrapperService {
+  rpc StreamLogs(stream StreamLogsRequest) returns (stream StreamLogsResponse);
+}
+
+message StreamLogsRequest {
+  oneof payload {
+    Handshake handshake = 1;
+    LogBatch log_batch = 2;
+    Ping ping = 3;
+    ExecutionComplete complete = 4;
+    PlanSummary plan_summary = 5;
+  }
+}
+
+message StreamLogsResponse {
+  oneof payload {
+    HandshakeAck handshake_ack = 1;
+    Ping ping = 2;
+    StreamComplete complete = 3;
+  }
+}
+
+// Handshake binds the stream to a single wrapper execution. Sent once as the
+// first request message.
+message Handshake {
+  string campaign_id = 1;
+  string step = 2;
+  Command command = 3;
+  StepType step_type = 4;
+  int32 pipeline_index = 5;
+}
+
+// StepType is the step executor. Matches model.StepType on the agent side.
+enum StepType {
+  STEP_TYPE_UNSPECIFIED = 0;
+  STEP_TYPE_TERRAFORM = 1;
+  STEP_TYPE_ARGOCD_APPS = 2;
+}
+
+// Command identifies the concrete action the wrapper is running. Matches model.ActionCommand on the agent side.
+enum Command {
+  COMMAND_UNSPECIFIED = 0;
+  COMMAND_PLAN = 1;
+  COMMAND_APPLY = 2;
+  COMMAND_PLAN_DESTROY = 3;
+  COMMAND_APPLY_DESTROY = 4;
+  COMMAND_ARGOCD_PLAN = 5;
+  COMMAND_ARGOCD_APPLY = 6;
+  COMMAND_ARGOCD_PLAN_DESTROY = 7;
+  COMMAND_ARGOCD_APPLY_DESTROY = 8;
+}
+
+// HandshakeAck confirms the server accepted the Handshake. The client must
+// wait for this before sending any LogBatch messages so handshake-time
+// validation errors surface before logs start flowing.
+message HandshakeAck {}
+
+// LogBatch is one or more raw stdout lines from the entrypoint. Lines are
+// batched per Send to amortize gRPC per-message overhead — terraform emits
+// in bursts and a per-line stream would saturate the channel buffer.
+message LogBatch {
+  repeated string lines = 1;
+}
+
+// Ping keeps idle connections alive across load balancers that drop HTTP/2 flows after inactivity timeouts.
+message Ping {}
+
+// ExecutionComplete reports the outcome of the wrapper's execution. Sent as the last client message.
+message ExecutionComplete {
+  int32 exit_code = 1;
+  string error = 2;
+}
+
+message StreamComplete {
+  uint64 total_received = 1;
+}
+
+// PlanSummary is the compact view of a step plan.
+message PlanSummary {
+  // Bare resources and outputs not connected to any module.
+  ModuleChanges root = 1;
+  // First-level modules declared in main.tf, keyed by module name. An entry
+  // exists if the module has resource changes OR outputs. Submodules (any
+  // depth) are rolled up into the parent's resource buckets; their identity
+  // is preserved in the resource address strings.
+  map<string, ModuleChanges> modules = 2;
+}
+
+// ModuleChanges is the per-module breakdown of changes. All repeated-string
+// fields hold full resource addresses (e.g. "module.vpc.module.vpc.aws_subnet.foo").
+message ModuleChanges {
+  repeated string added = 1;
+  repeated string changed = 2;
+  repeated string destroyed = 3;
+  repeated string replaced = 4;
+  repeated string imported = 5;
+  repeated string forgotten = 6;
+  repeated ResourceMove moved = 7;
+  OutputChanges outputs = 8;
+}
+
+// ResourceMove is an in-state move. From/To are full resource addresses; the
+// entry is filed under the destination module.
+message ResourceMove {
+  string from = 1;
+  string to = 2;
+}
+
+// OutputChanges is the per-action breakdown of output changes. Only names —
+// values are intentionally omitted from the summary.
+message OutputChanges {
+  repeated string added = 1;
+  repeated string changed = 2;
+  repeated string destroyed = 3;
+}

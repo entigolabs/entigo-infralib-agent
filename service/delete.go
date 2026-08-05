@@ -66,7 +66,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 		resources:            resources,
 		deleteBucket:         flags.Delete.DeleteBucket,
 		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
-		localPipeline:        getLocalPipeline(resources, ProcessPipelineFlags(flags.Pipeline), flags.GCloud, nil),
+		localPipeline:        getLocalPipeline(ctx, resources, ProcessPipelineFlags(flags.Pipeline), flags.GCloud, nil, config, ""),
 	}, nil
 }
 
@@ -98,6 +98,7 @@ func (d *deleter) Delete() error {
 		}
 	}
 	d.deleteSourceSecrets()
+	d.deleteSecret(model.WrapperConfigSecretName(d.resources.GetCloudPrefix()))
 	return d.provider.DeleteResources(d.deleteBucket, d.deleteServiceAccount)
 }
 
@@ -107,13 +108,13 @@ func (d *deleter) deleteSourceSecrets() {
 			continue
 		}
 		hash := util.HashCode(source.URL)
-		d.deleteSourceSecret(fmt.Sprintf(model.GitSourceFormat, hash))
-		d.deleteSourceSecret(fmt.Sprintf(model.GitUsernameFormat, hash))
-		d.deleteSourceSecret(fmt.Sprintf(model.GitPasswordFormat, hash))
+		d.deleteSecret(fmt.Sprintf(model.GitSourceFormat, hash))
+		d.deleteSecret(fmt.Sprintf(model.GitUsernameFormat, hash))
+		d.deleteSecret(fmt.Sprintf(model.GitPasswordFormat, hash))
 	}
 }
 
-func (d *deleter) deleteSourceSecret(secret string) {
+func (d *deleter) deleteSecret(secret string) {
 	err := d.resources.GetSSM().DeleteSecret(secret)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete secret %s: %s", secret, err)))

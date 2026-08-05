@@ -1,0 +1,62 @@
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      pr-branch:
+        description: 'PR branch name; when set, the cloud test profile is prefixed for isolation'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: aws
+            args: -run '^TestRunAWS$' ./commands/run/...
+            profile: test/profile-aws.yaml
+          - name: gcloud
+            args: -run '^TestRunGCloud$' ./commands/run/...
+            profile: test/profile-gcloud.yaml
+          - name: unit
+            args: -skip '^TestRunAWS$|^TestRunGCloud$' ./...
+            profile: ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+      - name: Prefix test profile for PR isolation
+        if: ${{ inputs.pr-branch != '' && matrix.profile != '' }}
+        env:
+          PR_BRANCH: ${{ inputs.pr-branch }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" "${PROFILE}"
+      - name: Run tests
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: eu-north-1
+          PROJECT_ID: entigo-infralib-agent
+          LOCATION: europe-west1
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ZONE: europe-west1-a
+        run: |
+          mkdir -p $(echo ~)/.config/gcloud
+          echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
+          gcloud config set project $PROJECT_ID
+          gcloud auth list
+          gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          go test -timeout 25m -v ${{ matrix.args }}

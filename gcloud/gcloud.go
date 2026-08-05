@@ -87,10 +87,6 @@ func validateServiceAccountJSON(credJSON []byte) error {
 	return nil
 }
 
-func (g *gcloudService) GetIdentifier() string {
-	return fmt.Sprintf("prefix %s, Google project Id %s, location %s", g.cloudPrefix, g.projectId, g.location)
-}
-
 func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	err := g.enableApiServices([]string{"secretmanager.googleapis.com"})
 	if err != nil {
@@ -123,7 +119,6 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 }
 
 func (g *gcloudService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
-	// TODO Default clients use gRPC, connections must be closed before exiting
 	err := g.enableApiServices([]string{"compute.googleapis.com", "cloudresourcemanager.googleapis.com",
 		"secretmanager.googleapis.com", "run.googleapis.com", "container.googleapis.com", "dns.googleapis.com",
 		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com", "cloudscheduler.googleapis.com"})
@@ -175,7 +170,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, err
 	}
-	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), g.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
@@ -185,7 +180,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	}
 	g.resources.CodeBuild = builder
 	g.resources.Pipeline = pipeline
-	err = g.createSchedule(config.Schedule, serviceAccount)
+	err = g.createSchedule(config.Schedule, serviceAccount, manager)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +193,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage service: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, "", true)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, "", true, true, g.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
@@ -335,7 +330,7 @@ func (g *gcloudService) createServiceAccount(iam *IAM) (string, error) {
 	return nameParts[len(nameParts)-1], nil
 }
 
-func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string) error {
+func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount string, manager model.NotificationManager) error {
 	scheduler, err := NewScheduler(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create scheduler service: %s", err)
@@ -351,18 +346,27 @@ func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount s
 	}
 	if schedule.UpdateCron == "" {
 		if updateSchedule != nil {
-			return scheduler.deleteUpdateSchedule()
+			err = scheduler.deleteUpdateSchedule()
+			if err == nil {
+				manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, schedule.UpdateCron)
+			}
+			return err
 		}
 		return nil
 	}
 	agentJob := model.GetAgentProjectName(model.GetAgentPrefix(g.cloudPrefix), common.UpdateCommand)
 	if updateSchedule == nil {
-		return scheduler.createUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+		err = scheduler.createUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+		if err == nil {
+			manager.Schedule(common.UpdateCommand, model.ScheduleAdded, schedule.UpdateCron)
+		}
+	} else if updateSchedule.Schedule != schedule.UpdateCron {
+		err = scheduler.updateUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
+		if err == nil {
+			manager.Schedule(common.UpdateCommand, model.ScheduleModified, schedule.UpdateCron)
+		}
 	}
-	if updateSchedule.Schedule != schedule.UpdateCron {
-		return scheduler.updateUpdateSchedule(schedule.UpdateCron, agentJob, serviceAccount)
-	}
-	return nil
+	return err
 }
 
 func (g *gcloudService) createLogResources(logging *Logging, bucketId, kmsKeyName string) error {
@@ -415,7 +419,7 @@ func getServiceAccountName(cloudPrefix, location string) string {
 	return fmt.Sprintf("%s-sa-%s", cloudPrefix, location)
 }
 
-func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
+func (g *gcloudService) CreateServiceAccount(SAFlags common.ServiceAccount) error {
 	username := getServiceAccountName(g.cloudPrefix, g.location)
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)
@@ -438,18 +442,22 @@ func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to add roles to project: %s", err)
 	}
-	if !created && !rotateCredentials {
-		log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
-		return nil
-	}
 	if created {
 		time.Sleep(1 * time.Second) // Creating key immediately after account creation may fail with 404
-	} else {
-		err = iam.DeleteServiceAccountKeys(account.Name)
+	}
+	if SAFlags.TrustRole != "" {
+		return g.createServiceAccountImpersonation(SAFlags, iam, account.Name, created)
+	}
+	if !created {
+		if !SAFlags.RotateCredentials {
+			log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
+			return nil
+		}
+		deleted, err := iam.DeleteServiceAccountKeys(account.Name)
 		if err != nil {
 			return fmt.Errorf("failed to remove existing service account keys: %s", err)
 		}
-		log.Printf("Deleted previous keys for service account %s\n", username)
+		log.Printf("Deleted %d previous keys for service account %s\n", deleted, username)
 	}
 	key, err := iam.CreateServiceAccountKey(account.Name)
 	if err != nil {
@@ -457,6 +465,69 @@ func (g *gcloudService) CreateServiceAccount(rotateCredentials bool) error {
 	}
 	fmt.Printf("Private key data:\n%s", key.PrivateKeyData)
 	return nil
+}
+
+func (g *gcloudService) createServiceAccountImpersonation(SAFlags common.ServiceAccount, iam *IAM, accountName string, created bool) error {
+	if created {
+		return grantImpersonation(iam, accountName, SAFlags.TrustRole)
+	}
+	err := removeKeysIfNeeded(iam, accountName, SAFlags.RemoveUser)
+	if err != nil {
+		return err
+	}
+
+	principals, err := iam.GetImpersonationPrincipals(accountName)
+	if err != nil {
+		return fmt.Errorf("failed to get impersonation principals: %s", err)
+	}
+	if containsPrincipal(principals, SAFlags.TrustRole) {
+		return nil
+	} else if len(principals) > 0 && !SAFlags.RotateCredentials {
+		slog.Error(common.PrefixError(fmt.Errorf("service account %s has different trust principal, use rotate-credentials flag to update it", accountName)))
+		return nil
+	}
+	return grantImpersonation(iam, accountName, SAFlags.TrustRole)
+}
+
+func grantImpersonation(iam *IAM, accountName string, principal string) error {
+	if err := iam.GrantImpersonation(accountName, principal); err != nil {
+		return fmt.Errorf("failed to grant impersonation on service account %s: %s", accountName, err)
+	}
+	log.Printf("Granted impersonation on service account %s to %s\n", accountName, principal)
+	return nil
+}
+
+func removeKeysIfNeeded(iam *IAM, accountName string, remove bool) error {
+	hasKeys, err := iam.HasUserManagedKeys(accountName)
+	if err != nil {
+		return err
+	}
+	if !hasKeys {
+		return nil
+	}
+	if !remove {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Service account %s has existing keys, use remove-user flag to delete them", accountName)))
+		return nil
+	}
+	deleted, err := iam.DeleteServiceAccountKeys(accountName)
+	if err != nil {
+		return fmt.Errorf("failed to delete service account keys: %s", err)
+	}
+	if deleted == 0 {
+		log.Printf("Service account %s has no keys", accountName)
+	} else {
+		log.Printf("Deleted %d previous keys for service account %s\n", deleted, accountName)
+	}
+	return nil
+}
+
+func containsPrincipal(principals []string, target string) bool {
+	for _, p := range principals {
+		if p == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *gcloudService) DeleteServiceAccount(iam *IAM) {

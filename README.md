@@ -29,7 +29,7 @@ Executes pipelines which apply the configured modules. During subsequent runs, t
     * [Optional replacement tags](#optional-replacement-tags)
   * [Including files in steps](#including-files-in-steps)
   * [Including CA certificates](#including-ca-certificates)
-  * [Notification API requests](#notification-api-requests)
+  * [Notifications](#notifications)
   * [Encryption](#encryption)
   * [Scheduling](#scheduling)
 * [Migration Helper](#migration-helper)
@@ -251,6 +251,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
+* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. [$TRUST_ROLE]
+* remove-user - optional, used with trust-role, removes an existing service account user in AWS or credentials in GCloud, default **false**. [$REMOVE_USER]
 
 Example
 ```bash
@@ -275,6 +277,21 @@ Example
 ```bash
 bin/ei-agent pull --prefix=infralib
 ```
+
+### provision
+
+Used by Infralib wrapper layer. `provision` is executed by a step pipeline. It wraps the Infralib output and, when a `wrapper` block is configured in the agent config, forwards raw stdout log lines and a compact plan summary to the backend over gRPC. Without a wrapper config the invocation is fully transparent. Infralib output goes only to the pipeline's normal stdout. All the OPTIONS are optional and any missing values fallback to running transparently.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* wrapper-config - **optional** wrapper api config yaml (resolved from secret manager by the pipeline) [$WRAPPER_CONFIG]
+* step - **optional** step name for the current pipeline execution [$INFRALIB_STEP]
+* prefix-step - **optional** step name with cloud prefix [$TF_VAR_prefix]
+* command - **optional** infralib command to execute (plan | apply | plan-destroy | apply-destroy | argocd-plan | argocd-apply | argocd-plan-destroy | argocd-apply-destroy) [$COMMAND]
+* entrypoint - **optional** path to the infralib-tool entrypoint script (default: **entrypoint-core.sh**) [$INFRALIB_ENTRYPOINT]
+* campaign-id - **optional** agent-run identifier forwarded to the backend handshake; empty runs the wrapper transparently [$CAMPAIGN_ID]
+* pipeline-index - **optional** release iteration index forwarded to the backend handshake [$PIPELINE_INDEX]
+* insecure - **optional** allow insecure gRPC connection (default: **false**) [$INSECURE]
 
 ### Custom Parameters
 
@@ -319,6 +336,8 @@ sources:
     password: string
     repo_path: string
     ca_file: string
+    use_oci_digests: bool
+    verify_signature: bool
 destinations:
   - name: string
     git:
@@ -342,6 +361,7 @@ notifications:
       webhook_url: string
     api:
       url: string
+      wrapper_url: string
       headers: map[string]string
       oauth:
         client_id: string
@@ -353,6 +373,8 @@ schedule:
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
+enable_opentofu: bool
+use_oci_proxy: bool
 provider:
   inputs: map[string]string
   aws:
@@ -379,6 +401,7 @@ steps:
       subnet_ids: multiline string
       security_group_ids: multiline string
     kubernetes_cluster_name: string
+    argocd_namespace: string
     modules:
       - name: string
         source: string
@@ -410,11 +433,13 @@ Source version is overwritten by module version. Default version is **stable** w
   * version - highest version of Entigo Infralib modules to use
   * include - list of module sources to exclusively include from the source repository
   * exclude - list of module sources to exclude from the source repository
-  * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver, default **false**. Modules with forced version always allow running in parallel during executions. **Warning!** Before changing from true to false, force a version that follows semver.
+  * force_version - sets the specified version to all modules that use this source, useful for specifying a branch or tag instead of semver or digest for OCI, default **false**. Modules with forced version always allow running in parallel during executions. **Warning!** Before changing from true to false, force a version that follows semver.
   * username - username for git authentication
   * password - password for git authentication, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-password}}"`
   * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
   * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
+  * use_oci_digests - use OCI digests for module sources instead of version tags when using OCI source with version tag, default **false**
+  * verify_signature - verify the OCI index signature when using OCI entigolabs source, true value forces use_oci_digests to true as well, default **false**
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
   * name - name of the destination
   * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`
@@ -431,9 +456,10 @@ Source version is overwritten by module version. Default version is **stable** w
 * notifications - send notifications with selected types, each notifier can only use one subtype
   * name - name of the notifier
   * context - optional, extra context added to the notification
-  * message_types - list of types of messages to send, possible values `started | approvals | progress | schedule | success | failure`, default **`[approvals, failure]`**
+  * message_types - list of types of messages to send, possible values `started | approvals | sources | progress | schedule | success | failure`, default **`[approvals, failure]`**. More info in [Message types](#message-types)
   * api - send notifications to a custom API
     * url - url for the api
+    * wrapper_url - optional, enables gRPC connection while provisioning for sending logs and plan summaries. Full URL of the backend endpoint (`https://host[:port][/path]`). The path segment is preserved and prepended to gRPC method names. When omitted, [provision](#provision) runs the entrypoint transparently. When set, the config is stored in Secret Manager and injected into each pipeline execution as the `WRAPPER_CONFIG` env var.
     * headers - key-value pair of headers to add to the request
     * oauth - optional oauth2 configuration for the api
   * slack - send notifications to slack
@@ -446,6 +472,8 @@ Source version is overwritten by module version. Default version is **stable** w
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
+* enable_opentofu - make Infralib use OpenTofu instead of Terraform, default **true**.
+* use_oci_proxy - replace OCI source url host with proxy for ArgoCD modules if registry proxy module has been applied, default **false**
 * provider - provider values to add for all terraform steps
   * inputs - variables for provider tf file
   * aws - aws provider default, ignore tags and endpoints to add
@@ -566,9 +594,38 @@ It's possible to include files in steps by adding the files into a `./config/<st
 
 It's possible to include CA certificates by adding the files into a `./ca-certificates` subdirectory. Files will be copied into the bucket root and each step directory for Infralib.
 
-### Notification API requests
+### Notifications
 
-When configuring api notifications, agent will send requests to the specified URL. OpenApi specification for the endpoints is in the `notification-api.yaml` file.
+The agent emits lifecycle events at three nested levels of granularity so external systems can observe progress and outcomes:
+
+* **Agent execution** — the entire agent invocation. Emits a start event and a terminal success or failure event.
+* **Pipeline** — each release iteration applied by the agent. A `run` command applies a single release (one pipeline). An `update` command can apply multiple releases sequentially, each emitting its own start, success, or failure events.
+* **Step** — each configuration step within a pipeline. Emits start, success, failure, or skipped events.
+
+**Failure cascade.** The levels nest: a step failure surfaces as a pipeline failure, which surfaces as an agent failure.
+
+**Subscriptions.** Lifecycle events are grouped into *message types*. Each notifier configured under `notifications` subscribes to specific message types via `message_types`, so the same event stream can be routed to different channels at different levels of detail (e.g. `failure` to a low-noise human channel, `progress` to an API integration). When `message_types` is omitted, the default is `[approvals, failure]`.
+
+**Delivery.** Notifier delivery is asynchronous and best-effort within the agent. A notifier returning an error is logged but does not abort the agent or block other notifiers.
+
+**Pre-initialization failures.** Failures that occur before the notification manager is constructed (cloud provider client setup, reading the root config from the bucket, parsing the notifications block itself) cannot be delivered through this system. Those are the responsibility of whatever runs the agent (Kubernetes Job, AWS CodeBuild, Cloud Run Job, etc.) via process exit code and container logs.
+
+#### Message types
+
+* `started` — the agent execution has started. Fires once at the beginning of the execution, after the notification manager is constructed. Includes the command and the agent's cloud identifier.
+* `success` — the agent execution finished successfully. Fires once at the end of a successful execution.
+* `failure` — an agent-level failure. Fires once on any error reachable after the notification manager has been constructed (resource setup, encryption setup, updater construction, or a propagated pipeline failure). Includes the error message.
+* `progress` — pipeline and step lifecycle. Carries:
+  * Pipeline `starting` / `success` / `failure` for each release iteration, with the source versions being applied.
+  * Step `starting` / `success` / `failure` / `skipped` for each configuration step. A step is `skipped` when no changed modules are found.
+* `approvals` — the pipeline is waiting for manual approval. Includes the planned changes and a link to the pipeline. Also fires when an approval is granted.
+* `modules` — list of modules that will be applied across all steps. Fires once near the start of the agent execution.
+* `sources` — list of sources and their resolved releases. Fires once at the start of the release loop.
+* `schedule` — emitted when the agent's update schedule is added, modified, or removed during bootstrap.
+
+#### API
+
+When configuring API notifications, the agent will send requests to the specified URL. The OpenAPI specification for the endpoints is in the [openapi/notification-api.yaml](./openapi/notification-api.yaml).
 
 ### Encryption
 

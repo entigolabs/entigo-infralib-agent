@@ -44,7 +44,6 @@ typeIdentifications:
       - aws_route53_resolver_rule_association
       - aws_route53_zone
       - aws_route_table
-      - aws_s3_bucket_policy
       - aws_s3_bucket_public_access_block
       - aws_s3_bucket_server_side_encryption_configuration
       - aws_s3_bucket_versioning

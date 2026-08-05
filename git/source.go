@@ -31,6 +31,8 @@ var (
 	repoMutex = sync.Mutex{}
 )
 
+var _ model.SourceRepository = (*SourceClient)(nil)
+
 type SourceClient struct {
 	ctx            context.Context
 	auth           transport.AuthMethod
@@ -95,7 +97,6 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 	}
 	var releases []*version.Version
 	var releaseSet = model.NewSet[string]()
-	var invalidTags = model.NewSet[string]()
 	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
 		if !t.Name().IsTag() {
 			return nil
@@ -104,15 +105,11 @@ func getReleases(repo *git.Repository) ([]*version.Version, model.Set[string], e
 		releaseSet.Add(tag)
 		tagVersion, err := version.NewVersion(tag)
 		if err != nil {
-			invalidTags.Add(tag)
 			return nil
 		}
 		releases = append(releases, tagVersion)
 		return nil
 	})
-	if len(invalidTags) > 0 {
-		slog.Debug(fmt.Sprintf("Tags are not a valid semversion: %s", strings.Join(invalidTags.ToSlice(), ", ")))
-	}
 	sort.Sort(version.Collection(releases))
 	return releases, releaseSet, err
 }
@@ -132,17 +129,16 @@ func getSourceRepo(ctx context.Context, auth transport.AuthMethod, source model.
 	if err != nil {
 		return nil, err
 	}
+	slog.Debug(fmt.Sprintf("Source %s repository path %s", source.URL, repoPath))
 	repoMutex.Lock()
 	defer repoMutex.Unlock()
 	repo, err := openSourceRepo(ctx, auth, source, repoPath, CABundle)
 	if err == nil {
-		slog.Debug(fmt.Sprintf("Repository path %s", repoPath))
 		return repo, nil
 	}
 	if !errors.Is(err, git.ErrRepositoryNotExists) {
 		return nil, err
 	}
-	slog.Debug(fmt.Sprintf("Cloning repository to %s", repoPath))
 	return git.PlainCloneContext(ctx, repoPath, false, &git.CloneOptions{
 		URL:             source.URL,
 		Auth:            auth,

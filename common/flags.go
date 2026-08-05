@@ -24,9 +24,12 @@ type Flags struct {
 	Pipeline                Pipeline
 	GCloud                  GCloud
 	AWS                     AWS
+	ServiceAccount          ServiceAccount
 	Delete                  DeleteFlags
 	Params                  Params
 	Migrate                 Migrate
+	Wrapper                 Wrapper
+	OfflineTrustBundle      string
 }
 
 func (f *Flags) Setup(cmd Command) error {
@@ -42,6 +45,12 @@ type GCloud struct {
 
 type AWS struct {
 	RoleArn string
+}
+
+type ServiceAccount struct {
+	RemoveUser        bool
+	RotateCredentials bool
+	TrustRole         string
 }
 
 type DeleteFlags struct {
@@ -63,6 +72,18 @@ type Migrate struct {
 	ImportFile string
 	PlanFile   string
 	TypesFile  string
+}
+
+type Wrapper struct {
+	Config        string
+	Step          string
+	Command       string
+	Entrypoint    string
+	PrefixStep    string
+	PlanPath      string
+	CampaignId    string
+	PipelineIndex string
+	Insecure      bool
 }
 
 type PipelineType string

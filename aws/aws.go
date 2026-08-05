@@ -11,8 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -70,41 +71,24 @@ func GetAWSConfig(ctx context.Context, roleArn string) (aws.Config, error) {
 		return retry.AddWithMaxAttempts(retry.NewStandard(), 10)
 	}))
 	if err != nil {
-		return cfg, fmt.Errorf("failed to initialize AWS session: %s", err)
+		return cfg, fmt.Errorf("failed to initialize AWS session: %v", err)
 	}
 	log.Printf("AWS session initialized with region: %s\n", cfg.Region)
 	if roleArn != "" {
-		return GetAssumedConfig(ctx, cfg, roleArn)
+		return GetAssumedConfig(cfg, roleArn), nil
 	}
 	return cfg, nil
 }
 
-func GetAssumedConfig(ctx context.Context, baseConfig aws.Config, roleArn string) (aws.Config, error) {
+func GetAssumedConfig(baseConfig aws.Config, roleArn string) aws.Config {
 	stsClient := sts.NewFromConfig(baseConfig)
-	assumedRole, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-		RoleArn:         aws.String(roleArn),
-		RoleSessionName: aws.String("entigo-infralib-agent"),
-		DurationSeconds: aws.Int32(3600),
+	provider := stscreds.NewAssumeRoleProvider(stsClient, roleArn, func(o *stscreds.AssumeRoleOptions) {
+		o.RoleSessionName = "entigo-infralib-agent"
+		o.Duration = 1 * time.Hour
 	})
-	if err != nil {
-		return baseConfig, fmt.Errorf("failed to assume role %s: %s", roleArn, err)
-	}
-	assumedConfig, err := config.LoadDefaultConfig(ctx,
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			*assumedRole.Credentials.AccessKeyId,
-			*assumedRole.Credentials.SecretAccessKey,
-			*assumedRole.Credentials.SessionToken,
-		)),
-		config.WithRegion(baseConfig.Region),
-	)
-	if err != nil {
-		return assumedConfig, fmt.Errorf("failed to initialize assumed AWS session: %s", err)
-	}
-	return assumedConfig, nil
-}
-
-func (a *awsService) GetIdentifier() string {
-	return fmt.Sprintf("prefix %s, AWS account id %s, region %s", a.cloudPrefix, a.accountId, a.awsConfig.Region)
+	assumedConfig := baseConfig
+	assumedConfig.Credentials = aws.NewCredentialsCache(provider)
+	return assumedConfig
 }
 
 func (a *awsService) SetupMinimalResources() (model.Resources, error) {
@@ -174,7 +158,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		return nil, err
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
-		*a.pipeline.TerraformCache.Value, manager)
+		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), a.cloudPrefix, manager)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -198,7 +182,7 @@ func (a *awsService) GetResources() (model.Resources, error) {
 			ProviderType: model.AWS,
 			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
 			CodeBuild:    codeBuild,
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, nil),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, nil),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),
@@ -372,11 +356,7 @@ func (a *awsService) createPipelineRole(iam IAM, s3Arn string) (string, bool, er
 	if pipelineRole != nil {
 		return *pipelineRole.Arn, false, nil
 	}
-	pipelineRole, err = iam.CreateRole(pipelineRoleName, []PolicyStatement{{
-		Effect:    "Allow",
-		Action:    []string{"sts:AssumeRole"},
-		Principal: map[string]string{"Service": "codepipeline.amazonaws.com"},
-	}})
+	pipelineRole, err = iam.CreateRole(pipelineRoleName, assumeRolePolicy("Service", "codepipeline.amazonaws.com"))
 	if err != nil {
 		return "", false, err
 	}
@@ -404,11 +384,7 @@ func (a *awsService) createBuildRole(iam IAM, logGroupArn string, s3Arn string, 
 	if buildRole != nil {
 		return *buildRole.Arn, false, nil
 	}
-	buildRole, err = iam.CreateRole(buildRoleName, []PolicyStatement{{
-		Effect:    "Allow",
-		Action:    []string{"sts:AssumeRole"},
-		Principal: map[string]string{"Service": "codebuild.amazonaws.com"},
-	}})
+	buildRole, err = iam.CreateRole(buildRoleName, assumeRolePolicy("Service", "codebuild.amazonaws.com"))
 	if err != nil {
 		return "", false, err
 	}
@@ -448,8 +424,7 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager mo
 		if updateSchedule != nil {
 			err = scheduler.deleteUpdateSchedule()
 			if err == nil {
-				manager.Message(model.MessageTypeSchedule, "Update schedule was removed",
-					map[string]string{"updateSchedule": updateCron})
+				manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, updateCron)
 			}
 			return err
 		}
@@ -466,14 +441,12 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager mo
 	if updateSchedule == nil {
 		err = scheduler.createUpdateSchedule(updateCron, updateArn, roleArn)
 		if err == nil {
-			manager.Message(model.MessageTypeSchedule, "Update schedule added: "+updateCron,
-				map[string]string{"updateSchedule": updateCron})
+			manager.Schedule(common.UpdateCommand, model.ScheduleAdded, updateCron)
 		}
 	} else if *updateSchedule.ScheduleExpression != getCronExpression(updateCron) {
 		err = scheduler.updateUpdateSchedule(updateCron, updateArn, roleArn)
 		if err == nil {
-			manager.Message(model.MessageTypeSchedule, "Update schedule modified: "+updateCron,
-				map[string]string{"updateSchedule": updateCron})
+			manager.Schedule(common.UpdateCommand, model.ScheduleModified, updateCron)
 		}
 	}
 	return err
@@ -488,11 +461,7 @@ func (a *awsService) createScheduleRole(iam IAM, runArn, updateArn string) (stri
 	if role != nil {
 		return *role.Arn, nil
 	}
-	role, err = iam.CreateRole(name, []PolicyStatement{{
-		Effect:    "Allow",
-		Action:    []string{"sts:AssumeRole"},
-		Principal: map[string]string{"Service": "scheduler.amazonaws.com"},
-	}})
+	role, err = iam.CreateRole(name, assumeRolePolicy("Service", "scheduler.amazonaws.com"))
 	if err != nil {
 		return "", err
 	}
@@ -573,40 +542,94 @@ func getServiceAccountName(cloudPrefix, region string) string {
 	return fmt.Sprintf("%s-service-account-%s", cloudPrefix, region)
 }
 
-func (a *awsService) CreateServiceAccount(rotateCredentials bool) error {
+func (a *awsService) CreateServiceAccount(SAFlags common.ServiceAccount) error {
 	username := getServiceAccountName(a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
 	policyStatement := ServiceAccountPolicy(bucketArn, a.cloudPrefix, a.accountId, a.awsConfig.Region, a.getBuildRoleName(), a.getPipelineRoleName(), a.getScheduleRoleName())
 	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
 
+	policy, err := iam.GetPolicy(username)
+	if err != nil {
+		return err
+	}
+	if policy == nil {
+		policy, err = iam.CreatePolicy(username, policyStatement)
+	} else {
+		err = iam.UpdatePolicy(*policy.Arn, policyStatement)
+	}
+	if err != nil {
+		return err
+	}
+
 	user, err := iam.GetUser(username)
 	if err != nil {
 		return err
 	}
+	if SAFlags.TrustRole != "" {
+		return a.createServiceRole(SAFlags, iam, username, user, *policy.Arn)
+	}
+	return a.createServiceUser(SAFlags, iam, username, user, *policy.Arn)
+}
+
+func (a *awsService) createServiceRole(SAFlags common.ServiceAccount, iam IAM, username string, user *iamtypes.User, policyArn string) error {
+	if user != nil {
+		if SAFlags.RemoveUser {
+			deleteServiceUser(iam, policyArn, username)
+		} else {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Service account user %s already exists, use remove-user flag to delete it", username)))
+		}
+	}
+
+	role, err := iam.GetRole(username)
+	if err != nil {
+		return err
+	}
+	if role == nil {
+		role, err = iam.CreateRole(username, assumeRolePolicy("AWS", SAFlags.TrustRole))
+		if err != nil {
+			return err
+		}
+		return iam.AttachRolePolicy(policyArn, *role.RoleName)
+	}
+	log.Printf("Service account role %s", *role.Arn)
+	if role.AssumeRolePolicyDocument == nil {
+		return iam.UpdateTrustedRole(*role.RoleName, SAFlags.TrustRole)
+	}
+	trusted, err := canAssumeRole(*role.AssumeRolePolicyDocument, SAFlags.TrustRole)
+	if err != nil {
+		return err
+	}
+	if trusted {
+		return nil
+	} else if !SAFlags.RotateCredentials {
+		slog.Error(common.PrefixError(fmt.Errorf("service account role %s has different trust relationship, use rotate-credentials flag to update it", *role.RoleName)))
+		return nil
+	}
+	err = iam.UpdateTrustedRole(*role.RoleName, SAFlags.TrustRole)
+	if err == nil {
+		log.Printf("Updated trust relationship for service account role %s\n", *role.RoleName)
+	}
+	return err
+}
+
+func (a *awsService) createServiceUser(SAFlags common.ServiceAccount, iam IAM, username string, user *iamtypes.User, policyArn string) error {
 	if user == nil {
+		var err error
 		user, err = iam.CreateUser(username)
 		if err != nil {
 			return err
 		}
-		policy, err := iam.CreatePolicy(username, policyStatement)
-		if err != nil {
-			return err
-		}
-		err = iam.AttachUserPolicy(*policy.Arn, *user.UserName)
+		err = iam.AttachUserPolicy(policyArn, *user.UserName)
 		if err != nil {
 			return err
 		}
 	} else {
-		err = updateServiceAccountPolicy(iam, username, policyStatement)
-		if err != nil {
-			return err
-		}
-		if !rotateCredentials {
+		if !SAFlags.RotateCredentials {
 			log.Printf("Service account %s already exists, use rotate-credentials flag to generate new credentials\n", username)
 			return nil
 		}
-		err = iam.DeleteAccessKeys(*user.UserName)
+		err := iam.DeleteAccessKeys(*user.UserName)
 		if err != nil {
 			return err
 		}
@@ -621,36 +644,18 @@ func (a *awsService) CreateServiceAccount(rotateCredentials bool) error {
 	return nil
 }
 
-func updateServiceAccountPolicy(iam IAM, username string, statement []PolicyStatement) error {
-	policy, err := iam.GetPolicy(username)
-	if err != nil {
-		return fmt.Errorf("failed to get policy for user %s: %s", username, err)
-	}
-	if policy != nil {
-		return iam.UpdatePolicy(*policy.Arn, statement)
-	}
-	policy, err = iam.CreatePolicy(username, statement)
-	if err != nil {
-		return err
-	}
-	return iam.AttachUserPolicy(*policy.Arn, username)
-}
-
 func (a *awsService) DeleteServiceAccount() {
 	username := getServiceAccountName(a.cloudPrefix, a.awsConfig.Region)
 	policyArn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", a.accountId, username)
-	err := a.resources.IAM.DetachUserPolicy(policyArn, username)
+	err := a.resources.IAM.DeleteRolePolicyAttachments(username)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", username, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM role policies %s: %s", username, err)))
 	}
-	err = a.resources.IAM.DeleteAccessKeys(username)
+	err = a.resources.IAM.DeleteRole(username)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM access keys for %s: %s", username, err)))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM role %s: %s", username, err)))
 	}
-	err = a.resources.IAM.DeleteUser(username)
-	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM user %s: %s", username, err)))
-	}
+	deleteServiceUser(a.resources.IAM, policyArn, username)
 	err = a.resources.IAM.DeletePolicy(username, a.accountId)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", username, err)))
@@ -664,6 +669,21 @@ func (a *awsService) DeleteServiceAccount() {
 	err = a.resources.SSM.DeleteParameter(secretAccessKeyParam)
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete SSM parameter %s: %s", secretAccessKeyParam, err)))
+	}
+}
+
+func deleteServiceUser(iam IAM, policyArn, username string) {
+	err := iam.DetachUserPolicy(policyArn, username)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to detach IAM policy %s: %s", username, err)))
+	}
+	err = iam.DeleteAccessKeys(username)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM access keys for %s: %s", username, err)))
+	}
+	err = iam.DeleteUser(username)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM user %s: %s", username, err)))
 	}
 }
 

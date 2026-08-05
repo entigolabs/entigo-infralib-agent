@@ -36,6 +36,7 @@ type IAM interface {
 	DetachUserPolicy(policyArn string, userName string) error
 	CreateAccessKey(userName string) (*types.AccessKey, error)
 	DeleteAccessKeys(userName string) error
+	UpdateTrustedRole(roleName, roleArn string) error
 	CreateServiceLinkedRole(service string) error
 }
 
@@ -92,7 +93,7 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*ty
 		}
 		return nil, fmt.Errorf("failed to create role %s: %s", roleName, err)
 	}
-	log.Printf("Created IAM role: %s\n", roleName)
+	log.Printf("Created IAM role: %s\n", *result.Role.Arn)
 	return result.Role, nil
 }
 
@@ -223,6 +224,65 @@ func getPolicy(statements []PolicyStatement) (*string, error) {
 		return nil, fmt.Errorf("failed to marshal policy: %s", err)
 	}
 	return aws.String(string(policyBytes)), nil
+}
+
+func decodePolicy(policy string) (PolicyDocument, error) {
+	decoded, err := url.QueryUnescape(policy)
+	if err != nil {
+		return PolicyDocument{}, err
+	}
+	var pd PolicyDocument
+	err = json.Unmarshal([]byte(decoded), &pd)
+	return pd, err
+}
+
+func canAssumeRole(policy, targetPrincipal string) (bool, error) {
+	policyDocument, err := decodePolicy(policy)
+	if err != nil {
+		return false, fmt.Errorf("failed to decode policy: %w", err)
+	}
+	for _, stmt := range policyDocument.Statement {
+		if stmt.Effect != "Allow" {
+			continue
+		}
+		principals := extractAWSPrincipals(stmt.Principal)
+		if principals != nil && principals.Contains(targetPrincipal) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func extractAWSPrincipals(raw interface{}) model.Set[string] {
+	if raw == nil {
+		return nil
+	}
+
+	switch p := raw.(type) {
+	case string:
+		return model.NewSet(p)
+
+	case map[string]interface{}:
+		awsVal, ok := p["AWS"]
+		if !ok {
+			return nil
+		}
+
+		switch val := awsVal.(type) {
+		case string:
+			return model.NewSet(val)
+		case []interface{}:
+			arns := model.NewSet[string]()
+			for _, entry := range val {
+				if str, ok := entry.(string); ok {
+					arns.Add(str)
+				}
+			}
+			return arns
+		}
+	}
+	return nil
 }
 
 func (i *identity) AttachRolePolicy(policyArn string, roleName string) error {
@@ -425,6 +485,18 @@ func (i *identity) DeleteAccessKeys(userName string) error {
 	return nil
 }
 
+func (i *identity) UpdateTrustedRole(roleName, roleArn string) error {
+	policy, err := getPolicy(assumeRolePolicy("AWS", roleArn))
+	if err != nil {
+		return err
+	}
+	_, err = i.iamClient.UpdateAssumeRolePolicy(i.ctx, &iam.UpdateAssumeRolePolicyInput{
+		RoleName:       &roleName,
+		PolicyDocument: policy,
+	})
+	return err
+}
+
 func (i *identity) CreateServiceLinkedRole(service string) error {
 	_, err := i.iamClient.CreateServiceLinkedRole(i.ctx, &iam.CreateServiceLinkedRoleInput{
 		AWSServiceName: aws.String(service),
@@ -492,11 +564,7 @@ func CodeBuildS3Policy(s3Arn string) PolicyStatement {
 }
 
 func CodePipelinePolicy(s3Arn string) []PolicyStatement {
-	return []PolicyStatement{{
-		Effect:   "Allow",
-		Resource: []string{"arn:aws:s3:::*"},
-		Action:   []string{"s3:ListBucket"},
-	}, CodePipelineS3Policy(s3Arn),
+	return []PolicyStatement{CodePipelineS3Policy(s3Arn),
 		{
 			Effect:   "Allow",
 			Resource: []string{"*"},
@@ -510,18 +578,20 @@ func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 }
 
 func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName string) []PolicyStatement {
-	return []PolicyStatement{{
-		Effect:   "Allow",
-		Resource: []string{"arn:aws:s3:::*"},
-		Action:   []string{"s3:ListBucket"},
-	}, CodePipelineS3Policy(s3Arn),
+	return []PolicyStatement{CodePipelineS3Policy(s3Arn),
 		{
 			Effect:   "Allow",
-			Resource: []string{"*"},
+			Resource: []string{fmt.Sprintf("arn:aws:codebuild:%s:%s:project/%s-*", region, accountId, prefix)},
 			Action: []string{
 				"codebuild:CreateProject",
 				"codebuild:BatchGetProjects",
 				"codebuild:UpdateProject",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:codepipeline:%s:%s:%s-*", region, accountId, prefix)},
+			Action: []string{
 				"codepipeline:CreatePipeline",
 				"codepipeline:StartPipelineExecution",
 				"codepipeline:UpdatePipeline",
@@ -534,26 +604,74 @@ func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipel
 				"codepipeline:GetPipeline",
 				"codepipeline:GetPipelineState",
 				"codepipeline:TagResource",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s-%s", region, accountId, prefix, accountId)},
+			Action: []string{
 				"dynamodb:DescribeTable",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:*", region, accountId)},
+			Action: []string{
 				"logs:DescribeLogGroups",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s-log:*", region, accountId, prefix)},
+			Action: []string{
 				"logs:DescribeLogStreams",
 				"logs:GetLogEvents",
 				"logs:AssociateKmsKey",
 				"logs:PutRetentionPolicy",
+			},
+		},
+		{
+			Effect: "Allow",
+			Resource: []string{
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, buildRoleName),
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, pipelineRoleName),
+				fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, scheduleRoleName),
+			},
+			Action: []string{
 				"iam:GetRole",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{"*"},
+			Action: []string{
 				"sts:GetCallerIdentity",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:ssm:%s:%s:parameter/*", region, accountId)},
+			Action: []string{
 				"ssm:GetParameter",
-				"ssm:PutParameter",
-				"ssm:DeleteParameter",
-				"ssm:AddTagsToResource",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:secretsmanager:%s:%s:secret:entigo-infralib-*", region, accountId)},
+			Action: []string{
 				"secretsmanager:GetSecretValue",
 				"secretsmanager:DeleteSecret",
 				"secretsmanager:CreateSecret",
 				"secretsmanager:PutSecretValue",
 				"secretsmanager:DescribeSecret",
+				"secretsmanager:RestoreSecret",
 				"secretsmanager:TagResource",
-				"tag:GetResources",
-				"tag:TagResources",
+			},
+		},
+		{
+			Effect:   "Allow",
+			Resource: []string{fmt.Sprintf("arn:aws:kms:%s:%s:key/*", region, accountId)},
+			Action: []string{
 				"kms:GenerateDataKey",
 				"kms:Decrypt",
 			},
@@ -595,7 +713,23 @@ func CodePipelineS3Policy(s3Arn string) PolicyStatement {
 		Effect:   "Allow",
 		Resource: []string{s3Arn, fmt.Sprintf("%s/*", s3Arn)},
 		Action: []string{
-			"s3:*",
+			"s3:GetObjectVersion",
+			"s3:GetBucketVersioning",
+			"s3:ListBucket",
+			"s3:ListBucketVersions",
+			"s3:GetBucketPolicy",
+			"s3:PutBucketPolicy",
+			"s3:GetEncryptionConfiguration",
+			"s3:PutEncryptionConfiguration",
+			"s3:PutBucketTagging",
+			"s3:PutBucketVersioning",
+			"s3:GetLifecycleConfiguration",
+			"s3:PutLifecycleConfiguration",
+			"s3:ListBucketVersions",
+			"s3:GetObject",
+			"s3:PutObject",
+			"s3:DeleteObject",
+			"s3:DeleteObjectVersion",
 		},
 	}
 }
@@ -609,4 +743,12 @@ func SchedulePolicy(runArn, updateArn string) []PolicyStatement {
 		},
 	},
 	}
+}
+
+func assumeRolePolicy(principalKey, principalValue string) []PolicyStatement {
+	return []PolicyStatement{{
+		Effect:    "Allow",
+		Action:    []string{"sts:AssumeRole"},
+		Principal: map[string]string{principalKey: principalValue},
+	}}
 }

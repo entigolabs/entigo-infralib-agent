@@ -9,6 +9,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/commands/destroy"
 	"github.com/entigolabs/entigo-infralib-agent/commands/migrate"
 	"github.com/entigolabs/entigo-infralib-agent/commands/params"
+	"github.com/entigolabs/entigo-infralib-agent/commands/provision"
 	"github.com/entigolabs/entigo-infralib-agent/commands/pull"
 	agentRun "github.com/entigolabs/entigo-infralib-agent/commands/run"
 	"github.com/entigolabs/entigo-infralib-agent/commands/sa"
@@ -54,6 +55,8 @@ func run(ctx context.Context, cmd common.Command) error {
 		return migrate.Plan(ctx, flags)
 	case common.MigrateValidateCommand:
 		return migrate.Validate(ctx, flags)
+	case common.ProvisionCommand:
+		return provision.Run(ctx, flags)
 	default:
 		return errors.New("unsupported command")
 	}

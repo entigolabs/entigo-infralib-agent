@@ -12,5 +12,5 @@ func Run(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
-	return provider.CreateServiceAccount(flags.RotateCredentials)
+	return provider.CreateServiceAccount(flags.ServiceAccount)
 }

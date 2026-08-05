@@ -1,0 +1,358 @@
+openapi: 3.0.3
+info:
+  title: Entigo Infralib Agent API
+  version: 1.0.0
+  description: |
+    Notification API for the Infralib agent. All notifications are POSTed to a
+    single endpoint as a discriminated union over the `kind` field. New
+    notification kinds are additive — receivers should respond 200 OK and drop
+    payloads with an unknown `kind`.
+paths:
+  /v1/campaigns/{campaignId}/notifications:
+    post:
+      summary: Submit a campaign notification
+      operationId: postNotification
+      parameters:
+        - $ref: '#/components/parameters/campaignId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Notification'
+      responses:
+        '200':
+          description: Notification accepted
+        '400':
+          description: |
+            Malformed payload. Sender MUST drop and log; replay will not help.
+        '401':
+          description: |
+            Authentication failed. Sender MUST drop and log; replay will not help.
+        '403':
+          description: |
+            Authorization failed. Sender MUST drop and log; replay will not help.
+        '429':
+          description: |
+            Rate limited. Sender SHOULD retry
+        '5XX':
+          description: |
+            Server error. Sender SHOULD retry with exponential backoff
+
+components:
+  parameters:
+    campaignId:
+      name: campaignId
+      in: path
+      description: Unique identifier for the campaign execution
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Notification:
+      oneOf:
+        - $ref: '#/components/schemas/CampaignNotification'
+        - $ref: '#/components/schemas/ScheduleNotification'
+        - $ref: '#/components/schemas/ApprovalNotification'
+        - $ref: '#/components/schemas/ManualApprovalNotification'
+        - $ref: '#/components/schemas/StepStateNotification'
+        - $ref: '#/components/schemas/PipelineStateNotification'
+        - $ref: '#/components/schemas/ModulesNotification'
+        - $ref: '#/components/schemas/SourcesNotification'
+      discriminator:
+        propertyName: kind
+        mapping:
+          campaign: '#/components/schemas/CampaignNotification'
+          schedule: '#/components/schemas/ScheduleNotification'
+          approval: '#/components/schemas/ApprovalNotification'
+          manual_approval: '#/components/schemas/ManualApprovalNotification'
+          step_state: '#/components/schemas/StepStateNotification'
+          pipeline_state: '#/components/schemas/PipelineStateNotification'
+          modules: '#/components/schemas/ModulesNotification'
+          sources: '#/components/schemas/SourcesNotification'
+
+    NotificationBase:
+      type: object
+      required: [ kind, notificationId, timestamp ]
+      properties:
+        kind:
+          type: string
+          description: Discriminator for the notification variant
+        notificationId:
+          type: string
+          format: uuid
+          description: Unique identifier for the notification
+        context:
+          type: string
+          description: Optional context label configured on the notifier
+        timestamp:
+          type: string
+          format: date-time
+
+    CampaignNotification:
+      description: Campaign status
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, status, command, id, region, provider ]
+          properties:
+            kind:
+              type: string
+              enum: [ campaign ]
+            status:
+              $ref: '#/components/schemas/CampaignStatus'
+            command:
+              $ref: '#/components/schemas/Command'
+            id:
+              type: string
+            region:
+              type: string
+            provider:
+              $ref: '#/components/schemas/ProviderType'
+            error:
+              type: string
+
+    ScheduleNotification:
+      description: Campaign status
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, action, command ]
+          properties:
+            kind:
+              type: string
+              enum: [ schedule ]
+            action:
+              type: string
+              enum: [ added, modified, removed]
+            command:
+              $ref: '#/components/schemas/Command'
+            schedule:
+              type: string
+              description: Cron expression for the campaign schedule
+
+    ApprovalNotification:
+      description: Pipeline step was approved
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, pipelineIndex, name, step ]
+          properties:
+            kind:
+              type: string
+              enum: [ approval ]
+            pipelineIndex:
+              type: integer
+            name:
+              type: string
+            step:
+              type: string
+            approvedBy:
+              type: string
+
+    ManualApprovalNotification:
+      description: Pipeline step requires manual approval
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, pipelineIndex, name, step, plan ]
+          properties:
+            kind:
+              type: string
+              enum: [ manual_approval ]
+            pipelineIndex:
+              type: integer
+            name:
+              type: string
+            step:
+              type: string
+            plan:
+              $ref: '#/components/schemas/PlanEntity'
+            link:
+              type: string
+
+    StepStateNotification:
+      description: Per-step apply status update (filtered as 'progress').
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, pipelineIndex, status, step, modules ]
+          properties:
+            kind:
+              type: string
+              enum: [ step_state ]
+            pipelineIndex:
+              type: integer
+            status:
+              $ref: '#/components/schemas/ApplyStatus'
+            step:
+              type: string
+            error:
+              type: string
+            applied_at:
+              type: string
+              format: date-time
+            modules:
+              type: array
+              items:
+                $ref: '#/components/schemas/StepModuleStatus'
+
+    PipelineStateNotification:
+      description: Per-pipeline apply status update (filtered as 'progress').
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, pipelineIndex, status, versions ]
+          properties:
+            kind:
+              type: string
+              enum: [ pipeline_state ]
+            pipelineIndex:
+              type: integer
+            status:
+              $ref: '#/components/schemas/ApplyStatus'
+            versions:
+              type: array
+              items:
+                $ref: '#/components/schemas/PipelineVersion'
+            error:
+              type: string
+
+    ModulesNotification:
+      description: Resolved modules and steps for the campaign.
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, id, region, provider, command, steps ]
+          properties:
+            kind:
+              type: string
+              enum: [ modules ]
+            id:
+              type: string
+            region:
+              type: string
+            updateSchedule:
+              type: string
+            provider:
+              $ref: '#/components/schemas/ProviderType'
+            command:
+              $ref: '#/components/schemas/Command'
+            steps:
+              type: array
+              items:
+                $ref: '#/components/schemas/StepEntity'
+
+    SourcesNotification:
+      description: Processed source repositories used by the campaign.
+      allOf:
+        - $ref: '#/components/schemas/NotificationBase'
+        - type: object
+          required: [ kind, sources ]
+          properties:
+            kind:
+              type: string
+              enum: [ sources ]
+            sources:
+              type: array
+              items:
+                $ref: '#/components/schemas/SourceEntity'
+
+    Command:
+      type: string
+      enum: [ run, update ]
+
+    ApplyStatus:
+      type: string
+      enum: [ success, failure, skipped, starting ]
+
+    CampaignStatus:
+      type: string
+      enum: [ started, success, failure, terminated ]
+
+    ProviderType:
+      type: string
+      enum: [ AWS, GCLOUD ]
+
+    PlanEntity:
+      type: object
+      required: [ imported, added, changed, destroyed ]
+      properties:
+        imported:
+          type: integer
+        added:
+          type: integer
+        changed:
+          type: integer
+        destroyed:
+          type: integer
+
+    StepEntity:
+      type: object
+      required: [ name, type, modules ]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [ terraform, argocd-apps ]
+        modules:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModuleEntity'
+
+    ModuleEntity:
+      type: object
+      required: [ name, source ]
+      properties:
+        name:
+          type: string
+        source:
+          type: string
+
+    StepModuleStatus:
+      type: object
+      required: [ name, version ]
+      properties:
+        name:
+          type: string
+        applied_version:
+          type: string
+        version:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+
+    PipelineVersion:
+      type: object
+      required: [ url ]
+      properties:
+        url:
+          type: string
+        forcedVersion:
+          type: string
+        version:
+          type: string
+
+    SourceEntity:
+      type: object
+      required: [ url ]
+      properties:
+        url:
+          type: string
+        version:
+          type: string
+        forcedVersion:
+          type: string
+        releases:
+          type: array
+          items:
+            type: string
+        modules:
+          type: array
+          items:
+            type: string

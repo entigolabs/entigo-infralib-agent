@@ -2,10 +2,14 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"maps"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,10 +25,11 @@ import (
 )
 
 const (
-	pollingDelay     = 10 * time.Second
-	waitTimeout      = 2 * time.Minute
-	logsRetries      = 3
-	logsPollingDelay = 5 * time.Second
+	pollingDelay         = 10 * time.Second
+	waitTimeout          = 2 * time.Minute
+	logsRetries          = 3
+	logsPollingDelay     = 5 * time.Second
+	autoExecutionTimeout = 30 * time.Second
 
 	approveStageName  = "Approve"
 	approveActionName = "Approval"
@@ -46,6 +51,12 @@ const (
 	approvalStatusApprove  approvalStatus = "Approve"
 )
 
+type envVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Type  string `json:"type,omitempty"`
+}
+
 type Pipeline struct {
 	ctx            context.Context
 	region         string
@@ -55,10 +66,22 @@ type Pipeline struct {
 	logGroup       string
 	logStream      string
 	terraformCache bool
+	enableOpenTofu bool
+	cloudPrefix    string
 	manager        model.NotificationManager
+	campaignId     string
+	pipelineIndex  string
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, manager model.NotificationManager) *Pipeline {
+func (p *Pipeline) SetCampaignId(id string) {
+	p.campaignId = id
+}
+
+func (p *Pipeline) SetPipelineIndex(index int) {
+	p.pipelineIndex = strconv.Itoa(index)
+}
+
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -68,7 +91,9 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		logGroup:       logGroup,
 		logStream:      logStream,
 		terraformCache: terraformCache,
+		cloudPrefix:    cloudPrefix,
 		manager:        manager,
+		enableOpenTofu: enableOpenTofu,
 	}
 }
 
@@ -99,8 +124,7 @@ func (p *Pipeline) deletePipeline(projectName string) error {
 		Name: aws.String(projectName),
 	})
 	if err != nil {
-		var notFoundError *types.PipelineNotFoundException
-		if errors.As(err, &notFoundError) {
+		if _, ok := errors.AsType[*types.PipelineNotFoundException](err); ok {
 			return nil
 		}
 		return err
@@ -118,10 +142,26 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return p.startUpdatedPipeline(pipe, stepName, step, bucket, authSources)
 	}
 	planCommand, applyCommand := model.GetCommands(step.Type)
+	planEnvars, err := p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return nil, err
+	}
+	applyEnvVars, err := p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return nil, err
+	}
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
+			Name:         aws.String(pipelineName),
+			RoleArn:      aws.String(p.roleArn),
+			PipelineType: types.PipelineTypeV2,
+			Variables: []types.PipelineVariableDeclaration{{
+				Name:         aws.String("CampaignId"),
+				DefaultValue: aws.String(model.CampaignSentinelNone),
+			}, {
+				Name:         aws.String("PipelineIndex"),
+				DefaultValue: aws.String("0"),
+			}},
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
@@ -161,7 +201,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": planEnvars,
 					},
 				},
 				},
@@ -193,7 +233,7 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": applyEnvVars,
 					},
 				},
 				},
@@ -209,30 +249,19 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return nil, err
 	}
 	log.Printf("Created CodePipeline %s\n", pipelineName)
-	return p.getNewPipelineExecutionId(pipelineName)
-}
-
-func (p *Pipeline) getNewPipelineExecutionId(pipelineName string) (*string, error) {
-	time.Sleep(5 * time.Second) // Wait for the pipeline to start executing
-	executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
-		PipelineName: aws.String(pipelineName),
-	})
+	err = p.disableStageTransition(pipelineName, planName)
 	if err != nil {
 		return nil, err
 	}
-	summaries := executions.PipelineExecutionSummaries
-	if len(summaries) == 0 {
-		return nil, fmt.Errorf("couldn't find a pipeline execution id")
+	// The auto-start on create has no CampaignId — replace it with our own.
+	if err := p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout); err != nil {
+		return nil, err
 	}
-	var oldestExecutionId *string
-	var oldestStartTime *time.Time
-	for _, execution := range summaries {
-		if oldestStartTime == nil || execution.StartTime.Before(*oldestStartTime) {
-			oldestExecutionId = execution.PipelineExecutionId
-			oldestStartTime = execution.StartTime
-		}
+	err = p.enableStageTransition(pipelineName, planName)
+	if err != nil {
+		return nil, err
 	}
-	return oldestExecutionId, nil
+	return p.StartPipelineExecution(pipelineName, "", model.Step{}, "")
 }
 
 func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) error {
@@ -252,10 +281,26 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		planCommand = model.PlanDestroyCommand
 		applyCommand = model.ApplyDestroyCommand
 	}
+	planEnvVars, err := p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return err
+	}
+	applyEnvVars, err := p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources)
+	if err != nil {
+		return err
+	}
 	_, err = p.codePipeline.CreatePipeline(p.ctx, &codepipeline.CreatePipelineInput{
 		Pipeline: &types.PipelineDeclaration{
-			Name:    aws.String(pipelineName),
-			RoleArn: aws.String(p.roleArn),
+			Name:         aws.String(pipelineName),
+			RoleArn:      aws.String(p.roleArn),
+			PipelineType: types.PipelineTypeV2,
+			Variables: []types.PipelineVariableDeclaration{{
+				Name:         aws.String("CampaignId"),
+				DefaultValue: aws.String(model.CampaignSentinelNone),
+			}, {
+				Name:         aws.String("PipelineIndex"),
+				DefaultValue: aws.String("0"),
+			}},
 			ArtifactStore: &types.ArtifactStore{
 				Location: aws.String(bucket),
 				Type:     types.ArtifactStoreTypeS3,
@@ -294,7 +339,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(planCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": planEnvVars,
 					},
 				},
 				},
@@ -326,7 +371,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 					Configuration: map[string]string{
 						"ProjectName":          projectName,
 						"PrimarySource":        "source_output",
-						"EnvironmentVariables": p.getEnvironmentVariablesByType(applyCommand, stepName, step, bucket, authSources),
+						"EnvironmentVariables": applyEnvVars,
 					},
 				},
 				},
@@ -354,8 +399,7 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-	return p.stopLatestPipelineExecutions(pipelineName, 1)
+	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
 }
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
@@ -369,8 +413,7 @@ func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucke
 		if err != nil {
 			return err
 		}
-		time.Sleep(5 * time.Second) // Wait for pipeline to start executing
-		err = p.stopLatestPipelineExecutions(updatePipeline, 1)
+		err = p.waitAndStopAutoExecution(updatePipeline, autoExecutionTimeout)
 		if err != nil {
 			return err
 		}
@@ -392,8 +435,7 @@ func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucke
 	if err != nil || run {
 		return err
 	}
-	time.Sleep(5 * time.Second)
-	return p.stopLatestPipelineExecutions(runPipeline, 1)
+	return p.waitAndStopAutoExecution(runPipeline, autoExecutionTimeout)
 }
 
 func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket string) error {
@@ -458,10 +500,23 @@ func (p *Pipeline) createAgentPipeline(prefix string, projectName string, bucket
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, _ string, _ model.Step, _ string) (*string, error) {
 	log.Printf("Starting pipeline %s\n", pipelineName)
-	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, &codepipeline.StartPipelineExecutionInput{
+	input := &codepipeline.StartPipelineExecutionInput{
 		Name:               aws.String(pipelineName),
-		ClientRequestToken: aws.String(uuid.New().String()),
-	})
+		ClientRequestToken: aws.String(uuid.NewString()),
+	}
+	if p.campaignId != "" {
+		input.Variables = append(input.Variables, types.PipelineVariable{
+			Name:  aws.String("CampaignId"),
+			Value: aws.String(p.campaignId),
+		})
+	}
+	if p.pipelineIndex != "" {
+		input.Variables = append(input.Variables, types.PipelineVariable{
+			Name:  aws.String("PipelineIndex"),
+			Value: aws.String(p.pipelineIndex),
+		})
+	}
+	execution, err := p.codePipeline.StartPipelineExecution(p.ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -504,14 +559,46 @@ func (p *Pipeline) UpdatePipeline(pipelineName string, stepName string, step mod
 	return p.updatePipeline(pipe, stepName, step, bucket, authSources)
 }
 
+func hasPipelineVariable(vars []types.PipelineVariableDeclaration, name string) bool {
+	for _, v := range vars {
+		if v.Name != nil && *v.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) error {
 	changed := false
+	// V1 pipelines treat #{variables.CampaignId} as a literal string, which
+	// would corrupt the wrapper's CAMPAIGN_ID env var — upgrade in place.
+	if pipeline.PipelineType != types.PipelineTypeV2 {
+		pipeline.PipelineType = types.PipelineTypeV2
+		changed = true
+	}
+	if !hasPipelineVariable(pipeline.Variables, "CampaignId") {
+		pipeline.Variables = append(pipeline.Variables, types.PipelineVariableDeclaration{
+			Name:         aws.String("CampaignId"),
+			DefaultValue: aws.String(model.CampaignSentinelNone),
+		})
+		changed = true
+	}
+	if !hasPipelineVariable(pipeline.Variables, "PipelineIndex") {
+		pipeline.Variables = append(pipeline.Variables, types.PipelineVariableDeclaration{
+			Name:         aws.String("PipelineIndex"),
+			DefaultValue: aws.String("0"),
+		})
+		changed = true
+	}
 	for _, stage := range pipeline.Stages {
 		if *stage.Name == sourceName || *stage.Name == approveStageName {
 			continue
 		}
 		for _, action := range stage.Actions {
-			envVars := p.getActionEnvironmentVariables(*action.Name, stepName, step, bucket, authSources)
+			envVars, err := p.getActionEnvironmentVariables(*action.Name, stepName, step, bucket, authSources)
+			if err != nil {
+				return err
+			}
 			if action.Configuration == nil || action.Configuration["EnvironmentVariables"] == envVars {
 				continue
 			}
@@ -532,13 +619,12 @@ func (p *Pipeline) updatePipeline(pipeline *types.PipelineDeclaration, stepName 
 	return err
 }
 
-func (p *Pipeline) getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+func (p *Pipeline) getActionEnvironmentVariables(actionName string, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
 	command := getCommand(actionName, step.Type)
 	if step.Type == model.StepTypeTerraform {
 		return p.getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
-	} else {
-		return getEnvironmentVariables(command, stepName, step, bucket, authSources)
 	}
+	return p.getEnvironmentVariables(command, stepName, step, bucket, authSources)
 }
 
 func getCommand(actionName string, stepType model.StepType) model.ActionCommand {
@@ -546,27 +632,23 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	case planName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDPlanCommand
-		} else {
-			return model.PlanCommand
 		}
+		return model.PlanCommand
 	case applyName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDApplyCommand
-		} else {
-			return model.ApplyCommand
 		}
+		return model.ApplyCommand
 	case destroyName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDPlanDestroyCommand
-		} else {
-			return model.PlanDestroyCommand
 		}
+		return model.PlanDestroyCommand
 	case applyDestroyName:
 		if stepType == model.StepTypeArgoCD {
 			return model.ArgoCDApplyDestroyCommand
-		} else {
-			return model.ApplyDestroyCommand
 		}
+		return model.ApplyDestroyCommand
 	}
 	return ""
 }
@@ -717,13 +799,11 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		}
 		if action.Status == types.ActionExecutionStatusSucceeded {
 			if status == approvalStatusWaiting && p.manager != nil {
-				message := fmt.Sprintf("Pipeline %s was approved", pipelineName)
-				params := map[string]string{"pipeline": pipelineName, "step": step.Name}
+				var approvedBy string
 				if action.UpdatedBy != nil {
-					message += fmt.Sprintf("\nApproved by %s", *action.UpdatedBy)
-					params["approvedBy"] = *action.UpdatedBy
+					approvedBy = *action.UpdatedBy
 				}
-				p.manager.Message(model.MessageTypeApprovals, message, params)
+				p.manager.Approval(pipelineName, step.Name, approvedBy)
 			}
 			return approvalStatusApproved, nil
 		}
@@ -759,7 +839,7 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 	}
 	log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 	if p.manager != nil {
-		p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+		p.manager.ManualApproval(pipelineName, step.Name, *pipeChanges, p.getLink(pipelineName))
 	}
 	return approvalStatusWaiting, nil
 }
@@ -876,25 +956,35 @@ func (p *Pipeline) disableStageTransition(pipelineName string, stage string) err
 	return err
 }
 
-func (p *Pipeline) stopLatestPipelineExecutions(pipelineName string, latestCount int32) error {
-	executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
-		PipelineName: aws.String(pipelineName),
-		MaxResults:   aws.Int32(latestCount),
-	})
-	if err != nil {
-		return err
-	}
-	for _, execution := range executions.PipelineExecutionSummaries {
-		if execution.Status != types.PipelineExecutionStatusInProgress {
-			continue
-		}
-		err = p.stopPipelineExecution(pipelineName, *execution.PipelineExecutionId,
-			"Abandoned pipeline execution")
+// Bounded by timeout — if no execution appears we return without error so a
+// subsequent StartPipelineExecution can still succeed.
+func (p *Pipeline) waitAndStopAutoExecution(pipelineName string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		executions, err := p.codePipeline.ListPipelineExecutions(p.ctx, &codepipeline.ListPipelineExecutionsInput{
+			PipelineName: aws.String(pipelineName),
+			MaxResults:   aws.Int32(1),
+		})
 		if err != nil {
 			return err
 		}
+		for _, execution := range executions.PipelineExecutionSummaries {
+			if execution.Status != types.PipelineExecutionStatusInProgress {
+				continue
+			}
+			slog.Debug("intercepting auto-execution", "pipeline", pipelineName, "execution", *execution.PipelineExecutionId)
+			return p.stopPipelineExecution(pipelineName, *execution.PipelineExecutionId, "Superseded by agent-orchestrated execution")
+		}
+		if time.Now().After(deadline) {
+			slog.Warn("no auto-execution appeared to intercept", "pipeline", pipelineName, "timeout", timeout)
+			return nil
+		}
+		select {
+		case <-p.ctx.Done():
+			return p.ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
-	return nil
 }
 
 func (p *Pipeline) stopPipelineExecution(pipelineName string, executionId string, reason string) error {
@@ -905,8 +995,7 @@ func (p *Pipeline) stopPipelineExecution(pipelineName string, executionId string
 		Reason:              &reason,
 	})
 	if err != nil {
-		var awsError *types.PipelineExecutionNotStoppableException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.PipelineExecutionNotStoppableException](err); ok {
 			return nil
 		}
 		return err
@@ -928,59 +1017,79 @@ func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 	return pipelineOutput.Pipeline, nil
 }
 
-func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
+func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
 	if step.Type == model.StepTypeTerraform {
 		return p.getTerraformEnvironmentVariables(command, stepName, step, bucket, authSources)
 	}
-	return getEnvironmentVariables(command, stepName, step, bucket, authSources)
+	return p.getEnvironmentVariables(command, stepName, step, bucket, authSources)
 }
 
-func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step, bucket, authSources)
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TERRAFORM_CACHE\",\"value\":\"%t\"}", p.terraformCache))
-	for _, module := range step.Modules {
-		if util.IsClientModule(module) {
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.HttpUsername))
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.HttpPassword))
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\"}",
-				strings.ToUpper(module.Name), module.Source))
-		}
+func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
+	vars := p.buildEnvVars(command, stepName, step, bucket, authSources)
+	vars = append(vars, envVar{Name: "TERRAFORM_CACHE", Value: fmt.Sprintf("%t", p.terraformCache)})
+	if p.enableOpenTofu {
+		vars = append(vars, envVar{Name: "TF_TOOL", Value: model.TofuTfTool})
 	}
-	return "[" + strings.Join(envVars, ",") + "]"
+	for _, module := range step.Modules {
+		if !util.IsClientModule(module) {
+			continue
+		}
+		up := strings.ToUpper(module.Name)
+		vars = append(vars,
+			envVar{Name: "GIT_AUTH_USERNAME_" + up, Value: module.HttpUsername},
+			envVar{Name: "GIT_AUTH_PASSWORD_" + up, Value: module.HttpPassword},
+			envVar{Name: "GIT_AUTH_SOURCE_" + up, Value: module.Source},
+		)
+	}
+	return marshalEnvVars(vars)
 }
 
-func getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) string {
-	envVars := getEnvironmentVariablesList(command, stepName, step, bucket, authSources)
-	return "[" + strings.Join(envVars, ",") + "]"
+func (p *Pipeline) getEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
+	return marshalEnvVars(p.buildEnvVars(command, stepName, step, bucket, authSources))
 }
 
-func getEnvironmentVariablesList(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) []string {
-	var envVars []string
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"COMMAND\",\"value\":\"%s\"}", command))
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"TF_VAR_prefix\",\"value\":\"%s\"}", stepName))
-	envVars = append(envVars, fmt.Sprintf("{\"name\":\"INFRALIB_BUCKET\",\"value\":\"%s\"}", bucket))
+func marshalEnvVars(vars []envVar) (string, error) {
+	b, err := json.Marshal(vars)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func (p *Pipeline) buildEnvVars(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) []envVar {
+	vars := []envVar{
+		{Name: "COMMAND", Value: string(command)},
+		{Name: "TF_VAR_prefix", Value: stepName},
+		{Name: "INFRALIB_BUCKET", Value: bucket},
+		{Name: "INFRALIB_STEP", Value: step.Name},
+		{Name: "CAMPAIGN_ID", Value: "#{variables.CampaignId}"},
+		{Name: "PIPELINE_INDEX", Value: "#{variables.PipelineIndex}"},
+	}
+	if p.campaignId != "" {
+		vars = append(vars, envVar{Name: model.WrapperConfigEnv, Value: model.WrapperConfigSecretName(p.cloudPrefix),
+			Type: "SECRETS_MANAGER"})
+	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"KUBERNETES_CLUSTER_NAME\",\"value\":\"%s\"}", step.KubernetesClusterName))
+			vars = append(vars, envVar{Name: "KUBERNETES_CLUSTER_NAME", Value: step.KubernetesClusterName})
 		}
-		if step.ArgocdNamespace == "" {
-			envVars = append(envVars, "{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"argocd\"}")
-		} else {
-			envVars = append(envVars, fmt.Sprintf("{\"name\":\"ARGOCD_NAMESPACE\",\"value\":\"%s\"}", step.ArgocdNamespace))
+		ns := step.ArgocdNamespace
+		if ns == "" {
+			ns = "argocd"
 		}
+		vars = append(vars, envVar{Name: "ARGOCD_NAMESPACE", Value: ns})
 	}
-	for source := range authSources {
+	keys := slices.Collect(maps.Keys(authSources))
+	slices.Sort(keys)
+	for _, source := range keys {
 		hash := util.HashCode(source)
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_USERNAME_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
-			hash, fmt.Sprintf(model.GitUsernameFormat, hash)))
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_PASSWORD_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
-			hash, fmt.Sprintf(model.GitPasswordFormat, hash)))
-		envVars = append(envVars, fmt.Sprintf("{\"name\":\"GIT_AUTH_SOURCE_%s\",\"value\":\"%s\",\"type\":\"SECRETS_MANAGER\"}",
-			hash, fmt.Sprintf(model.GitSourceFormat, hash)))
+		vars = append(vars,
+			envVar{Name: fmt.Sprintf(model.GitUsernameEnvFormat, hash), Value: fmt.Sprintf(model.GitUsernameFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: fmt.Sprintf(model.GitPasswordEnvFormat, hash), Value: fmt.Sprintf(model.GitPasswordFormat, hash), Type: "SECRETS_MANAGER"},
+			envVar{Name: fmt.Sprintf(model.GitSourceEnvFormat, hash), Value: fmt.Sprintf(model.GitSourceFormat, hash), Type: "SECRETS_MANAGER"},
+		)
 	}
-	return envVars
+	return vars
 }
 
 func (p *Pipeline) getApprovalToken(pipelineName string) *string {
@@ -1039,15 +1148,23 @@ func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {
 		if stage.InboundTransitionState == nil || stage.InboundTransitionState.Enabled {
 			continue
 		}
-		_, err = p.codePipeline.EnableStageTransition(p.ctx, &codepipeline.EnableStageTransitionInput{
-			PipelineName:   aws.String(pipelineName),
-			StageName:      stage.StageName,
-			TransitionType: types.StageTransitionTypeInbound,
-		})
+		err = p.enableStageTransition(pipelineName, *stage.StageName)
 		if err != nil {
-			return fmt.Errorf("failed to enable inbound transition for stage %s: %v", *stage.StageName, err)
+			return err
 		}
 	}
 	log.Printf("Enabled all stage transitions for pipeline %s", pipelineName)
+	return nil
+}
+
+func (p *Pipeline) enableStageTransition(pipelineName string, stageName string) error {
+	_, err := p.codePipeline.EnableStageTransition(p.ctx, &codepipeline.EnableStageTransitionInput{
+		PipelineName:   &pipelineName,
+		StageName:      &stageName,
+		TransitionType: types.StageTransitionTypeInbound,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to enable inbound transition for stage %s: %v", stageName, err)
+	}
 	return nil
 }

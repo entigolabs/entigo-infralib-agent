@@ -21,6 +21,7 @@ const (
 	IncludeFormat = "config/%s/include"
 	ConfigFile    = "config.yaml"
 	EntigoSource  = "github.com/entigolabs/entigo-infralib-release"
+	EntigoRepo    = "entigolabs/entigo-infralib-release"
 
 	certsFolder    = "ca-certificates"
 	terraformCache = ".terraform"
@@ -462,17 +463,23 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 }
 
 func ProcessConfig(config *model.Config, providerType model.ProviderType) {
+	if config.EnableOpenTofu == nil {
+		enabled := true
+		config.EnableOpenTofu = &enabled
+	}
 	processSources(config)
 	processSteps(config, providerType)
 }
 
 func processSources(config *model.Config) {
 	for i, source := range config.Sources {
-		if !util.IsLocalSource(source.URL) {
-			continue
+		if source.VerifySignature {
+			source.UseOCIDigests = true
 		}
-		source.ForceVersion = true
-		source.Version = "local"
+		if util.IsLocalSource(source.URL) {
+			source.ForceVersion = true
+			source.Version = "local"
+		}
 		config.Sources[i] = source
 	}
 }
@@ -532,7 +539,7 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		return fmt.Errorf("at least one source must be provided")
 	}
 	for index, source := range config.Sources {
-		if err := validateSource(index, source); err != nil {
+		if err := validateSource(index, source, config.IsOpenTofuEnabled()); err != nil {
 			return err
 		}
 	}
@@ -546,16 +553,19 @@ func ValidateConfig(config model.Config, state *model.State) error {
 		}
 		destinations.Add(destination.Name)
 	}
-	err := validateSteps(config, state)
+	err := validateNotifiers(config)
 	if err != nil {
 		return err
 	}
-	return nil
+	return validateSteps(config, state)
 }
 
-func validateSource(index int, source model.ConfigSource) error {
+func validateSource(index int, source model.ConfigSource, tofuEnabled bool) error {
 	if source.URL == "" {
 		return fmt.Errorf("%d. source URL is not set", index+1)
+	}
+	if util.IsOCISource(source.URL) && !tofuEnabled {
+		return fmt.Errorf("source %s can't use OCI if OpenTofu hasn't been enabled", source.URL)
 	}
 	if source.Include != nil && source.Exclude != nil {
 		return fmt.Errorf("source %s can't have both include and exclude", source.URL)
@@ -601,6 +611,81 @@ func validateDestination(index int, destination model.ConfigDestination) error {
 	}
 	if destination.Git.Password != "" && destination.Git.Username == "" {
 		return fmt.Errorf("%d. destination git username is required when using basic auth", index+1)
+	}
+	return nil
+}
+
+func validateNotifiers(config model.Config) error {
+	notifiers := model.NewSet[string]()
+	hasWrapper := false
+	for index, notifier := range config.Notifications {
+		if err := validateNotifier(index, notifier); err != nil {
+			return err
+		}
+		if notifiers.Contains(notifier.Name) {
+			return fmt.Errorf("configNotifier %s name must be unique", notifier.Name)
+		}
+		notifiers.Add(notifier.Name)
+		if notifier.Api != nil && notifier.Api.WrapperURL != "" {
+			if hasWrapper {
+				return fmt.Errorf("configNotifier %s wrapper URL is set but only one wrapper URL is allowed", notifier.Name)
+			}
+			hasWrapper = true
+		}
+	}
+	return nil
+}
+
+func validateNotifier(index int, notifier model.ConfigNotification) error {
+	if notifier.Name == "" {
+		return fmt.Errorf("configNotifier[%d] name is empty", index)
+	}
+	if (util.BoolToInt(notifier.Slack != nil) +
+		util.BoolToInt(notifier.Api != nil) +
+		util.BoolToInt(notifier.Teams != nil)) != 1 {
+		return fmt.Errorf("configNotifier %s must have exactly 1 subtype specified", notifier.Name)
+	}
+	if notifier.Slack != nil {
+		return validateSlackNotifier(notifier.Name, notifier.Slack)
+	}
+	if notifier.Teams != nil {
+		return validateTeamsNotifier(notifier.Name, notifier.Teams)
+	}
+	return validateAPINotifier(notifier.Name, notifier.Api)
+}
+
+func validateSlackNotifier(name string, slack *model.Slack) error {
+	if slack.Token == "" {
+		return fmt.Errorf("configNotifier %s slack token is required", name)
+	}
+	if slack.ChannelId == "" {
+		return fmt.Errorf("configNotifier %s slack channelId is required", name)
+	}
+	return nil
+}
+
+func validateTeamsNotifier(name string, teams *model.Teams) error {
+	if teams.WebhookUrl == "" {
+		return fmt.Errorf("configNotifier %s webhook url is required", name)
+	}
+	return nil
+}
+
+func validateAPINotifier(name string, api *model.NotificationApi) error {
+	if api.URL == "" {
+		return fmt.Errorf("configNotifier %s api url is required", name)
+	}
+	if api.OAuth == nil {
+		return nil
+	}
+	if api.OAuth.ClientId == "" {
+		return fmt.Errorf("configNotifier %s api oauth clientId is required", name)
+	}
+	if api.OAuth.ClientSecret == "" {
+		return fmt.Errorf("configNotifier %s api oauth clientSecret is required", name)
+	}
+	if api.OAuth.TokenURL == "" {
+		return fmt.Errorf("configNotifier %s api oauth tokenUrl is required", name)
 	}
 	return nil
 }
@@ -845,4 +930,15 @@ func getModule(moduleName string, modules []model.Module) *model.Module {
 		}
 	}
 	return nil
+}
+
+func getModuleByType(config model.Config, moduleType string) (*model.Step, *model.Module) {
+	for _, step := range config.Steps {
+		for _, module := range step.Modules {
+			if getModuleType(module) == moduleType {
+				return &step, &module
+			}
+		}
+	}
+	return nil, nil
 }

@@ -67,6 +67,20 @@ type Pipeline struct {
 	builder        *Builder
 	logging        *Logging
 	manager        model.NotificationManager
+	campaignId     string
+}
+
+func (p *Pipeline) SetCampaignId(id string) {
+	p.campaignId = id
+	if p.builder != nil {
+		p.builder.SetCampaignId(id)
+	}
+}
+
+func (p *Pipeline) SetPipelineIndex(index int) {
+	if p.builder != nil {
+		p.builder.SetPipelineIndex(index)
+	}
 }
 
 func NewPipeline(ctx context.Context, options []option.ClientOption, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
@@ -580,7 +594,7 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 				} else {
 					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
 					if !notified && p.manager != nil {
-						p.manager.ManualApproval(pipelineName, *pipeChanges, p.getLink(pipelineName))
+						p.manager.ManualApproval(pipelineName, step.Name, *pipeChanges, p.getLink(pipelineName))
 						notified = true
 					}
 				}
@@ -588,8 +602,7 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 				continue
 			}
 			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
-				p.manager.Message(model.MessageTypeApprovals, fmt.Sprintf("Pipeline %s was approved", pipelineName),
-					map[string]string{"pipeline": pipelineName, "step": step.Name})
+				p.manager.Approval(pipelineName, step.Name, "")
 				notified = false
 			}
 			if rollout.GetState() == deploypb.Rollout_STATE_UNSPECIFIED || rollout.GetState() == deploypb.Rollout_IN_PROGRESS {
