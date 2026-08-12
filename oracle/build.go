@@ -396,7 +396,6 @@ func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPi
 				Description:             &description,
 				BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
 				FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-				DefinedTags:             definedTags(d.cloudPrefix),
 			},
 		})
 		return err
@@ -434,10 +433,6 @@ func (d *DevOpsBuilder) updatePipeline(id string, params []devops.BuildPipelineP
 	err := d.withConflictRetry(fmt.Sprintf("update build pipeline %s", id), func() error {
 		_, err := d.client.UpdateBuildPipeline(d.ctx, devops.UpdateBuildPipelineRequest{
 			BuildPipelineId: &id,
-			// DefinedTags is deliberately NOT sent: OCI treats it as full desired state, so
-			// re-sending only our namespace would drop the Oracle-Tags default tags OCI
-			// auto-stamps — which a scoped SA (use tag-namespaces on <prefix>-infralib only)
-			// isn't authorized to touch (404 on 'oracle-tags'). The tag is set once at create.
 			UpdateBuildPipelineDetails: devops.UpdateBuildPipelineDetails{
 				BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
 				FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},

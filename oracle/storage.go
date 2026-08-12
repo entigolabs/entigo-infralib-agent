@@ -421,8 +421,8 @@ func isConflict(err error, code string) bool {
 }
 
 // isConflictStatus reports any 409, regardless of the specific code — used where the
-// concrete code is irrelevant (e.g. a tag namespace/tag already exists from a concurrent
-// bootstrap and the find-or-create just needs to fall back to the existing resource).
+// concrete code is irrelevant (e.g. a resource already exists from a concurrent bootstrap
+// and the find-or-create just needs to fall back to it).
 func isConflictStatus(err error) bool {
 	failure, ok := asServiceError(err)
 	return ok && failure.GetHTTPStatusCode() == http.StatusConflict

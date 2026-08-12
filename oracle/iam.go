@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -372,9 +371,13 @@ func sameStatements(a, b []string) bool {
 	return true
 }
 
+// ensurePolicy find-or-creates a policy ATTACHED TO THE COMPARTMENT, never the tenancy
+// root, so the agent creates no resource outside its compartment. Consequence: every
+// statement must be compartment-scoped — a compartment-attached policy cannot carry an
+// `in tenancy` statement.
 func (i *IAM) ensurePolicy(name, description string, statements []string) error {
 	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{
-		CompartmentId: &i.tenancyId,
+		CompartmentId: &i.compartmentId,
 		Name:          &name,
 	})
 	if err != nil {
@@ -398,7 +401,7 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 	}
 	_, err = i.client.CreatePolicy(i.ctx, identity.CreatePolicyRequest{
 		CreatePolicyDetails: identity.CreatePolicyDetails{
-			CompartmentId: &i.tenancyId,
+			CompartmentId: &i.compartmentId,
 			Name:          &name,
 			Description:   &description,
 			Statements:    statements,
@@ -406,156 +409,44 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 		},
 	})
 	if err != nil {
+		if isConflictStatus(err) {
+			// Policy names are unique tenancy-wide, so this is a same-named policy in
+			// another compartment — a deployment from before policies were
+			// compartment-scoped left one at the tenancy root.
+			return fmt.Errorf("policy %s already exists outside compartment %s (a tenancy-root policy from an "+
+				"earlier deployment); delete it or use another prefix: %w", name, i.compartmentId, err)
+		}
 		return fmt.Errorf("failed to create policy %s: %w", name, err)
 	}
 	return nil
 }
 
-// EnsureDevOpsBuildAccess grants the DevOps build pipeline's resource principal the
-// permissions it needs: reading the build-spec repo, fetching+decrypting the step's Vault
-// secrets, and — because the RP is forwarded into the step container where terraform runs
-// — managing the infrastructure the steps create. A dynamic group matches build pipelines
-// in the compartment carrying the agent's Infralib.created-by defined tag (so unrelated
-// build pipelines sharing the compartment don't inherit the grant) and is granted manage
-// all-resources over it.
+// EnsureDevOpsBuildAccess grants the DevOps build pipelines' resource principal the
+// permissions it needs: fetching+decrypting the step's Vault secrets (the spec's
+// vaultVariables) and — because the RP is forwarded into the step container where terraform
+// runs — managing the infrastructure the steps create.
 func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
-	if err := i.EnsureTagNamespace(cloudPrefix); err != nil {
-		return err
-	}
-	dgName := fmt.Sprintf("%s-infralib", cloudPrefix)
-	matchingRule := fmt.Sprintf("ALL {resource.type='devopsbuildpipeline', resource.compartment.id='%s', tag.%s.%s.value='%s'}",
-		i.compartmentId, tagNamespaceName(cloudPrefix), model.ResourceTagKey, model.ResourceTagValue)
-	if err := i.ensureDynamicGroup(dgName, "Entigo infralib devops build pipelines", matchingRule); err != nil {
-		return err
-	}
-	statements := []string{
-		fmt.Sprintf("Allow dynamic-group %s to manage all-resources in compartment id %s", dgName, i.compartmentId),
-		fmt.Sprintf("Allow dynamic-group %s to use tag-namespaces in tenancy where target.tag-namespace.name='%s'", dgName, tagNamespaceName(cloudPrefix)),
-		fmt.Sprintf("Allow dynamic-group %s to manage dynamic-groups in tenancy", dgName),
-		fmt.Sprintf("Allow dynamic-group %s to manage policies in tenancy", dgName),
-	}
-	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access", statements)
+	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access",
+		devOpsBuildStatements(i.compartmentId))
 }
 
-// tagNamespaceName is the per-prefix defined-tag namespace the agent owns
-// (<prefix>-infralib). Its created-by key drives the build-pipeline dynamic group's
-// matching rule (EnsureDevOpsBuildAccess) — only defined tags, never freeform, can gate a
-// dynamic group. Per-prefix rather than a shared tenancy-wide name so exactly one
-// deployment owns it and teardown can cleanly delete it (DeleteTagNamespace); the name is
-// unique per tenancy. Created at the tenancy root so its tags apply in any compartment.
-func tagNamespaceName(cloudPrefix string) string {
-	return fmt.Sprintf("%s-infralib", cloudPrefix)
-}
-
-// definedTags is the defined-tag map applied to resources whose type feeds a dynamic
-// group (build pipelines), mirroring the freeform created-by convention.
-func definedTags(cloudPrefix string) map[string]map[string]interface{} {
-	return map[string]map[string]interface{}{
-		tagNamespaceName(cloudPrefix): {model.ResourceTagKey: model.ResourceTagValue},
+// devOpsBuildStatements grants the build pipelines' resource principals directly, with no
+// dynamic group: OCI creates dynamic groups only in the tenancy root, which the
+// compartment-only mandate forbids. `any-user` covers resource principals, so the
+// conditions carry the whole scoping — a devopsbuildpipeline principal, from this
+// compartment. That is as narrow as the policy language allows: there is no variable for a
+// principal's DevOps project, and none for a principal's own tags either
+// (request.principal.compartment.tag is the compartment's tags, not the pipeline's), so
+// tightening further means enumerating request.principal.id per pipeline. Consequence:
+// every build pipeline in the compartment gets this grant, so the compartment should hold
+// nothing but this deployment. Deliberately NO tenancy-level grants — steps whose terraform
+// creates tenancy IAM are unsupported and fail in the step, not here.
+func devOpsBuildStatements(compartmentId string) []string {
+	return []string{
+		fmt.Sprintf("Allow any-user to manage all-resources in compartment id %s where all "+
+			"{ request.principal.type = 'devopsbuildpipeline', request.principal.compartment.id = '%s' }",
+			compartmentId, compartmentId),
 	}
-}
-
-// EnsureTagNamespace find-or-creates the <prefix>-infralib defined-tag namespace and its
-// created-by key. Needs manage tag-namespaces in tenancy (an admin bootstrap privilege); a
-// compartment-scoped consume run gets NotAuthorizedOrNotFound and relies on a prior
-// bootstrap having created it (the caller warn-skips, like the dynamic-group reconcile).
-func (i *IAM) EnsureTagNamespace(cloudPrefix string) error {
-	nsId, err := i.ensureTagNamespace(tagNamespaceName(cloudPrefix), "Entigo infralib agent-owned defined tags")
-	if err != nil {
-		return err
-	}
-	return i.ensureTag(nsId, model.ResourceTagKey, "Identifies resources the agent created")
-}
-
-// DeleteTagNamespace retires and cascade-deletes the agent's per-prefix tag namespace.
-// OCI requires retiring a namespace before deletion; cascade delete then removes the
-// namespace and its tag definitions (async, via a work request). Best-effort — teardown
-// runs after the build pipelines that reference the tag are already deleted.
-func (i *IAM) DeleteTagNamespace(cloudPrefix string) {
-	name := tagNamespaceName(cloudPrefix)
-	id, err := i.findTagNamespace(name)
-	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to find tag namespace %s for deletion: %s", name, errSummary(err))))
-		return
-	}
-	if id == "" {
-		return
-	}
-	retire := true
-	if _, err = i.client.UpdateTagNamespace(i.ctx, identity.UpdateTagNamespaceRequest{
-		TagNamespaceId:            &id,
-		UpdateTagNamespaceDetails: identity.UpdateTagNamespaceDetails{IsRetired: &retire},
-	}); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to retire tag namespace %s (delete it manually): %s", name, errSummary(err))))
-		return
-	}
-	if _, err = i.client.CascadeDeleteTagNamespace(i.ctx, identity.CascadeDeleteTagNamespaceRequest{
-		TagNamespaceId: &id,
-	}); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete retired tag namespace %s (delete it manually): %s", name, errSummary(err))))
-	}
-}
-
-func (i *IAM) ensureTagNamespace(name, description string) (string, error) {
-	id, err := i.findTagNamespace(name)
-	if err != nil || id != "" {
-		return id, err
-	}
-	created, err := i.client.CreateTagNamespace(i.ctx, identity.CreateTagNamespaceRequest{
-		CreateTagNamespaceDetails: identity.CreateTagNamespaceDetails{
-			CompartmentId: &i.tenancyId,
-			Name:          &name,
-			Description:   &description,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
-	})
-	if err != nil {
-		// A concurrent bootstrap of another prefix (this namespace is tenancy-wide) may
-		// have created it between the list and the create.
-		if isConflictStatus(err) {
-			return i.findTagNamespace(name)
-		}
-		return "", fmt.Errorf("failed to create tag namespace %s: %w", name, err)
-	}
-	return *created.Id, nil
-}
-
-func (i *IAM) findTagNamespace(name string) (string, error) {
-	list, err := i.client.ListTagNamespaces(i.ctx, identity.ListTagNamespacesRequest{
-		CompartmentId: &i.tenancyId,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to list tag namespaces: %w", err)
-	}
-	for _, ns := range list.Items {
-		if ns.Name != nil && strings.EqualFold(*ns.Name, name) {
-			return *ns.Id, nil
-		}
-	}
-	return "", nil
-}
-
-func (i *IAM) ensureTag(namespaceId, name, description string) error {
-	list, err := i.client.ListTags(i.ctx, identity.ListTagsRequest{TagNamespaceId: &namespaceId})
-	if err != nil {
-		return fmt.Errorf("failed to list tags in namespace: %w", err)
-	}
-	for _, t := range list.Items {
-		if t.Name != nil && strings.EqualFold(*t.Name, name) {
-			return nil
-		}
-	}
-	_, err = i.client.CreateTag(i.ctx, identity.CreateTagRequest{
-		TagNamespaceId: &namespaceId,
-		CreateTagDetails: identity.CreateTagDetails{
-			Name:        &name,
-			Description: &description,
-		},
-	})
-	if err != nil && !isConflictStatus(err) {
-		return fmt.Errorf("failed to create tag %s: %w", name, err)
-	}
-	return nil
 }
 
 // EnsureObjectStorageKeyAccess lets the Object Storage service principal use the agent's
@@ -593,73 +484,35 @@ func (i *IAM) EnsureAgentServiceAccount(cloudPrefix, bucketName, repoName string
 	if err = i.addUserToGroup(userId, groupId); err != nil {
 		return "", err
 	}
-	// Scoped to the exact bucket and repo the agent's credentials touch: manage objects for
-	// state, inspect buckets for the s3 backend's probes, use devops-repository for the push.
-	statements := []string{
-		fmt.Sprintf("Allow group %s to manage objects in compartment id %s where target.bucket.name='%s'", name, i.compartmentId, bucketName),
-		fmt.Sprintf("Allow group %s to inspect buckets in compartment id %s", name, i.compartmentId),
-		fmt.Sprintf("Allow group %s to use devops-repository in compartment id %s where target.repository.name='%s'", name, i.compartmentId, repoName),
-	}
-	if err = i.ensurePolicy(name, "Entigo infralib agent service account access", statements); err != nil {
+	if err = i.ensurePolicy(name, "Entigo infralib agent service account access",
+		agentServiceAccountStatements(name, i.compartmentId, bucketName, repoName)); err != nil {
 		return "", err
 	}
 	return userId, nil
 }
 
-func (i *IAM) ensureDynamicGroup(name, description, matchingRule string) error {
-	list, err := i.client.ListDynamicGroups(i.ctx, identity.ListDynamicGroupsRequest{
-		CompartmentId: &i.tenancyId,
-		Name:          &name,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list dynamic groups: %w", err)
+// agentServiceAccountStatements scopes the agent SA's group to the exact bucket and repo its
+// credentials touch: manage objects for state, inspect buckets for the s3 backend's probes,
+// use devops-repository for the spec push. All compartment-scoped (ensurePolicy).
+func agentServiceAccountStatements(group, compartmentId, bucketName, repoName string) []string {
+	return []string{
+		fmt.Sprintf("Allow group %s to manage objects in compartment id %s where target.bucket.name='%s'", group, compartmentId, bucketName),
+		fmt.Sprintf("Allow group %s to inspect buckets in compartment id %s", group, compartmentId),
+		fmt.Sprintf("Allow group %s to use devops-repository in compartment id %s where target.repository.name='%s'", group, compartmentId, repoName),
 	}
-	if len(list.Items) > 0 {
-		existing := list.Items[0]
-		if existing.MatchingRule != nil && *existing.MatchingRule == matchingRule {
-			return nil
-		}
-		// Self-heal: an earlier run may have created the group with a different
-		// matching rule. Update it so the intended principals are actually members.
-		_, err = i.client.UpdateDynamicGroup(i.ctx, identity.UpdateDynamicGroupRequest{
-			DynamicGroupId:            existing.Id,
-			UpdateDynamicGroupDetails: identity.UpdateDynamicGroupDetails{MatchingRule: &matchingRule},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to update dynamic group %s: %w", name, err)
-		}
-		return nil
-	}
-	_, err = i.client.CreateDynamicGroup(i.ctx, identity.CreateDynamicGroupRequest{
-		CreateDynamicGroupDetails: identity.CreateDynamicGroupDetails{
-			CompartmentId: &i.tenancyId,
-			Name:          &name,
-			Description:   &description,
-			MatchingRule:  &matchingRule,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic group %s: %w", name, err)
-	}
-	return nil
 }
 
 // DeleteAgentServiceAccount removes the agent's own IAM scaffolding, mirroring
 // EnsureAgentServiceAccount + EnsureDevOpsBuildAccess: the SA user (with its CSK and auth
-// token), its group, the build-pipeline dynamic group, the -infralib-agent/-infralib
-// policies and the <prefix>-infralib defined-tag namespace (retired + cascade-deleted; the
-// tag's only consumers, the build pipelines, are already gone by teardown order). The
-// -infralib-kms policy is deleted separately by the caller AFTER the bucket
-// (the Object Storage principal needs it until the bucket is gone). Best-effort.
+// token), its group and the -infralib-agent/-infralib policies. The -infralib-kms policy is
+// deleted separately by the caller AFTER the bucket (the Object Storage principal needs it
+// until the bucket is gone). Best-effort.
 func (i *IAM) DeleteAgentServiceAccount(cloudPrefix string) {
 	name := fmt.Sprintf("%s-infralib-agent", cloudPrefix)
 	i.deleteUserByName(name)
 	i.deleteGroupByName(name)
 	i.deletePolicyByName(name)
 	i.deletePolicyByName(fmt.Sprintf("%s-infralib", cloudPrefix))
-	i.deleteDynamicGroupByName(fmt.Sprintf("%s-infralib", cloudPrefix))
-	i.DeleteTagNamespace(cloudPrefix)
 }
 
 // DeleteCICDServiceAccount removes the external CI/CD service account minted by
@@ -765,36 +618,31 @@ func (i *IAM) deleteGroupByName(name string) {
 	log.Printf("Deleted IAM group %s\n", name)
 }
 
+// deletePolicyByName removes the compartment-attached policy, then silently sweeps a
+// same-named tenancy-root leftover from a deployment that predates compartment-scoped
+// policies (that lookup needs tenancy IAM the caller may not have, so it never warns).
 func (i *IAM) deletePolicyByName(name string) {
-	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{CompartmentId: &i.tenancyId, Name: &name})
+	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{CompartmentId: &i.compartmentId, Name: &name})
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to look up IAM policy %s: %s", name, err)))
-		return
+	} else if len(list.Items) > 0 {
+		if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", name, err)))
+		} else {
+			log.Printf("Deleted IAM policy %s\n", name)
+		}
 	}
-	if len(list.Items) == 0 {
-		return
-	}
-	if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", name, err)))
-		return
-	}
-	log.Printf("Deleted IAM policy %s\n", name)
+	i.deleteLegacyRootPolicy(name)
 }
 
-func (i *IAM) deleteDynamicGroupByName(name string) {
-	list, err := i.client.ListDynamicGroups(i.ctx, identity.ListDynamicGroupsRequest{CompartmentId: &i.tenancyId, Name: &name})
-	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to look up dynamic group %s: %s", name, err)))
+func (i *IAM) deleteLegacyRootPolicy(name string) {
+	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{CompartmentId: &i.tenancyId, Name: &name})
+	if err != nil || len(list.Items) == 0 {
 		return
 	}
-	if len(list.Items) == 0 {
-		return
+	if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err == nil {
+		log.Printf("Deleted IAM policy %s from the tenancy root\n", name)
 	}
-	if _, err = i.client.DeleteDynamicGroup(i.ctx, identity.DeleteDynamicGroupRequest{DynamicGroupId: list.Items[0].Id}); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete dynamic group %s: %s", name, err)))
-		return
-	}
-	log.Printf("Deleted dynamic group %s\n", name)
 }
 
 // cicdServiceAccountStatements returns the least-privilege policy for the external CI/CD
@@ -803,16 +651,12 @@ func (i *IAM) deleteDynamicGroupByName(name string) {
 // (can't mint/rotate SAs or widen its own access) and no KMS/vault/bucket creation (the
 // trust root already exists, so it only finds+uses it). Everything is compartment-scoped.
 // The terraform-state S3 traffic is signed with the agent SA's own CSK, not this identity.
-func cicdServiceAccountStatements(group, compartmentId, bucketName, cloudPrefix string) []string {
+func cicdServiceAccountStatements(group, compartmentId, bucketName string) []string {
 	return []string{
 		// DevOps: create/update/delete the build & deployment pipelines and push the
 		// hosted build-spec repo content that config changes drive, and trigger build
 		// runs / deployments. This is the "dynamically changed through config" surface.
 		fmt.Sprintf("Allow group %s to manage devops-family in compartment id %s", group, compartmentId),
-		// Apply the <prefix>-infralib defined tag to the build pipelines this SA creates
-		// (the tag drives the build dynamic group). `use`, not `manage` — tag application
-		// only, scoped to the one namespace; namespace lifecycle stays with the admin bootstrap.
-		fmt.Sprintf("Allow group %s to use tag-namespaces in tenancy where target.tag-namespace.name='%s'", group, tagNamespaceName(cloudPrefix)),
 		// Vault secrets: read the bootstrapped CSK / git token and upsert per-source,
 		// wrapper and custom secrets. `manage` covers create/update/read-bundle/delete;
 		// the family aggregates secrets + secret-versions + secret-bundles.

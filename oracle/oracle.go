@@ -148,10 +148,10 @@ func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
 		return nil, err
 	}
 	// Grant the Object Storage service principal use of the agent's KMS key for the
-	// bucket CMK. Tenancy-level policy, so a compartment-scoped consume run (RP or CI/CD
-	// SA) gets NotAuthorizedOrNotFound — the policy already exists there, so warn and
-	// continue (admin-vs-consume split, like reconcileAgentServiceAccount). Other errors
-	// are real and propagate.
+	// bucket CMK. The policy is compartment-attached, but a consume run (RP or CI/CD SA)
+	// holds no policy-management grant and gets NotAuthorizedOrNotFound — the policy
+	// already exists, so warn and continue (admin-vs-consume split, like
+	// reconcileAgentServiceAccount). Other errors are real and propagate.
 	if err = iam.EnsureObjectStorageKeyAccess(o.cloudPrefix, o.region, kms.KeyId()); err != nil {
 		if !isNotAuthorized(err) {
 			return nil, fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
@@ -243,8 +243,8 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 }
 
 // setupDevOpsBuild provisions the shared <prefix>-infralib project (build pipelines +
-// hosted build-spec repo + notification topic), grants the build pipeline's dynamic
-// group access, and enables the project's service log.
+// hosted build-spec repo + notification topic), grants the build pipelines' resource
+// principal access, and enables the project's service log.
 func (o *oracleService) setupDevOpsBuild(logs *Logging) (*DevOpsBuilder, error) {
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
@@ -257,15 +257,14 @@ func (o *oracleService) setupDevOpsBuild(logs *Logging) (*DevOpsBuilder, error) 
 	if err = build.Ensure(); err != nil {
 		return nil, err
 	}
-	// Reconciles the build pipeline's dynamic group + tenancy-level policy; like
-	// EnsureObjectStorageKeyAccess, a compartment-scoped consume run gets
+	// Like EnsureObjectStorageKeyAccess, a consume run without policy management gets
 	// NotAuthorizedOrNotFound and warns rather than failing.
 	if err = iam.EnsureDevOpsBuildAccess(o.cloudPrefix); err != nil {
 		if !isNotAuthorized(err) {
 			return nil, err
 		}
 		log.Printf("Skipping DevOps build access policy reconcile (no IAM permissions — expected on a "+
-			"non-admin run); using the existing dynamic group and policy (%s)\n", errSummary(err))
+			"non-admin run); using the existing policy (%s)\n", errSummary(err))
 	}
 	if logs != nil {
 		if err = logs.EnsureDevOpsBuildLog(build.ProjectId()); err != nil {
@@ -551,7 +550,7 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 		logs.Delete()
 	}
 	// The agent's own IAM scaffolding (service account with its state Customer Secret
-	// Key and DevOps auth token, group, build-pipeline dynamic group, policies).
+	// Key and DevOps auth token, group, policies).
 	iam.DeleteAgentServiceAccount(o.cloudPrefix)
 	if deleteServiceAccount {
 		iam.DeleteCICDServiceAccount(o.cloudPrefix)
@@ -605,7 +604,7 @@ func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) erro
 	if err = iam.addUserToGroup(userId, groupId); err != nil {
 		return err
 	}
-	statements := cicdServiceAccountStatements(groupName, o.compartmentId, getBucketName(o.cloudPrefix, o.region), o.cloudPrefix)
+	statements := cicdServiceAccountStatements(groupName, o.compartmentId, getBucketName(o.cloudPrefix, o.region))
 	if err = iam.ensurePolicy(username, "Entigo infralib CI/CD policy", statements); err != nil {
 		return err
 	}
