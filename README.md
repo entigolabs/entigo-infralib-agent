@@ -368,6 +368,10 @@ Example
 bin/ei-agent add-custom --key=custom-key --value=custom-value
 ```
 
+### Version
+
+Shows the agent version, build date and commit hash.
+
 ## Config
 
 Config is provided with a yaml file:

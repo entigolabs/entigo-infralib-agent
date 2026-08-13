@@ -3,6 +3,7 @@ package common
 type Command string
 
 const (
+	VersionCommand         Command = "version"
 	RunCommand             Command = "run"
 	BootstrapCommand       Command = "bootstrap"
 	DestroyCommand         Command = "destroy"

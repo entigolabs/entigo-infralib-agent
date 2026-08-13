@@ -7,6 +7,7 @@ import (
 
 func cliCommands() []*cli.Command {
 	return []*cli.Command{
+		&versionCommand,
 		&runCommand,
 		&updateCommand,
 		&bootstrapCommand,
@@ -23,6 +24,14 @@ func cliCommands() []*cli.Command {
 		&migrateValidateCommand,
 		&provisionCommand,
 	}
+}
+
+var versionCommand = cli.Command{
+	Name:    string(common.VersionCommand),
+	Aliases: []string{""},
+	Usage:   "show version info",
+	Action:  action(common.VersionCommand),
+	Flags:   cliFlags(common.VersionCommand),
 }
 
 var runCommand = cli.Command{
