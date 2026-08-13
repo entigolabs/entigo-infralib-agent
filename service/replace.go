@@ -36,6 +36,7 @@ const (
 	terraformOutput = "terraform-output.json"
 
 	skipReplace = "SKIP_REPLACE"
+	inputPrefix = "infralib_input_"
 )
 
 var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*[^{}\n]*?(?:}}\x60)*)}}`)
@@ -204,7 +205,9 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
-			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
+			content = replaceQuotedOnce(content, replacement, replacement)
+		} else if strings.HasPrefix(replacement, inputPrefix) {
+			content = replaceQuotedOnce(content, replacement, strings.TrimPrefix(replacement, inputPrefix))
 		}
 	}
 	return content, delayedKeyTypes, nil
@@ -227,6 +230,26 @@ func getMultilineReplacement(replaceTag, content, replacement string) (string, e
 		lines[i] = indent + lines[i]
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func replaceQuotedOnce(content, replacement, newValue string) string {
+	if replacement == "" {
+		return content
+	}
+	for i := 0; i < len(content); {
+		j := strings.Index(content[i:], replacement)
+		if j == -1 {
+			return content
+		}
+		start, end := i+j, i+j+len(replacement)
+		if start > 0 && end < len(content) {
+			if q := content[start-1]; (q == '"' || q == '\'') && content[end] == q {
+				return content[:start-1] + newValue + content[end+1:]
+			}
+		}
+		i = start + 1
+	}
+	return content
 }
 
 func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes []delayedKeyType) (string, error) {
@@ -299,7 +322,7 @@ func (u *updater) replaceMetadataValues(step model.Step, module model.Module, in
 
 func (u *updater) getReplacementMetadataValue(step model.Step, module model.Module, index int, replaceKey, replaceType string, cache paramCache) (string, error) {
 	if replaceType == string(model.ReplaceTypeInput) {
-		return getModuleInputValue(module, replaceKey)
+		return getModuleMapValue(module.Name, "input", module.Inputs, replaceKey, 1)
 	} else if replaceType == string(model.ReplaceTypeSelfOutput) {
 		return u.getModuleSelfOutputValue(step, module, replaceKey, cache)
 	}
@@ -330,6 +353,8 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 		return u.getTypedModuleName(step, replaceKey, true)
 	case string(model.ReplaceTypeStepModule):
 		return getTypedStepModuleName(step, replaceKey)
+	case string(model.ReplaceTypeTInput):
+		return u.getTypedModuleInput(step, index, replaceKey, cache)
 	case string(model.ReplaceTypeModule):
 		return "", nil // Ignore this replace
 	default:
@@ -596,23 +621,67 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 	return module.Name, nil
 }
 
-func getModuleInputValue(module model.Module, replaceKey string) (string, error) {
+func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey string, cache paramCache) (string, error) {
+	inputValue, err := getModuleValueReplacement(step, "input", replaceKey)
+	if err != nil {
+		return "", err
+	}
+	if inputValue == "" && step.Type == model.StepTypeArgoCD {
+		inputValue, err = getModuleValueReplacement(step, "value", replaceKey)
+		if err != nil {
+			return "", err
+		}
+	}
+	inputValue, delayedKeyTypes, err := u.replaceStringValues(step, inputValue, index, cache)
+	if err != nil {
+		return "", err
+	}
+	if len(delayedKeyTypes) > 0 {
+		inputValue, err = u.replaceDelayedStringValues(step, inputValue, index, cache, delayedKeyTypes)
+	}
+	return inputPrefix + inputValue, err
+}
+
+func getModuleValueReplacement(step model.Step, mapName, replaceKey string) (string, error) {
+	parts := strings.Split(replaceKey, ".")
+	if len(parts) < 3 {
+		return "", fmt.Errorf("failed to parse module %s key %s, got %d split parts instead of at least 3",
+			mapName, replaceKey, len(parts))
+	}
+	module, err := findModuleByType(step.Modules, parts[1])
+	if err != nil || module == nil {
+		return "", fmt.Errorf("failed to find step %s module with type %s for module value key %s: %w",
+			step.Name, parts[1], replaceKey, err)
+	}
+	var values map[string]interface{}
+	if mapName == "input" {
+		values = module.Inputs
+	} else if mapName == "value" {
+		values = module.Values
+	} else {
+		return "", fmt.Errorf("unknown module map name %s", mapName)
+	}
+	return getModuleMapValue(module.Name, mapName, values, replaceKey, 2)
+}
+
+func getModuleMapValue(name, mapName string, values map[string]interface{}, replaceKey string, firstIndex int) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) < 2 {
-		return "", fmt.Errorf("failed to parse module input key %s, got %d split parts instead of at least 2", replaceKey, len(parts))
+		return "", fmt.Errorf("failed to parse module %s key %s, got %d split parts instead of at least 2",
+			mapName, replaceKey, len(parts))
 	}
-	currentValue := module.Inputs[parts[1]]
+	currentValue := values[parts[firstIndex]]
 	if currentValue == nil {
-		slog.Warn(fmt.Sprintf("module %s input %s key not found", module.Name, replaceKey))
+		slog.Debug(fmt.Sprintf("module %s %s %s key not found", name, mapName, replaceKey))
 		return "", nil
 	}
 
-	for i := 2; i < len(parts); i++ {
+	for i := firstIndex + 1; i < len(parts); i++ {
 		switch v := currentValue.(type) {
 		case map[string]interface{}:
 			currentValue = v[parts[i]]
 			if currentValue == nil {
-				slog.Warn(fmt.Sprintf("module %s input %s key not found", module.Name, replaceKey))
+				slog.Debug(fmt.Sprintf("module %s %s %s key not found", name, mapName, replaceKey))
 				return "", nil
 			}
 		case []interface{}:
@@ -621,13 +690,13 @@ func getModuleInputValue(module model.Module, replaceKey string) (string, error)
 				return "", fmt.Errorf("invalid array index: %s", parts[i])
 			}
 			if index < 0 || index >= len(v) {
-				slog.Warn(fmt.Sprintf("module %s input %s array element not found", module.Name, replaceKey))
+				slog.Debug(fmt.Sprintf("module %s %s %s array element not found", name, mapName, replaceKey))
 				return "", nil
 			}
 			currentValue = v[index]
 		default:
 			if i < len(parts)-1 {
-				slog.Warn(fmt.Sprintf("module %s input %s key not found", module.Name, replaceKey))
+				slog.Debug(fmt.Sprintf("module %s %s %s key not found", name, mapName, replaceKey))
 				return "", nil
 			}
 		}
