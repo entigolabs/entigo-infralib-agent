@@ -521,7 +521,7 @@ Source version is overwritten by module version. Default version is **stable** w
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
 * enable_opentofu - make Infralib use OpenTofu instead of Terraform, default **true**.
-* use_oci_proxy - replace OCI source url host with proxy for ArgoCD modules if registry proxy module has been applied, default **false**
+* use_oci_proxy - replace OCI source url host with proxy if registry proxy module has been applied, excluding modules that are part of the same step as the proxy module, default **false**
 * provider - provider values to add for all terraform steps
   * inputs - variables for provider tf file
   * aws - aws provider default, ignore tags and endpoints to add
@@ -593,23 +593,24 @@ When using the `approve` property, auto approve type is only considered when res
 
 Step, module and input field values can be overwritten by using replacement tags `{{ .type.key }}`. Possible replacement tags are:
 
-| Type            | Key / Format                | Example                         | Description                                                                               |
-|-----------------|-----------------------------|---------------------------------|-------------------------------------------------------------------------------------------|
-| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`      | Configured version of the specified module.                                               |
-|                 | accountId                   | `.agent.accountId`              | Configured AWS account ID.                                                                |
-|                 | region                      | `.agent.region`                 | Configured cloud provider region.                                                         |
-| `config`        | fieldName                   | `.config.prefix`                | Value from the provided config field. Config replacement does not support indexed paths.  |
-| `module`        | name                        | `.module.name`                  | Name of the module itself (for module inputs and input files only).                       |
-|                 | source                      | `.module.source`                | Source of the module itself (for module inputs and input files only).                     |
-| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn` | Optional value from Terraform output from specific step/module. Defaults to empty string. |
-| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn` | Value from Terraform output from specific step/module.                                    |
-| `output-custom` | key                         | `.output-custom.param-key`      | Value from AWS SSM parameter, GCloud SM, or OCI Vault.                                     |
-| `step`          | name                        | `.step.name`                    | Name of the step containing the module.                                                   |
-| `tmodule`       | type                        | `.tmodule.eks`                  | Name of the module with a specified type.                                                 |
-| `toptmodule`    | type                        | `.toptmodule.eks`               | Optional name of the module with a specified type.                                        |
-| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`      | Optional value from Terraform output based on module type. Defaults to empty string.      |
-| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`      | Value from Terraform output based on module type.                                         |
-| `tsmodule`      | type                        | `.tsmodule.eks`                 | Name of the typed module in the current step.                                             |
+| Type            | Key / Format                | Example                               | Description                                                                                      |
+|-----------------|-----------------------------|---------------------------------------|--------------------------------------------------------------------------------------------------|
+| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                      |
+|                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                       |
+|                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                |
+| `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.         |
+| `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                              |
+|                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                            |
+| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from Terraform output from specific step/module. Defaults to empty string.        |
+| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from Terraform output from specific step/module.                                           |
+| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM, or OCI Vault.                                           |
+| `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                          |
+| `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps |
+| `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                        |
+| `toptmodule`    | type                        | `.toptmodule.eks`                     | Optional name of the module with a specified type.                                               |
+| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from Terraform output based on module type. Defaults to empty string.             |
+| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from Terraform output based on module type.                                                |
+| `tsmodule`      | type                        | `.tsmodule.eks`                       | Name of the typed module in the current step.                                                    |
 
 For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or OCI Vault.
 

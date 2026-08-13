@@ -2050,13 +2050,18 @@ func (u *updater) processModules(step model.Step, moduleVersions map[string]mode
 			return step, err
 		}
 		step.Modules[i].Metadata = metadata
+		values, err := u.getModuleValues(step.Type, module, moduleSource, source, moduleVersion.Version)
+		if err != nil {
+			return step, err
+		}
+		step.Modules[i].Values = values
 	}
 	return step, nil
 }
 
 func (u *updater) getModuleInputs(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
 	filePath := fmt.Sprintf("modules/%s/agent_input.yaml", moduleSource)
-	defaultInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
+	defaultInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -2071,23 +2076,23 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 		providerType = "oracle"
 	}
 	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
-	providerInputs, err := u.getModuleDefaultInputs(filePath, source, moduleVersion)
+	providerInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	inputs, err := mergeInputs(defaultInputs, providerInputs)
+	inputs, err := mergeMaps(defaultInputs, providerInputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
-	inputs, err = mergeInputs(inputs, module.ConfigInputs)
+	inputs, err = mergeMaps(inputs, module.ConfigInputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
 	return replaceModuleValues(module, inputs)
 }
 
-func (u *updater) getModuleDefaultInputs(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
+func (u *updater) getModuleFileMapValues(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
 	defaultInputsRaw, err := moduleSource.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
 		var fileError model.NotFoundError
@@ -2130,7 +2135,41 @@ func (u *updater) getModuleMetadata(module model.Module, moduleSource string, so
 	}
 }
 
-func mergeInputs(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {
+func (u *updater) getModuleValues(stepType model.StepType, module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
+	if stepType != model.StepTypeArgoCD {
+		return nil, nil
+	}
+	filePath := fmt.Sprintf("modules/%s/values.yaml", moduleSource)
+	defaultValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	providerType := u.resources.GetProviderType()
+	switch providerType {
+	case model.AWS:
+		providerType = "aws"
+	case model.GCLOUD:
+		providerType = "google"
+	}
+	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, providerType)
+	providerValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	values, err := mergeMaps(defaultValues, providerValues)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge inputs: %w", err)
+	}
+	values, err = mergeMaps(values, module.ConfigInputs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge inputs: %w", err)
+	}
+	return values, nil
+}
+
+func mergeMaps(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {
 	if baseInputs != nil && patchInputs == nil {
 		return baseInputs, nil
 	} else if baseInputs == nil && patchInputs != nil {

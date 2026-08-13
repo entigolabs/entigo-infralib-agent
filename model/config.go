@@ -222,6 +222,7 @@ type Module struct {
 	InputsFile     string                 `yaml:"-"`
 	FileContent    []byte                 `yaml:"-"`
 	Metadata       map[string]string      `yaml:"-"`
+	Values         map[string]interface{} `yaml:"-"`
 }
 
 type StepType string
@@ -251,6 +252,7 @@ const (
 	ReplaceTypeStepModule      ReplaceType = "tsmodule"
 	ReplaceTypeModule          ReplaceType = "module"
 	ReplaceTypeInput           ReplaceType = "input"
+	ReplaceTypeTInput          ReplaceType = "tinput"
 	ReplaceTypeSelfOutput      ReplaceType = "sout"
 )
 
