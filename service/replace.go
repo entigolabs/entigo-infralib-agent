@@ -36,6 +36,7 @@ const (
 	terraformOutput = "terraform-output.json"
 
 	skipReplace = "SKIP_REPLACE"
+	inputPrefix = "infralib_input_"
 )
 
 var replaceRegex = regexp.MustCompile(`{{((?:\x60{{)*[^{}\n]*?(?:}}\x60)*)}}`)
@@ -204,7 +205,9 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		}
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
-			content = strings.Replace(content, fmt.Sprintf(`"%s"`, replacement), replacement, 1)
+			content = replaceQuotedOnce(content, replacement, replacement)
+		} else if strings.HasPrefix(replacement, inputPrefix) {
+			content = replaceQuotedOnce(content, replacement, strings.TrimPrefix(replacement, inputPrefix))
 		}
 	}
 	return content, delayedKeyTypes, nil
@@ -227,6 +230,23 @@ func getMultilineReplacement(replaceTag, content, replacement string) (string, e
 		lines[i] = indent + lines[i]
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func replaceQuotedOnce(content, replacement, newValue string) string {
+	doubleQuoted := `"` + replacement + `"`
+	singleQuoted := `'` + replacement + `'`
+
+	doubleIdx := strings.Index(content, doubleQuoted)
+	singleIdx := strings.Index(content, singleQuoted)
+
+	switch {
+	case doubleIdx == -1 && singleIdx == -1:
+		return content
+	case singleIdx == -1 || (doubleIdx != -1 && doubleIdx < singleIdx):
+		return content[:doubleIdx] + newValue + content[doubleIdx+len(doubleQuoted):]
+	default:
+		return content[:singleIdx] + newValue + content[singleIdx+len(singleQuoted):]
+	}
 }
 
 func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes []delayedKeyType) (string, error) {
@@ -616,7 +636,7 @@ func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey str
 	if len(delayedKeyTypes) > 0 {
 		inputValue, err = u.replaceDelayedStringValues(step, inputValue, index, cache, delayedKeyTypes)
 	}
-	return inputValue, err
+	return inputPrefix + inputValue, err
 }
 
 func getModuleValueReplacement(step model.Step, mapName, replaceKey string) (string, error) {
