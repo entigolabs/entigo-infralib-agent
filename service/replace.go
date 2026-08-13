@@ -233,20 +233,23 @@ func getMultilineReplacement(replaceTag, content, replacement string) (string, e
 }
 
 func replaceQuotedOnce(content, replacement, newValue string) string {
-	doubleQuoted := `"` + replacement + `"`
-	singleQuoted := `'` + replacement + `'`
-
-	doubleIdx := strings.Index(content, doubleQuoted)
-	singleIdx := strings.Index(content, singleQuoted)
-
-	switch {
-	case doubleIdx == -1 && singleIdx == -1:
+	if replacement == "" {
 		return content
-	case singleIdx == -1 || (doubleIdx != -1 && doubleIdx < singleIdx):
-		return content[:doubleIdx] + newValue + content[doubleIdx+len(doubleQuoted):]
-	default:
-		return content[:singleIdx] + newValue + content[singleIdx+len(singleQuoted):]
 	}
+	for i := 0; i < len(content); {
+		j := strings.Index(content[i:], replacement)
+		if j == -1 {
+			return content
+		}
+		start, end := i+j, i+j+len(replacement)
+		if start > 0 && end < len(content) {
+			if q := content[start-1]; (q == '"' || q == '\'') && content[end] == q {
+				return content[:start-1] + newValue + content[end+1:]
+			}
+		}
+		i = start + 1
+	}
+	return content
 }
 
 func (u *updater) replaceDelayedStringValues(step model.Step, content string, index int, cache paramCache, delayedKeyTypes []delayedKeyType) (string, error) {
