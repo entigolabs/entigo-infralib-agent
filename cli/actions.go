@@ -33,6 +33,8 @@ func action(cmd common.Command) cli.ActionFunc {
 func run(ctx context.Context, cmd common.Command) error {
 	common.PrintVersion()
 	switch cmd {
+	case common.VersionCommand:
+		return nil
 	case common.RunCommand:
 		return agentRun.Run(ctx, flags)
 	case common.UpdateCommand:
