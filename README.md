@@ -20,7 +20,7 @@
 
 ---
 
-> **In production since 2023.** Tested nightly against live AWS and Google Cloud accounts. Used by Estonia's Information System Authority (RIA), the Health and Welfare Information Systems Centre (TEHIK), and the Ministry of Finance IT centre (RMIT).
+> **In production since 2023.** Tested nightly against live AWS and Google Cloud accounts. Used by Estonia's Information System Authority (RIA), the Health and Welfare Information Systems Centre (TEHIK).
 
 ## What it does
 
