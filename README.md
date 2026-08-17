@@ -57,15 +57,15 @@ under the same license.
 What this means in practice:
 
 - **Running the agent to manage your own infrastructure carries no source
-  obligation.** The AGPL covers this program, not the infrastructure it
-  provisions or the applications you deploy on the resulting platform. Your
-  config files, Terraform inputs and workloads are yours.
+  obligation.** The AGPL covers this program, not the infrastructure it
+  provisions or the applications you deploy on the resulting platform. Your
+  config files, Terraform inputs and workloads are yours.
 - **If you modify the agent and let others interact with it over a network,
-  the AGPL requires you to offer them the modified source.** This is the
-  clause that distinguishes the AGPL from the GPL, and it is the one to read
-  carefully if you plan to build a hosted service around a fork.
+  the AGPL requires you to offer them the modified source.** This is the
+  clause that distinguishes the AGPL from the GPL, and it is the one to read
+  carefully if you plan to build a hosted service around a fork.
 - **Redistribution of modified versions** — including modified images —
-  requires that recipients get the source under the same license.
+  requires that recipients get the source under the same license.
 
 This summary is for orientation only; the LICENSE file governs, and if the
 network clause is material to your plans, take your own legal advice.
