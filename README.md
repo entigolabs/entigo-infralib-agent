@@ -1,4 +1,4 @@
-<h1 align="center">Infralib</h1>
+<h1 align="center"> Entigo Infralib Agent</h1>
 
 <p align="center">
   <strong>Provision and continuously update a complete Kubernetes platform on AWS or Google Cloud from a single YAML file.</strong>
