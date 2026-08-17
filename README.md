@@ -1,8 +1,53 @@
-# Entigo Infralib Agent
+<h1 align="center">Infralib</h1>
 
-Entigo infralib agent prepares an AWS Account or Google Cloud Project for [Entigo Infralib modules](https://github.com/entigolabs/entigo-infralib).
-Creates the required resources for S3/storage, DynamoDB, CloudWatch, CodeBuild/Cloud Run Jobs, CodePipeline/Delivery Pipeline, and IAM roles and policies.
-Executes pipelines which apply the configured modules. During subsequent runs, the agent will update the modules to the latest version and apply any config changes.
+<p align="center">
+  <strong>Provision and continuously update a complete Kubernetes platform on AWS or Google Cloud from a single YAML file.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/entigolabs/entigo-infralib-agent/releases"><img src="https://img.shields.io/github/v/release/entigolabs/entigo-infralib-agent" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/entigolabs/entigo-infralib-agent" alt="License"></a>
+  <a href="https://goreportcard.com/report/github.com/entigolabs/entigo-infralib-agent"><img src="https://goreportcard.com/badge/github.com/entigolabs/entigo-infralib-agent" alt="Go report card"></a>
+  <a href="https://www.entigo.com/infralib"><img src="https://img.shields.io/badge/website-entigo.com%2Finfralib-blue" alt="Website"></a>
+</p>
+
+<p align="center">
+  <a href="https://docs.entigo.com">Documentation</a> ·
+  <a href="https://www.entigo.com/infralib">Website</a> ·
+  <a href="https://github.com/entigolabs/entigo-infralib">Modules</a> ·
+  <a href="#commands">Command reference</a>
+</p>
+
+---
+
+> **In production since 2020.** Tested nightly against live AWS and Google Cloud accounts. Used by Estonia's Information System Authority (RIA), the Health and Welfare Information Systems Centre (TEHIK), and the Ministry of Finance IT centre (RMIT).
+
+## What it does
+
+You describe the platform you want in one YAML file — Kubernetes, ArgoCD, observability, DNS and TLS, SSO. This tool creates the cloud resources it needs, resolves module versions, and runs the pipelines that apply them. On every subsequent run it updates everything to the latest tested release and applies your config changes.
+
+It is a Go CLI, not an LLM agent.
+
+## Install
+
+```bash
+go install github.com/entigolabs/entigo-infralib-agent@latest
+```
+
+```bash
+docker pull entigolabs/entigo-infralib-agent            # Docker Hub
+docker pull public.ecr.aws/entigolabs/entigo-infralib-agent   # ECR Public
+```
+
+Installing with `go install` places the binary in `$(go env GOPATH)/bin` as `entigo-infralib-agent`. Examples below use `ei-agent`, the name used when building from source.
+
+## Documentation
+
+Full configuration reference, command flags, and operational guides: **[docs.entigo.com](https://docs.entigo.com)**. The modules this tool applies live in [entigo-infralib](https://github.com/entigolabs/entigo-infralib).
+
+---
+
+## Reference
 
 * [Requirements](#requirements)
 * [Compiling Source](#compiling-source)
