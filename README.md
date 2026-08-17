@@ -45,6 +45,38 @@ Installing with `go install` places the binary in `$(go env GOPATH)/bin` as `ent
 
 Full configuration reference, command flags, and operational guides: **[docs.entigo.com](https://docs.entigo.com)**. The modules this tool applies live in [entigo-infralib](https://github.com/entigolabs/entigo-infralib).
 
+
+## License
+
+Entigo Infralib Agent is licensed under the **GNU Affero General Public
+License v3.0**. The full text is in [LICENSE](LICENSE). The
+[Infralib modules](https://github.com/entigolabs/entigo-infralib) and the
+[module releases](https://github.com/entigolabs/entigo-infralib-release) are
+under the same license.
+
+What this means in practice:
+
+- **Running the agent to manage your own infrastructure carries no source
+  obligation.** The AGPL covers this program, not the infrastructure it
+  provisions or the applications you deploy on the resulting platform. Your
+  config files, Terraform inputs and workloads are yours.
+- **If you modify the agent and let others interact with it over a network,
+  the AGPL requires you to offer them the modified source.** This is the
+  clause that distinguishes the AGPL from the GPL, and it is the one to read
+  carefully if you plan to build a hosted service around a fork.
+- **Redistribution of modified versions** — including modified images —
+  requires that recipients get the source under the same license.
+
+This summary is for orientation only; the LICENSE file governs, and if the
+network clause is material to your plans, take your own legal advice.
+
+Infralib is developed by [Entigo](https://www.entigo.com) and is currently
+maintained by the Entigo team rather than an external contributor community.
+[Entigo Platform](https://www.entigo.com/platform) is a separate commercial
+product that builds on Infralib; Infralib itself does not depend on it and
+continues to work without it.
+
+
 ---
 
 ## Reference
