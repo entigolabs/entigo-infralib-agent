@@ -2,10 +2,13 @@ package oracle
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -298,27 +301,34 @@ func (o *oracleService) warnScheduleUnsupported(schedule model.Schedule) {
 	}
 }
 
-// agentGitAuth carries the DevOps build-spec push credentials for the agent service
-// account, fed to the builder via DevOpsBuilder.SetGitAuth. Both strings are empty on a
-// consume run that never bootstrapped them. fresh reports a just-created token that must
-// propagate to the git endpoint before it authenticates.
+// agentGitAuth carries the DevOps build-spec push credentials, fed to the builder via
+// DevOpsBuilder.SetGitAuth. Both strings are empty on a run that never bootstrapped them
+// and cannot (a resource principal owns no credentials). fresh reports a just-created token
+// that must propagate to the git endpoint before it authenticates.
 type agentGitAuth struct {
 	username string
 	token    string
 	fresh    bool
 }
 
-// provisionBackendCredentials resolves the agent service account's credentials: the
+// complete reports a usable pair — the token authenticates only against the username of
+// the user it belongs to, so half of it is worthless.
+func (a agentGitAuth) complete() bool {
+	return a.username != "" && a.token != ""
+}
+
+// provisionBackendCredentials resolves the credentials the agent's own traffic needs: the
 // S3-compatible Customer Secret Key for the terraform state backend (always) and, when
-// needGit is set, the DevOps git auth token + username. Both belong to the agent's
-// dedicated service account, not to whoever runs the agent. Two regimes, decided by
-// whether the caller can reconcile the agent SA (has IAM user-management perms):
-//   - Admin/seed-capable: resolve both through their Ensure* funcs, which reuse a valid
-//     credential or recreate one deleted out of band (self-heal). Both propagate after
-//     creation, so they're resolved concurrently to overlap the waits.
-//   - Consume (CI/CD SA or in-container RP, Vault-read only): trust whatever is persisted
-//     (probing the CSK to surface a revoked key); a missing credential can't be minted,
-//     so it warns and falls back (env credentials for state; a loud pushSpec error for git).
+// needGit is set, the DevOps git auth token + username. They belong to the EXECUTING user —
+// OCI creates users only in the tenancy root, and the agent creates nothing outside its
+// compartment, so it mints no service account for them (the `sa` command is the sole
+// exception, being explicitly about an external identity).
+//
+// Whatever the Vault already holds is used AS IS, without a single Identity call, so a
+// steady-state run needs no IAM permissions. What's missing is created on the executing
+// user and persisted. A credential that later stops working is NOT detected and replaced:
+// the stale Vault secret has to be deleted to force a reseed. An in-container resource
+// principal has no user to own credentials, so it can only consume.
 func (o *oracleService) provisionBackendCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, needGit bool) (agentGitAuth, error) {
 	cskAccess, cskSecret, err := loadPersistedCustomerSecretKey(secrets)
 	if err != nil {
@@ -329,29 +339,30 @@ func (o *oracleService) provisionBackendCredentials(ctx context.Context, resourc
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Could not read persisted DevOps git credentials: %v", err)))
 	}
+	needGitSeed := needGit && !git.complete()
+	if cskAccess != "" && !needGitSeed {
+		return git, o.usePersistedStateCredentials(ctx, resources, cskAccess, cskSecret)
+	}
+	userId := o.userId()
+	if userId == "" {
+		return o.consumeCredentials(ctx, resources, cskAccess, cskSecret, git, needGit)
+	}
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
 		return agentGitAuth{}, err
 	}
-	// Reconcile the agent SA + its policy on every run with IAM perms (not just seeding)
-	// so policy changes take effect without deleting the persisted credentials. On a
-	// first-run seed in a non-home region this waits minutes on IAM replication, so
-	// announce it. Best-effort: a Vault-read-only principal can't, and its credentials work.
-	log.Println("Reconciling the agent service account (user, group and access policy)")
-	saUserId := o.reconcileAgentServiceAccount(iam, resources.BucketName)
-
-	// No IAM user-management perms: trust whatever is persisted — can't mint or self-heal.
-	if saUserId == "" {
-		return o.consumeCredentials(ctx, resources, cskAccess, cskSecret, git, needGit)
-	}
-
-	// Admin: resolve both credentials concurrently (each propagates asynchronously, so
-	// overlap the waits). WithContext so a fast git-auth error isn't masked behind the
+	// A new credential of either kind propagates asynchronously, so seed them concurrently
+	// to overlap the waits. WithContext so a fast git-auth error isn't masked behind the
 	// up-to-10-min CSK propagation wait.
 	group, gctx := errgroup.WithContext(ctx)
-	group.Go(func() error { return o.ensureStateCredentials(gctx, resources, secrets, iam, saUserId) })
-	if needGit {
-		group.Go(func() error { return o.ensureGitAuth(secrets, iam, saUserId, &git) })
+	group.Go(func() error {
+		if cskAccess != "" {
+			return o.usePersistedStateCredentials(gctx, resources, cskAccess, cskSecret)
+		}
+		return o.seedStateCredentials(gctx, resources, secrets, iam, userId)
+	})
+	if needGitSeed {
+		group.Go(func() error { return o.seedGitAuth(secrets, iam, userId, &git) })
 	}
 	if err = group.Wait(); err != nil {
 		return agentGitAuth{}, err
@@ -359,24 +370,22 @@ func (o *oracleService) provisionBackendCredentials(ctx context.Context, resourc
 	return git, nil
 }
 
-// consumeCredentials trusts the Vault-persisted credentials on a run without IAM
-// user-management perms. It cannot mint or self-heal, so a missing credential just warns;
-// a persisted CSK is probed to surface a key revoked out of band.
+// consumeCredentials handles a run with no user to own credentials — an in-container
+// resource principal — which can only use what a prior run persisted. A missing credential
+// just warns; minting one needs a user principal.
 func (o *oracleService) consumeCredentials(ctx context.Context, resources *Resources, cskAccess, cskSecret string, git agentGitAuth, needGit bool) (agentGitAuth, error) {
 	if cskAccess != "" {
-		if err := s3CredentialsUsable(ctx, resources.S3Endpoint, o.region, resources.BucketName, cskAccess, cskSecret); err != nil {
-			return agentGitAuth{}, fmt.Errorf("persisted Customer Secret Key no longer authenticates to the s3-compatible endpoint: %w; "+
-				"re-run the bootstrap with an admin (user-management) principal to reseed it", err)
+		if err := o.usePersistedStateCredentials(ctx, resources, cskAccess, cskSecret); err != nil {
+			return agentGitAuth{}, err
 		}
-		resources.AccessKey, resources.SecretKey = cskAccess, cskSecret
 	} else {
-		slog.Warn(common.PrefixWarning("No persisted Customer Secret Key and could not provision the agent service " +
-			"account; the terraform s3 backend will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the environment. " +
-			"Run the agent once as an admin to seed and persist one automatically."))
+		slog.Warn(common.PrefixWarning("No persisted Customer Secret Key and no user to create one for (a resource " +
+			"principal owns none); the terraform s3 backend will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from " +
+			"the environment. Run the agent once with user credentials to seed and persist one automatically."))
 	}
-	if needGit && (git.token == "" || git.username == "") {
-		slog.Warn(common.PrefixWarning("No persisted DevOps git credentials and could not provision the agent service " +
-			"account; a build-spec push would fail — run the agent once as an admin to bootstrap them."))
+	if needGit && !git.complete() {
+		slog.Warn(common.PrefixWarning("No persisted DevOps git credentials and no user to create them for; a " +
+			"build-spec push would fail — run the agent once with user credentials to bootstrap them."))
 	}
 	return git, nil
 }
@@ -395,26 +404,36 @@ func (o *oracleService) loadPersistedGitAuth(secrets secretPersistence, needGit 
 	if err != nil {
 		return agentGitAuth{}, err
 	}
+	// The override outranks the persisted value, which is the point of it — a username
+	// whose form this tenancy rejects is otherwise stuck in the Vault.
+	if override := os.Getenv(gitUsernameEnv); override != "" {
+		username = override
+	}
 	return agentGitAuth{username: username, token: token}, nil
 }
 
-// ensureStateCredentials resolves the state-backend CSK on an admin run.
-// EnsureCustomerSecretKey reuses the persisted key or (re)creates one deleted out of
-// band. A freshly created key must propagate before it's broadly usable, so wait for a
-// stable streak; a reused key is validated with a single probe.
-func (o *oracleService) ensureStateCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, iam *IAM, saUserId string) error {
-	access, secret, created, err := EnsureCustomerSecretKey(iam, secrets, saUserId, fmt.Sprintf("entigo-infralib-%s-state", o.cloudPrefix))
+// seedStateCredentials mints the state-backend CSK on the executing user, the first time
+// the Vault holds none. A new key must propagate before it's broadly usable, so wait for a
+// stable streak of successful probes before handing it to terraform.
+func (o *oracleService) seedStateCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, iam *IAM, userId string) error {
+	access, secret, err := CreateCustomerSecretKey(iam, secrets, userId, stateKeyName(o.cloudPrefix))
 	if err != nil {
 		return err
 	}
-	if created {
-		log.Println("Waiting for the new Customer Secret Key to propagate to the state backend (can take a few minutes)")
-		if err = waitForS3Credentials(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
-			return err
-		}
-	} else if err = s3CredentialsUsable(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
-		// A reused key seeded by an earlier run interrupted mid-propagation can still be
-		// inconsistent, so wait it out before declaring it broken.
+	log.Println("Waiting for the new Customer Secret Key to propagate to the state backend (can take a few minutes)")
+	if err = waitForS3Credentials(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
+		return err
+	}
+	resources.AccessKey, resources.SecretKey = access, secret
+	return nil
+}
+
+// usePersistedStateCredentials wires the Vault-persisted CSK into the backend env. It is
+// probed first, and a failure is waited out — a key seeded by a run that died
+// mid-propagation is still settling. A key that has genuinely stopped working is not
+// replaced; the error says to delete the Vault secret, which reseeds on the next run.
+func (o *oracleService) usePersistedStateCredentials(ctx context.Context, resources *Resources, access, secret string) error {
+	if err := s3CredentialsUsable(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
 		log.Println("Persisted Customer Secret Key not yet usable; waiting for it to propagate to the state backend")
 		if err = waitForS3Credentials(ctx, resources.S3Endpoint, o.region, resources.BucketName, access, secret); err != nil {
 			return fmt.Errorf("persisted Customer Secret Key no longer authenticates to the s3-compatible endpoint: %w; "+
@@ -425,54 +444,94 @@ func (o *oracleService) ensureStateCredentials(ctx context.Context, resources *R
 	return nil
 }
 
-// ensureGitAuth resolves the DevOps git credentials on an admin run: the username is
-// derived once (deterministic), and EnsureAuthToken reuses a live token or recreates one
-// whose user was deleted out of band.
-func (o *oracleService) ensureGitAuth(secrets secretPersistence, iam *IAM, saUserId string, git *agentGitAuth) error {
-	if git.username == "" {
-		username, err := o.deriveGitUsername(iam)
+// seedGitAuth mints the DevOps git credentials on the executing user. Token and username
+// are seeded as a PAIR — the token authenticates only as its own user, so keeping a
+// username left behind by a different user would 401.
+func (o *oracleService) seedGitAuth(secrets secretPersistence, iam *IAM, userId string, git *agentGitAuth) error {
+	username := git.username // an ORACLE_GIT_USERNAME override, if one is set
+	if username == "" {
+		derived, err := o.deriveGitUsername(iam, userId)
 		if err != nil {
 			return err
 		}
-		if err = secrets.PutSecret(gitUsernameObject, username); err != nil {
-			return fmt.Errorf("failed to persist git username %q: %w", username, err)
-		}
-		git.username = username
+		username = derived
 	}
 	log.Println("Provisioning DevOps git auth token for the build-spec push")
-	token, fresh, err := iam.EnsureAuthToken(secrets, saUserId, fmt.Sprintf("entigo-infralib-%s-devops", o.cloudPrefix))
+	token, err := iam.CreateAuthToken(secrets, userId, gitTokenDescription(o.cloudPrefix))
 	if err != nil {
 		return err
 	}
-	git.token, git.fresh = token, fresh
+	if err = secrets.PutSecret(gitUsernameObject, username); err != nil {
+		return fmt.Errorf("failed to persist git username %q: %w", username, err)
+	}
+	*git = agentGitAuth{username: username, token: token, fresh: true}
 	return nil
 }
 
-// deriveGitUsername builds the OCI code-repository HTTPS username for the build-spec
-// push: `<tenancy-name>/<login>` (the tenancy NAME, not the object-storage namespace).
-// The login is the agent SA user, whose name the agent picks, so only the tenancy name
-// is looked up. Identity-domain tenancies need `<tenancy>/<domain>/<login>` — change the
-// derivation here if that's ever required.
-func (o *oracleService) deriveGitUsername(iam *IAM) (string, error) {
+// gitUsernameEnv overrides the derived build-spec push username, for tenancies whose form
+// the derivation below can't produce.
+const gitUsernameEnv = "ORACLE_GIT_USERNAME"
+
+// deriveGitUsername builds the OCI code-repository HTTPS username for the build-spec push:
+// `<tenancy-name>/<login>` (the tenancy NAME, not the object-storage namespace). A user in a
+// non-default identity domain instead needs `<tenancy>/<domain>/<login>`, and the domain
+// can't be read off the Identity user, so that case sets ORACLE_GIT_USERNAME. Both lookups
+// happen once — the result is persisted next to the token.
+func (o *oracleService) deriveGitUsername(iam *IAM, userId string) (string, error) {
 	tenancy, err := iam.TenancyName()
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s/%s-infralib-agent", tenancy, o.cloudPrefix), nil
+	login, err := iam.Username(userId)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/%s", tenancy, login), nil
 }
 
-// reconcileAgentServiceAccount ensures the agent SA user + group + resource-scoped
-// policy and returns its user OCID, or "" when the principal lacks IAM user-management
-// perms (best-effort so a consume/Vault-only run isn't blocked). On an admin run it
-// re-applies the current policy statements, so scoping them in code takes effect.
-func (o *oracleService) reconcileAgentServiceAccount(iam *IAM, bucketName string) string {
-	saUserId, err := iam.EnsureAgentServiceAccount(o.cloudPrefix, bucketName, repositoryName(o.cloudPrefix))
+// userId returns the OCID of the authenticated user, or "" when there is none — an
+// in-container resource principal, which owns no Customer Secret Key or auth token.
+// API-key auth exposes the user directly; a session token (UPST) carries none in the config
+// file, so it comes from the token's `sub` claim, which the SDK surfaces via KeyID().
+func (o *oracleService) userId() string {
+	if user, err := o.provider.UserOCID(); err == nil && user != "" {
+		return user
+	}
+	keyID, err := o.provider.KeyID()
 	if err != nil {
-		log.Printf("Skipping agent service account reconcile (no IAM permissions — expected on a "+
-			"non-admin run); using the already-persisted credentials (%s)\n", errSummary(err))
 		return ""
 	}
-	return saUserId
+	token, ok := strings.CutPrefix(keyID, "ST$")
+	if !ok {
+		return ""
+	}
+	// A resource principal's token rides in KeyID the same way, but its subject is the
+	// resource (a build run), not a user, so accept only a user OCID.
+	if subject := subjectFromJWT(token); strings.HasPrefix(subject, "ocid1.user.") {
+		return subject
+	}
+	return ""
+}
+
+// subjectFromJWT extracts the `sub` claim from an unverified JWT. The signature is not
+// checked: the claim only names the user credentials get attached to, and the SDK still
+// authenticates every API call with the token itself.
+func subjectFromJWT(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err = json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return claims.Sub
 }
 
 // GetResources returns clients wired to the ALREADY-provisioned resources, for
@@ -524,7 +583,7 @@ func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resourc
 // pipelines and the git-source/wrapper Vault secrets are already removed by the delete
 // command executor (service/delete.go); this covers everything else: the shared DevOps
 // project (cascading to its repo and pipelines), the approval topic, the service log
-// group, the agent's IAM scaffolding, the state bucket and — last, because it encrypts
+// group, the credentials the agent put on the executing user, the state bucket and — last, because it encrypts
 // the bucket — the agent-owned KMS vault/key. The KMS vault/key/secrets have no hard
 // delete: they are scheduled for deletion (~7 days, revertible in the console).
 func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
@@ -549,9 +608,9 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	} else {
 		logs.Delete()
 	}
-	// The agent's own IAM scaffolding (service account with its state Customer Secret
-	// Key and DevOps auth token, group, policies).
-	iam.DeleteAgentServiceAccount(o.cloudPrefix)
+	// The credentials the agent provisioned on the executing user (state Customer Secret
+	// Key, DevOps auth token) and the build access policy.
+	iam.DeleteAgentCredentials(o.cloudPrefix, o.userId())
 	if deleteServiceAccount {
 		iam.DeleteCICDServiceAccount(o.cloudPrefix)
 	}
@@ -617,8 +676,8 @@ func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) erro
 		return fmt.Errorf("failed to resolve tenancy ocid: %w", err)
 	}
 	// An API signing key (not a CSK) authenticates the OCI SDK calls the agent makes as
-	// this SA; it never expires. The state-backend CSK belongs to the agent's OWN service
-	// account and is read from the Vault at run time, so this SA needs none.
+	// this SA; it never expires. The state-backend CSK is read from the Vault at run time
+	// (seeded by the bootstrap), so no CSK is minted here.
 	key, err := iam.EnsureApiKey(userId, !created)
 	if err != nil {
 		return err

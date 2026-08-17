@@ -150,7 +150,7 @@ func (d *DevOpsBuilder) ensure() error {
 }
 
 // repositoryName is the shared hosted build-spec repo's name, referenced when creating it
-// and when scoping the agent SA's devops-repository grant to it.
+// and when cloning it for the spec push.
 func repositoryName(cloudPrefix string) string {
 	return fmt.Sprintf("%s-infralib-src", cloudPrefix)
 }
@@ -595,7 +595,7 @@ const (
 // it only when git reports the content changed — git status is the single source of truth,
 // so a spec deleted or edited out of band is restored, with no external hash to keep in
 // sync. Serialized on pushMu since all callers share the one clone. A genuine change on a
-// run without git credentials is a loud error from specClone (admin run required).
+// run without git credentials is a loud error from specClone (a user principal required).
 func (d *DevOpsBuilder) ensureSpecPushed(specFile, spec string) error {
 	d.pushMu.Lock()
 	defer d.pushMu.Unlock()
@@ -635,7 +635,7 @@ func (d *DevOpsBuilder) specClone() (*git.Worktree, error) {
 	}
 	if d.gitUsername == "" || d.gitToken == "" {
 		return nil, fmt.Errorf("build spec changed but no DevOps git credentials are provisioned; " +
-			"run the agent once as an admin to bootstrap them")
+			"run the agent once with user credentials to bootstrap them")
 	}
 	dir := filepath.Join(os.TempDir(), repositoryName(d.cloudPrefix))
 	if err := os.RemoveAll(dir); err != nil { // start each process from a clean checkout
@@ -684,9 +684,9 @@ func (d *DevOpsBuilder) pushSpecRepo() error {
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("failed to push build spec: %w; if this is a 401, the git username form may differ "+
-			"for this tenancy (e.g. identity-domain tenancies need \"<tenancy>/<domain>/%s\") — adjust deriveGitUsername",
-			err, d.gitUsername)
+		return fmt.Errorf("failed to push build spec: %w; if this is a 401, the git username form may differ for "+
+			"this tenancy (identity-domain users need \"<tenancy>/<domain>/<login>\" instead of %q) — set %s to override it",
+			err, d.gitUsername, gitUsernameEnv)
 	}
 	log.Printf("Pushed build spec commit %s to %s\n", head.Hash().String()[:8], buildSpecBranch)
 	return nil

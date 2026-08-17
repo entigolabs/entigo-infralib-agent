@@ -30,6 +30,17 @@ const devopsAuthTokenObject = "oracle-devops-auth-token"
 // runs need no Identity lookup to reconstruct the <tenancy>/<login> form.
 const gitUsernameObject = "oracle-git-username"
 
+// stateKeyName and gitTokenDescription label the credentials the agent creates on the
+// executing user. They are how the agent recognises its own — replacing or deleting only
+// these and never the user's other keys and tokens.
+func stateKeyName(cloudPrefix string) string {
+	return fmt.Sprintf("entigo-infralib-%s-state", cloudPrefix)
+}
+
+func gitTokenDescription(cloudPrefix string) string {
+	return fmt.Sprintf("entigo-infralib-%s-devops", cloudPrefix)
+}
+
 // secretPersistence is the subset of the Vault-backed SSM that IAM uses to persist the
 // credentials it provisions (Customer Secret Key + DevOps auth token).
 type secretPersistence interface {
@@ -79,10 +90,10 @@ func NewIAM(ctx context.Context, provider ocicommon.ConfigurationProvider, regio
 }
 
 // customerSecretKeyClient is the subset of Identity operations the credential
-// provisioning needs, extracted so EnsureCustomerSecretKey can be unit tested.
+// provisioning needs, extracted so CreateCustomerSecretKey can be unit tested.
 type customerSecretKeyClient interface {
 	createCustomerSecretKey(userId, displayName string) (id string, secret string, err error)
-	listCustomerSecretKeyIds(userId string) (model.Set[string], error)
+	listCustomerSecretKeyIds(userId, displayName string) (model.Set[string], error)
 	deleteCustomerSecretKey(userId, keyId string) error
 }
 
@@ -106,40 +117,34 @@ func loadPersistedCustomerSecretKey(store secretPersistence) (string, string, er
 	return stored.AccessKey, stored.SecretKey, nil
 }
 
-// EnsureCustomerSecretKey returns the S3-compat access/secret pair for userId, creating
-// and persisting one if none is stored or the stored key no longer exists on the user
-// (deleted/rotated out of band). The bool reports whether a new key was created — a fresh
-// key must propagate before it's usable, so the caller waits harder for it than a reused one.
-func EnsureCustomerSecretKey(csk customerSecretKeyClient, store secretPersistence, userId, displayName string) (string, string, bool, error) {
-	value, found, err := readPersistedSecret(store, customerSecretKeyObject)
+// CreateCustomerSecretKey mints an S3-compat access/secret pair on userId and persists it
+// to the Vault, called only when nothing is persisted yet. Any earlier key of the agent's
+// own (same display name) is deleted first: its secret half was returned once at creation
+// and is gone, so it is unusable, and OCI caps a user at 2 keys. Other keys on the user
+// are never touched.
+func CreateCustomerSecretKey(csk customerSecretKeyClient, store secretPersistence, userId, displayName string) (string, string, error) {
+	stale, err := csk.listCustomerSecretKeyIds(userId, displayName)
 	if err != nil {
-		return "", "", false, err
+		return "", "", err
 	}
-	if found {
-		var stored storedCredentials
-		if json.Unmarshal([]byte(value), &stored) == nil && stored.AccessKey != "" {
-			existing, err := csk.listCustomerSecretKeyIds(userId)
-			if err != nil {
-				return "", "", false, err
-			}
-			if existing.Contains(stored.AccessKey) {
-				return stored.AccessKey, stored.SecretKey, false, nil
-			}
+	for id := range stale {
+		if err = csk.deleteCustomerSecretKey(userId, id); err != nil {
+			return "", "", fmt.Errorf("failed to delete unusable customer secret key %s: %w", id, err)
 		}
 	}
 	id, secret, err := csk.createCustomerSecretKey(userId, displayName)
 	if err != nil {
-		return "", "", false, err
+		return "", "", err
 	}
 	data, err := json.Marshal(storedCredentials{AccessKey: id, SecretKey: secret})
 	if err != nil {
-		return "", "", false, err
+		return "", "", err
 	}
 	if err = store.PutSecret(customerSecretKeyObject, string(data)); err != nil {
-		return "", "", false, err
+		return "", "", err
 	}
 	log.Printf("Provisioned Oracle Customer Secret Key %s for terraform state access\n", id)
-	return id, secret, true, nil
+	return id, secret, nil
 }
 
 func (i *IAM) createCustomerSecretKey(userId, displayName string) (string, string, error) {
@@ -158,7 +163,10 @@ func (i *IAM) createCustomerSecretKey(userId, displayName string) (string, strin
 	return *response.Id, *response.Key, nil
 }
 
-func (i *IAM) listCustomerSecretKeyIds(userId string) (model.Set[string], error) {
+// listCustomerSecretKeyIds returns the OCIDs of the user's ACTIVE Customer Secret Keys,
+// restricted to the given display name unless it is empty (keys aren't uniquely named, so
+// the display name is how the agent recognises its own).
+func (i *IAM) listCustomerSecretKeyIds(userId, displayName string) (model.Set[string], error) {
 	response, err := i.client.ListCustomerSecretKeys(i.ctx, identity.ListCustomerSecretKeysRequest{
 		UserId: &userId,
 	})
@@ -167,9 +175,13 @@ func (i *IAM) listCustomerSecretKeyIds(userId string) (model.Set[string], error)
 	}
 	ids := model.NewSet[string]()
 	for _, key := range response.Items {
-		if key.Id != nil && key.LifecycleState == identity.CustomerSecretKeySummaryLifecycleStateActive {
-			ids.Add(*key.Id)
+		if key.Id == nil || key.LifecycleState != identity.CustomerSecretKeySummaryLifecycleStateActive {
+			continue
 		}
+		if displayName != "" && (key.DisplayName == nil || *key.DisplayName != displayName) {
+			continue
+		}
+		ids.Add(*key.Id)
 	}
 	return ids, nil
 }
@@ -182,31 +194,19 @@ func (i *IAM) deleteCustomerSecretKey(userId, keyId string) error {
 	return err
 }
 
-// EnsureAuthToken returns an OCI auth token for the user, used on the bootstrap run that
-// git-pushes the build specs. It reuses a token only when present on BOTH sides —
-// persisted in the Vault AND still active on the user — because OCI returns the value
-// only once at creation, so either alone is useless; if they've drifted the leftover is
-// removed and a fresh token created (also capping the 2-per-user limit). The bool reports
-// whether a NEW token was created, which propagates asynchronously, so the caller retries
-// the push while it settles.
-func (i *IAM) EnsureAuthToken(store secretPersistence, userId, description string) (string, bool, error) {
-	existing, err := i.listAuthTokenIds(userId, description)
+// CreateAuthToken mints an OCI auth token on the user (the git password for the build-spec
+// push) and persists it, called only when nothing is persisted yet. Any earlier token of
+// the agent's own (same description) is deleted first: OCI returns a token's value once at
+// creation, so a token without its persisted value is unusable, and the user is capped at 2.
+// Tokens with other descriptions — the user's own — are never touched.
+func (i *IAM) CreateAuthToken(store secretPersistence, userId, description string) (string, error) {
+	stale, err := i.listAuthTokenIds(userId, description)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
-	stored, found, err := readPersistedSecret(store, devopsAuthTokenObject)
-	if err != nil {
-		return "", false, err
-	}
-	if len(existing) > 0 && found {
-		return stored, false, nil
-	}
-	// Drifted: delete the stale OCI-side token(s) so a fresh one can be created (the value
-	// can't be updated, and the user is capped at 2). The persisted secret isn't deleted —
-	// the PutSecret below overwrites it in place.
-	for _, id := range existing {
+	for _, id := range stale {
 		if err = i.deleteAuthToken(userId, id); err != nil {
-			return "", false, fmt.Errorf("failed to delete stale auth token %s: %w", id, err)
+			return "", fmt.Errorf("failed to delete unusable auth token %s: %w", id, err)
 		}
 	}
 	response, err := i.client.CreateAuthToken(i.ctx, identity.CreateAuthTokenRequest{
@@ -216,16 +216,16 @@ func (i *IAM) EnsureAuthToken(store secretPersistence, userId, description strin
 		},
 	})
 	if err != nil {
-		return "", false, fmt.Errorf("failed to create auth token: %w", err)
+		return "", fmt.Errorf("failed to create auth token: %w", err)
 	}
 	if response.Token == nil {
-		return "", false, fmt.Errorf("auth token response missing token value")
+		return "", fmt.Errorf("auth token response missing token value")
 	}
 	if err = store.PutSecret(devopsAuthTokenObject, *response.Token); err != nil {
-		return "", false, fmt.Errorf("failed to persist auth token: %w", err)
+		return "", fmt.Errorf("failed to persist auth token: %w", err)
 	}
 	log.Printf("Provisioned Oracle auth token %q for DevOps build-spec git push\n", description)
-	return *response.Token, true, nil
+	return *response.Token, nil
 }
 
 // listAuthTokenIds returns the OCIDs of the user's ACTIVE auth tokens whose
@@ -410,11 +410,11 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 	})
 	if err != nil {
 		if isConflictStatus(err) {
-			// Policy names are unique tenancy-wide, so this is a same-named policy in
-			// another compartment — a deployment from before policies were
-			// compartment-scoped left one at the tenancy root.
-			return fmt.Errorf("policy %s already exists outside compartment %s (a tenancy-root policy from an "+
-				"earlier deployment); delete it or use another prefix: %w", name, i.compartmentId, err)
+			// Policy names are unique tenancy-wide, so a conflict means a same-named policy
+			// is attached to another compartment (or the tenancy root) where the agent can't
+			// see it.
+			return fmt.Errorf("policy %s already exists outside compartment %s; delete it or use another prefix: %w",
+				name, i.compartmentId, err)
 		}
 		return fmt.Errorf("failed to create policy %s: %w", name, err)
 	}
@@ -458,67 +458,45 @@ func (i *IAM) EnsureObjectStorageKeyAccess(cloudPrefix, region, keyId string) er
 	return i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
 }
 
-// EnsureAgentServiceAccount find-or-creates the agent's own dedicated IAM user, its group
-// and the policy granting what the agent's persisted credentials use: object-storage (the
-// terraform-state bucket, signed with the CSK) and the build-spec git push (authenticated
-// with the auth token). Returns the user OCID.
-//
-// The DevOps grant is `use devops-repository`, NOT `manage repos` — `repos` is the
-// Container Registry resource-type (git 401 "not authorized"); `use` pushes git content
-// while denying repo lifecycle, keeping it least-privilege.
-//
-// This user is deliberately separate from the CI/CD service account the `sa` command mints
-// (<prefix>-sa), so rotating or deleting that never disturbs the agent's own credentials.
-// Idempotent and invoked best-effort on every admin run, so tightening the policy in code
-// re-applies without deleting the persisted credentials.
-func (i *IAM) EnsureAgentServiceAccount(cloudPrefix, bucketName, repoName string) (string, error) {
-	name := fmt.Sprintf("%s-infralib-agent", cloudPrefix)
-	userId, _, err := i.getOrCreateUser(name, "Entigo infralib agent service account (owns the terraform-state Customer Secret Key and the DevOps git auth token)")
-	if err != nil {
-		return "", err
-	}
-	groupId, err := i.getOrCreateGroup(name, "Entigo infralib agent service account group")
-	if err != nil {
-		return "", err
-	}
-	if err = i.addUserToGroup(userId, groupId); err != nil {
-		return "", err
-	}
-	if err = i.ensurePolicy(name, "Entigo infralib agent service account access",
-		agentServiceAccountStatements(name, i.compartmentId, bucketName, repoName)); err != nil {
-		return "", err
-	}
-	return userId, nil
-}
-
-// agentServiceAccountStatements scopes the agent SA's group to the exact bucket and repo its
-// credentials touch: manage objects for state, inspect buckets for the s3 backend's probes,
-// use devops-repository for the spec push. All compartment-scoped (ensurePolicy).
-func agentServiceAccountStatements(group, compartmentId, bucketName, repoName string) []string {
-	return []string{
-		fmt.Sprintf("Allow group %s to manage objects in compartment id %s where target.bucket.name='%s'", group, compartmentId, bucketName),
-		fmt.Sprintf("Allow group %s to inspect buckets in compartment id %s", group, compartmentId),
-		fmt.Sprintf("Allow group %s to use devops-repository in compartment id %s where target.repository.name='%s'", group, compartmentId, repoName),
-	}
-}
-
-// DeleteAgentServiceAccount removes the agent's own IAM scaffolding, mirroring
-// EnsureAgentServiceAccount + EnsureDevOpsBuildAccess: the SA user (with its CSK and auth
-// token), its group and the -infralib-agent/-infralib policies. The -infralib-kms policy is
-// deleted separately by the caller AFTER the bucket (the Object Storage principal needs it
-// until the bucket is gone). Best-effort.
-func (i *IAM) DeleteAgentServiceAccount(cloudPrefix string) {
-	name := fmt.Sprintf("%s-infralib-agent", cloudPrefix)
-	i.deleteUserByName(name)
-	i.deleteGroupByName(name)
-	i.deletePolicyByName(name)
+// DeleteAgentCredentials removes the credentials the agent provisioned on the executing
+// user — the state Customer Secret Key and the DevOps git auth token, recognised by the
+// display name / description the agent gives them — plus the build access policy that
+// mirrors EnsureDevOpsBuildAccess. Credentials seeded by a DIFFERENT user stay on that
+// user (nothing records who created them), so they must be removed there. The -infralib-kms
+// policy is deleted separately by the caller AFTER the bucket (the Object Storage principal
+// needs it until the bucket is gone). Best-effort.
+func (i *IAM) DeleteAgentCredentials(cloudPrefix, userId string) {
 	i.deletePolicyByName(fmt.Sprintf("%s-infralib", cloudPrefix))
+	if userId == "" {
+		return
+	}
+	keys, err := i.listCustomerSecretKeyIds(userId, stateKeyName(cloudPrefix))
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list customer secret keys: %s", err)))
+	}
+	for id := range keys {
+		if err = i.deleteCustomerSecretKey(userId, id); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete customer secret key %s: %s", id, err)))
+		} else {
+			log.Printf("Deleted Customer Secret Key %s\n", id)
+		}
+	}
+	tokens, err := i.listAuthTokenIds(userId, gitTokenDescription(cloudPrefix))
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list auth tokens: %s", err)))
+	}
+	for _, id := range tokens {
+		if err = i.deleteAuthToken(userId, id); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete auth token %s: %s", id, err)))
+		} else {
+			log.Printf("Deleted auth token %s\n", id)
+		}
+	}
 }
 
 // DeleteCICDServiceAccount removes the external CI/CD service account minted by
 // CreateServiceAccount (<prefix>-sa user, <prefix>-sa-group group, <prefix>-sa
-// policy). Deliberately separate from the agent's own SA — only removed when the
-// delete flag opts in. Best-effort.
+// policy). Only removed when the delete flag opts in. Best-effort.
 func (i *IAM) DeleteCICDServiceAccount(cloudPrefix string) {
 	username := fmt.Sprintf("%s-sa", cloudPrefix)
 	i.deleteUserByName(username)
@@ -549,7 +527,7 @@ func (i *IAM) deleteUserByName(name string) {
 // purgeUserCredentials removes everything that blocks a user deletion: its Customer
 // Secret Keys, auth tokens and group memberships. Best-effort per item.
 func (i *IAM) purgeUserCredentials(userId, name string) {
-	keys, err := i.listCustomerSecretKeyIds(userId)
+	keys, err := i.listCustomerSecretKeyIds(userId, "")
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list customer secret keys of %s: %s", name, err)))
 	}
@@ -618,31 +596,21 @@ func (i *IAM) deleteGroupByName(name string) {
 	log.Printf("Deleted IAM group %s\n", name)
 }
 
-// deletePolicyByName removes the compartment-attached policy, then silently sweeps a
-// same-named tenancy-root leftover from a deployment that predates compartment-scoped
-// policies (that lookup needs tenancy IAM the caller may not have, so it never warns).
+// deletePolicyByName removes the compartment-attached policy. A missing one is a no-op.
 func (i *IAM) deletePolicyByName(name string) {
 	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{CompartmentId: &i.compartmentId, Name: &name})
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to look up IAM policy %s: %s", name, err)))
-	} else if len(list.Items) > 0 {
-		if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", name, err)))
-		} else {
-			log.Printf("Deleted IAM policy %s\n", name)
-		}
-	}
-	i.deleteLegacyRootPolicy(name)
-}
-
-func (i *IAM) deleteLegacyRootPolicy(name string) {
-	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{CompartmentId: &i.tenancyId, Name: &name})
-	if err != nil || len(list.Items) == 0 {
 		return
 	}
-	if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err == nil {
-		log.Printf("Deleted IAM policy %s from the tenancy root\n", name)
+	if len(list.Items) == 0 {
+		return
 	}
+	if _, err = i.client.DeletePolicy(i.ctx, identity.DeletePolicyRequest{PolicyId: list.Items[0].Id}); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete IAM policy %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted IAM policy %s\n", name)
 }
 
 // cicdServiceAccountStatements returns the least-privilege policy for the external CI/CD
@@ -650,7 +618,10 @@ func (i *IAM) deleteLegacyRootPolicy(name string) {
 // run mutates or reads, and NONE of the bootstrap's privileges: no identity management
 // (can't mint/rotate SAs or widen its own access) and no KMS/vault/bucket creation (the
 // trust root already exists, so it only finds+uses it). Everything is compartment-scoped.
-// The terraform-state S3 traffic is signed with the agent SA's own CSK, not this identity.
+// The terraform-state S3 traffic is signed with the Vault-persisted Customer Secret Key,
+// which belongs to whoever bootstrapped the deployment; the object-storage grants below
+// cover it either way, since this SA can seed a key of its own when the Vault holds none
+// (OCI lets every user manage its own credentials without a policy).
 func cicdServiceAccountStatements(group, compartmentId, bucketName string) []string {
 	return []string{
 		// DevOps: create/update/delete the build & deployment pipelines and push the
