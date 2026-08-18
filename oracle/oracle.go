@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -142,6 +143,9 @@ func (o *oracleService) resolveStore() (*SSM, error) {
 }
 
 func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
+	if err := o.ensureAgentAccess(); err != nil {
+		return nil, err
+	}
 	kms, ssm, err := o.setupStore()
 	if err != nil {
 		return nil, err
@@ -174,6 +178,9 @@ func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
 }
 
 func (o *oracleService) SetupResources(manager model.NotificationManager, config model.Config) (model.Resources, error) {
+	if err := o.ensureAgentAccess(); err != nil {
+		return nil, err
+	}
 	resources, _, err := o.bucketResources()
 	if err != nil {
 		return nil, err
@@ -275,6 +282,75 @@ func (o *oracleService) setupDevOpsBuild(logs *Logging) (*DevOpsBuilder, error) 
 		}
 	}
 	return build, nil
+}
+
+// agentGroupEnv pins the IAM group the agent's access policy grants, for a compartment
+// several identities drive. Unset, it grants the executing user by OCID.
+const agentGroupEnv = "ORACLE_AGENT_GROUP"
+
+const (
+	// IAM is global and a policy change replicates for 5-10 min, per Oracle's troubleshooting
+	// guidance — far longer than the ~1 min the console implies.
+	policyPropagationTimeout  = 10 * time.Minute
+	policyPropagationInterval = 15 * time.Second
+)
+
+// ensureAgentAccess writes the compartment policy covering the agent's own OCI calls, so a
+// user granted nothing but `manage policies` there can run the deployment. Nothing to do for
+// an in-container resource principal: it owns no user and devOpsBuildStatements covers it.
+func (o *oracleService) ensureAgentAccess() error {
+	grant := agentGrant{group: os.Getenv(agentGroupEnv), userId: o.userId()}
+	if !grant.valid() {
+		return nil
+	}
+	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
+	if err != nil {
+		return err
+	}
+	changed, err := iam.EnsureAgentAccess(o.cloudPrefix, getBucketName(o.cloudPrefix, o.region), grant)
+	if err != nil {
+		// Like EnsureDevOpsBuildAccess: a run without policy management (the CI/CD service
+		// account) relies on the policy a bootstrap wrote.
+		if !isNotAuthorized(err) {
+			return fmt.Errorf("failed to grant the agent access to compartment %s: %w", o.compartmentId, err)
+		}
+		log.Printf("Skipping agent access policy reconcile (no IAM permissions — expected on a non-admin run); "+
+			"using the existing policy (%s)\n", errSummary(err))
+		return nil
+	}
+	if changed {
+		log.Println("Wrote the agent access policy, waiting for it to take effect")
+		o.waitForAgentAccess()
+	}
+	return nil
+}
+
+// waitForAgentAccess polls until a just-written policy is in effect — until then every call it
+// authorizes fails NotAuthorizedOrNotFound, failing a first bootstrap. A timeout is not fatal:
+// carry on and let the real call report the real error. CAVEAT: the probe only proves THIS
+// call is authorized. A principal with an overlapping grant already (the CI/CD SA has
+// `read vaults`) passes at once, and the wait becomes a no-op.
+func (o *oracleService) waitForAgentAccess() {
+	kms, err := NewKMS(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
+	if err != nil {
+		return
+	}
+	for start := time.Now(); ; {
+		err = kms.authorized()
+		if err == nil {
+			return
+		}
+		if time.Since(start) > policyPropagationTimeout {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Agent access policy is still not in effect after %s (%s); continuing",
+				policyPropagationTimeout, errSummary(err))))
+			return
+		}
+		select {
+		case <-o.ctx.Done():
+			return
+		case <-time.After(policyPropagationInterval):
+		}
+	}
 }
 
 // ensureLogging returns the Logging service the pipeline reads plan output back from.
@@ -480,13 +556,23 @@ const gitUsernameEnv = "ORACLE_GIT_USERNAME"
 func (o *oracleService) deriveGitUsername(iam *IAM, userId string) (string, error) {
 	tenancy, err := iam.TenancyName()
 	if err != nil {
-		return "", err
+		return "", gitUsernameUnavailable("the tenancy name", err)
 	}
 	login, err := iam.Username(userId)
 	if err != nil {
-		return "", err
+		return "", gitUsernameUnavailable("the user's login name", err)
 	}
 	return fmt.Sprintf("%s/%s", tenancy, login), nil
+}
+
+// gitUsernameUnavailable explains the way out when the derivation fails. Reading one's OWN
+// user and tenancy needs no policy, so this is a genuinely blocked identity read, not the
+// ordinary compartment-scoped operator.
+func gitUsernameUnavailable(what string, err error) error {
+	return fmt.Errorf("failed to read %s to derive the DevOps git push username: %w; reading your own user and "+
+		"tenancy normally needs no policy at all, so set %s explicitly — \"<tenancy>/<login>\", or "+
+		"\"<tenancy>/<domain>/<login>\" in a non-default identity domain, or \"<tenancy>/Federation/<login>\" for a "+
+		"federated user (e.g. \"acme/oracleidentitycloudservice/alice@acme.com\")", what, err, gitUsernameEnv)
 }
 
 // userId returns the OCID of the authenticated user, or "" when there is none — an
@@ -585,7 +671,8 @@ func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resourc
 // project (cascading to its repo and pipelines), the approval topic, the service log
 // group, the credentials the agent put on the executing user, the state bucket and — last, because it encrypts
 // the bucket — the agent-owned KMS vault/key. The KMS vault/key/secrets have no hard
-// delete: they are scheduled for deletion (~7 days, revertible in the console).
+// delete: they are scheduled for deletion (~7 days, revertible in the console). The agent's own
+// access policy outlives all of it unless deleteServiceAccount is set.
 func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
 	resources, storage, err := o.bucketResources()
 	if err != nil {
@@ -636,13 +723,18 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	if err = kms.ScheduleDeletion(); err != nil {
 		slog.Warn(common.PrefixWarning(err.Error()))
 	}
+	// Dead last — everything above authorizes through it. Kept unless the service account flag
+	// opts in, so a re-run of this best-effort teardown still has the access to finish.
+	if deleteServiceAccount {
+		iam.deletePolicyByName(fmt.Sprintf("%s-infralib-agent", o.cloudPrefix))
+	}
 	return nil
 }
 
 // CreateServiceAccount provisions the external CI/CD service account a gitops engineer
-// uses to run the agent from their pipeline AFTER an admin bootstrap. It gets an API
-// signing key and a group/policy scoped to only what a steady-state run needs
-// (cicdServiceAccountStatements) — NOT the bootstrap's identity-management or
+// uses to run the agent from their pipeline AFTER a bootstrap. It gets an API signing key
+// and a group/policy scoped to only what a steady-state run needs
+// (cicdServiceAccountStatements) — NOT the bootstrap's policy management or
 // KMS/bucket-creation privileges. OCI has no impersonation, so TrustRole is ignored;
 // the policy is reconciled every invocation, so re-running tightens it in place.
 func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) error {
@@ -664,7 +756,7 @@ func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) erro
 		return err
 	}
 	statements := cicdServiceAccountStatements(groupName, o.compartmentId, getBucketName(o.cloudPrefix, o.region))
-	if err = iam.ensurePolicy(username, "Entigo infralib CI/CD policy", statements); err != nil {
+	if _, err = iam.ensurePolicy(username, "Entigo infralib CI/CD policy", statements); err != nil {
 		return err
 	}
 	if !created && !saFlags.RotateCredentials {

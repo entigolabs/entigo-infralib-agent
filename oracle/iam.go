@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -374,19 +375,19 @@ func sameStatements(a, b []string) bool {
 // ensurePolicy find-or-creates a policy ATTACHED TO THE COMPARTMENT, never the tenancy
 // root, so the agent creates no resource outside its compartment. Consequence: every
 // statement must be compartment-scoped — a compartment-attached policy cannot carry an
-// `in tenancy` statement.
-func (i *IAM) ensurePolicy(name, description string, statements []string) error {
+// `in tenancy` statement. Reports whether it changed — a change needs time to take effect.
+func (i *IAM) ensurePolicy(name, description string, statements []string) (bool, error) {
 	list, err := i.client.ListPolicies(i.ctx, identity.ListPoliciesRequest{
 		CompartmentId: &i.compartmentId,
 		Name:          &name,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(list.Items) > 0 {
 		existing := list.Items[0]
 		if sameStatements(existing.Statements, statements) {
-			return nil
+			return false, nil
 		}
 		// Self-heal: an earlier run may have created this policy with a narrower
 		// statement set. Update it to the desired statements.
@@ -395,9 +396,9 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 			UpdatePolicyDetails: identity.UpdatePolicyDetails{Statements: statements},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update policy %s: %w", name, err)
+			return false, fmt.Errorf("failed to update policy %s: %w", name, err)
 		}
-		return nil
+		return true, nil
 	}
 	_, err = i.client.CreatePolicy(i.ctx, identity.CreatePolicyRequest{
 		CreatePolicyDetails: identity.CreatePolicyDetails{
@@ -413,12 +414,12 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 			// Policy names are unique tenancy-wide, so a conflict means a same-named policy
 			// is attached to another compartment (or the tenancy root) where the agent can't
 			// see it.
-			return fmt.Errorf("policy %s already exists outside compartment %s; delete it or use another prefix: %w",
+			return false, fmt.Errorf("policy %s already exists outside compartment %s; delete it or use another prefix: %w",
 				name, i.compartmentId, err)
 		}
-		return fmt.Errorf("failed to create policy %s: %w", name, err)
+		return false, fmt.Errorf("failed to create policy %s: %w", name, err)
 	}
-	return nil
+	return true, nil
 }
 
 // EnsureDevOpsBuildAccess grants the DevOps build pipelines' resource principal the
@@ -426,8 +427,9 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) error 
 // vaultVariables) and — because the RP is forwarded into the step container where terraform
 // runs — managing the infrastructure the steps create.
 func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
-	return i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access",
+	_, err := i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access",
 		devOpsBuildStatements(i.compartmentId))
+	return err
 }
 
 // devOpsBuildStatements grants the build pipelines' resource principals directly, with no
@@ -455,7 +457,71 @@ func devOpsBuildStatements(compartmentId string) []string {
 func (i *IAM) EnsureObjectStorageKeyAccess(cloudPrefix, region, keyId string) error {
 	statement := fmt.Sprintf("Allow service objectstorage-%s to use keys in compartment id %s where target.key.id = '%s'",
 		region, i.compartmentId, keyId)
-	return i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
+	_, err := i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
+	return err
+}
+
+// agentGrant names the principal the agent's own access policy grants: the EXECUTING user by
+// OCID, since a group is a tenancy-root resource the agent must not create, or a pre-created
+// group (ORACLE_AGENT_GROUP) so several operators share one policy no run rewrites.
+type agentGrant struct {
+	group  string
+	userId string
+}
+
+func (g agentGrant) valid() bool { return g.group != "" || g.userId != "" }
+
+// statement renders one Allow statement. Matching the user by OCID is a condition like any
+// other, so it merges into `where all { … }` with the resource conditions.
+func (g agentGrant) statement(verb, resource, compartmentId string, conditions ...string) string {
+	subject := "group " + g.group
+	if g.group == "" {
+		subject = "any-user"
+		conditions = append(conditions, fmt.Sprintf("request.user.id = '%s'", g.userId))
+	}
+	statement := fmt.Sprintf("Allow %s to %s %s in compartment id %s", subject, verb, resource, compartmentId)
+	switch len(conditions) {
+	case 0:
+		return statement
+	case 1:
+		return fmt.Sprintf("%s where %s", statement, conditions[0])
+	default:
+		return fmt.Sprintf("%s where all { %s }", statement, strings.Join(conditions, ", "))
+	}
+}
+
+// EnsureAgentAccess grants the agent's own principal what it needs inside the compartment, so
+// a deployment can be run by a user holding nothing but `manage policies` there — the
+// compartment being the isolation boundary, OCI having no equivalent of separate AWS
+// accounts. Reports whether the policy changed; until a change takes effect it authorizes
+// nothing.
+func (i *IAM) EnsureAgentAccess(cloudPrefix, bucketName string, grant agentGrant) (bool, error) {
+	return i.ensurePolicy(fmt.Sprintf("%s-infralib-agent", cloudPrefix), "Entigo infralib agent access",
+		agentAccessStatements(grant, i.compartmentId, bucketName))
+}
+
+// agentAccessStatements mirrors the OCI calls this package makes as the agent's own principal;
+// a new call means a new statement here. Out of reach either way, identity policies attaching
+// only to the tenancy root: the git username's tenancy+user reads (ORACLE_GIT_USERNAME covers
+// it) and the `sa` command.
+func agentAccessStatements(grant agentGrant, compartmentId, bucketName string) []string {
+	return []string{
+		grant.statement("manage", "vaults", compartmentId),
+		grant.statement("manage", "keys", compartmentId),
+		// KEY_ASSOCIATE, letting Object Storage encrypt the bucket with the key. Its own
+		// resource type — `manage keys` does NOT include it — and Object Storage reports it
+		// missing as CreateBucket 409 BucketAlreadyExists.
+		grant.statement("use", "key-delegate", compartmentId),
+		grant.statement("manage", "secret-family", compartmentId),
+		grant.statement("manage", "buckets", compartmentId),
+		// Covers terraform's s3 backend traffic too: it is signed with this user's CSK.
+		grant.statement("manage", "objects", compartmentId, fmt.Sprintf("target.bucket.name = '%s'", bucketName)),
+		grant.statement("manage", "devops-family", compartmentId),
+		// CreateLog is a log-groups permission; searching the plan output reads log-content.
+		grant.statement("manage", "log-groups", compartmentId),
+		grant.statement("read", "log-content", compartmentId),
+		grant.statement("manage", "ons-topics", compartmentId),
+	}
 }
 
 // DeleteAgentCredentials removes the credentials the agent provisioned on the executing
@@ -615,13 +681,12 @@ func (i *IAM) deletePolicyByName(name string) {
 
 // cicdServiceAccountStatements returns the least-privilege policy for the external CI/CD
 // service account minted by CreateServiceAccount. It grants exactly what a steady-state
-// run mutates or reads, and NONE of the bootstrap's privileges: no identity management
-// (can't mint/rotate SAs or widen its own access) and no KMS/vault/bucket creation (the
-// trust root already exists, so it only finds+uses it). Everything is compartment-scoped.
-// The terraform-state S3 traffic is signed with the Vault-persisted Customer Secret Key,
-// which belongs to whoever bootstrapped the deployment; the object-storage grants below
-// cover it either way, since this SA can seed a key of its own when the Vault holds none
-// (OCI lets every user manage its own credentials without a policy).
+// run mutates or reads, and NONE of the bootstrap's privileges: no policy management (so it
+// cannot widen its own access the way agentAccessStatements does) and no KMS/vault/bucket
+// creation (the trust root already exists, so it only finds+uses it). Everything is
+// compartment-scoped. The terraform-state S3 traffic is signed with the Vault-persisted
+// Customer Secret Key of whoever bootstrapped; the object-storage grants cover it either way,
+// since this SA can seed a key of its own (self-credential management needs no policy).
 func cicdServiceAccountStatements(group, compartmentId, bucketName string) []string {
 	return []string{
 		// DevOps: create/update/delete the build & deployment pipelines and push the

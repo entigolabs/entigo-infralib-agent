@@ -51,7 +51,17 @@ Google Cloud Service Account with owner access, credentials provided by GCP or g
 
 or
 
-Oracle Cloud user with compartment manage access. Credentials are resolved ambiently like the `oci` CLI: a resource principal when running in-container, otherwise the OCI configuration (`~/.oci/config`, `OCI_CONFIG_FILE`, or config env vars). The first local run must use an API-key or session-token profile with user-management permissions: it seeds a dedicated agent service account that owns the Object Storage credentials used by the terraform state backend and the auth token used to git-push the hosted DevOps build-spec repository (a one-time push). The git username is derived automatically as `<tenancy-name>/<prefix>-infralib-agent`; identity-domain tenancies, which require a domain-qualified username (`<tenancy>/<domain>/<login>`), are not yet auto-detected. Subsequent in-container runs (resource principal) reuse the seeded resources and need only read access to the Vault.
+Oracle Cloud user with policy management access to one compartment, granted by a tenancy administrator:
+
+```
+Allow group <your-group> to manage policies in compartment id <compartment-ocid>
+```
+
+On the first run the agent writes a `<prefix>-infralib-agent` policy into the same compartment granting itself the rest of the required permissions and waits for it to take effect. The policy is reconciled on every run, and by default it names the executing user by OCID. Use `ORACLE_AGENT_GROUP` to set an existing group instead when different users execute in the same compartment.
+
+Customer secret key for Infralib and auth token for DevOps code repository are generated on the first executing user, and stored in the Vault for later runs. Users in a non-default identity domain, and federated users, need to set `ORACLE_GIT_USERNAME` to `<tenancy-name>/<domain>/<login>` or `<tenancy-name>/Federation/<login>`. It is resolved once, at seeding time, and stored in the Vault alongside the token. Subsequent in-container runs (resource principal) reuse the stored credentials and need only read access to the Vault.
+
+If a stored credential ever stops working it is not replaced automatically: delete the `oracle-customer-secret-key` or `oracle-devops-auth-token` (plus `oracle-git-username`) secret from the agent's Vault and the next local run reseeds it.
 
 ## Compiling Source
 
@@ -281,6 +291,8 @@ bin/ei-agent delete --config=config.yaml --prefix=infralib
 
 Creates a service account and a key for the account. Key will be outputted to the stdout.
 This account can be used for running the agent in a CI/CD pipeline.
+
+On Oracle Cloud the account is a user in a group whose compartment-scoped policy grants only what a steady-state run needs — no policy management and no KMS/bucket creation, so it runs an already-bootstrapped deployment but cannot bootstrap one or widen its own access. The command itself needs a tenancy administrator, since OCI creates users and groups only in the tenancy root.
 
 Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
 

@@ -105,6 +105,16 @@ func (k *KMS) Ensure() error {
 	return k.err
 }
 
+// authorized reports whether the caller may list the compartment's vaults, what Ensure does
+// first — used to wait out IAM policy propagation.
+func (k *KMS) authorized() error {
+	_, err := k.vaultClient.ListVaults(k.ctx, keymanagement.ListVaultsRequest{
+		CompartmentId: &k.compartmentId,
+		Limit:         ocicommon.Int(1),
+	})
+	return err
+}
+
 func (k *KMS) KeyId() string   { return k.state.KeyId }
 func (k *KMS) VaultId() string { return k.state.VaultId }
 
