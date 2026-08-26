@@ -69,7 +69,7 @@ func (r Resources) GetBackendEnv() map[string]string {
 }
 
 func NewOracle(ctx context.Context, cloudPrefix string, oracle common.Oracle, pipeline common.Pipeline, skipBucketDelay bool) (model.CloudProvider, error) {
-	provider, err := newConfigProvider()
+	provider, err := newConfigProvider(oracle)
 	if err != nil {
 		return nil, err
 	}

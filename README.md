@@ -203,7 +203,7 @@ docker run --pull always -it --rm \
 
 ### Using with Oracle Cloud
 
-The agent resolves Oracle credentials the same way as the `oci` CLI. For local use, create an API key config with `oci setup config`, which writes `~/.oci/config` and a private key PEM. Mount `~/.oci` at the same path inside the container and point `OCI_CONFIG_FILE` at it — the agent then uses the config as-is, with no edits.
+The agent resolves Oracle credentials the same way as the `oci` CLI. For local use, create an API key config with `oci setup config`, which writes `~/.oci/config` and a private key PEM. Mount `~/.oci` at the same path inside the container and point `--oci-config-file`/`OCI_CONFIG_FILE` at it — the agent then uses the config as-is, with no edits.
 
 ```shell
 #!/bin/bash
@@ -222,7 +222,7 @@ docker run --pull always -it --rm \
     entigolabs/entigo-infralib-agent ei-agent run
 ```
 
-`OCI_COMPARTMENT_ID` selects the Oracle provider and `OCI_REGION` sets the region (equivalent to the `--oci-compartment-id` and `--oci-region` flags). Credentials come from the `DEFAULT` profile of the mounted `~/.oci/config`.
+`OCI_COMPARTMENT_ID` selects the Oracle provider and `OCI_REGION` sets the region (equivalent to the `--oci-compartment-id` and `--oci-region` flags). Credentials come from the `DEFAULT` profile of the mounted `~/.oci/config`; use `--oci-profile`/`OCI_PROFILE` to pick another profile, which still falls back to `DEFAULT` for any values it omits.
 
 Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is what avoids editing the config: `oci setup config` records an **absolute host path** for `key_file` (e.g. `/Users/you/.oci/oci_api_key.pem`), so the key only resolves inside the container when `~/.oci` is mounted at that same path. If you prefer a fixed `-v "$HOME/.oci:/root/.oci:ro"` mount, edit `key_file` in `~/.oci/config` to the in-container path `/root/.oci/oci_api_key.pem` instead.
 
@@ -246,6 +246,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * start - start pipeline execution after creating (default: **true**) [$START]
 
@@ -270,6 +272,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
@@ -299,6 +303,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
@@ -327,6 +333,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * steps - **optional** comma separated list of steps to destroy [$STEPS]
@@ -354,6 +362,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]. For Oracle, the agent-owned KMS vault and key that encrypt the bucket are scheduled for deletion (revertible in the console for ~7 days) only when the bucket is deleted.
@@ -382,6 +392,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
 * trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. Not supported on Oracle Cloud (no impersonation), where the command always outputs an API signing key and a ready-to-paste `~/.oci/config` profile. [$TRUST_ROLE]
@@ -406,6 +418,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * force - overwrite existing local files, default **false**. **Warning!** Force deletes the `/config` subfolder before writing. [$FORCE]
 
 Example
@@ -448,6 +462,8 @@ OPTIONS:
 * google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
 * oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * key - key for the custom parameter [$KEY]
 * value - value for the custom parameter [$VALUE]
 * overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]

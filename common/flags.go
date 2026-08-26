@@ -12,6 +12,8 @@ const (
 	GCloudZoneEnv      = "ZONE"
 
 	OracleCompartmentIdEnv = "OCI_COMPARTMENT_ID"
+	OracleProfileEnv       = "OCI_PROFILE"
+	OracleConfigFileEnv    = "OCI_CONFIG_FILE"
 )
 
 type Flags struct {
@@ -52,11 +54,14 @@ type AWS struct {
 
 // Oracle holds OCI (Oracle Cloud) resource placement. CompartmentId selects the
 // Oracle provider when set. Credentials are resolved ambiently by the SDK
-// (~/.oci/config or OCI_CONFIG_FILE / config env vars), or via resource principal
-// in-container — see oracle.newConfigProvider.
+// (~/.oci/config / config env vars), or via resource principal in-container — see
+// oracle.newConfigProvider. ConfigFile and Profile pin the config file and its
+// profile when the ambient defaults aren't what's wanted.
 type Oracle struct {
 	Region        string
 	CompartmentId string
+	Profile       string
+	ConfigFile    string
 }
 
 type ServiceAccount struct {

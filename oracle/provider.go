@@ -18,7 +18,7 @@ type oracleProvider struct {
 }
 
 func NewOracleProvider(ctx context.Context, oracle common.Oracle, cloudPrefix string) (model.ResourceProvider, error) {
-	provider, err := newConfigProvider()
+	provider, err := newConfigProvider(oracle)
 	if err != nil {
 		return nil, err
 	}

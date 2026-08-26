@@ -4,18 +4,30 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/entigolabs/entigo-infralib-agent/common"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
 )
 
+const defaultProfile = "DEFAULT"
+
 // newConfigProvider resolves OCI credentials like the oci CLI: resource principal
 // in-container (signalled by the env var), else the SDK default chain
-// (~/.oci/config or OCI_CONFIG_FILE). Region is applied per client via SetRegion.
-func newConfigProvider() (ocicommon.ConfigurationProvider, error) {
+// (~/.oci/config or OCI_CONFIG_FILE). A config file or profile given by flag narrows
+// that to the named file and section, falling back to the DEFAULT section for keys the
+// profile omits. Region is applied per client via SetRegion.
+func newConfigProvider(oracle common.Oracle) (ocicommon.ConfigurationProvider, error) {
 	if os.Getenv(auth.ResourcePrincipalRPSTEnvVar) != "" {
 		return auth.ResourcePrincipalConfigurationProvider()
 	}
-	return ocicommon.DefaultConfigProvider(), nil
+	if oracle.ConfigFile == "" && oracle.Profile == "" {
+		return ocicommon.DefaultConfigProvider(), nil
+	}
+	profile := oracle.Profile
+	if profile == "" {
+		profile = defaultProfile
+	}
+	return ocicommon.CustomProfileConfigProvider(oracle.ConfigFile, profile), nil
 }
 
 func getBucketName(cloudPrefix, region string) string {
