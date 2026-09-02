@@ -354,7 +354,9 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 	case string(model.ReplaceTypeStepModule):
 		return getTypedStepModuleName(step, replaceKey)
 	case string(model.ReplaceTypeTInput):
-		return u.getTypedModuleInput(step, index, replaceKey, cache)
+		return u.getTypedModuleInput(step, index, replaceKey, cache, false)
+	case string(model.ReplaceTypeTInputOptional):
+		return u.getTypedModuleInput(step, index, replaceKey, cache, true)
 	case string(model.ReplaceTypeModule):
 		return "", nil // Ignore this replace
 	default:
@@ -434,9 +436,8 @@ func (u *updater) getTypedModuleParameter(step model.Step, replaceKey string, ca
 	if foundStep == nil || module == nil {
 		if optional {
 			return "", nil
-		} else {
-			return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 		}
+		return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[2])
 	return u.getParameter(match, replaceKey, step, *foundStep, *module, cache, optional)
@@ -601,9 +602,8 @@ func (u *updater) getTypedModuleName(step model.Step, replaceKey string, optiona
 	if module == nil {
 		if optional {
 			return "", nil
-		} else {
-			return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 		}
+		return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 	}
 	return module.Name, nil
 }
@@ -621,16 +621,22 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 	return module.Name, nil
 }
 
-func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey string, cache paramCache) (string, error) {
-	inputValue, err := getModuleValueReplacement(step, "input", replaceKey)
+func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey string, cache paramCache, optional bool) (string, error) {
+	inputValue, err := getModuleValueReplacement(step, "input", replaceKey, optional)
 	if err != nil {
 		return "", err
 	}
 	if inputValue == "" && step.Type == model.StepTypeArgoCD {
-		inputValue, err = getModuleValueReplacement(step, "value", replaceKey)
+		inputValue, err = getModuleValueReplacement(step, "value", replaceKey, optional)
 		if err != nil {
 			return "", err
 		}
+	}
+	if inputValue == "" {
+		if optional {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to find step %s module input key %s", step.Name, replaceKey)
 	}
 	inputValue, delayedKeyTypes, err := u.replaceStringValues(step, inputValue, index, cache)
 	if err != nil {
@@ -642,16 +648,23 @@ func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey str
 	return inputPrefix + inputValue, err
 }
 
-func getModuleValueReplacement(step model.Step, mapName, replaceKey string) (string, error) {
+func getModuleValueReplacement(step model.Step, mapName, replaceKey string, optional bool) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) < 3 {
 		return "", fmt.Errorf("failed to parse module %s key %s, got %d split parts instead of at least 3",
 			mapName, replaceKey, len(parts))
 	}
 	module, err := findModuleByType(step.Modules, parts[1])
-	if err != nil || module == nil {
+	if err != nil {
 		return "", fmt.Errorf("failed to find step %s module with type %s for module value key %s: %w",
 			step.Name, parts[1], replaceKey, err)
+	}
+	if module == nil {
+		if optional {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to find step %s module with type %s for module value key %s",
+			step.Name, parts[1], replaceKey)
 	}
 	var values map[string]interface{}
 	if mapName == "input" {
