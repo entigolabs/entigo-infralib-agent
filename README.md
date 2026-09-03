@@ -399,7 +399,12 @@ bin/ei-agent add-custom --key=custom-key --value=custom-value
 
 ### Version
 
-Shows the agent version, build date and commit hash.
+Prints the agent version, build date and commit hash.
+
+Example
+```bash
+bin/ei-agent version
+```
 
 ## Config
 
