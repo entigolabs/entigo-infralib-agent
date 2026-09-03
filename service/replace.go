@@ -175,24 +175,15 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		if err != nil {
 			return "", nil, err
 		}
-		var replacement string
-		for _, keyType := range keyTypes {
-			if strings.HasPrefix(keyType.ReplaceKey, `"`) {
-				replacement = strings.Trim(keyType.ReplaceKey, `"`)
-				break
+		replacement, err := resolveReplaceChain(keyTypes, replaceTag, func(key keyType) (string, error) {
+			if key.ReplaceType == string(model.ReplaceTypeAgent) {
+				delayedKeyTypes = append(delayedKeyTypes, delayedKeyType{keyType: key, ReplaceTag: replaceTag})
+				return skipReplace, nil
 			}
-			if keyType.ReplaceType == string(model.ReplaceTypeAgent) {
-				delayedKeyTypes = append(delayedKeyTypes, delayedKeyType{keyType: keyType, ReplaceTag: replaceTag})
-				replacement = skipReplace
-				break
-			}
-			replacement, err = u.getReplacementValue(step, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
-			if err != nil {
-				return "", nil, err
-			}
-			if replacement != "" {
-				break
-			}
+			return u.getReplacementValue(step, index, key.ReplaceKey, key.ReplaceType, cache)
+		})
+		if err != nil {
+			return "", nil, err
 		}
 		if replacement == skipReplace {
 			continue
@@ -267,6 +258,22 @@ func hasSamePrefixSuffix(s, prefixSuffix string) bool {
 	return strings.HasPrefix(s, prefixSuffix) && strings.HasSuffix(s, prefixSuffix)
 }
 
+func resolveReplaceChain(keyTypes []keyType, replaceTag string, resolve func(keyType) (string, error)) (string, error) {
+	for _, key := range keyTypes {
+		if key.ReplaceType == string(model.ReplaceTypeRequired) {
+			return "", fmt.Errorf("required tag %s: none of the values resolved to a non-empty value", replaceTag)
+		}
+		if strings.HasPrefix(key.ReplaceKey, `"`) {
+			return strings.Trim(key.ReplaceKey, `"`), nil
+		}
+		value, err := resolve(key)
+		if err != nil || value != "" {
+			return value, err
+		}
+	}
+	return "", nil
+}
+
 func (u *updater) replaceStepMetadataValues(step model.Step, index int) (model.Step, error) {
 	cache := make(paramCache)
 	for i, module := range step.Modules {
@@ -298,19 +305,11 @@ func (u *updater) replaceMetadataValues(step model.Step, module model.Module, in
 			if err != nil {
 				return nil, err
 			}
-			var replacement string
-			for _, keyType := range keyTypes {
-				if strings.HasPrefix(keyType.ReplaceKey, `"`) {
-					replacement = strings.Trim(keyType.ReplaceKey, `"`)
-					break
-				}
-				replacement, err = u.getReplacementMetadataValue(step, module, index, keyType.ReplaceKey, keyType.ReplaceType, cache)
-				if err != nil {
-					return nil, err
-				}
-				if replacement != "" {
-					break
-				}
+			replacement, err := resolveReplaceChain(keyTypes, match[0], func(key keyType) (string, error) {
+				return u.getReplacementMetadataValue(step, module, index, key.ReplaceKey, key.ReplaceType, cache)
+			})
+			if err != nil {
+				return nil, err
 			}
 			replacement = strings.Trim(strings.Trim(replacement, `"`), "\n")
 			value = strings.Replace(value, match[0], replacement, 1)
@@ -354,7 +353,9 @@ func (u *updater) getReplacementValue(step model.Step, index int, replaceKey, re
 	case string(model.ReplaceTypeStepModule):
 		return getTypedStepModuleName(step, replaceKey)
 	case string(model.ReplaceTypeTInput):
-		return u.getTypedModuleInput(step, index, replaceKey, cache)
+		return u.getTypedModuleInput(step, index, replaceKey, cache, false)
+	case string(model.ReplaceTypeTInputOptional):
+		return u.getTypedModuleInput(step, index, replaceKey, cache, true)
 	case string(model.ReplaceTypeModule):
 		return "", nil // Ignore this replace
 	default:
@@ -434,9 +435,8 @@ func (u *updater) getTypedModuleParameter(step model.Step, replaceKey string, ca
 	if foundStep == nil || module == nil {
 		if optional {
 			return "", nil
-		} else {
-			return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 		}
+		return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 	}
 	match := parameterIndexRegex.FindStringSubmatch(parts[2])
 	return u.getParameter(match, replaceKey, step, *foundStep, *module, cache, optional)
@@ -601,9 +601,8 @@ func (u *updater) getTypedModuleName(step model.Step, replaceKey string, optiona
 	if module == nil {
 		if optional {
 			return "", nil
-		} else {
-			return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 		}
+		return "", fmt.Errorf("failed to find module with type %s for toutput key %s", parts[1], replaceKey)
 	}
 	return module.Name, nil
 }
@@ -621,16 +620,22 @@ func getTypedStepModuleName(step model.Step, replaceKey string) (string, error) 
 	return module.Name, nil
 }
 
-func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey string, cache paramCache) (string, error) {
-	inputValue, err := getModuleValueReplacement(step, "input", replaceKey)
+func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey string, cache paramCache, optional bool) (string, error) {
+	inputValue, err := getModuleValueReplacement(step, "input", replaceKey, optional)
 	if err != nil {
 		return "", err
 	}
 	if inputValue == "" && step.Type == model.StepTypeArgoCD {
-		inputValue, err = getModuleValueReplacement(step, "value", replaceKey)
+		inputValue, err = getModuleValueReplacement(step, "value", replaceKey, optional)
 		if err != nil {
 			return "", err
 		}
+	}
+	if inputValue == "" {
+		if optional {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to find step %s module input key %s", step.Name, replaceKey)
 	}
 	inputValue, delayedKeyTypes, err := u.replaceStringValues(step, inputValue, index, cache)
 	if err != nil {
@@ -642,16 +647,23 @@ func (u *updater) getTypedModuleInput(step model.Step, index int, replaceKey str
 	return inputPrefix + inputValue, err
 }
 
-func getModuleValueReplacement(step model.Step, mapName, replaceKey string) (string, error) {
+func getModuleValueReplacement(step model.Step, mapName, replaceKey string, optional bool) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) < 3 {
 		return "", fmt.Errorf("failed to parse module %s key %s, got %d split parts instead of at least 3",
 			mapName, replaceKey, len(parts))
 	}
 	module, err := findModuleByType(step.Modules, parts[1])
-	if err != nil || module == nil {
+	if err != nil {
 		return "", fmt.Errorf("failed to find step %s module with type %s for module value key %s: %w",
 			step.Name, parts[1], replaceKey, err)
+	}
+	if module == nil {
+		if optional {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to find step %s module with type %s for module value key %s",
+			step.Name, parts[1], replaceKey)
 	}
 	var values map[string]interface{}
 	if mapName == "input" {
@@ -1032,6 +1044,10 @@ func parseReplaceTag(match []string) ([]keyType, error) {
 			keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: ""})
 			continue
 		}
+		if strings.EqualFold(replaceKey, string(model.ReplaceTypeRequired)) {
+			keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: string(model.ReplaceTypeRequired)})
+			continue
+		}
 		splitIndex := strings.Index(replaceKey, ".")
 		if splitIndex == -1 || len(replaceKey) <= splitIndex {
 			return nil, fmt.Errorf("invalid replace tag format: %s", match[0])
@@ -1039,5 +1055,34 @@ func parseReplaceTag(match []string) ([]keyType, error) {
 		replaceType := strings.ToLower(replaceKey[:strings.Index(replaceKey, ".")])
 		keyTypes = append(keyTypes, keyType{ReplaceKey: replaceKey, ReplaceType: replaceType})
 	}
+	err := validateReplaceTag(match[0], keyTypes)
+	if err != nil {
+		return nil, err
+	}
 	return keyTypes, nil
+}
+
+func validateReplaceTag(replaceTag string, keyTypes []keyType) error {
+	for i, key := range keyTypes {
+		if key.ReplaceType != string(model.ReplaceTypeRequired) {
+			continue
+		}
+		if i != len(keyTypes)-1 {
+			return fmt.Errorf("invalid replace tag %s: required must be the last value", replaceTag)
+		}
+		if i == 0 {
+			return fmt.Errorf("invalid replace tag %s: required must be preceded by at least one value", replaceTag)
+		}
+		for _, previous := range keyTypes[:i] {
+			if previous.ReplaceType == "" {
+				return fmt.Errorf("invalid replace tag %s: required can't be combined with a default value",
+					replaceTag)
+			}
+			if previous.ReplaceType == string(model.ReplaceTypeAgent) {
+				return fmt.Errorf("invalid replace tag %s: required can't be combined with %s", replaceTag,
+					model.ReplaceTypeAgent)
+			}
+		}
+	}
+	return nil
 }

@@ -253,7 +253,9 @@ const (
 	ReplaceTypeModule          ReplaceType = "module"
 	ReplaceTypeInput           ReplaceType = "input"
 	ReplaceTypeTInput          ReplaceType = "tinput"
+	ReplaceTypeTInputOptional  ReplaceType = "toptin"
 	ReplaceTypeSelfOutput      ReplaceType = "sout"
+	ReplaceTypeRequired        ReplaceType = "required"
 )
 
 type AgentReplaceType string
