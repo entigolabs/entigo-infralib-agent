@@ -717,7 +717,7 @@ Step, module and input field values can be overwritten by using replacement tags
 |                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                         |
 | `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from Terraform output from specific step/module. Defaults to empty string.                     |
 | `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from Terraform output from specific step/module.                                                        |
-| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM or OCI Vault.                                                                     |
+| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM or OCI Vault.                                                         |
 | `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                                       |
 | `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps              |
 | `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                                     |
