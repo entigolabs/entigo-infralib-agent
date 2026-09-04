@@ -475,7 +475,12 @@ bin/ei-agent add-custom --key=custom-key --value=custom-value
 
 ### Version
 
-Shows the agent version, build date and commit hash.
+Prints the agent version, build date and commit hash.
+
+Example
+```bash
+bin/ei-agent version
+```
 
 ## Config
 
@@ -702,24 +707,25 @@ When using the `approve` property, auto approve type is only considered when res
 
 Step, module and input field values can be overwritten by using replacement tags `{{ .type.key }}`. Possible replacement tags are:
 
-| Type            | Key / Format                | Example                               | Description                                                                                      |
-|-----------------|-----------------------------|---------------------------------------|--------------------------------------------------------------------------------------------------|
-| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                      |
-|                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                       |
-|                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                |
-| `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.         |
-| `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                              |
-|                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                            |
-| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from Terraform output from specific step/module. Defaults to empty string.        |
-| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from Terraform output from specific step/module.                                           |
-| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM, or OCI Vault.                                           |
-| `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                          |
-| `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps |
-| `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                        |
-| `toptmodule`    | type                        | `.toptmodule.eks`                     | Optional name of the module with a specified type.                                               |
-| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from Terraform output based on module type. Defaults to empty string.             |
-| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from Terraform output based on module type.                                                |
-| `tsmodule`      | type                        | `.tsmodule.eks`                       | Name of the typed module in the current step.                                                    |
+| Type            | Key / Format                | Example                               | Description                                                                                                   |
+|-----------------|-----------------------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                                   |
+|                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                                    |
+|                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                             |
+| `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.                      |
+| `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                                           |
+|                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                         |
+| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from Terraform output from specific step/module. Defaults to empty string.                     |
+| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from Terraform output from specific step/module.                                                        |
+| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM or OCI Vault.                                                                     |
+| `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                                       |
+| `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps              |
+| `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                                     |
+| `toptmodule`    | type                        | `.toptmodule.eks`                     | Optional name of the module with a specified type.                                                            |
+| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from Terraform output based on module type. Defaults to empty string.                          |
+| `toptin`        | type.key                    | `.toptin.argocd.argocd.global.domain` | Optional value from a module inputs in the current step, fallback same as `tinput`. Defaults to empty string. |
+| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from Terraform output based on module type.                                                             |
+| `tsmodule`      | type                        | `.tsmodule.eks`                       | Name of the typed module in the current step.                                                                 |
 
 For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or OCI Vault.
 
@@ -742,7 +748,19 @@ Replacement tags support escaping with inner ``{{`{{ }}`}}`` tags. For example, 
 
 #### Optional replacement tags
 
-If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
+If the output value is optional then use `optout` or `toptout`, it will replace the value with an empty string if the module or output is not found. This also applies to `toptin`. Optional tag can be combined with the `|` operation to add (multiple) fallback values. Quotation marks can be used to provide a default value. For example `{{ .optout.stepName.ModuleName.key-1 | "default" }}`.
+
+#### Required replacement tags
+
+A chain of optional values can be marked as required as a whole by ending it with `required`. If every value in the chain resolves to an empty string then the agent fails with an error naming the whole tag, instead of replacing the tag with an empty string. This allows every value in the chain to be optional, which makes cross cloud chains both safe and order independent.
+
+```yaml
+inputs:
+  name: '{{ .toptin.aws-alb.global.internalGateway | .toptin.google-gateway-global.internalGateway | required }}'
+  host: '{{ .toptout.route53.int_domain | .toptout.dns.int_domain | required }}'
+```
+
+`required` is a reserved word, it never provides a value itself. It must be the last value in the chain and must be preceded by at least one value. It can't be combined with a default value or with an `agent` value, both of which always resolve.
 
 ### Including files in steps
 
