@@ -11,11 +11,9 @@ import (
 	"cloud.google.com/go/scheduler/apiv1/schedulerpb"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	locationpb "google.golang.org/genproto/googleapis/cloud/location"
-	"google.golang.org/grpc/codes"
 )
 
 var locationPrefixFallbacks = map[string]string{
@@ -99,8 +97,7 @@ func getValidSchedulerLocation(ctx context.Context, client *scheduler.CloudSched
 func (s *Scheduler) getUpdateSchedule() (*schedulerpb.Job, error) {
 	job, err := s.client.GetJob(s.ctx, &schedulerpb.GetJobRequest{Name: s.updateSchedule})
 	if err != nil {
-		var apiError *apierror.APIError
-		if errors.As(err, &apiError) && (apiError.HTTPCode() == 404 || apiError.GRPCStatus().Code() == codes.NotFound) {
+		if isNotFoundError(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -125,11 +122,10 @@ func (s *Scheduler) deleteUpdateSchedule() error {
 		log.Printf("Deleted Cloud Scheduler job: %s\n", s.updateScheduleName)
 		return nil
 	}
-	var apiError *apierror.APIError
-	if !errors.As(err, &apiError) || apiError.GRPCStatus().Code() != codes.NotFound {
-		return err
+	if isNotFoundError(err) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 func (s *Scheduler) updateUpdateSchedule(cron, agentJob, serviceAccount string) error {

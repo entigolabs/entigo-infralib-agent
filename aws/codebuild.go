@@ -305,7 +305,7 @@ func logProjectChanges(projectName string, imageChanged, vpcChanged bool, awsVpc
 		if awsVpcConfig.VpcId != nil {
 			fmt.Fprintf(&sb, " vpc to %s", *awsVpcConfig.VpcId)
 		} else {
-			sb.WriteString(" removed vpc")
+			fmt.Fprintf(&sb, " removed vpc")
 		}
 	}
 	log.Println(sb.String())

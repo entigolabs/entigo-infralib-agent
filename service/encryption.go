@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/entigolabs/entigo-infralib-agent/aws"
+	"github.com/entigolabs/entigo-infralib-agent/gcloud"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
@@ -30,7 +31,15 @@ func GetEncryptionKey(providerType model.ProviderType, prefix, configFlag string
 	if len(outputs) == 0 {
 		return "", nil
 	}
-	keyId, err := aws.GetConfigEncryptionKey(moduleName, outputs)
+	var keyId string
+	switch providerType {
+	case model.AWS:
+		keyId, err = aws.GetConfigEncryptionKey(moduleName, outputs)
+	case model.GCLOUD:
+		keyId, err = gcloud.GetConfigEncryptionKey(moduleName, outputs)
+	default:
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to get encryption key: %s", err)
 	}
