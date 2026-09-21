@@ -137,8 +137,23 @@ func (n *NotificationManager) Modules(resources model.Resources, command common.
 	n.Notify(model.ModulesMessage{Resources: resources, Command: command, Config: config})
 }
 
-func (n *NotificationManager) Sources(sources map[model.SourceKey]*model.Source) {
+func (n *NotificationManager) Sources(sources map[model.SourceKey]*model.Source, command common.Command) {
+	if command == common.RunCommand {
+		sources = firstReleaseSources(sources)
+	}
 	n.Notify(model.SourcesMessage{Sources: sources})
+}
+
+func firstReleaseSources(sources map[model.SourceKey]*model.Source) map[model.SourceKey]*model.Source {
+	trimmed := make(map[model.SourceKey]*model.Source, len(sources))
+	for key, source := range sources {
+		notified := *source
+		if len(notified.Releases) > 1 {
+			notified.Releases = notified.Releases[:1]
+		}
+		trimmed[key] = &notified
+	}
+	return trimmed
 }
 
 func (n *NotificationManager) PipelineState(status model.ApplyStatus, sourceVersions []model.SourceVersion, err error) {

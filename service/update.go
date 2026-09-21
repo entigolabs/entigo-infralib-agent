@@ -458,7 +458,7 @@ func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 func (u *updater) Process() (bool, error) {
 	index := 0
 	mostReleases := 1
-	u.manager.Sources(u.sources)
+	u.manager.Sources(u.sources, u.cmd)
 	if u.cmd == common.UpdateCommand {
 		index = 1
 		mostReleases = u.getMostReleases()

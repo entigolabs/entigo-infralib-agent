@@ -16,7 +16,7 @@ type NotificationManager interface {
 	ManualApproval(pipelineName, step string, changes PipelineChanges, link string)
 	StepState(status ApplyStatus, stepState StateStep, step *Step, err error)
 	Modules(resources Resources, command common.Command, config Config)
-	Sources(sources map[SourceKey]*Source)
+	Sources(sources map[SourceKey]*Source, command common.Command)
 	PipelineState(status ApplyStatus, sourceVersions []SourceVersion, err error)
 }
 
