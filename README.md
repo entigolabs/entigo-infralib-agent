@@ -712,6 +712,7 @@ Step, module and input field values can be overwritten by using replacement tags
 | `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                                   |
 |                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                                    |
 |                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                             |
+|                 | vaultId                     | `.agent.vaultId`                      | Managed Oracle Vault OCID, only supported for Oracle provider.                                                |
 | `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.                      |
 | `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                                           |
 |                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                         |

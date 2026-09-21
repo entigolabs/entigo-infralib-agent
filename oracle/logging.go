@@ -87,7 +87,7 @@ func (l *Logging) EnsureDevOpsBuildLog(projectId string) error {
 		CreateLogDetails: logging.CreateLogDetails{
 			DisplayName:       &name,
 			LogType:           logging.CreateLogDetailsLogTypeService,
-			IsEnabled:         ocicommon.Bool(true),
+			IsEnabled:         new(true),
 			RetentionDuration: &retention,
 			Configuration: &logging.Configuration{
 				CompartmentId: &l.compartmentId,

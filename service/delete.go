@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"slices"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -89,8 +90,7 @@ func getBaseConfig(prefix, configFile string, bucket model.Bucket) (model.Config
 }
 
 func (d *deleter) Delete() error {
-	for i := len(d.config.Steps) - 1; i >= 0; i-- {
-		step := d.config.Steps[i]
+	for _, step := range slices.Backward(d.config.Steps) {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		err := d.resources.GetPipeline().DeletePipeline(projectName)
 		if err != nil {
@@ -139,8 +139,7 @@ func (d *deleter) Destroy() error {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get latest state: %v", err)))
 	}
-	for i := len(d.steps) - 1; i >= 0; i-- {
-		step := d.steps[i]
+	for _, step := range slices.Backward(d.steps) {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		log.Printf("Starting destroy execution pipeline for step %s\n", step.Name)
 		step.Approve = model.ApproveForce
@@ -185,8 +184,7 @@ func (d *deleter) removeStepFromState(state *model.State, step model.Step) error
 		return nil
 	}
 	stepRemoved := false
-	for i := len(state.Steps) - 1; i >= 0; i-- {
-		stepState := state.Steps[i]
+	for i, stepState := range slices.Backward(state.Steps) {
 		if stepState.Name != step.Name {
 			continue
 		}

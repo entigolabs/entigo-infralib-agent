@@ -17,6 +17,9 @@ const (
 	kmsCreateTimeout = 15 * time.Minute
 	// kmsKeyLengthBytes is 32 == AES-256.
 	kmsKeyLengthBytes = 32
+	// scheduleDeletionDelay is the earliest OCI allows a vault/key deletion to be
+	// scheduled (the minimum of the 7–30 day window).
+	scheduleDeletionDelay = 7.5 * 24 * time.Hour
 )
 
 // kmsState holds the agent-owned vault + master key, resolved once per process
@@ -63,19 +66,24 @@ func NewKMS(ctx context.Context, provider ocicommon.ConfigurationProvider, regio
 	}, nil
 }
 
-func (k *KMS) resourceName() string { return fmt.Sprintf("%s-infralib", k.cloudPrefix) }
+func (k *KMS) getVaultName() string {
+	return fmt.Sprintf("%s-%s", k.cloudPrefix, k.region)
+}
 
-// scheduleDeletionDelay is the earliest OCI allows a vault/key deletion to be
-// scheduled (the minimum of the 7–30 day window).
-const scheduleDeletionDelay = 7 * 24 * time.Hour
+func (k *KMS) getKeyName() string {
+	return fmt.Sprintf("%s-%s-agent", k.cloudPrefix, k.region)
+}
 
 // ScheduleDeletion schedules the agent-owned vault for deletion at the earliest
 // allowed time; OCI cascades to the master key and every secret. There is no hard
 // delete — it can be reverted in the console until the scheduled time. The vault
 // encrypts the state bucket, so the caller must delete (or keep) the bucket first.
 // A vault that is absent or already scheduled is a no-op.
+// The vault is SHARED with the infralib modules (a region allows only 10 free
+// vaults), so the cascade also takes any key or secret a module put in it — it runs
+// after destroy, when those are expected to be gone.
 func (k *KMS) ScheduleDeletion() error {
-	name := k.resourceName()
+	name := k.getVaultName()
 	existing, err := k.findVault(name)
 	if err != nil {
 		return err
@@ -110,7 +118,7 @@ func (k *KMS) Ensure() error {
 func (k *KMS) authorized() error {
 	_, err := k.vaultClient.ListVaults(k.ctx, keymanagement.ListVaultsRequest{
 		CompartmentId: &k.compartmentId,
-		Limit:         ocicommon.Int(1),
+		Limit:         new(1),
 	})
 	return err
 }
@@ -123,8 +131,7 @@ func (k *KMS) VaultId() string { return k.state.VaultId }
 // whether the vault was found; if not, the ids stay empty and a Vault-backed SSM
 // on them operates best-effort. Callers use Resolve OR Ensure, never both.
 func (k *KMS) Resolve() (bool, error) {
-	name := k.resourceName()
-	vault, err := k.findVault(name)
+	vault, err := k.findVault(k.getVaultName())
 	if err != nil {
 		return false, err
 	}
@@ -142,7 +149,7 @@ func (k *KMS) Resolve() (bool, error) {
 	}
 	// A key scheduled for deletion returns "" (findKey skips it); the vault id in
 	// the state is all the read/schedule-delete paths need.
-	keyId, err := k.findKey(mgmt, name)
+	keyId, err := k.findKey(mgmt, k.getKeyName())
 	if err != nil {
 		return false, err
 	}
@@ -161,7 +168,7 @@ func (k *KMS) ensure() error {
 	if err != nil {
 		return err
 	}
-	keyId, err := k.ensureKey(mgmt, *vault.Id)
+	keyId, err := k.ensureKey(mgmt)
 	if err != nil {
 		return err
 	}
@@ -172,7 +179,7 @@ func (k *KMS) ensure() error {
 // ensureVault finds a live vault by name or creates a DEFAULT one, polling until
 // ACTIVE — DEFAULT-vault creation takes minutes on the first run.
 func (k *KMS) ensureVault() (*keymanagement.Vault, error) {
-	name := k.resourceName()
+	name := k.getVaultName()
 	existing, err := k.findVault(name)
 	if err != nil {
 		return nil, err
@@ -262,8 +269,8 @@ func (k *KMS) waitForVaultActive(vaultId string) (*keymanagement.Vault, error) {
 
 // ensureKey finds a live AES key by name in the vault or creates one, polling
 // until ENABLED. The management client is scoped to the vault's endpoint.
-func (k *KMS) ensureKey(mgmt keymanagement.KmsManagementClient, vaultId string) (string, error) {
-	name := k.resourceName()
+func (k *KMS) ensureKey(mgmt keymanagement.KmsManagementClient) (string, error) {
+	name := k.getKeyName()
 	existing, err := k.findKey(mgmt, name)
 	if err != nil {
 		return "", err

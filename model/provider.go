@@ -90,6 +90,7 @@ type Resources interface {
 	GetBackendConfigVars(string) map[string]string
 	GetRegion() string
 	GetAccount() string
+	GetVaultId() (string, error)
 }
 
 type Bucket interface {
@@ -197,6 +198,10 @@ func (c CloudResources) GetRegion() string {
 
 func (c CloudResources) GetAccount() string {
 	return c.Account
+}
+
+func (c CloudResources) GetVaultId() (string, error) {
+	return "", fmt.Errorf("GetVaultId not supported by provider %s", c.ProviderType)
 }
 
 type RepositoryMetadata struct {

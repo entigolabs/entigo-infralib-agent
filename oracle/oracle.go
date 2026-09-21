@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -33,6 +34,7 @@ type Resources struct {
 	S3Endpoint string
 	AccessKey  string
 	SecretKey  string
+	VaultId    string
 }
 
 // GetBackendConfigVars emits the flat part of the terraform s3 backend config
@@ -66,6 +68,13 @@ func (r Resources) GetBackendEnv() map[string]string {
 		env["AWS_SECRET_ACCESS_KEY"] = r.SecretKey
 	}
 	return env
+}
+
+func (r Resources) GetVaultId() (string, error) {
+	if r.VaultId == "" {
+		return "", errors.New("vault has not yet been initialized")
+	}
+	return r.VaultId, nil
 }
 
 func NewOracle(ctx context.Context, cloudPrefix string, oracle common.Oracle, pipeline common.Pipeline, skipBucketDelay bool) (model.CloudProvider, error) {
@@ -127,19 +136,23 @@ func (o *oracleService) setupStore() (*KMS, *SSM, error) {
 // resolveStore is the find-only (no creation) counterpart to setupStore, used by
 // GetResources so destroy/delete/read flows never provision the KMS trust root. If the
 // vault/key are absent the SSM still constructs but can only operate on existing secrets.
-func (o *oracleService) resolveStore() (*SSM, error) {
+func (o *oracleService) resolveStore() (*KMS, *SSM, error) {
 	kms, err := NewKMS(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create kms service: %w", err)
+		return nil, nil, fmt.Errorf("failed to create kms service: %w", err)
 	}
 	found, err := kms.Resolve()
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve kms vault and key: %w", err)
+		return nil, nil, fmt.Errorf("failed to resolve kms vault and key: %w", err)
 	}
 	if !found {
 		slog.Warn(common.PrefixWarning("Agent KMS vault not found; secret store operations are limited to existing secrets"))
 	}
-	return NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())
+	ssm, err := NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())
+	if err != nil {
+		return nil, nil, err
+	}
+	return kms, ssm, nil
 }
 
 func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
@@ -189,11 +202,12 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	if !needGit {
 		// Local runs execute in-process and never push build specs — only KMS/SSM +
 		// state-backend credentials are needed, no DevOps project.
-		_, ssm, err := o.setupStore()
+		kms, ssm, err := o.setupStore()
 		if err != nil {
 			return nil, err
 		}
 		resources.SSM = ssm
+		resources.VaultId = kms.VaultId()
 		if _, err = o.provisionBackendCredentials(o.ctx, &resources, ssm, false); err != nil {
 			return nil, err
 		}
@@ -212,11 +226,13 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	var build *DevOpsBuilder
 	group, gctx := errgroup.WithContext(o.ctx)
 	group.Go(func() error {
+		var kms *KMS
 		var err error
-		if _, ssm, err = o.setupStore(); err != nil {
+		if kms, ssm, err = o.setupStore(); err != nil {
 			return err
 		}
 		resources.SSM = ssm
+		resources.VaultId = kms.VaultId()
 		log.Println("Provisioning terraform state backend credentials")
 		git, err = o.provisionBackendCredentials(gctx, &resources, ssm, true)
 		return err
@@ -629,11 +645,12 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
-	ssm, err := o.resolveStore()
+	kms, ssm, err := o.resolveStore()
 	if err != nil {
 		return nil, err
 	}
 	resources.SSM = ssm
+	resources.VaultId = kms.VaultId()
 	logs, err := o.ensureLogging()
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Could not resolve logging: %s", err)))
@@ -669,10 +686,11 @@ func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resourc
 // pipelines and the git-source/wrapper Vault secrets are already removed by the delete
 // command executor (service/delete.go); this covers everything else: the shared DevOps
 // project (cascading to its repo and pipelines), the approval topic, the service log
-// group, the credentials the agent put on the executing user, the state bucket and — last, because it encrypts
-// the bucket — the agent-owned KMS vault/key. The KMS vault/key/secrets have no hard
-// delete: they are scheduled for deletion (~7 days, revertible in the console). The agent's own
-// access policy outlives all of it unless deleteServiceAccount is set.
+// group, the credentials the agent put on the executing user, the state bucket and — last,
+// because it encrypts the bucket — the KMS vault the agent created and shares with the
+// modules. The KMS vault/key/secrets have no hard delete: they are scheduled for deletion
+// (~7 days, revertible in the console), which cascades over the modules' keys too. The
+// agent's own access policy outlives all of it unless deleteServiceAccount is set.
 func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
 	resources, storage, err := o.bucketResources()
 	if err != nil {
