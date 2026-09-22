@@ -40,7 +40,7 @@ func (o *oracleProvider) GetSSM() (model.SSM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kms service: %w", err)
 	}
-	if err = kms.Ensure(); err != nil {
+	if err = kms.Ensure(true); err != nil {
 		return nil, fmt.Errorf("failed to provision kms vault and key: %w", err)
 	}
 	ssm, err := NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())

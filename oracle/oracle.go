@@ -123,7 +123,7 @@ func (o *oracleService) setupStore() (*KMS, *SSM, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create kms service: %w", err)
 	}
-	if err = kms.Ensure(); err != nil {
+	if err = kms.Ensure(o.skipDelay); err != nil {
 		return nil, nil, fmt.Errorf("failed to provision kms vault and key: %w", err)
 	}
 	ssm, err := NewSSM(o.ctx, o.provider, o.region, o.compartmentId, kms.VaultId(), kms.KeyId())
@@ -183,7 +183,7 @@ func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = storage.CreateBucket(kms, o.skipDelay); err != nil {
+	if err = storage.CreateBucket(kms); err != nil {
 		return nil, fmt.Errorf("failed to create object storage bucket: %w", err)
 	}
 	resources.SSM = ssm

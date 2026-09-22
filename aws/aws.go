@@ -274,7 +274,7 @@ func (a *awsService) createBucket(bucket string) (*S3, string, error) {
 	if exists {
 		return s3, fmt.Sprintf(bucketArnFormat, bucket), nil
 	}
-	util.DelayBucketCreation(bucket, a.skipDelay) // This allows users to react if they ran the agent with wrong credentials
+	util.DelayResourceCreation("bucket", bucket, a.skipDelay) // This allows users to react if they ran the agent with wrong credentials
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create S3 Bucket %s: %s", bucket, err)

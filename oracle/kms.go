@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/keymanagement"
 )
@@ -108,8 +109,8 @@ func (k *KMS) ScheduleDeletion() error {
 }
 
 // Ensure resolves the vault + master key once per process (found-or-created by name).
-func (k *KMS) Ensure() error {
-	k.once.Do(func() { k.err = k.ensure() })
+func (k *KMS) Ensure(skipDelay bool) error {
+	k.once.Do(func() { k.err = k.ensure(skipDelay) })
 	return k.err
 }
 
@@ -157,8 +158,8 @@ func (k *KMS) Resolve() (bool, error) {
 	return true, nil
 }
 
-func (k *KMS) ensure() error {
-	vault, err := k.ensureVault()
+func (k *KMS) ensure(skipDelay bool) error {
+	vault, err := k.ensureVault(skipDelay)
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ func (k *KMS) ensure() error {
 
 // ensureVault finds a live vault by name or creates a DEFAULT one, polling until
 // ACTIVE — DEFAULT-vault creation takes minutes on the first run.
-func (k *KMS) ensureVault() (*keymanagement.Vault, error) {
+func (k *KMS) ensureVault(skipDelay bool) (*keymanagement.Vault, error) {
 	name := k.getVaultName()
 	existing, err := k.findVault(name)
 	if err != nil {
@@ -187,6 +188,7 @@ func (k *KMS) ensureVault() (*keymanagement.Vault, error) {
 	if existing != nil {
 		return k.waitForVaultActive(*existing.Id)
 	}
+	util.DelayResourceCreation("vault", k.getVaultName(), skipDelay)
 	created, err := k.vaultClient.CreateVault(k.ctx, keymanagement.CreateVaultRequest{
 		CreateVaultDetails: keymanagement.CreateVaultDetails{
 			CompartmentId: &k.compartmentId,

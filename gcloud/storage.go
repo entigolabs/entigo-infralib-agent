@@ -53,7 +53,7 @@ func (g *GStorage) CreateBucket(skipDelay bool) error {
 	if exists {
 		return nil
 	}
-	util.DelayBucketCreation(g.bucket, skipDelay)
+	util.DelayResourceCreation("bucket", g.bucket, skipDelay)
 	err = g.bucketHandle.Create(g.ctx, g.projectId, &storage.BucketAttrs{
 		Location:                 g.location,
 		PublicAccessPrevention:   storage.PublicAccessPreventionEnforced,

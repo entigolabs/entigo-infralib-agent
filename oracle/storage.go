@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 )
@@ -59,7 +58,7 @@ func (s *Storage) Namespace() string {
 	return s.namespace
 }
 
-func (s *Storage) CreateBucket(kms *KMS, skipDelay bool) error {
+func (s *Storage) CreateBucket(kms *KMS) error {
 	exists, err := s.BucketExists()
 	if err != nil {
 		return err
@@ -68,7 +67,6 @@ func (s *Storage) CreateBucket(kms *KMS, skipDelay bool) error {
 		s.bucketCreated = &exists // cache so later BucketExists calls skip the API round-trip
 		return nil
 	}
-	util.DelayBucketCreation(s.bucket, skipDelay)
 	request := objectstorage.CreateBucketRequest{
 		NamespaceName: &s.namespace,
 		CreateBucketDetails: objectstorage.CreateBucketDetails{
