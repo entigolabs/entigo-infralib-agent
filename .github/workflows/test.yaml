@@ -26,8 +26,11 @@ jobs:
           - name: gcloud
             args: -run '^TestRunGCloud$' ./commands/run/...
             profile: test/profile-gcloud.yaml
+          - name: oracle
+            args: -run '^TestRunOracle$' ./commands/run/...
+            profile: test/profile-oracle.yaml
           - name: unit
-            args: -skip '^TestRunAWS$|^TestRunGCloud$' ./...
+            args: -skip '^TestRunAWS$|^TestRunGCloud$|^TestRunOracle$' ./...
             profile: ''
     steps:
       - name: Checkout code
@@ -52,7 +55,17 @@ jobs:
           LOCATION: europe-west1
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ZONE: europe-west1-a
+          OCI_REGION: eu-frankfurt-1
+          OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
+          OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
         run: |
+          if [ -n "${OCI_CONFIG}" ]; then
+            mkdir -p $(echo ~)/.oci
+            echo "${OCI_CONFIG}" > $(echo ~)/.oci/config
+            echo "${OCI_PRIVATE_KEY}" > $(echo ~)/.oci/oci_api_key.pem
+            chmod 600 $(echo ~)/.oci/config $(echo ~)/.oci/oci_api_key.pem
+          fi
           mkdir -p $(echo ~)/.config/gcloud
           echo ${GOOGLE_CREDENTIALS} > $(echo ~)/.config/gcloud/application_default_credentials.json
           gcloud auth activate-service-account --key-file=$(echo ~)/.config/gcloud/application_default_credentials.json
