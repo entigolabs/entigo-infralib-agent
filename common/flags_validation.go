@@ -21,6 +21,15 @@ func (f *Flags) validate(cmd Command) error {
 		}
 		fallthrough
 	case SACommand, AddCustomCommand, DeleteCustomCommand, GetCustomCommand, ListCustomCommand:
+		if f.Prefix == "" && f.Config == "" {
+			return fmt.Errorf("config or prefix must be set")
+		}
+		if f.Oracle.CompartmentId != "" {
+			if f.Oracle.Region == "" {
+				return fmt.Errorf("oracle region must be set")
+			}
+			return nil
+		}
 		if f.GCloud.ProjectId != "" {
 			if f.GCloud.Location == "" || f.GCloud.Zone == "" {
 				return fmt.Errorf("gcloud location and zone must be set")

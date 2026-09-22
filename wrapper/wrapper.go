@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -19,7 +18,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
-const tfPlan = "steps/%s/%s-plan.json"
+const planFile = "steps/%s/plan.json"
 
 const disconnectTimeout = 10 * time.Second
 
@@ -84,7 +83,11 @@ func parsePipelineIndex(raw string) int32 {
 }
 
 func getBackendClient(config *model.NotificationApi, campaignId string, insecure bool) (BackendClient, error) {
-	if config == nil || config.WrapperURL == "" {
+	if config == nil {
+		return nil, nil
+	}
+	if config.WrapperURL == "" {
+		slog.Warn("wrapper config supplied but wrapper_url is empty, running transparently")
 		return nil, nil
 	}
 	if campaignId == "" {
@@ -145,22 +148,32 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("failed to create stdout pipe: %v", err)
 	}
-	cmd.Stderr = log.Writer()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return -1, fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("failed to start %s: %v", w.entrypoint, err)
 	}
 
+	// Each stream is forwarded to the portal and echoed to the matching local
+	// stream (which the DevOps build runner captures into its service log — the
+	// agent reads plan output back from there).
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		w.streamStdout(stdout)
+		w.streamPipe(stdout, w.stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		w.streamPipe(stderr, os.Stderr)
 	}()
 
-	// Drain the pipe fully before Wait: cmd.Wait closes the stdout pipe on
-	// process exit, so calling it while the scanner is still reading races and
-	// fails the scanner with "file already closed", truncating the output.
+	// Drain both pipes fully before Wait: cmd.Wait closes them on process exit,
+	// so calling it while a scanner is still reading races and fails the scanner
+	// with "file already closed", truncating the output.
 	wg.Wait()
 	waitErr := cmd.Wait()
 
@@ -175,12 +188,12 @@ func (w *Wrapper) runEntrypoint() (int, error) {
 	return exitCode, waitErr
 }
 
-func (w *Wrapper) streamStdout(r io.Reader) {
+func (w *Wrapper) streamPipe(r io.Reader, echo io.Writer) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		_, _ = fmt.Fprintln(w.stdout, line)
+		_, _ = fmt.Fprintln(echo, line)
 		if w.client != nil {
 			if err := w.client.SendLog(line); err != nil {
 				slog.Warn("wrapper backend SendLog failed", "err", err)
@@ -188,16 +201,23 @@ func (w *Wrapper) streamStdout(r io.Reader) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Error("wrapper stdout scanner failed", "err", err)
+		slog.Error("wrapper output scanner failed", "err", err)
 	}
 }
 
+func PlanFilePath(planPath, prefixStep string) string {
+	return path.Join(planPath, fmt.Sprintf(planFile, prefixStep))
+}
+
 func (w *Wrapper) sendPlan() {
+	if w.stepType != model.StepTypeTerraform {
+		return // only terraform produces the terraform show -json plan
+	}
 	if w.prefixStep == "" {
 		slog.Warn("TF_VAR_prefix flag not set, can't find the plan")
 		return
 	}
-	planFile := path.Join(w.getPlanPath(), fmt.Sprintf(tfPlan, w.prefixStep, w.prefixStep))
+	planFile := PlanFilePath(w.getPlanPath(), w.prefixStep)
 	summary, err := readPlanSummary(planFile)
 	if err != nil {
 		slog.Warn("wrapper plan summary unavailable", "err", err)
@@ -211,6 +231,11 @@ func (w *Wrapper) sendPlan() {
 func (w *Wrapper) getPlanPath() string {
 	if w.planPath != "" {
 		return w.planPath
+	}
+	// Oracle must be checked before AWS: the OCI s3-compatible backend needs
+	// AWS_REGION set, which would otherwise match the AWS branch below.
+	if os.Getenv(model.OracleRegion) != "" {
+		return "/tmp/project"
 	}
 	if os.Getenv(model.GoogleRegion) != "" {
 		return "/project"

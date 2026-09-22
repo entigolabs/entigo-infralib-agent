@@ -288,8 +288,8 @@ func SetChildStringValue(data map[string]interface{}, newValue string, overwrite
 	return nil
 }
 
-func DelayBucketCreation(bucket string, skipDelay bool) {
-	slog.Warn(common.PrefixWarning(fmt.Sprintf("Bucket %s doesn't exist", bucket)))
+func DelayResourceCreation(resource, name string, skipDelay bool) {
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("%s %s doesn't exist", resource, name)))
 	if skipDelay {
 		return
 	}
@@ -299,7 +299,7 @@ func DelayBucketCreation(bucket string, skipDelay bool) {
 		_, _ = reader.ReadString('\n')
 		done <- true
 	}()
-	fmt.Println("Waiting for 10 seconds before creating the bucket, press Enter to skip...")
+	fmt.Printf("Waiting for 10 seconds before creating the %s %s, press Enter to skip...", resource, name)
 	select {
 	case <-time.After(10 * time.Second):
 		return

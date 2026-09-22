@@ -16,10 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline"
 	"github.com/aws/aws-sdk-go-v2/service/codepipeline/types"
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 )
@@ -68,6 +67,7 @@ type Pipeline struct {
 	terraformCache bool
 	enableOpenTofu bool
 	cloudPrefix    string
+	bucket         model.Bucket
 	manager        model.NotificationManager
 	campaignId     string
 	pipelineIndex  string
@@ -81,7 +81,7 @@ func (p *Pipeline) SetPipelineIndex(index int) {
 	p.pipelineIndex = strconv.Itoa(index)
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, manager model.NotificationManager) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, bucket model.Bucket, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -92,6 +92,7 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		logStream:      logStream,
 		terraformCache: terraformCache,
 		cloudPrefix:    cloudPrefix,
+		bucket:         bucket,
 		manager:        manager,
 		enableOpenTofu: enableOpenTofu,
 	}
@@ -249,7 +250,8 @@ func (p *Pipeline) CreateApplyPipeline(pipelineName string, projectName string, 
 		return nil, err
 	}
 	log.Printf("Created CodePipeline %s\n", pipelineName)
-	err = p.disableStageTransition(pipelineName, planName)
+	err = p.disableStageTransition(pipelineName, planName,
+		"Disabled plan transition to avoid running with incorrect wrapper variables. Please disable it")
 	if err != nil {
 		return nil, err
 	}
@@ -387,19 +389,19 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Created destroy CodePipeline %s\n", pipelineName)
-	err = p.disableStageTransition(pipelineName, destroyName)
-	if err != nil {
-		return err
-	}
-	err = p.disableStageTransition(pipelineName, approveStageName)
-	if err != nil {
-		return err
-	}
-	err = p.disableStageTransition(pipelineName, applyDestroyName)
-	if err != nil {
-		return err
-	}
+
 	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
+}
+
+func (p *Pipeline) disableDestroyTransitions(pipelineName string) error {
+	reason := "Disable pipeline transition to prevent accidental destruction of infrastructure"
+	for _, stage := range []string{destroyName, approveStageName, applyDestroyName} {
+		err := p.disableStageTransition(pipelineName, stage, reason)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
@@ -824,7 +826,7 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 }
 
 func (p *Pipeline) processChanges(pipelineName string, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, approve model.ManualApprove) (approvalStatus, error) {
-	pipeChanges, err := p.getChanges(pipelineName, actions, step.Type)
+	pipeChanges, err := p.getChanges(pipelineName, actions, step)
 	if err != nil {
 		return approvalStatusStop, err
 	}
@@ -848,17 +850,22 @@ func (p *Pipeline) getLink(pipelineName string) string {
 	return fmt.Sprintf(linkFormat, p.region, pipelineName, p.region)
 }
 
-func (p *Pipeline) getChanges(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.PipelineChanges, error) {
-	switch stepType {
-	case model.StepTypeTerraform:
-		return p.getPipelineChanges(pipelineName, actions, terraform.ParseLogChanges)
-	case model.StepTypeArgoCD:
-		return p.getPipelineChanges(pipelineName, actions, argocd.ParseLogChanges)
+func (p *Pipeline) getChanges(pipelineName string, actions []types.ActionExecutionDetail, step model.Step) (*model.PipelineChanges, error) {
+	// Prefer the JSON plan the base image uploads; fall back to CloudWatch log
+	// parsing for older base images that don't upload it.
+	if p.bucket != nil {
+		data, err := p.bucket.GetFile(model.PlanBucketKey(pipelineName))
+		if err != nil {
+			return nil, err
+		}
+		if data != nil {
+			return generator.ParsePlanChanges(pipelineName, step.Type, data)
+		}
 	}
-	return &model.PipelineChanges{}, nil
+	return p.getPipelineChanges(pipelineName, actions, step.Type)
 }
 
-func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.ActionExecutionDetail, logParser func(string, string) (*model.PipelineChanges, error)) (*model.PipelineChanges, error) {
+func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.ActionExecutionDetail, stepType model.StepType) (*model.PipelineChanges, error) {
 	codeBuildRunId, err := getCodeBuildRunId(actions)
 	if err != nil {
 		return nil, err
@@ -871,7 +878,7 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, actions []types.Actio
 			return nil, err
 		}
 		for _, logRow := range logs {
-			changes, err := logParser(pipelineName, logRow)
+			changes, err := generator.ParseLogChanges(pipelineName, stepType, logRow)
 			if err != nil {
 				return nil, err
 			}
@@ -946,11 +953,11 @@ func (p *Pipeline) approveStage(pipelineName string) (approvalStatus, error) {
 	return approvalStatusApproved, nil
 }
 
-func (p *Pipeline) disableStageTransition(pipelineName string, stage string) error {
+func (p *Pipeline) disableStageTransition(pipelineName, stage, reason string) error {
 	_, err := p.codePipeline.DisableStageTransition(p.ctx, &codepipeline.DisableStageTransitionInput{
 		PipelineName:   aws.String(pipelineName),
 		StageName:      aws.String(stage),
-		Reason:         aws.String("Disable pipeline transition to prevent accidental destruction of infrastructure"),
+		Reason:         &reason,
 		TransitionType: types.StageTransitionTypeInbound,
 	})
 	return err

@@ -12,10 +12,9 @@ import (
 
 	deploy "cloud.google.com/go/deploy/apiv1"
 	"cloud.google.com/go/deploy/apiv1/deploypb"
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"github.com/googleapis/gax-go/v2/apierror"
@@ -344,20 +343,25 @@ func (p *Pipeline) getLink(pipelineName string) string {
 	return fmt.Sprintf(linkFormat, p.location, pipelineName, p.projectId)
 }
 
-func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.PipelineChanges, stepType model.StepType, jobName string, executionName string) (*model.PipelineChanges, error) {
+func (p *Pipeline) getChanges(pipelineName string, pipeChanges *model.PipelineChanges, step model.Step, jobName string, executionName string) (*model.PipelineChanges, error) {
 	if pipeChanges != nil {
 		return pipeChanges, nil
 	}
-	switch stepType {
-	case model.StepTypeTerraform:
-		return p.getPipelineChanges(pipelineName, jobName, executionName, terraform.ParseLogChanges)
-	case model.StepTypeArgoCD:
-		return p.getPipelineChanges(pipelineName, jobName, executionName, argocd.ParseLogChanges)
+	// Prefer the JSON plan the base image uploads; fall back to Cloud Logging
+	// parsing for older base images that don't upload it.
+	if p.storage != nil {
+		data, err := p.storage.GetFile(model.PlanBucketKey(pipelineName))
+		if err != nil {
+			return nil, err
+		}
+		if data != nil {
+			return generator.ParsePlanChanges(pipelineName, step.Type, data)
+		}
 	}
-	return &model.PipelineChanges{}, nil
+	return p.getPipelineChanges(pipelineName, jobName, executionName, step.Type)
 }
 
-func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, executionName string, logParser func(string, string) (*model.PipelineChanges, error)) (*model.PipelineChanges, error) {
+func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, executionName string, stepType model.StepType) (*model.PipelineChanges, error) {
 	lastSlash := strings.LastIndex(executionName, "/")
 	logIterator := p.logging.GetJobExecutionLogs(jobName, executionName[lastSlash+1:], p.location)
 	for {
@@ -368,7 +372,7 @@ func (p *Pipeline) getPipelineChanges(pipelineName string, jobName string, execu
 		if err != nil {
 			return nil, err
 		}
-		changes, err := logParser(pipelineName, logRow)
+		changes, err := generator.ParseLogChanges(pipelineName, stepType, logRow)
 		if err != nil {
 			return nil, err
 		}
@@ -464,7 +468,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
-	pipeChanges, err := p.getChanges(pipelineName, nil, step.Type, planJob, executionName)
+	pipeChanges, err := p.getChanges(pipelineName, nil, step, planJob, executionName)
 	if err != nil {
 		return err
 	}

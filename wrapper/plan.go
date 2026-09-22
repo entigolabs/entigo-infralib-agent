@@ -49,7 +49,7 @@ func buildPlanSummary(p model.Plan) *v1alpha1.PlanSummary {
 	}
 
 	for _, rc := range p.ResourceChanges {
-		bucket := classifyResourceAction(rc.Change.Actions)
+		bucket := model.ClassifyResourceAction(rc.Change.Actions)
 		isMove := rc.PreviousAddress != "" && rc.PreviousAddress != rc.Address
 		isImport := rc.Change.Importing != nil
 		if bucket == "" && !isMove && !isImport {
@@ -80,7 +80,7 @@ func buildPlanSummary(p model.Plan) *v1alpha1.PlanSummary {
 	}
 
 	for name, oc := range p.OutputChanges {
-		action := classifyOutputAction(oc.Actions)
+		action := model.ClassifyOutputAction(oc.Actions)
 		if action == "" {
 			continue
 		}
@@ -156,44 +156,4 @@ func splitOutputName(name string) (module, rest string) {
 		return "", name
 	}
 	return name[:i], name[i+2:]
-}
-
-// Returns "" for no-op and read (data source refresh), which we drop.
-func classifyResourceAction(actions []string) string {
-	switch len(actions) {
-	case 1:
-		switch actions[0] {
-		case "create":
-			return "added"
-		case "update":
-			return "changed"
-		case "delete":
-			return "destroyed"
-		case "forget":
-			return "forgotten"
-		}
-	case 2:
-		a, b := actions[0], actions[1]
-		if (a == "delete" && b == "create") || (a == "create" && b == "delete") {
-			return "replaced"
-		}
-	}
-	return ""
-}
-
-// Outputs don't have replace/import/forget semantics — they're either gained,
-// changed, or lost.
-func classifyOutputAction(actions []string) string {
-	if len(actions) != 1 {
-		return ""
-	}
-	switch actions[0] {
-	case "create":
-		return "added"
-	case "update":
-		return "changed"
-	case "delete":
-		return "destroyed"
-	}
-	return ""
 }

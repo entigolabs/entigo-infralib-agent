@@ -214,6 +214,10 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	return g.resources, nil
 }
 
+func (o *gcloudService) PrepareDestroy(resources model.Resources) (model.Resources, error) {
+	return resources, nil
+}
+
 func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
 	scheduler, err := NewScheduler(g.ctx, g.options, g.projectId, g.location, g.cloudPrefix)
 	if err != nil {

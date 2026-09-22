@@ -10,10 +10,14 @@ const ProjectImage = "public.ecr.aws/entigolabs/entigo-infralib-base"
 const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const ProjectImageGCloud = "docker.io/entigolabs/entigo-infralib-google"
+const ProjectImageOracle = "docker.io/entigolabs/entigo-infralib-oracle"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 
 // const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
 const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent"
+
+// AgentImageOracle is provisional; final home is OCIR once the oracle base image build lands.
+const AgentImageOracle = "docker.io/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
@@ -22,11 +26,13 @@ type ProviderType string
 const (
 	AWS    ProviderType = "AWS"
 	GCLOUD ProviderType = "GCLOUD"
+	ORACLE ProviderType = "ORACLE"
 )
 
 const (
 	AWSRegion    = "AWS_REGION"
 	GoogleRegion = "GOOGLE_REGION"
+	OracleRegion = "OCI_REGION"
 )
 
 const (
@@ -60,6 +66,7 @@ type CloudProvider interface {
 	SetupResources(manager NotificationManager, config Config) (Resources, error)
 	SetupMinimalResources() (Resources, error)
 	GetResources() (Resources, error)
+	PrepareDestroy(resources Resources) (Resources, error)
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool) error
 	CreateServiceAccount(SAFlags common.ServiceAccount) error
 	AddEncryption(moduleName string, outputs map[string]TFOutput) error
@@ -83,6 +90,7 @@ type Resources interface {
 	GetBackendConfigVars(string) map[string]string
 	GetRegion() string
 	GetAccount() string
+	GetVaultId() (string, error)
 }
 
 type Bucket interface {
@@ -136,6 +144,14 @@ type Destination interface {
 	UpdateFiles(branch, folder string, files map[string]File) error
 }
 
+// BackendEnvProvider is optionally implemented by Resources whose terraform
+// backend needs extra environment variables at execution time — e.g. Oracle's
+// S3-compatible Object Storage endpoint and region for the s3 backend. Providers
+// that need nothing extra simply don't implement it.
+type BackendEnvProvider interface {
+	GetBackendEnv() map[string]string
+}
+
 type CloudResources struct {
 	ProviderType ProviderType
 	Bucket       Bucket
@@ -182,6 +198,10 @@ func (c CloudResources) GetRegion() string {
 
 func (c CloudResources) GetAccount() string {
 	return c.Account
+}
+
+func (c CloudResources) GetVaultId() (string, error) {
+	return "", fmt.Errorf("GetVaultId not supported by provider %s", c.ProviderType)
 }
 
 type RepositoryMetadata struct {

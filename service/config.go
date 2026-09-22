@@ -497,14 +497,15 @@ func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
 		step.KubernetesClusterName = getKubernetesClusterName(providerType)
 	}
 	if step.Vpc.Attach == nil {
-		attach := step.Type == model.StepTypeArgoCD
-		step.Vpc.Attach = &attach
+		step.Vpc.Attach = new(step.Type == model.StepTypeArgoCD)
 	}
 }
 
 func getKubernetesClusterName(providerType model.ProviderType) string {
 	if providerType == model.GCLOUD {
 		return "{{ .toutput.gke.cluster_name }}"
+	} else if providerType == model.ORACLE {
+		return "{{ .toutput.oke.cluster_id }}"
 	}
 	return "{{ .toutput.eks.cluster_name }}"
 }
@@ -527,6 +528,13 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 	case model.GCLOUD:
 		if step.Vpc.Id == "" {
 			step.Vpc.Id = "{{ .toutput.vpc.vpc_name }}"
+		}
+		if step.Vpc.SubnetIds == "" {
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		}
+	case model.ORACLE:
+		if step.Vpc.Id == "" {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
 		}
 		if step.Vpc.SubnetIds == "" {
 			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"

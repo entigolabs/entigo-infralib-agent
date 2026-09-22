@@ -158,7 +158,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		return nil, err
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
-		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), a.cloudPrefix, manager)
+		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), a.cloudPrefix, s3, manager)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -177,12 +177,13 @@ func (a *awsService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
+	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	a.resources = Resources{
 		CloudResources: model.CloudResources{
 			ProviderType: model.AWS,
-			Bucket:       NewS3(a.ctx, a.awsConfig, bucket),
+			Bucket:       s3,
 			CodeBuild:    codeBuild,
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, nil),
+			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, s3, nil),
 			CloudPrefix:  a.cloudPrefix,
 			BucketName:   bucket,
 			SSM:          NewSSM(a.ctx, a.awsConfig),
@@ -193,6 +194,10 @@ func (a *awsService) GetResources() (model.Resources, error) {
 		CloudWatch: cloudwatch,
 	}
 	return a.resources, nil
+}
+
+func (a *awsService) PrepareDestroy(resources model.Resources) (model.Resources, error) {
+	return resources, nil
 }
 
 func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
@@ -269,7 +274,7 @@ func (a *awsService) createBucket(bucket string) (*S3, string, error) {
 	if exists {
 		return s3, fmt.Sprintf(bucketArnFormat, bucket), nil
 	}
-	util.DelayBucketCreation(bucket, a.skipDelay) // This allows users to react if they ran the agent with wrong credentials
+	util.DelayResourceCreation("bucket", bucket, a.skipDelay) // This allows users to react if they ran the agent with wrong credentials
 	s3Arn, _, err := s3.CreateBucket()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create S3 Bucket %s: %s", bucket, err)

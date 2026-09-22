@@ -66,7 +66,51 @@ func getProviderFlags() []cli.Flag {
 		&zoneFlag,
 		&gcloudCredentialsJsonFlag,
 		&awsRoleArnFlag,
+		&oracleRegionFlag,
+		&oracleCompartmentIdFlag,
+		&oracleProfileFlag,
+		&oracleConfigFileFlag,
 	}
+}
+
+var oracleRegionFlag = cli.StringFlag{
+	Name:        "oci-region",
+	Aliases:     []string{"or"},
+	Sources:     cli.EnvVars(model.OracleRegion),
+	Value:       "",
+	Usage:       "oracle cloud region used when creating resources",
+	Destination: &flags.Oracle.Region,
+	Required:    false,
+}
+
+var oracleCompartmentIdFlag = cli.StringFlag{
+	Name:        "oci-compartment-id",
+	Aliases:     []string{"oci-comp"},
+	Sources:     cli.EnvVars(common.OracleCompartmentIdEnv),
+	Value:       "",
+	Usage:       "oracle cloud compartment ocid where resources are created; selects the oracle provider when set",
+	Destination: &flags.Oracle.CompartmentId,
+	Required:    false,
+}
+
+var oracleProfileFlag = cli.StringFlag{
+	Name:        "oci-profile",
+	Aliases:     []string{"op"},
+	Sources:     cli.EnvVars(common.OracleProfileEnv),
+	Value:       "",
+	Usage:       "oracle cloud config file profile used for credentials; empty uses the default profile",
+	Destination: &flags.Oracle.Profile,
+	Required:    false,
+}
+
+var oracleConfigFileFlag = cli.StringFlag{
+	Name:        "oci-config-file",
+	Aliases:     []string{"ocf"},
+	Sources:     cli.EnvVars(common.OracleConfigFileEnv),
+	Value:       "",
+	Usage:       "path to the oracle cloud config file used for credentials; empty uses ~/.oci/config",
+	Destination: &flags.Oracle.ConfigFile,
+	Required:    false,
 }
 
 var offlineTrustBundleFlag = cli.StringFlag{

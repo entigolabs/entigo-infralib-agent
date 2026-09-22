@@ -15,12 +15,11 @@ import (
 	"time"
 
 	"dario.cat/mergo"
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/git"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/oci"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-version"
@@ -46,8 +45,8 @@ type updater struct {
 	steps         []model.Step
 	stepChecksums model.StepsChecksums
 	resources     model.Resources
-	terraform     terraform.Terraform
-	argocd        argocd.ArgoCD
+	terraform     generator.Terraform
+	argocd        generator.ArgoCD
 	destinations  map[string]model.Destination
 	state         *model.State
 	stateLock     sync.Mutex
@@ -110,12 +109,12 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		steps:         steps,
 		stepChecksums: model.NewStepsChecksums(),
 		resources:     resources,
-		terraform:     terraform.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
-		argocd:        argocd.NewArgoCD(resources.GetProviderType()),
+		terraform:     generator.NewTerraform(resources.GetProviderType(), config.Sources, sources, config.Provider),
+		argocd:        generator.NewArgoCD(resources.GetProviderType()),
 		destinations:  destinations,
 		state:         state,
 		pipelineFlags: pipeline,
-		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags.GCloud, manager, config, campaignId.String()),
+		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags, manager, config, campaignId.String()),
 		manager:       manager,
 		moduleSources: moduleSources,
 		sources:       sources,
@@ -253,11 +252,15 @@ func upsertWrapperConfig(notifiers []model.ConfigNotification, prefix string, ss
 		}
 		return false, nil
 	}
-	notifierYaml, err := yaml.Marshal(notifierApi)
+	// Marshal as single-line JSON, not YAML: the value is stored as a cloud secret
+	// and, on Oracle, delivered through an OCI DevOps vaultVariable that is truncated
+	// at the first newline. Multi-line YAML value would reach the container missing
+	// wrapper_url. JSON is a YAML subset, so the wrapper still parses it with yaml.Unmarshal.
+	notifierJSON, err := json.Marshal(notifierApi)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal wrapper notifier config: %v", err)
 	}
-	if err = ssm.PutSecret(model.WrapperConfigSecretName(prefix), string(notifierYaml)); err != nil {
+	if err = ssm.PutSecret(model.WrapperConfigSecretName(prefix), string(notifierJSON)); err != nil {
 		return false, fmt.Errorf("failed to upsert wrapper config secret: %v", err)
 	}
 	return true, nil
@@ -448,9 +451,9 @@ func createDestinations(ctx context.Context, config model.Config) (map[string]mo
 	return dests, nil
 }
 
-func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
+func getLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, flags *common.Flags, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
 	if pipeline.Type == string(common.PipelineTypeLocal) {
-		return NewLocalPipeline(ctx, resources, pipeline, gcloudFlags, manager, config, campaignId)
+		return NewLocalPipeline(ctx, resources, pipeline, flags, manager, config, campaignId)
 	}
 	return nil
 }
@@ -1543,6 +1546,8 @@ func (u *updater) getProxySource(source string, step model.Step) (string, error)
 func (u *updater) proxyModuleType() string {
 	if u.resources.GetProviderType() == model.GCLOUD {
 		return "gar-proxy"
+	} else if u.resources.GetProviderType() == model.ORACLE {
+		return "ocir-proxy"
 	}
 	return "ecr-proxy"
 }
@@ -1692,7 +1697,7 @@ func moduleSourceChanged(previous, current string) bool {
 	if previous == current {
 		return false
 	}
-	return !(isEntigoReleaseSource(previous) && isEntigoReleaseSource(current))
+	return !isEntigoReleaseSource(previous) || !isEntigoReleaseSource(current)
 }
 
 func isEntigoReleaseSource(url string) bool {
@@ -2067,6 +2072,8 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 		providerType = "aws"
 	case model.GCLOUD:
 		providerType = "google"
+	case model.ORACLE:
+		providerType = "oracle"
 	}
 	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
 	providerInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,15 +16,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/entigolabs/entigo-infralib-agent/argocd"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"github.com/entigolabs/entigo-infralib-agent/terraform"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/entigolabs/entigo-infralib-agent/wrapper"
 )
 
 const executeScript = "entrypoint-core.sh"
+
+const localPlanPath = "/tmp/project"
 
 type LocalPipeline struct {
 	ctx            context.Context
@@ -32,7 +34,9 @@ type LocalPipeline struct {
 	region         string
 	project        string
 	zone           string
+	compartmentId  string
 	bucket         string
+	backendEnv     map[string]string
 	enableOpenTofu bool
 	pipeline       common.Pipeline
 	inputLock      sync.Mutex
@@ -46,14 +50,23 @@ func (l *LocalPipeline) SetPipelineIndex(index int) {
 	l.pipelineIndex = index
 }
 
-func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, gcloudFlags common.GCloud, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
+func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline common.Pipeline, flags *common.Flags, manager model.NotificationManager, config model.Config, campaignId string) *LocalPipeline {
 	regionKey := model.AWSRegion
 	project := ""
 	zone := ""
-	if resources.GetProviderType() == model.GCLOUD {
+	compartmentId := ""
+	switch resources.GetProviderType() {
+	case model.GCLOUD:
 		regionKey = model.GoogleRegion
-		project = gcloudFlags.ProjectId
-		zone = gcloudFlags.Zone
+		project = flags.GCloud.ProjectId
+		zone = flags.GCloud.Zone
+	case model.ORACLE:
+		regionKey = model.OracleRegion
+		compartmentId = flags.Oracle.CompartmentId
+	}
+	var backendEnv map[string]string
+	if provider, ok := resources.(model.BackendEnvProvider); ok {
+		backendEnv = provider.GetBackendEnv()
 	}
 	return &LocalPipeline{
 		ctx:            ctx,
@@ -62,7 +75,9 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 		region:         resources.GetRegion(),
 		project:        project,
 		zone:           zone,
+		compartmentId:  compartmentId,
 		bucket:         resources.GetBucketName(),
+		backendEnv:     backendEnv,
 		pipeline:       pipeline,
 		manager:        manager,
 		enableOpenTofu: config.IsOpenTofuEnabled(),
@@ -113,7 +128,7 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		Command:       string(command),
 		Entrypoint:    executeScript,
 		PrefixStep:    prefixStep,
-		PlanPath:      "/tmp/project",
+		PlanPath:      localPlanPath,
 		CampaignId:    l.campaignId,
 		PipelineIndex: strconv.Itoa(l.pipelineIndex),
 		//		Insecure:      true, // Development only
@@ -144,6 +159,9 @@ func (l *LocalPipeline) getEnv(prefixStep string, command model.ActionCommand, s
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("COMMAND=%s", command), fmt.Sprintf("TF_VAR_prefix=%s", prefixStep),
 		fmt.Sprintf("INFRALIB_BUCKET=%s", l.bucket), fmt.Sprintf("%s=%s", l.regionKey, l.region))
+	for key, value := range l.backendEnv {
+		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
 	for source, auth := range sourceAuths {
 		hash := util.HashCode(source)
 		env = append(env, fmt.Sprintf("%s=%s", fmt.Sprintf(model.GitSourceEnvFormat, hash), source),
@@ -152,6 +170,9 @@ func (l *LocalPipeline) getEnv(prefixStep string, command model.ActionCommand, s
 	}
 	if l.project != "" {
 		env = append(env, fmt.Sprintf("GOOGLE_PROJECT=%s", l.project), fmt.Sprintf("GOOGLE_ZONE=%s", l.zone))
+	}
+	if l.compartmentId != "" {
+		env = append(env, fmt.Sprintf("%s=%s", common.OracleCompartmentIdEnv, l.compartmentId))
 	}
 	if step.Type == model.StepTypeArgoCD {
 		if step.KubernetesClusterName != "" {
@@ -176,7 +197,32 @@ func (l *LocalPipeline) getEnv(prefixStep string, command model.ActionCommand, s
 			}
 		}
 	}
-	return env
+	return dedupeEnv(env)
+}
+
+// dedupeEnv collapses duplicate keys keeping the last value, so the values the
+// agent appends (e.g. the provisioned AWS_ACCESS_KEY_ID for the Oracle s3 backend)
+// deterministically override anything inherited from the caller's shell via
+// os.Environ — otherwise a stale exported credential could shadow the real one,
+// and duplicate-key resolution across bash/aws is unspecified.
+func dedupeEnv(env []string) []string {
+	index := make(map[string]int, len(env))
+	result := make([]string, 0, len(env))
+	for _, kv := range env {
+		before, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			result = append(result, kv)
+			continue
+		}
+		key := before
+		if i, ok := index[key]; ok {
+			result[i] = kv
+			continue
+		}
+		index[key] = len(result)
+		result = append(result, kv)
+	}
+	return result
 }
 
 func (l *LocalPipeline) getLogFileWriter(prefix string, command model.ActionCommand) *os.File {
@@ -216,18 +262,19 @@ func (l *LocalPipeline) getApproval(pipelineName string, step model.Step, autoAp
 }
 
 func getPipelineChanges(pipelineName string, stepType model.StepType, output []byte) (*model.PipelineChanges, error) {
-	var logParser func(string, string) (*model.PipelineChanges, error)
-	switch stepType {
-	case model.StepTypeTerraform:
-		logParser = terraform.ParseLogChanges
-	case model.StepTypeArgoCD:
-		logParser = argocd.ParseLogChanges
+	changes, err := planChangesFromFile(pipelineName, stepType)
+	if err != nil {
+		return nil, err
 	}
-
+	if changes != nil {
+		return changes, nil
+	}
+	// Fall back to parsing the captured stdout for older base images that don't
+	// write a JSON plan file.
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
 		logRow := scanner.Text()
-		changes, err := logParser(pipelineName, logRow)
+		changes, err := generator.ParseLogChanges(pipelineName, stepType, logRow)
 		if err != nil {
 			return nil, err
 		}
@@ -236,6 +283,17 @@ func getPipelineChanges(pipelineName string, stepType model.StepType, output []b
 		}
 	}
 	return nil, fmt.Errorf("couldn't find plan output from logs for %s", pipelineName)
+}
+
+func planChangesFromFile(prefixStep string, stepType model.StepType) (*model.PipelineChanges, error) {
+	data, err := os.ReadFile(wrapper.PlanFilePath(localPlanPath, prefixStep))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return generator.ParsePlanChanges(prefixStep, stepType, data)
 }
 
 func (l *LocalPipeline) getManualApproval(pipelineName, step string, changes *model.PipelineChanges) (bool, error) {

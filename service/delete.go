@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"slices"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -19,13 +20,14 @@ type Deleter interface {
 }
 
 type deleter struct {
+	ctx                  context.Context
+	flags                *common.Flags
 	config               model.Config
 	steps                []model.Step
 	provider             model.CloudProvider
 	resources            model.Resources
 	deleteBucket         bool
 	deleteServiceAccount bool
-	localPipeline        *LocalPipeline
 }
 
 func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
@@ -43,6 +45,8 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 	}
 	if repo == nil && flags.Config == "" {
 		return &deleter{
+			ctx:       ctx,
+			flags:     flags,
 			config:    model.Config{},
 			provider:  provider,
 			resources: resources,
@@ -60,13 +64,14 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 		return nil, err
 	}
 	return &deleter{
+		ctx:                  ctx,
+		flags:                flags,
 		config:               config,
 		steps:                steps,
 		provider:             provider,
 		resources:            resources,
 		deleteBucket:         flags.Delete.DeleteBucket,
 		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
-		localPipeline:        getLocalPipeline(ctx, resources, ProcessPipelineFlags(flags.Pipeline), flags.GCloud, nil, config, ""),
 	}, nil
 }
 
@@ -85,8 +90,7 @@ func getBaseConfig(prefix, configFile string, bucket model.Bucket) (model.Config
 }
 
 func (d *deleter) Delete() error {
-	for i := len(d.config.Steps) - 1; i >= 0; i-- {
-		step := d.config.Steps[i]
+	for _, step := range slices.Backward(d.config.Steps) {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		err := d.resources.GetPipeline().DeletePipeline(projectName)
 		if err != nil {
@@ -122,18 +126,26 @@ func (d *deleter) deleteSecret(secret string) {
 }
 
 func (d *deleter) Destroy() error {
-	state, err := getLatestState(d.resources.GetBucket())
+	// Resolve the state-backend credentials before building the local pipeline:
+	// GetResources skips them, so without this the local terraform destroy has no
+	// AWS_ACCESS_KEY_ID for the Oracle s3-compatible backend (no-op for AWS/GCloud).
+	resources, err := d.provider.PrepareDestroy(d.resources)
+	if err != nil {
+		return err
+	}
+	d.resources = resources
+	localPipeline := getLocalPipeline(d.ctx, resources, ProcessPipelineFlags(d.flags.Pipeline), d.flags, nil, d.config, "")
+	state, err := getLatestState(resources.GetBucket())
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get latest state: %v", err)))
 	}
-	for i := len(d.steps) - 1; i >= 0; i-- {
-		step := d.steps[i]
+	for _, step := range slices.Backward(d.steps) {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		log.Printf("Starting destroy execution pipeline for step %s\n", step.Name)
 		step.Approve = model.ApproveForce
 		var err error
-		if d.localPipeline != nil {
-			err = d.localPipeline.startDestroyExecution(step, d.getSourceAuths())
+		if localPipeline != nil {
+			err = localPipeline.startDestroyExecution(step, d.getSourceAuths())
 		} else {
 			err = d.resources.GetPipeline().StartDestroyExecution(projectName, step)
 		}
@@ -172,8 +184,7 @@ func (d *deleter) removeStepFromState(state *model.State, step model.Step) error
 		return nil
 	}
 	stepRemoved := false
-	for i := len(state.Steps) - 1; i >= 0; i-- {
-		stepState := state.Steps[i]
+	for i, stepState := range slices.Backward(state.Steps) {
 		if stepState.Name != step.Name {
 			continue
 		}

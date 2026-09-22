@@ -24,6 +24,8 @@ func (b *BaseNotifier) HandleCampaign(msg model.CampaignMessage) error {
 		msg.Resources.GetCloudPrefix(), provider)
 	if provider == model.GCLOUD {
 		message += fmt.Sprintf("project Id %s, location %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
+	} else if provider == model.ORACLE {
+		message += fmt.Sprintf("compartment Id %s, region %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
 	} else {
 		message += fmt.Sprintf("account Id %s, region %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
 	}
