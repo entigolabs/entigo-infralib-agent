@@ -2,6 +2,7 @@ package run
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -98,7 +99,7 @@ func TestRunOracle(t *testing.T) {
 	test.ChangeRunDir()
 	prefix := os.Getenv(common.AwsPrefixEnv)
 	if len(prefix) > 10 {
-		prefix = prefix[:10]
+		prefix = strings.Trim(prefix[:10], "-")
 	}
 	flags := &common.Flags{
 		Config: "test/profile-oracle.yaml",
