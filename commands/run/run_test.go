@@ -2,7 +2,6 @@ package run
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -19,7 +18,6 @@ func TestRunAWS(t *testing.T) {
 	test.ChangeRunDir()
 	flags := &common.Flags{
 		Config:                  "test/profile-aws.yaml",
-		Prefix:                  getTestPrefix(),
 		SkipBucketCreationDelay: true,
 		Delete: common.DeleteFlags{
 			DeleteBucket: true,
@@ -42,7 +40,6 @@ func TestRunGCloud(t *testing.T) {
 	zone := os.Getenv(common.GCloudZoneEnv)
 	flags := &common.Flags{
 		Config: "test/profile-gcloud.yaml",
-		Prefix: getTestPrefix(),
 		GCloud: common.GCloud{
 			ProjectId: projectId,
 			Location:  location,
@@ -67,7 +64,6 @@ func TestRunOracle(t *testing.T) {
 	test.ChangeRunDir()
 	flags := &common.Flags{
 		Config: "test/profile-oracle.yaml",
-		Prefix: getTestPrefix(),
 		Oracle: common.Oracle{
 			Region:        os.Getenv(model.OracleRegion),
 			CompartmentId: os.Getenv(common.OracleCompartmentIdEnv),
@@ -83,27 +79,6 @@ func TestRunOracle(t *testing.T) {
 		},
 	}
 	runTest(t, flags)
-}
-
-func TestPrefix(t *testing.T) {
-	err := os.Setenv(common.AwsPrefixEnv, "at-oracle-test")
-	if err != nil {
-		t.Fatal()
-	}
-	prefix := getTestPrefix()
-	if prefix != "at-oracle" {
-		t.Fatalf("expected prefix at-oracle, got %s", prefix)
-	}
-}
-
-func getTestPrefix() string {
-	prefix := strings.TrimSpace(os.Getenv(common.AwsPrefixEnv))
-	if len(prefix) > 10 {
-		prefix = prefix[:10]
-	}
-	return strings.TrimFunc(prefix, func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
-	})
 }
 
 func runTest(t *testing.T, flags *common.Flags) {

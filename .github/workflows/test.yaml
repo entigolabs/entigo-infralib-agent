@@ -45,7 +45,9 @@ jobs:
           PR_BRANCH: ${{ inputs.pr-branch }}
           PROFILE: ${{ matrix.profile }}
         run: |
-          sed -i.bak "0,/prefix: at/{s/prefix: at/prefix: at-\L${PR_BRANCH}/}" "${PROFILE}"
+          PREFIX=$(printf 'at-%s' "${PR_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | cut -c1-10 | sed 's/-*$//')
+          echo "Using prefix ${PREFIX}"
+          sed -i.bak "0,/prefix: at/{s|prefix: at|prefix: ${PREFIX}|}" "${PROFILE}"
       - name: Run tests
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
