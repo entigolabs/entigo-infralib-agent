@@ -25,6 +25,15 @@ const (
 	secretUpdateRetries = 5
 )
 
+// readRetryPolicy is the SDK default minus IncorrectState, which a pending-deletion secret
+// returns permanently — retrying it only stalls each read for ~1.5 min.
+var readRetryPolicy = ocicommon.NewRetryPolicyWithOptions(
+	ocicommon.ReplaceWithValuesFromRetryPolicy(ocicommon.DefaultRetryPolicyWithoutEventualConsistency()),
+	ocicommon.WithShouldRetryOperation(func(r ocicommon.OCIOperationResponse) bool {
+		return !isIncorrectState(r.Error) && ocicommon.DefaultShouldRetryOperation(r)
+	}),
+)
+
 // SSM implements model.SSM over OCI Vault secrets, encrypted with the agent-owned
 // master key (see KMS). Both parameters and secrets are stored as Vault secrets,
 // keeping all sensitive material off the bucket and under the customer-managed key.
@@ -379,12 +388,24 @@ func (s *SSM) secretOCID(name string) (string, error) {
 
 func (s *SSM) readSecret(name string) (string, bool, error) {
 	response, err := s.secretsClient.GetSecretBundleByName(s.ctx, secrets.GetSecretBundleByNameRequest{
-		SecretName: &name,
-		VaultId:    &s.vaultId,
+		SecretName:      &name,
+		VaultId:         &s.vaultId,
+		RequestMetadata: ocicommon.RequestMetadata{RetryPolicy: &readRetryPolicy},
 	})
 	if err != nil {
 		if isNotFound(err) {
 			return "", false, nil
+		}
+		// A secret whose deletion cascaded from its vault's reads 409 IncorrectState, not
+		// 404, once the vault is revived.
+		if isIncorrectState(err) {
+			_, state, found, findErr := s.findSecret(name)
+			if findErr != nil {
+				return "", false, findErr
+			}
+			if !found || secretPendingDeletion(state) {
+				return "", false, nil
+			}
 		}
 		return "", false, fmt.Errorf("failed to read secret %s: %w", name, err)
 	}
