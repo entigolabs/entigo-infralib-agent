@@ -424,12 +424,11 @@ func (a agentGitAuth) complete() bool {
 func (o *oracleService) provisionBackendCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, needGit bool) (agentGitAuth, error) {
 	cskAccess, cskSecret, err := loadPersistedCustomerSecretKey(secrets)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Could not read persisted Customer Secret Key: %v", err)))
-		return agentGitAuth{}, nil
+		return agentGitAuth{}, fmt.Errorf("failed to read persisted Customer Secret Key: %w", err)
 	}
 	git, err := o.loadPersistedGitAuth(secrets, needGit)
 	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Could not read persisted DevOps git credentials: %v", err)))
+		return agentGitAuth{}, fmt.Errorf("failed to read persisted DevOps git credentials: %w", err)
 	}
 	needGitSeed := needGit && !git.complete()
 	if cskAccess != "" && !needGitSeed {
