@@ -716,6 +716,7 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	// The credentials the agent provisioned on the executing user (state Customer Secret
 	// Key, DevOps auth token) and the build access policy.
 	iam.DeleteAgentCredentials(o.cloudPrefix, o.userId())
+	o.deleteCredentialSecrets()
 	if deleteServiceAccount {
 		iam.DeleteCICDServiceAccount(o.cloudPrefix)
 	}
@@ -747,6 +748,23 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 		iam.deletePolicyByName(fmt.Sprintf("%s-infralib-agent", o.cloudPrefix))
 	}
 	return nil
+}
+
+// deleteCredentialSecrets schedules deletion of the Vault secrets caching the credentials
+// DeleteAgentCredentials just removed. The vault's scheduled deletion reaches its secrets
+// only after a delay, so a vault revived before then would hand the next execution a
+// deleted key.
+func (o *oracleService) deleteCredentialSecrets() {
+	_, ssm, err := o.resolveStore()
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to resolve secret store for teardown: %s", err)))
+		return
+	}
+	for _, name := range []string{customerSecretKeyObject, awsSecretAccessKeySecret, devopsAuthTokenObject, gitUsernameObject} {
+		if err = ssm.DeleteSecret(name); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to schedule deletion of secret %s: %s", name, err)))
+		}
+	}
 }
 
 // CreateServiceAccount provisions the external CI/CD service account a gitops engineer

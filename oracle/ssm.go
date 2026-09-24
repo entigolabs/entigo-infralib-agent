@@ -402,6 +402,11 @@ func (s *SSM) readSecret(name string) (string, bool, error) {
 // scheduleDeletion schedules the earliest-allowed deletion of the named secret; a
 // missing secret is not an error. Hard delete is not possible on OCI.
 func (s *SSM) scheduleDeletion(name string) error {
+	// An empty vault id drops the ListSecrets vault filter, so the name would match
+	// same-named secrets of other deployments' vaults in the compartment.
+	if s.vaultId == "" {
+		return nil
+	}
 	id, err := s.secretOCID(name)
 	if err != nil {
 		return err
