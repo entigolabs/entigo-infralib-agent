@@ -1,5 +1,4 @@
 prefix: at
-enable_opentofu: true
 sources:
   - url: https://github.com/entigolabs/entigo-infralib-release
 steps:

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
@@ -18,19 +20,24 @@ const (
 	s3ReadinessInterval = 5 * time.Second
 	s3ProbeTimeout      = 30 * time.Second
 	// A fresh CSK reaches a region's backend hosts at different times, so one
-	// successful probe can be followed by failures on other hosts; require this
-	// many consecutive successes before trusting it (streak resets on any failure).
-	s3ReadinessStreak = 5
+	// successful probe can be followed by failures on other hosts; require
+	// uninterrupted successes for this long before trusting it (any failure resets).
+	s3ReadinessStableFor = 60 * time.Second
 	// Log the "still waiting" line only every Nth attempt to avoid minutes of spam.
 	s3ReadinessLogEvery = 6
 )
 
+// newS3ProbeClient disables keep-alives so every probe dials a new connection and
+// can land on a different backend host, instead of re-confirming the first one.
 func newS3ProbeClient(endpoint, region, accessKey, secretKey string) *s3.Client {
 	return s3.New(s3.Options{
 		BaseEndpoint: aws.String(endpoint),
 		Region:       region,
 		UsePathStyle: true,
 		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		HTTPClient: awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+			t.DisableKeepAlives = true
+		}),
 	})
 }
 
@@ -55,9 +62,9 @@ func s3CredentialsUsable(ctx context.Context, endpoint, region, bucket, accessKe
 
 // waitForS3Credentials blocks until a freshly provisioned Customer Secret Key is
 // broadly accepted by the S3-compatible endpoint. OCI distributes a new CSK's
-// per-region signing key to backend hosts asynchronously, so it requires
-// s3ReadinessStreak consecutive successes before returning, so the state backend
-// and the entrypoint file-copy don't race the tail of propagation.
+// per-region signing key to backend hosts asynchronously, so it requires probes to
+// succeed uninterruptedly for s3ReadinessStableFor before returning, so the state
+// backend and the entrypoint file-copy don't race the tail of propagation.
 func waitForS3Credentials(ctx context.Context, endpoint, region, bucket, accessKey, secretKey string) error {
 	client := newS3ProbeClient(endpoint, region, accessKey, secretKey)
 	deadline, cancel := context.WithTimeout(ctx, s3ReadinessTimeout)
@@ -65,7 +72,7 @@ func waitForS3Credentials(ctx context.Context, endpoint, region, bucket, accessK
 	ticker := time.NewTicker(s3ReadinessInterval)
 	defer ticker.Stop()
 
-	streak := 0
+	var stableSince time.Time
 	attempts := 0
 	var lastErr error
 	for {
@@ -75,12 +82,13 @@ func waitForS3Credentials(ctx context.Context, endpoint, region, bucket, accessK
 		cancelAttempt()
 		attempts++
 		if lastErr == nil {
-			streak++
-			if streak >= s3ReadinessStreak {
+			if stableSince.IsZero() {
+				stableSince = time.Now()
+			} else if time.Since(stableSince) >= s3ReadinessStableFor {
 				return nil
 			}
 		} else {
-			streak = 0
+			stableSince = time.Time{}
 			// A fresh CSK is expected to fail for minutes while OCI propagates it,
 			// so log the reason once, then only periodically.
 			if attempts == 1 {
@@ -93,7 +101,8 @@ func waitForS3Credentials(ctx context.Context, endpoint, region, bucket, accessK
 		select {
 		case <-deadline.Done():
 			if lastErr == nil {
-				lastErr = fmt.Errorf("only %d/%d consecutive probes succeeded", streak, s3ReadinessStreak)
+				lastErr = fmt.Errorf("probes succeeded for only %s of the required %s",
+					time.Since(stableSince).Round(time.Second), s3ReadinessStableFor)
 			}
 			return fmt.Errorf("customer secret key still not usable on the s3-compatible endpoint after %s "+
 				"(re-run to keep waiting on the same persisted key): %w", s3ReadinessTimeout, lastErr)
