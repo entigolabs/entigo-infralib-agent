@@ -177,16 +177,19 @@ func (k *KMS) ensure(skipDelay bool) error {
 	return nil
 }
 
-// ensureVault finds a live vault by name or creates a DEFAULT one, polling until
-// ACTIVE — DEFAULT-vault creation takes minutes on the first run.
+// ensureVault finds a live vault by name, else revives one pending deletion, else creates
+// a DEFAULT one, polling until ACTIVE — DEFAULT-vault creation takes minutes on the first run.
 func (k *KMS) ensureVault(skipDelay bool) (*keymanagement.Vault, error) {
 	name := k.getVaultName()
-	existing, err := k.findVault(name)
+	vaults, err := k.listVaults(name)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
+	if existing := liveVault(vaults); existing != nil {
 		return k.waitForVaultActive(*existing.Id)
+	}
+	if pending := revivableVault(vaults); pending != nil {
+		return k.reviveVault(name, *pending.Id)
 	}
 	util.DelayResourceCreation("vault", k.getVaultName(), skipDelay)
 	created, err := k.vaultClient.CreateVault(k.ctx, keymanagement.CreateVaultRequest{
@@ -204,10 +207,19 @@ func (k *KMS) ensureVault(skipDelay bool) (*keymanagement.Vault, error) {
 	return k.waitForVaultActive(*created.Id)
 }
 
-// findVault returns the first non-deleted vault with the given display name.
-// ListVaults has no name filter, so every page is scanned to avoid missing an
-// existing vault and creating a duplicate.
 func (k *KMS) findVault(name string) (*keymanagement.VaultSummary, error) {
+	vaults, err := k.listVaults(name)
+	if err != nil {
+		return nil, err
+	}
+	return liveVault(vaults), nil
+}
+
+// listVaults returns every vault with the given display name. ListVaults has no name
+// filter, so every page is scanned to avoid missing an existing vault and creating a
+// duplicate.
+func (k *KMS) listVaults(name string) ([]keymanagement.VaultSummary, error) {
+	var vaults []keymanagement.VaultSummary
 	var page *string
 	for {
 		response, err := k.vaultClient.ListVaults(k.ctx, keymanagement.ListVaultsRequest{
@@ -217,17 +229,42 @@ func (k *KMS) findVault(name string) (*keymanagement.VaultSummary, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to list kms vaults: %w", err)
 		}
-		for i := range response.Items {
-			v := response.Items[i]
-			if v.DisplayName != nil && *v.DisplayName == name && !vaultDeleted(v.LifecycleState) {
-				return &v, nil
+		for _, v := range response.Items {
+			if v.DisplayName != nil && *v.DisplayName == name {
+				vaults = append(vaults, v)
 			}
 		}
 		if response.OpcNextPage == nil {
-			return nil, nil
+			return vaults, nil
 		}
 		page = response.OpcNextPage
 	}
+}
+
+func liveVault(vaults []keymanagement.VaultSummary) *keymanagement.VaultSummary {
+	for i := range vaults {
+		if !vaultDeleted(vaults[i].LifecycleState) {
+			return &vaults[i]
+		}
+	}
+	return nil
+}
+
+// revivableVault returns the newest vault pending deletion. Pending vaults count against
+// the regional vault limit, so reviving one instead of creating a new vault keeps a
+// delete/redeploy cycle within it.
+func revivableVault(vaults []keymanagement.VaultSummary) *keymanagement.VaultSummary {
+	var newest *keymanagement.VaultSummary
+	for i := range vaults {
+		v := &vaults[i]
+		if v.LifecycleState != keymanagement.VaultSummaryLifecycleStatePendingDeletion || v.TimeCreated == nil {
+			continue
+		}
+		if newest == nil || v.TimeCreated.After(newest.TimeCreated.Time) {
+			newest = v
+		}
+	}
+	return newest
 }
 
 func vaultDeleted(state keymanagement.VaultSummaryLifecycleStateEnum) bool {
@@ -239,6 +276,17 @@ func vaultDeleted(state keymanagement.VaultSummaryLifecycleStateEnum) bool {
 		return true
 	}
 	return false
+}
+
+// reviveVault cancels a scheduled vault deletion; OCI restores the vault's keys with it,
+// while its secrets stay pending deletion until rewritten.
+func (k *KMS) reviveVault(name, vaultId string) (*keymanagement.Vault, error) {
+	_, err := k.vaultClient.CancelVaultDeletion(k.ctx, keymanagement.CancelVaultDeletionRequest{VaultId: &vaultId})
+	if err != nil {
+		return nil, fmt.Errorf("failed to cancel scheduled deletion of kms vault %s: %w", name, err)
+	}
+	log.Printf("Restoring Oracle KMS vault %s from pending deletion\n", name)
+	return k.waitForVaultActive(vaultId)
 }
 
 func (k *KMS) waitForVaultActive(vaultId string) (*keymanagement.Vault, error) {
@@ -253,7 +301,8 @@ func (k *KMS) waitForVaultActive(vaultId string) (*keymanagement.Vault, error) {
 			return &response.Vault, nil
 		case keymanagement.VaultLifecycleStateCreating,
 			keymanagement.VaultLifecycleStateUpdating,
-			keymanagement.VaultLifecycleStateRestoring:
+			keymanagement.VaultLifecycleStateRestoring,
+			keymanagement.VaultLifecycleStateCancellingDeletion:
 			// keep waiting
 		default:
 			return nil, fmt.Errorf("kms vault %s is in unexpected state %s", vaultId, response.LifecycleState)
