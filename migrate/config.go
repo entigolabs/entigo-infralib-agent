@@ -42,7 +42,7 @@ func NewConfigGenerator(ctx context.Context, flags common.Migrate) (ConfigGenera
 
 func (u *configGenerator) Generate() {
 	log.Println("Generating config based on the state file")
-	resourcesWithIndexes := make(map[ResourceKey][]interface{})
+	resourcesWithIndexes := make(map[ResourceKey][]any)
 	for _, item := range u.config.Import {
 		itemResources, err := u.processItem(item)
 		if err != nil {
@@ -74,7 +74,7 @@ func (u *configGenerator) Generate() {
 	}
 }
 
-func (u *configGenerator) processItem(item importItem) (map[ResourceKey][]interface{}, error) {
+func (u *configGenerator) processItem(item importItem) (map[ResourceKey][]any, error) {
 	err := processItem(&item)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (u *configGenerator) processItem(item importItem) (map[ResourceKey][]interf
 	if err != nil {
 		return nil, err
 	}
-	resourceWithIndexes := make(map[ResourceKey][]interface{})
+	resourceWithIndexes := make(map[ResourceKey][]any)
 	for _, resource := range resources {
 		if len(resource.Instances) == 0 {
 			continue
@@ -101,7 +101,7 @@ func (u *configGenerator) processItem(item importItem) (map[ResourceKey][]interf
 	return resourceWithIndexes, nil
 }
 
-func (u *configGenerator) findMissingResources(resources map[ResourceKey][]interface{}) []importItem {
+func (u *configGenerator) findMissingResources(resources map[ResourceKey][]any) []importItem {
 	missingResources := make([]importItem, 0)
 	for _, resource := range u.state.Resources {
 		if resource.Mode != "managed" {
@@ -120,7 +120,7 @@ func (u *configGenerator) findMissingResources(resources map[ResourceKey][]inter
 	return missingResources
 }
 
-func (u *configGenerator) getMissingResource(resources map[ResourceKey][]interface{}, resourceKey ResourceKey, resource resourceStateV4) *importItem {
+func (u *configGenerator) getMissingResource(resources map[ResourceKey][]any, resourceKey ResourceKey, resource resourceStateV4) *importItem {
 	item := &importItem{
 		Type:   resource.Type,
 		Name:   resource.Name,
@@ -134,7 +134,7 @@ func (u *configGenerator) getMissingResource(resources map[ResourceKey][]interfa
 		}
 		return item
 	}
-	var missingIndexes []interface{}
+	var missingIndexes []any
 	for _, instance := range resource.Instances {
 		found := false
 		for _, index := range indexes {
@@ -186,8 +186,8 @@ func (u *configGenerator) getResources(rsType string, module module) ([]resource
 	return matching, nil
 }
 
-func getResourceIndexes(indexKeys []KeyPair, resource resourceStateV4) []interface{} {
-	var indexes []interface{}
+func getResourceIndexes(indexKeys []KeyPair, resource resourceStateV4) []any {
+	var indexes []any
 	if len(indexKeys) != 0 {
 		for _, index := range indexKeys {
 			indexes = append(indexes, index.Key1)
@@ -203,7 +203,7 @@ func getResourceIndexes(indexKeys []KeyPair, resource resourceStateV4) []interfa
 	return indexes
 }
 
-func formatIndexKeys(indexKeys []interface{}) []string {
+func formatIndexKeys(indexKeys []any) []string {
 	var keys []string
 	for _, indexKey := range indexKeys {
 		if indexKey == nil {

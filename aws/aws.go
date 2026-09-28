@@ -21,13 +21,14 @@ import (
 )
 
 type awsService struct {
-	ctx         context.Context
-	awsConfig   aws.Config
-	cloudPrefix string
-	accountId   string
-	resources   Resources
-	pipeline    common.Pipeline
-	skipDelay   bool
+	ctx            context.Context
+	awsConfig      aws.Config
+	cloudPrefix    string
+	accountId      string
+	organizationId string
+	resources      Resources
+	pipeline       common.Pipeline
+	skipDelay      bool
 }
 
 type Resources struct {
@@ -51,18 +52,24 @@ func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeli
 	if err != nil {
 		return nil, err
 	}
-	accountId, err := getAccountId(ctx, awsConfig)
+	stsService := NewSTS(ctx, awsConfig)
+	accountId, err := stsService.GetAccountID()
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("AWS account id: %s\n", accountId)
+	organizationId, err := stsService.GetOrganizationID()
+	if err != nil {
+		return nil, err
+	}
 	return &awsService{
-		ctx:         ctx,
-		awsConfig:   awsConfig,
-		cloudPrefix: cloudPrefix,
-		accountId:   accountId,
-		pipeline:    pipeline,
-		skipDelay:   skipBucketDelay,
+		ctx:            ctx,
+		awsConfig:      awsConfig,
+		cloudPrefix:    cloudPrefix,
+		accountId:      accountId,
+		organizationId: organizationId,
+		pipeline:       pipeline,
+		skipDelay:      skipBucketDelay,
 	}, nil
 }
 
@@ -98,15 +105,14 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 		return nil, err
 	}
 	a.resources = Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.AWS,
-			Bucket:       s3,
-			SSM:          NewSSM(a.ctx, a.awsConfig),
-			CloudPrefix:  a.cloudPrefix,
-			BucketName:   bucket,
-			Region:       a.awsConfig.Region,
-			Account:      a.accountId,
-		},
+		ProviderType:   model.AWS,
+		Bucket:         s3,
+		SSM:            NewSSM(a.ctx, a.awsConfig),
+		CloudPrefix:    a.cloudPrefix,
+		BucketName:     bucket,
+		Region:         a.awsConfig.Region,
+		Account:        a.accountId,
+		OrganizationId: a.organizationId,
 	}
 	return a.resources, nil
 }
@@ -128,17 +134,16 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 	}
 
 	a.resources = Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.AWS,
-			Bucket:       s3,
-			SSM:          NewSSM(a.ctx, a.awsConfig),
-			CloudPrefix:  a.cloudPrefix,
-			BucketName:   bucket,
-			Region:       a.awsConfig.Region,
-			Account:      a.accountId,
-		},
-		DynamoDBTable: *dynamoDBTable.TableName,
-		IAM:           iam,
+		ProviderType:   model.AWS,
+		Bucket:         s3,
+		SSM:            NewSSM(a.ctx, a.awsConfig),
+		CloudPrefix:    a.cloudPrefix,
+		BucketName:     bucket,
+		Region:         a.awsConfig.Region,
+		Account:        a.accountId,
+		OrganizationId: a.organizationId,
+		DynamoDBTable:  *dynamoDBTable.TableName,
+		IAM:            iam,
 	}
 	if a.pipeline.Type == string(common.PipelineTypeLocal) {
 		return a.resources, nil
@@ -179,19 +184,18 @@ func (a *awsService) GetResources() (model.Resources, error) {
 	}
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	a.resources = Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.AWS,
-			Bucket:       s3,
-			CodeBuild:    codeBuild,
-			Pipeline:     NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, s3, nil),
-			CloudPrefix:  a.cloudPrefix,
-			BucketName:   bucket,
-			SSM:          NewSSM(a.ctx, a.awsConfig),
-			Region:       a.awsConfig.Region,
-			Account:      a.accountId,
-		},
-		IAM:        NewIAM(a.ctx, a.awsConfig, a.accountId),
-		CloudWatch: cloudwatch,
+		ProviderType:   model.AWS,
+		Bucket:         s3,
+		CodeBuild:      codeBuild,
+		Pipeline:       NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, s3, nil),
+		CloudPrefix:    a.cloudPrefix,
+		BucketName:     bucket,
+		SSM:            NewSSM(a.ctx, a.awsConfig),
+		Region:         a.awsConfig.Region,
+		Account:        a.accountId,
+		OrganizationId: a.organizationId,
+		IAM:            NewIAM(a.ctx, a.awsConfig, a.accountId),
+		CloudWatch:     cloudwatch,
 	}
 	return a.resources, nil
 }
@@ -433,6 +437,7 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager mo
 			}
 			return err
 		}
+		manager.ScheduleUnchanged(common.UpdateCommand, model.ScheduleRemoved, updateCron)
 		return nil
 	}
 	runArn := fmt.Sprintf("arn:aws:codepipeline:%s:%s:%s", a.awsConfig.Region, a.accountId,
@@ -453,6 +458,8 @@ func (a *awsService) createSchedule(schedule model.Schedule, iam IAM, manager mo
 		if err == nil {
 			manager.Schedule(common.UpdateCommand, model.ScheduleModified, updateCron)
 		}
+	} else {
+		manager.ScheduleUnchanged(common.UpdateCommand, model.ScheduleAdded, updateCron)
 	}
 	return err
 }

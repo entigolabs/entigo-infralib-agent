@@ -101,17 +101,20 @@ func (o *oracleService) bucketResources() (Resources, *Storage, error) {
 	if err != nil {
 		return Resources{}, nil, fmt.Errorf("failed to create object storage service: %w", err)
 	}
+	tenancyId, err := o.provider.TenancyOCID()
+	if err != nil {
+		slog.Warn(fmt.Sprintf("failed to resolve tenancy ocid: %v", err))
+	}
 	return Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.ORACLE,
-			Bucket:       storage,
-			BucketName:   bucket,
-			CloudPrefix:  o.cloudPrefix,
-			Region:       o.region,
-			Account:      o.compartmentId,
-		},
-		Namespace:  storage.Namespace(),
-		S3Endpoint: s3Endpoint(storage.Namespace(), o.region),
+		ProviderType:   model.ORACLE,
+		Bucket:         storage,
+		BucketName:     bucket,
+		CloudPrefix:    o.cloudPrefix,
+		Region:         o.region,
+		Account:        o.compartmentId,
+		OrganizationId: tenancyId,
+		Namespace:      storage.Namespace(),
+		S3Endpoint:     s3Endpoint(storage.Namespace(), o.region),
 	}, storage, nil
 }
 

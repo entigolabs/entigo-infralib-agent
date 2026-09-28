@@ -95,10 +95,8 @@ func (k *KMS) ScheduleDeletion() error {
 	}
 	when := ocicommon.SDKTime{Time: time.Now().Add(scheduleDeletionDelay)}
 	_, err = k.vaultClient.ScheduleVaultDeletion(k.ctx, keymanagement.ScheduleVaultDeletionRequest{
-		VaultId: existing.Id,
-		ScheduleVaultDeletionDetails: keymanagement.ScheduleVaultDeletionDetails{
-			TimeOfDeletion: &when,
-		},
+		VaultId:        existing.Id,
+		TimeOfDeletion: &when,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to schedule deletion of kms vault %s: %w", name, err)
@@ -193,12 +191,10 @@ func (k *KMS) ensureVault(skipDelay bool) (*keymanagement.Vault, error) {
 	}
 	util.DelayResourceCreation("vault", k.getVaultName(), skipDelay)
 	created, err := k.vaultClient.CreateVault(k.ctx, keymanagement.CreateVaultRequest{
-		CreateVaultDetails: keymanagement.CreateVaultDetails{
-			CompartmentId: &k.compartmentId,
-			DisplayName:   &name,
-			VaultType:     keymanagement.CreateVaultDetailsVaultTypeDefault,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		CompartmentId: &k.compartmentId,
+		DisplayName:   &name,
+		VaultType:     keymanagement.CreateVaultDetailsVaultTypeDefault,
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kms vault %s: %w", name, err)
@@ -331,15 +327,13 @@ func (k *KMS) ensureKey(mgmt keymanagement.KmsManagementClient) (string, error) 
 	}
 	length := kmsKeyLengthBytes
 	created, err := mgmt.CreateKey(k.ctx, keymanagement.CreateKeyRequest{
-		CreateKeyDetails: keymanagement.CreateKeyDetails{
-			CompartmentId: &k.compartmentId,
-			DisplayName:   &name,
-			KeyShape: &keymanagement.KeyShape{
-				Algorithm: keymanagement.KeyShapeAlgorithmAes,
-				Length:    &length,
-			},
-			FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+		CompartmentId: &k.compartmentId,
+		DisplayName:   &name,
+		KeyShape: &keymanagement.KeyShape{
+			Algorithm: keymanagement.KeyShapeAlgorithmAes,
+			Length:    &length,
 		},
+		FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create kms key %s: %w", name, err)

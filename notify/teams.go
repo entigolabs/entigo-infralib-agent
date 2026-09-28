@@ -20,7 +20,7 @@ func newTeamsClient(baseNotifier model.BaseNotifier, configTeams model.Teams) *B
 
 func teamsMessage(client *goteamsnotify.TeamsClient, webhookUrl, message string) error {
 	var body []adaptivecard.Element
-	for _, text := range strings.Split(message, "\n") {
+	for text := range strings.SplitSeq(message, "\n") {
 		body = append(body, adaptivecard.Element{
 			Type: adaptivecard.TypeElementTextBlock,
 			Wrap: true,

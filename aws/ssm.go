@@ -41,8 +41,7 @@ func (s *ssm) GetParameter(name string) (*model.Parameter, error) {
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
-		var notFoundErr *types.ParameterNotFound
-		if errors.As(err, &notFoundErr) {
+		if _, ok := errors.AsType[*types.ParameterNotFound](err); ok {
 			return nil, &model.ParameterNotFoundError{Name: name}
 		}
 		return nil, err
@@ -56,8 +55,7 @@ func (s *ssm) GetParameter(name string) (*model.Parameter, error) {
 func (s *ssm) ParameterExists(name string) (bool, error) {
 	_, err := s.GetParameter(name)
 	if err != nil {
-		var notFoundErr *model.ParameterNotFoundError
-		if errors.As(err, &notFoundErr) {
+		if _, ok := errors.AsType[*model.ParameterNotFoundError](err); ok {
 			return false, nil
 		}
 		return false, err
@@ -71,8 +69,7 @@ func (s *ssm) PutParameter(name string, value string) error {
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
-		var notFoundErr *types.ParameterNotFound
-		if !errors.As(err, &notFoundErr) {
+		if _, ok := errors.AsType[*types.ParameterNotFound](err); !ok {
 			return err
 		}
 		output = nil
@@ -105,8 +102,7 @@ func (s *ssm) DeleteParameter(name string) error {
 		Name: aws.String(name),
 	})
 	if err != nil {
-		var notFoundErr *types.ParameterNotFound
-		if errors.As(err, &notFoundErr) {
+		if _, ok := errors.AsType[*types.ParameterNotFound](err); ok {
 			return nil
 		}
 		return err
@@ -170,8 +166,7 @@ func (s *ssm) getSecret(name string) (*string, *string, error) {
 		SecretId: aws.String(name),
 	})
 	if err != nil {
-		var notFoundError *smTypes.ResourceNotFoundException
-		if errors.As(err, &notFoundError) {
+		if _, ok := errors.AsType[*smTypes.ResourceNotFoundException](err); ok {
 			return nil, nil, nil
 		}
 		return nil, nil, err
@@ -190,8 +185,7 @@ func (s *ssm) getSecret(name string) (*string, *string, error) {
 	if err == nil {
 		return secret.SecretString, described.KmsKeyId, nil
 	}
-	var notFoundError *smTypes.ResourceNotFoundException
-	if errors.As(err, &notFoundError) {
+	if _, ok := errors.AsType[*smTypes.ResourceNotFoundException](err); ok {
 		return nil, nil, nil
 	}
 	return nil, nil, err
@@ -244,8 +238,7 @@ func (s *ssm) updateKmsKey(name string, value string) error {
 			if err == nil {
 				return nil
 			}
-			var invalidError *smTypes.InvalidRequestException
-			if !errors.As(err, &invalidError) {
+			if _, ok := errors.AsType[*smTypes.InvalidRequestException](err); !ok {
 				return err
 			}
 			time.Sleep(time.Duration(delay) * time.Second)
@@ -268,8 +261,7 @@ func (s *ssm) deleteSecret(name string, force bool) error {
 		log.Printf("Deleted secret: %s\n", name)
 		return nil
 	}
-	var notFoundError *smTypes.ResourceNotFoundException
-	if errors.As(err, &notFoundError) {
+	if _, ok := errors.AsType[*smTypes.ResourceNotFoundException](err); ok {
 		return nil
 	}
 	return err

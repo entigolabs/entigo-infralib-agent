@@ -22,17 +22,21 @@ func (b *BaseNotifier) HandleCampaign(msg model.CampaignMessage) error {
 	}
 	message += fmt.Sprintf("Agent %s %s: prefix %s %s ", msg.Command, msg.Status,
 		msg.Resources.GetCloudPrefix(), provider)
-	if provider == model.GCLOUD {
+	switch provider {
+	case model.GCLOUD:
 		message += fmt.Sprintf("project Id %s, location %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
-	} else if provider == model.ORACLE {
+	case model.ORACLE:
 		message += fmt.Sprintf("compartment Id %s, region %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
-	} else {
+	default:
 		message += fmt.Sprintf("account Id %s, region %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
 	}
 	return b.sendMessage(message)
 }
 
 func (b *BaseNotifier) HandleSchedule(msg model.ScheduleMessage) error {
+	if msg.Unchanged {
+		return nil
+	}
 	message := fmt.Sprintf("Update schedule %s: %s", msg.Action, msg.Schedule)
 	return b.sendMessage(message)
 }

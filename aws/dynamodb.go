@@ -72,8 +72,7 @@ func DeleteDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName st
 		TableName: aws.String(tableName),
 	})
 	if err != nil {
-		var resourceError *types.ResourceNotFoundException
-		if errors.As(err, &resourceError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil
 		}
 		return err
@@ -86,8 +85,7 @@ func GetDynamoDBTable(ctx context.Context, awsConfig aws.Config, tableName strin
 	dynamodbClient := dynamodb.NewFromConfig(awsConfig)
 	table, err := GetExistingDynamoDBTable(ctx, dynamodbClient, tableName)
 	if err != nil {
-		var resourceError *types.ResourceNotFoundException
-		if errors.As(err, &resourceError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil, nil
 		}
 		return nil, err

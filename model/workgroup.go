@@ -7,17 +7,17 @@ import (
 
 type SafeCounter struct {
 	wg    sync.WaitGroup
-	count int64
+	count atomic.Int64
 }
 
 func (sc *SafeCounter) Add(delta int) {
 	sc.wg.Add(delta)
-	atomic.AddInt64(&sc.count, int64(delta))
+	sc.count.Add(int64(delta))
 }
 
 func (sc *SafeCounter) Done() {
 	sc.wg.Done()
-	atomic.AddInt64(&sc.count, -1)
+	sc.count.Add(-1)
 }
 
 func (sc *SafeCounter) Wait() {
@@ -25,9 +25,9 @@ func (sc *SafeCounter) Wait() {
 }
 
 func (sc *SafeCounter) Count() int64 {
-	return atomic.LoadInt64(&sc.count)
+	return sc.count.Load()
 }
 
 func (sc *SafeCounter) HasCount() bool {
-	return atomic.LoadInt64(&sc.count) > 0
+	return sc.count.Load() > 0
 }

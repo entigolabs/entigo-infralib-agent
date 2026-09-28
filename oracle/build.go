@@ -169,12 +169,10 @@ func (d *DevOpsBuilder) ensureTopic(name string) (string, error) {
 	}
 	description := "Entigo infralib approval notifications"
 	created, err := d.onsClient.CreateTopic(d.ctx, ons.CreateTopicRequest{
-		CreateTopicDetails: ons.CreateTopicDetails{
-			Name:          &name,
-			CompartmentId: &d.compartmentId,
-			Description:   &description,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		Name:          &name,
+		CompartmentId: &d.compartmentId,
+		Description:   &description,
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create notification topic %s: %w", name, err)
@@ -195,13 +193,11 @@ func (d *DevOpsBuilder) ensureProject(name, topicId string) (string, error) {
 	}
 	description := "Entigo infralib DevOps-native execution (build pipelines + approval gate)"
 	created, err := d.client.CreateProject(d.ctx, devops.CreateProjectRequest{
-		CreateProjectDetails: devops.CreateProjectDetails{
-			Name:               &name,
-			CompartmentId:      &d.compartmentId,
-			Description:        &description,
-			NotificationConfig: &devops.NotificationConfig{TopicId: &topicId},
-			FreeformTags:       map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		Name:               &name,
+		CompartmentId:      &d.compartmentId,
+		Description:        &description,
+		NotificationConfig: &devops.NotificationConfig{TopicId: &topicId},
+		FreeformTags:       map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create devops project %s: %w", name, err)
@@ -232,14 +228,12 @@ func (d *DevOpsBuilder) ensureRepository(name string) (string, string, error) {
 	defaultBranch := buildSpecBranch
 	description := "Entigo infralib DevOps build specs"
 	created, err := d.client.CreateRepository(d.ctx, devops.CreateRepositoryRequest{
-		CreateRepositoryDetails: devops.CreateRepositoryDetails{
-			Name:           &name,
-			ProjectId:      &d.projectId,
-			RepositoryType: devops.RepositoryRepositoryTypeHosted,
-			DefaultBranch:  &defaultBranch,
-			Description:    &description,
-			FreeformTags:   map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		Name:           &name,
+		ProjectId:      &d.projectId,
+		RepositoryType: devops.RepositoryRepositoryTypeHosted,
+		DefaultBranch:  &defaultBranch,
+		Description:    &description,
+		FreeformTags:   map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create repository %s: %w", name, err)
@@ -266,12 +260,10 @@ func (d *DevOpsBuilder) launchBuildRun(displayName, specFile, image string, para
 		args = append(args, devops.BuildRunArgument{Name: &paramName, Value: &v})
 	}
 	response, err := d.client.CreateBuildRun(d.ctx, devops.CreateBuildRunRequest{
-		CreateBuildRunDetails: devops.CreateBuildRunDetails{
-			BuildPipelineId:   &pipelineId,
-			DisplayName:       &displayName,
-			BuildRunArguments: &devops.BuildRunArgumentCollection{Items: args},
-			FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		BuildPipelineId:   &pipelineId,
+		DisplayName:       &displayName,
+		BuildRunArguments: &devops.BuildRunArgumentCollection{Items: args},
+		FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create build run for %s: %w", displayName, err)
@@ -307,12 +299,10 @@ func (d *DevOpsBuilder) triggerBuildRun(displayName string, perRun map[string]st
 		args = append(args, devops.BuildRunArgument{Name: &paramName, Value: &v})
 	}
 	response, err := d.client.CreateBuildRun(d.ctx, devops.CreateBuildRunRequest{
-		CreateBuildRunDetails: devops.CreateBuildRunDetails{
-			BuildPipelineId:   &pipelineId,
-			DisplayName:       &displayName,
-			BuildRunArguments: &devops.BuildRunArgumentCollection{Items: args},
-			FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		BuildPipelineId:   &pipelineId,
+		DisplayName:       &displayName,
+		BuildRunArguments: &devops.BuildRunArgumentCollection{Items: args},
+		FreeformTags:      map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create build run for %s: %w", displayName, err)
@@ -390,13 +380,11 @@ func (d *DevOpsBuilder) getOrCreatePipeline(name string, params []devops.BuildPi
 	var created devops.CreateBuildPipelineResponse
 	err = d.withConflictRetry(fmt.Sprintf("create build pipeline %s", name), func() error {
 		created, err = d.client.CreateBuildPipeline(d.ctx, devops.CreateBuildPipelineRequest{
-			CreateBuildPipelineDetails: devops.CreateBuildPipelineDetails{
-				ProjectId:               &d.projectId,
-				DisplayName:             &name,
-				Description:             &description,
-				BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
-				FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-			},
+			ProjectId:               &d.projectId,
+			DisplayName:             &name,
+			Description:             &description,
+			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
+			FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		})
 		return err
 	})
@@ -432,11 +420,9 @@ func (d *DevOpsBuilder) withConflictRetry(desc string, op func() error) error {
 func (d *DevOpsBuilder) updatePipeline(id string, params []devops.BuildPipelineParameter) error {
 	err := d.withConflictRetry(fmt.Sprintf("update build pipeline %s", id), func() error {
 		_, err := d.client.UpdateBuildPipeline(d.ctx, devops.UpdateBuildPipelineRequest{
-			BuildPipelineId: &id,
-			UpdateBuildPipelineDetails: devops.UpdateBuildPipelineDetails{
-				BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
-				FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-			},
+			BuildPipelineId:         &id,
+			BuildPipelineParameters: &devops.BuildPipelineParameterCollection{Items: params},
+			FreeformTags:            map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		})
 		return err
 	})

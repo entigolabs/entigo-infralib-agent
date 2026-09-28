@@ -90,6 +90,7 @@ type Resources interface {
 	GetBackendConfigVars(string) map[string]string
 	GetRegion() string
 	GetAccount() string
+	GetOrganizationId() string
 	GetVaultId() (string, error)
 }
 
@@ -153,15 +154,16 @@ type BackendEnvProvider interface {
 }
 
 type CloudResources struct {
-	ProviderType ProviderType
-	Bucket       Bucket
-	Pipeline     Pipeline
-	CodeBuild    Builder
-	SSM          SSM
-	CloudPrefix  string
-	BucketName   string
-	Region       string
-	Account      string
+	ProviderType   ProviderType
+	Bucket         Bucket
+	Pipeline       Pipeline
+	CodeBuild      Builder
+	SSM            SSM
+	CloudPrefix    string
+	BucketName     string
+	Region         string
+	Account        string
+	OrganizationId string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -198,6 +200,10 @@ func (c CloudResources) GetRegion() string {
 
 func (c CloudResources) GetAccount() string {
 	return c.Account
+}
+
+func (c CloudResources) GetOrganizationId() string {
+	return c.OrganizationId
 }
 
 func (c CloudResources) GetVaultId() (string, error) {
@@ -254,8 +260,8 @@ func GetDestroyCommands(stepType StepType) (ActionCommand, ActionCommand) {
 
 type TFOutput struct {
 	Sensitive bool
-	Type      interface{}
-	Value     interface{}
+	Type      any
+	Value     any
 }
 
 type Parameter struct {

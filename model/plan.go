@@ -41,7 +41,7 @@ type PlanResource struct {
 	Mode          string          `json:"mode"`
 	Type          string          `json:"type"`
 	Name          string          `json:"name"`
-	Index         interface{}     `json:"index,omitempty"`
+	Index         any             `json:"index,omitempty"`
 	ProviderName  string          `json:"provider_name"`
 	SchemaVersion int             `json:"schema_version"`
 	Values        json.RawMessage `json:"values"`
@@ -51,15 +51,15 @@ type PlanResource struct {
 // arrays. ModuleAddress is set for resources nested inside a module call;
 // PreviousAddress is set when the resource was moved.
 type ResourceChange struct {
-	Address         string      `json:"address"`
-	ModuleAddress   string      `json:"module_address,omitempty"`
-	PreviousAddress string      `json:"previous_address,omitempty"`
-	Mode            string      `json:"mode"`
-	Type            string      `json:"type"`
-	Name            string      `json:"name"`
-	Index           interface{} `json:"index,omitempty"`
-	ProviderName    string      `json:"provider_name"`
-	Change          Change      `json:"change"`
+	Address         string `json:"address"`
+	ModuleAddress   string `json:"module_address,omitempty"`
+	PreviousAddress string `json:"previous_address,omitempty"`
+	Mode            string `json:"mode"`
+	Type            string `json:"type"`
+	Name            string `json:"name"`
+	Index           any    `json:"index,omitempty"`
+	ProviderName    string `json:"provider_name"`
+	Change          Change `json:"change"`
 }
 
 // Change describes how a single resource will be modified. Actions is the
@@ -98,15 +98,15 @@ type ChangedValue struct {
 	DataType       string            `json:"data_type"`
 	Description    string            `json:"description"`
 	ID             string            `json:"id"`
-	InsecureValue  interface{}       `json:"insecure_value"`
+	InsecureValue  any               `json:"insecure_value"`
 	KeyID          string            `json:"key_id"`
 	Name           string            `json:"name"`
-	Overwrite      interface{}       `json:"overwrite"`
+	Overwrite      any               `json:"overwrite"`
 	Tags           map[string]string `json:"tags"`
 	TagsAll        map[string]string `json:"tags_all"`
 	Tier           string            `json:"tier"`
 	Type           string            `json:"type"`
-	Value          interface{}       `json:"value"`
+	Value          any               `json:"value"`
 	Version        int               `json:"version"`
 }
 

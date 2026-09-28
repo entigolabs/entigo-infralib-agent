@@ -150,8 +150,7 @@ func (d *deleter) Destroy() error {
 			err = d.resources.GetPipeline().StartDestroyExecution(projectName, step)
 		}
 		if err != nil {
-			var notFoundErr model.NotFoundError
-			if errors.As(err, &notFoundErr) {
+			if notFoundErr, ok := errors.AsType[model.NotFoundError](err); ok {
 				slog.Warn(common.PrefixWarning(fmt.Sprintf("Step %s %s, skipping", step.Name, notFoundErr.Error())))
 				continue
 			}

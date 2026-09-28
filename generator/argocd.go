@@ -69,11 +69,12 @@ func getBaseApplicationFile() []byte {
 func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte) []byte {
 	file := string(bytes)
 	var cloudProvider string
-	if a.provider == model.GCLOUD {
+	switch a.provider {
+	case model.GCLOUD:
 		cloudProvider = "google"
-	} else if a.provider == model.ORACLE {
+	case model.ORACLE:
 		cloudProvider = "oracle"
-	} else {
+	default:
 		cloudProvider = "aws"
 	}
 	url := source
@@ -111,7 +112,7 @@ func getValuesString(file string, bytes []byte, values []byte) string {
 	return strings.Join(replaceLines, "\n")
 }
 
-func getModuleApplicationFile(storage model.Storage, release, moduleSource string) (map[string]interface{}, error) {
+func getModuleApplicationFile(storage model.Storage, release, moduleSource string) (map[string]any, error) {
 	bytes, err := storage.GetFile(fmt.Sprintf("modules/k8s/%s/argo-apps.yaml", moduleSource), release)
 	if err != nil {
 		if _, ok := errors.AsType[model.NotFoundError](err); ok {
@@ -122,7 +123,7 @@ func getModuleApplicationFile(storage model.Storage, release, moduleSource strin
 	return util.YamlBytesToMap(bytes)
 }
 
-func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte, error) {
+func mergeAppFiles(baseBytes []byte, moduleFile map[string]any) ([]byte, error) {
 	if moduleFile == nil {
 		return baseBytes, nil
 	}
@@ -140,19 +141,19 @@ func mergeAppFiles(baseBytes []byte, moduleFile map[string]interface{}) ([]byte,
 	return util.MapToYamlBytes(baseFile)
 }
 
-func mergeFirstSource(base, module map[string]interface{}) error {
-	baseSpec, _ := base["spec"].(map[string]interface{})
-	modSpec, _ := module["spec"].(map[string]interface{})
+func mergeFirstSource(base, module map[string]any) error {
+	baseSpec, _ := base["spec"].(map[string]any)
+	modSpec, _ := module["spec"].(map[string]any)
 	if baseSpec == nil || modSpec == nil {
 		return nil
 	}
-	baseSources, _ := baseSpec["sources"].([]interface{})
-	modSources, _ := modSpec["sources"].([]interface{})
+	baseSources, _ := baseSpec["sources"].([]any)
+	modSources, _ := modSpec["sources"].([]any)
 	if len(baseSources) == 0 || len(modSources) == 0 {
 		return nil
 	}
-	baseSrc, ok1 := baseSources[0].(map[string]interface{})
-	modSrc, ok2 := modSources[0].(map[string]interface{})
+	baseSrc, ok1 := baseSources[0].(map[string]any)
+	modSrc, ok2 := modSources[0].(map[string]any)
 	if !ok1 || !ok2 {
 		return nil
 	}
@@ -164,12 +165,12 @@ func mergeFirstSource(base, module map[string]interface{}) error {
 	return nil
 }
 
-func deduplicateSyncOptions(app map[string]interface{}) {
-	spec, ok := app["spec"].(map[string]interface{})
+func deduplicateSyncOptions(app map[string]any) {
+	spec, ok := app["spec"].(map[string]any)
 	if !ok {
 		return
 	}
-	policy, ok := spec["syncPolicy"].(map[string]interface{})
+	policy, ok := spec["syncPolicy"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -177,7 +178,7 @@ func deduplicateSyncOptions(app map[string]interface{}) {
 	if !ok {
 		return
 	}
-	optionsSlice, ok := optionsRaw.([]interface{})
+	optionsSlice, ok := optionsRaw.([]any)
 	if !ok {
 		return
 	}

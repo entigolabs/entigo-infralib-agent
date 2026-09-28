@@ -49,9 +49,9 @@ type PolicyDocument struct {
 type PolicyStatement struct {
 	Sid       string `json:",omitempty"`
 	Effect    string
-	Action    interface{}
-	Principal interface{}      `json:",omitempty"`
-	Resource  interface{}      `json:",omitempty"`
+	Action    any
+	Principal any              `json:",omitempty"`
+	Resource  any              `json:",omitempty"`
 	Condition *PolicyCondition `json:",omitempty"`
 }
 
@@ -87,8 +87,7 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*ty
 		}},
 	})
 	if err != nil {
-		var awsError *types.EntityAlreadyExistsException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.EntityAlreadyExistsException](err); ok {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to create role %s: %s", roleName, err)
@@ -100,8 +99,7 @@ func (i *identity) CreateRole(roleName string, statement []PolicyStatement) (*ty
 func (i *identity) GetRole(roleName string) (*types.Role, error) {
 	role, err := i.iamClient.GetRole(i.ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get role %s: %s", roleName, err)
@@ -123,8 +121,7 @@ func (i *identity) CreatePolicy(policyName string, statement []PolicyStatement) 
 		}},
 	})
 	if err != nil {
-		var awsError *types.EntityAlreadyExistsException
-		if !errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.EntityAlreadyExistsException](err); !ok {
 			return nil, fmt.Errorf("failed to create policy %s: %s", policyName, err)
 		}
 		return &types.Policy{Arn: aws.String(fmt.Sprintf(policyArnFormat, i.accountId, policyName))}, nil
@@ -138,8 +135,7 @@ func (i *identity) GetPolicy(policyName string) (*types.Policy, error) {
 		PolicyArn: aws.String(fmt.Sprintf(policyArnFormat, i.accountId, policyName)),
 	})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil, nil
 		}
 		return nil, err
@@ -254,7 +250,7 @@ func canAssumeRole(policy, targetPrincipal string) (bool, error) {
 	return false, nil
 }
 
-func extractAWSPrincipals(raw interface{}) model.Set[string] {
+func extractAWSPrincipals(raw any) model.Set[string] {
 	if raw == nil {
 		return nil
 	}
@@ -263,7 +259,7 @@ func extractAWSPrincipals(raw interface{}) model.Set[string] {
 	case string:
 		return model.NewSet(p)
 
-	case map[string]interface{}:
+	case map[string]any:
 		awsVal, ok := p["AWS"]
 		if !ok {
 			return nil
@@ -272,7 +268,7 @@ func extractAWSPrincipals(raw interface{}) model.Set[string] {
 		switch val := awsVal.(type) {
 		case string:
 			return model.NewSet(val)
-		case []interface{}:
+		case []any:
 			arns := model.NewSet[string]()
 			for _, entry := range val {
 				if str, ok := entry.(string); ok {
@@ -299,8 +295,7 @@ func (i *identity) DeleteRolePolicyAttachment(policyArn string, roleName string)
 		RoleName:  aws.String(roleName),
 	})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 	}
@@ -311,8 +306,7 @@ func (i *identity) DeleteRolePolicyAttachments(roleName string) error {
 	policies, err := i.iamClient.ListAttachedRolePolicies(i.ctx,
 		&iam.ListAttachedRolePoliciesInput{RoleName: aws.String(roleName)})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 		return err
@@ -323,8 +317,7 @@ func (i *identity) DeleteRolePolicyAttachments(roleName string) error {
 			RoleName:  aws.String(roleName),
 		})
 		if err != nil {
-			var awsError *types.NoSuchEntityException
-			if errors.As(err, &awsError) {
+			if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 				continue
 			}
 			return err
@@ -337,8 +330,7 @@ func (i *identity) DeletePolicy(policyName string, accountId string) error {
 	policyArn := fmt.Sprintf(policyArnFormat, accountId, policyName)
 	_, err := i.iamClient.DeletePolicy(i.ctx, &iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 		return err
@@ -350,8 +342,7 @@ func (i *identity) DeletePolicy(policyName string, accountId string) error {
 func (i *identity) DeleteRole(roleName string) error {
 	_, err := i.iamClient.DeleteRole(i.ctx, &iam.DeleteRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 		return err
@@ -382,8 +373,7 @@ func (i *identity) deleteOldestPolicyVersion(policyArn string, versions []types.
 func (i *identity) GetUser(username string) (*types.User, error) {
 	user, err := i.iamClient.GetUser(i.ctx, &iam.GetUserInput{UserName: aws.String(username)})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user %s: %s", username, err)
@@ -400,8 +390,7 @@ func (i *identity) CreateUser(username string) (*types.User, error) {
 		}},
 	})
 	if err != nil {
-		var awsError *types.EntityAlreadyExistsException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.EntityAlreadyExistsException](err); ok {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to create user %s: %v", username, err)
@@ -413,8 +402,7 @@ func (i *identity) CreateUser(username string) (*types.User, error) {
 func (i *identity) DeleteUser(userName string) error {
 	_, err := i.iamClient.DeleteUser(i.ctx, &iam.DeleteUserInput{UserName: aws.String(userName)})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 		return err
@@ -440,8 +428,7 @@ func (i *identity) DetachUserPolicy(policyArn string, userName string) error {
 		UserName:  aws.String(userName),
 	})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 		return err
@@ -463,8 +450,7 @@ func (i *identity) DeleteAccessKeys(userName string) error {
 		UserName: aws.String(userName),
 	})
 	if err != nil {
-		var awsError *types.NoSuchEntityException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 			return nil
 		}
 		return fmt.Errorf("failed to list access keys for user %s: %w", userName, err)
@@ -475,8 +461,7 @@ func (i *identity) DeleteAccessKeys(userName string) error {
 			UserName:    aws.String(userName),
 		})
 		if err != nil {
-			var awsError *types.NoSuchEntityException
-			if errors.As(err, &awsError) {
+			if _, ok := errors.AsType[*types.NoSuchEntityException](err); ok {
 				continue
 			}
 			return err
@@ -646,6 +631,7 @@ func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipel
 			Resource: []string{"*"},
 			Action: []string{
 				"sts:GetCallerIdentity",
+				"organizations:DescribeOrganization",
 			},
 		},
 		{

@@ -1368,7 +1368,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 		}
 		inputs := module.Inputs
 		if len(inputs) == 0 {
-			inputs = make(map[string]interface{})
+			inputs = make(map[string]any)
 		}
 		prefix := fmt.Sprintf("%s-%s-%s", u.resources.GetCloudPrefix(), step.Name, module.Name)
 		err := util.SetChildStringValue(inputs, prefix, false, "global", "prefix")
@@ -1390,7 +1390,7 @@ func (u *updater) updateArgoCDFiles(step model.Step, moduleVersions map[string]m
 	return executePipeline, files, err
 }
 
-func getModuleInputBytes(inputs map[string]interface{}) ([]byte, error) {
+func getModuleInputBytes(inputs map[string]any) ([]byte, error) {
 	if len(inputs) == 0 {
 		return []byte{}, nil
 	}
@@ -1558,7 +1558,7 @@ func (u *updater) getProxyRegistry(source string) (string, error) {
 	if val, ok := u.proxyRegistries.Load(source); ok {
 		return val.(string), nil
 	}
-	registry, err, _ := u.proxyGroup.Do(source, func() (interface{}, error) {
+	registry, err, _ := u.proxyGroup.Do(source, func() (any, error) {
 		if val, ok := u.proxyRegistries.Load(source); ok {
 			return val.(string), nil
 		}
@@ -1684,8 +1684,8 @@ func ociRegistryKind(source string) string {
 
 func ociHost(ref string) string {
 	trimmed := util.TrimOCIScheme(ref)
-	if i := strings.IndexByte(trimmed, '/'); i != -1 {
-		return trimmed[:i]
+	if before, _, ok := strings.Cut(trimmed, "/"); ok {
+		return before
 	}
 	return trimmed
 }
@@ -1737,7 +1737,7 @@ func (u *updater) verifyIndexSignature(source *model.Source, release string) err
 	if _, ok := u.verified.Load(image); ok {
 		return nil
 	}
-	_, err, _ = u.verifyGroup.Do(image, func() (interface{}, error) {
+	_, err, _ = u.verifyGroup.Do(image, func() (any, error) {
 		if _, ok := u.verified.Load(image); ok {
 			return nil, nil
 		}
@@ -1758,7 +1758,7 @@ func (u *updater) getModuleManifest(sourceKey model.SourceKey, release string) (
 	if val, ok := u.manifests.Load(cacheKey); ok {
 		return val.(map[string]model.OCIManifestModule), nil
 	}
-	result, err, _ := u.manifestGroup.Do(cacheKey, func() (interface{}, error) {
+	result, err, _ := u.manifestGroup.Do(cacheKey, func() (any, error) {
 		if val, ok := u.manifests.Load(cacheKey); ok {
 			return val, nil
 		}
@@ -2059,7 +2059,7 @@ func (u *updater) processModules(step model.Step, moduleVersions map[string]mode
 	return step, nil
 }
 
-func (u *updater) getModuleInputs(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
+func (u *updater) getModuleInputs(module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]any, error) {
 	filePath := fmt.Sprintf("modules/%s/agent_input.yaml", moduleSource)
 	defaultInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
@@ -2092,16 +2092,15 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 	return replaceModuleValues(module, inputs)
 }
 
-func (u *updater) getModuleFileMapValues(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]interface{}, error) {
+func (u *updater) getModuleFileMapValues(filePath string, moduleSource *model.Source, moduleVersion string) (map[string]any, error) {
 	defaultInputsRaw, err := moduleSource.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
-		var fileError model.NotFoundError
-		if errors.As(err, &fileError) {
+		if _, ok := errors.AsType[model.NotFoundError](err); ok {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get module file %s: %w", filePath, err)
 	}
-	var defaultInputs map[string]interface{}
+	var defaultInputs map[string]any
 	err = yaml.Unmarshal(defaultInputsRaw, &defaultInputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal default inputs: %w", err)
@@ -2116,8 +2115,7 @@ func (u *updater) getModuleMetadata(module model.Module, moduleSource string, so
 	filePath := fmt.Sprintf("modules/%s/agent.yaml", moduleSource)
 	metadataRaw, err := source.Storage.GetFile(filePath, moduleVersion)
 	if err != nil {
-		var fileError model.NotFoundError
-		if errors.As(err, &fileError) {
+		if _, ok := errors.AsType[model.NotFoundError](err); ok {
 			slog.Debug(fmt.Sprintf("Module %s agent file not found", module.Name))
 			return nil, nil
 		}
@@ -2135,7 +2133,7 @@ func (u *updater) getModuleMetadata(module model.Module, moduleSource string, so
 	}
 }
 
-func (u *updater) getModuleValues(stepType model.StepType, module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]interface{}, error) {
+func (u *updater) getModuleValues(stepType model.StepType, module model.Module, moduleSource string, source *model.Source, moduleVersion string) (map[string]any, error) {
 	if stepType != model.StepTypeArgoCD {
 		return nil, nil
 	}
@@ -2169,7 +2167,7 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 	return values, nil
 }
 
-func mergeMaps(baseInputs map[string]interface{}, patchInputs map[string]interface{}) (map[string]interface{}, error) {
+func mergeMaps(baseInputs map[string]any, patchInputs map[string]any) (map[string]any, error) {
 	if baseInputs != nil && patchInputs == nil {
 		return baseInputs, nil
 	} else if baseInputs == nil && patchInputs != nil {

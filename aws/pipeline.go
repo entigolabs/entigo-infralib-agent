@@ -393,17 +393,6 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
 }
 
-func (p *Pipeline) disableDestroyTransitions(pipelineName string) error {
-	reason := "Disable pipeline transition to prevent accidental destruction of infrastructure"
-	for _, stage := range []string{destroyName, approveStageName, applyDestroyName} {
-		err := p.disableStageTransition(pipelineName, stage, reason)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
 	updatePipeline := fmt.Sprintf("%s-%s", projectName, common.UpdateCommand)
 	pipe, err := p.getPipeline(updatePipeline)
@@ -724,8 +713,7 @@ func (p *Pipeline) waitPipelineExecutionStart(pipelineName string, executionId *
 			if err == nil {
 				return nil
 			}
-			var notFoundError *types.PipelineExecutionNotFoundException
-			if errors.As(err, &notFoundError) {
+			if _, ok := errors.AsType[*types.PipelineExecutionNotFoundException](err); ok {
 				continue
 			}
 			return err
@@ -1015,8 +1003,7 @@ func (p *Pipeline) getPipeline(pipelineName string) (*types.PipelineDeclaration,
 		Name: aws.String(pipelineName),
 	})
 	if err != nil {
-		var awsError *types.PipelineNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.PipelineNotFoundException](err); ok {
 			return nil, nil
 		}
 		return nil, err

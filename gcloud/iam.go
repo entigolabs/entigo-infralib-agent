@@ -302,7 +302,7 @@ func (iam *IAM) tryGrantImpersonation(serviceAccountName, principal string) erro
 func retry(execute func() error) error {
 	maxRetries := 6
 	var lastErr error
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		err := execute()
 		if err == nil {
 			return nil

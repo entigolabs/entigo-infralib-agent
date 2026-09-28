@@ -42,8 +42,7 @@ func (c *cloudWatch) GetLogGroup(logGroupName string) (string, error) {
 		LogGroupNamePrefix: aws.String(logGroupName),
 	})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return "", nil
 		}
 		return "", err
@@ -62,8 +61,7 @@ func (c *cloudWatch) CreateLogGroup(logGroupName string) (string, error) {
 		Tags:         map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
-		var awsError *types.ResourceAlreadyExistsException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceAlreadyExistsException](err); ok {
 			return c.getLogGroup(logGroupName)
 		}
 		return "", err
@@ -107,8 +105,7 @@ func (c *cloudWatch) LogStreamExists(logGroupName string, logStreamName string) 
 		LogStreamNamePrefix: aws.String(logStreamName),
 	})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return false, nil
 		}
 		return false, err
@@ -122,8 +119,7 @@ func (c *cloudWatch) CreateLogStream(logGroupName string, logStreamName string) 
 		LogStreamName: aws.String(logStreamName),
 	})
 	if err != nil {
-		var awsError *types.ResourceAlreadyExistsException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceAlreadyExistsException](err); ok {
 			return nil
 		}
 		return err
@@ -160,8 +156,7 @@ func (c *cloudWatch) DeleteLogGroup(logGroupName string) error {
 		LogGroupName: aws.String(logGroupName),
 	})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil
 		}
 		return err
@@ -176,8 +171,7 @@ func (c *cloudWatch) DeleteLogStream(logGroupName, logStreamName string) error {
 		LogStreamName: aws.String(logStreamName),
 	})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil
 		}
 		return err

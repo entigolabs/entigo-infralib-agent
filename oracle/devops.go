@@ -138,13 +138,11 @@ func (g *Gate) ensurePipeline(projectId, displayName string) (string, error) {
 	}
 	description := "Pauses at a manual approval stage; approving applies the step's planned changes"
 	created, err := g.client.CreateDeployPipeline(g.ctx, devops.CreateDeployPipelineRequest{
-		CreateDeployPipelineDetails: devops.CreateDeployPipelineDetails{
-			ProjectId:   &projectId,
-			DisplayName: &displayName,
-			Description: &description,
-			FreeformTags: map[string]string{
-				model.ResourceTagKey: model.ResourceTagValue,
-			},
+		ProjectId:   &projectId,
+		DisplayName: &displayName,
+		Description: &description,
+		FreeformTags: map[string]string{
+			model.ResourceTagKey: model.ResourceTagValue,
 		},
 	})
 	if err != nil {

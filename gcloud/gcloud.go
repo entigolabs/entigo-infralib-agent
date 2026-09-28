@@ -7,24 +7,27 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/option"
 )
 
 type gcloudService struct {
-	ctx         context.Context
-	cloudPrefix string
-	projectId   string
-	location    string
-	zone        string
-	resources   Resources
-	pipeline    common.Pipeline
-	skipDelay   bool
-	options     []option.ClientOption
+	ctx            context.Context
+	cloudPrefix    string
+	projectId      string
+	organizationId *string
+	location       string
+	zone           string
+	resources      Resources
+	pipeline       common.Pipeline
+	skipDelay      bool
+	options        []option.ClientOption
 }
 
 type Resources struct {
@@ -86,9 +89,13 @@ func validateServiceAccountJSON(credJSON []byte) error {
 }
 
 func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
-	err := g.enableApiServices([]string{"secretmanager.googleapis.com"})
+	err := g.enableApiServices([]string{"secretmanager.googleapis.com", "cloudresourcemanager.googleapis.com"})
 	if err != nil {
 		return nil, err
+	}
+	organizationId, err := g.getOrganizationId()
+	if err != nil {
+		slog.Warn(fmt.Sprintf("failed to get organizationId: %v", err))
 	}
 	bucket := g.getBucketName()
 	storage, err := NewStorage(g.ctx, g.options, g.projectId, g.location, bucket)
@@ -104,15 +111,14 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
 	return Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.GCLOUD,
-			Bucket:       storage,
-			SSM:          sm,
-			BucketName:   bucket,
-			CloudPrefix:  g.cloudPrefix,
-			Region:       g.location,
-			Account:      g.projectId,
-		},
+		ProviderType:   model.GCLOUD,
+		Bucket:         storage,
+		SSM:            sm,
+		BucketName:     bucket,
+		CloudPrefix:    g.cloudPrefix,
+		Region:         g.location,
+		Account:        g.projectId,
+		OrganizationId: organizationId,
 	}, nil
 }
 
@@ -122,6 +128,10 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 		"clouddeploy.googleapis.com", "certificatemanager.googleapis.com", "cloudscheduler.googleapis.com"})
 	if err != nil {
 		return nil, err
+	}
+	organizationId, err := g.getOrganizationId()
+	if err != nil {
+		slog.Warn(fmt.Sprintf("failed to get organizationId: %v", err))
 	}
 	bucket := g.getBucketName()
 	storage, err := NewStorage(g.ctx, g.options, g.projectId, g.location, bucket)
@@ -137,15 +147,14 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
 	resources := Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.GCLOUD,
-			Bucket:       storage,
-			SSM:          sm,
-			BucketName:   bucket,
-			CloudPrefix:  g.cloudPrefix,
-			Region:       g.location,
-			Account:      g.projectId,
-		},
+		ProviderType:   model.GCLOUD,
+		Bucket:         storage,
+		SSM:            sm,
+		BucketName:     bucket,
+		CloudPrefix:    g.cloudPrefix,
+		Region:         g.location,
+		Account:        g.projectId,
+		OrganizationId: organizationId,
 	}
 	if g.pipeline.Type == string(common.PipelineTypeLocal) {
 		return resources, nil
@@ -181,6 +190,10 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 }
 
 func (g *gcloudService) GetResources() (model.Resources, error) {
+	organizationId, err := g.getOrganizationId()
+	if err != nil {
+		slog.Warn(fmt.Sprintf("failed to get organizationId: %v", err))
+	}
 	bucket := g.getBucketName()
 	codeStorage, err := NewStorage(g.ctx, g.options, g.projectId, g.location, bucket)
 	if err != nil {
@@ -199,17 +212,16 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 		return nil, fmt.Errorf("failed to create secret manager: %s", err)
 	}
 	g.resources = Resources{
-		CloudResources: model.CloudResources{
-			ProviderType: model.GCLOUD,
-			Bucket:       codeStorage,
-			CodeBuild:    builder,
-			Pipeline:     pipeline,
-			CloudPrefix:  g.cloudPrefix,
-			BucketName:   bucket,
-			SSM:          sm,
-			Region:       g.location,
-			Account:      g.projectId,
-		},
+		ProviderType:   model.GCLOUD,
+		Bucket:         codeStorage,
+		CodeBuild:      builder,
+		Pipeline:       pipeline,
+		CloudPrefix:    g.cloudPrefix,
+		BucketName:     bucket,
+		SSM:            sm,
+		Region:         g.location,
+		Account:        g.projectId,
+		OrganizationId: organizationId,
 	}
 	return g.resources, nil
 }
@@ -336,6 +348,7 @@ func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount s
 			}
 			return err
 		}
+		manager.ScheduleUnchanged(common.UpdateCommand, model.ScheduleRemoved, schedule.UpdateCron)
 		return nil
 	}
 	agentJob := model.GetAgentProjectName(model.GetAgentPrefix(g.cloudPrefix), common.UpdateCommand)
@@ -349,8 +362,34 @@ func (g *gcloudService) createSchedule(schedule model.Schedule, serviceAccount s
 		if err == nil {
 			manager.Schedule(common.UpdateCommand, model.ScheduleModified, schedule.UpdateCron)
 		}
+	} else {
+		manager.ScheduleUnchanged(common.UpdateCommand, model.ScheduleAdded, schedule.UpdateCron)
 	}
 	return err
+}
+
+// getOrganizationId returns an empty id when the project doesn't belong to an organization.
+func (g *gcloudService) getOrganizationId() (string, error) {
+	if g.organizationId != nil {
+		return *g.organizationId, nil
+	}
+	resourceManager, err := cloudresourcemanager.NewService(g.ctx, g.options...)
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize Cloud Resource Manager service: %w", err)
+	}
+	ancestry, err := resourceManager.Projects.GetAncestry(g.projectId, &cloudresourcemanager.GetAncestryRequest{}).Context(g.ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("failed to get project %s ancestry: %w", g.projectId, err)
+	}
+	organizationId := ""
+	for _, ancestor := range ancestry.Ancestor {
+		if ancestor.ResourceId != nil && ancestor.ResourceId.Type == "organization" {
+			organizationId = ancestor.ResourceId.Id
+			break
+		}
+	}
+	g.organizationId = &organizationId
+	return organizationId, nil
 }
 
 func (g *gcloudService) getBucketName() string {
@@ -463,12 +502,7 @@ func removeKeysIfNeeded(iam *IAM, accountName string, remove bool) error {
 }
 
 func containsPrincipal(principals []string, target string) bool {
-	for _, p := range principals {
-		if p == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(principals, target)
 }
 
 func (g *gcloudService) DeleteServiceAccount(iam *IAM) {

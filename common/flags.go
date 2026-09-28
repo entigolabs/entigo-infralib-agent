@@ -120,7 +120,7 @@ type BoolPtrFlag struct {
 	Value *bool
 }
 
-func (b *BoolPtrFlag) Get() interface{} {
+func (b *BoolPtrFlag) Get() any {
 	return b.Value
 }
 

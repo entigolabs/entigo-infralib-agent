@@ -55,9 +55,10 @@ const (
 )
 
 type ScheduleMessage struct {
-	Command  common.Command
-	Action   ScheduleAction
-	Schedule string
+	Command   common.Command
+	Action    ScheduleAction
+	Schedule  string
+	Unchanged bool
 }
 
 func (m ScheduleMessage) Type() MessageType {

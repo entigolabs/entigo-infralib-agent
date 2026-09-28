@@ -148,7 +148,7 @@ func validateStepFile(file string, content []byte) error {
 			return fmt.Errorf("failed to parse hcl file %s: %v", file, diags.Errs())
 		}
 	} else if strings.HasSuffix(file, ".yaml") || strings.HasSuffix(file, ".yml") {
-		var yamlContent map[string]interface{}
+		var yamlContent map[string]any
 		err := yaml.Unmarshal(content, &yamlContent)
 		if err != nil {
 			slog.Debug(fmt.Sprintf("broken yaml %s:\n%s", file, string(content)))
@@ -197,8 +197,8 @@ func (u *updater) replaceStringValues(step model.Step, content string, index int
 		content = strings.Replace(content, replaceTag, replacement, 1)
 		if strings.HasPrefix(replacement, "module.") {
 			content = replaceQuotedOnce(content, replacement, replacement)
-		} else if strings.HasPrefix(replacement, inputPrefix) {
-			content = replaceQuotedOnce(content, replacement, strings.TrimPrefix(replacement, inputPrefix))
+		} else if after, ok := strings.CutPrefix(replacement, inputPrefix); ok {
+			content = replaceQuotedOnce(content, replacement, after)
 		}
 	}
 	return content, delayedKeyTypes, nil
@@ -390,6 +390,8 @@ func (u *updater) getReplacementAgentValue(key string, index int) (string, error
 		return moduleVersion, err
 	} else if parts[0] == string(model.AgentReplaceTypeAccountId) {
 		return u.resources.GetAccount(), nil
+	} else if parts[0] == string(model.AgentReplaceTypeOrganizationId) {
+		return u.resources.GetOrganizationId(), nil
 	} else if parts[0] == string(model.AgentReplaceTypeRegion) {
 		return u.resources.GetRegion(), nil
 	} else if parts[0] == string(model.AgentReplaceTypeVaultId) {
@@ -483,7 +485,7 @@ func getOutputValue(output model.TFOutput, replaceKey string, match []string) (s
 			return "", fmt.Errorf("output %s is not a list, but an index was given", replaceKey)
 		}
 		return strings.Trim(util.GetStringValue(v), "\""), nil
-	case []interface{}:
+	case []any:
 		values := make([]string, 0)
 		for _, value := range v {
 			values = append(values, util.GetStringValue(value))
@@ -492,13 +494,13 @@ func getOutputValue(output model.TFOutput, replaceKey string, match []string) (s
 			return strings.Join(values, ","), nil
 		}
 		return getSSMParameterValueFromList(match, values, replaceKey, match[1])
-	case map[string]interface{}:
+	case map[string]any:
 		return getOutputMapValue(v, output, replaceKey, match)
 	}
 	return "", fmt.Errorf("unsupported type: %s", reflect.TypeOf(output.Value))
 }
 
-func getOutputMapValue(v map[string]interface{}, output model.TFOutput, replaceKey string, match []string) (string, error) {
+func getOutputMapValue(v map[string]any, output model.TFOutput, replaceKey string, match []string) (string, error) {
 	if match[3] != "" {
 		innerValue, found := v[match[3]]
 		if !found {
@@ -667,18 +669,19 @@ func getModuleValueReplacement(step model.Step, mapName, replaceKey string, opti
 		return "", fmt.Errorf("failed to find step %s module with type %s for module value key %s",
 			step.Name, parts[1], replaceKey)
 	}
-	var values map[string]interface{}
-	if mapName == "input" {
+	var values map[string]any
+	switch mapName {
+	case "input":
 		values = module.Inputs
-	} else if mapName == "value" {
+	case "value":
 		values = module.Values
-	} else {
+	default:
 		return "", fmt.Errorf("unknown module map name %s", mapName)
 	}
 	return getModuleMapValue(module.Name, mapName, values, replaceKey, 2)
 }
 
-func getModuleMapValue(name, mapName string, values map[string]interface{}, replaceKey string, firstIndex int) (string, error) {
+func getModuleMapValue(name, mapName string, values map[string]any, replaceKey string, firstIndex int) (string, error) {
 	parts := strings.Split(replaceKey, ".")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("failed to parse module %s key %s, got %d split parts instead of at least 2",
@@ -692,13 +695,13 @@ func getModuleMapValue(name, mapName string, values map[string]interface{}, repl
 
 	for i := firstIndex + 1; i < len(parts); i++ {
 		switch v := currentValue.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			currentValue = v[parts[i]]
 			if currentValue == nil {
 				slog.Debug(fmt.Sprintf("module %s %s %s key not found", name, mapName, replaceKey))
 				return "", nil
 			}
-		case []interface{}:
+		case []any:
 			index, err := strconv.Atoi(parts[i])
 			if err != nil {
 				return "", fmt.Errorf("invalid array index: %s", parts[i])
@@ -954,7 +957,7 @@ func replaceConfigCustomTags(ssm model.SSM, content string, matches [][]string) 
 }
 
 // This exists because current replace logic isn't aware of modules
-func replaceModuleValues(module model.Module, inputs map[string]interface{}) (map[string]interface{}, error) {
+func replaceModuleValues(module model.Module, inputs map[string]any) (map[string]any, error) {
 	if inputs == nil {
 		return nil, nil
 	}
@@ -1079,10 +1082,6 @@ func validateReplaceTag(replaceTag string, keyTypes []keyType) error {
 			if previous.ReplaceType == "" {
 				return fmt.Errorf("invalid replace tag %s: required can't be combined with a default value",
 					replaceTag)
-			}
-			if previous.ReplaceType == string(model.ReplaceTypeAgent) {
-				return fmt.Errorf("invalid replace tag %s: required can't be combined with %s", replaceTag,
-					model.ReplaceTypeAgent)
 			}
 		}
 	}

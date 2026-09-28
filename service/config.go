@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -502,12 +503,14 @@ func processStepVpcAttach(step *model.Step, providerType model.ProviderType) {
 }
 
 func getKubernetesClusterName(providerType model.ProviderType) string {
-	if providerType == model.GCLOUD {
+	switch providerType {
+	case model.GCLOUD:
 		return "{{ .toutput.gke.cluster_name }}"
-	} else if providerType == model.ORACLE {
+	case model.ORACLE:
 		return "{{ .toutput.oke.cluster_id }}"
+	default:
+		return "{{ .toutput.eks.cluster_name }}"
 	}
-	return "{{ .toutput.eks.cluster_name }}"
 }
 
 func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
@@ -873,8 +876,8 @@ func addNewSteps(config model.Config, state *model.State) {
 }
 
 func removeUnusedSteps(prefix string, config model.Config, state *model.State, bucket model.Bucket) {
-	for i := len(state.Steps) - 1; i >= 0; i-- {
-		stepState := state.Steps[i]
+	for i, stepState := range slices.Backward(state.Steps) {
+
 		stepFound := false
 		for _, step := range config.Steps {
 			if stepState.Name == step.Name {
@@ -893,8 +896,8 @@ func removeUnusedSteps(prefix string, config model.Config, state *model.State, b
 }
 
 func removeUnusedModules(step model.Step, stepState *model.StateStep, bucket model.Bucket) {
-	for i := len(stepState.Modules) - 1; i >= 0; i-- {
-		moduleState := stepState.Modules[i]
+	for i, moduleState := range slices.Backward(stepState.Modules) {
+
 		moduleFound := false
 		for _, module := range step.Modules {
 			if moduleState.Name == module.Name {

@@ -116,9 +116,7 @@ func (t *terraform) getProvidersAttributes(step model.Step, moduleVersions map[s
 		if err != nil {
 			return nil, err
 		}
-		for name, attribute := range providerAttributes {
-			providersAttributes[name] = attribute
-		}
+		maps.Copy(providersAttributes, providerAttributes)
 	}
 	return providersAttributes, nil
 }
@@ -197,8 +195,7 @@ func getRequiredProvidersBlock(file *hclwrite.File) (*hclwrite.Block, error) {
 func (t *terraform) getProviderBlocks(providerName string, sourceVersions map[model.SourceKey]string) ([]*hclwrite.Block, model.SourceKey) {
 	providerFile, providerSource, err := t.findProviderFile(providerPath, fmt.Sprintf("%s.tf", providerName), sourceVersions)
 	if err != nil {
-		var fileNotFoundError model.NotFoundError
-		if errors.As(err, &fileNotFoundError) {
+		if _, ok := errors.AsType[model.NotFoundError](err); ok {
 			slog.Debug(fmt.Sprintf("Provider file not found for %s\n", providerName))
 			return []*hclwrite.Block{}, providerSource
 		}
@@ -213,7 +210,7 @@ func (t *terraform) addProviderAttributes(baseBody *hclwrite.Body, providersBloc
 		providerInputs = t.provider.Inputs
 	}
 	if providerInputs == nil {
-		providerInputs = make(map[string]interface{})
+		providerInputs = make(map[string]any)
 	}
 	providers := make(map[string]model.SourceKey)
 	keys := make([]string, 0, len(providersAttributes))
@@ -331,9 +328,7 @@ func addAwsProviderDefaultTags(body *hclwrite.Body, defaultTags model.AwsDefault
 		for _, match := range matches {
 			tags[match[1]] = match[2]
 		}
-		for key, value := range defaultTags.Tags {
-			tags[key] = value
-		}
+		maps.Copy(tags, defaultTags.Tags)
 	}
 	pairs, err := util.CreateKeyValuePairs(tags, "{\n", "}")
 	if err != nil {
@@ -410,7 +405,7 @@ func addProviderBodyArray(body *hclwrite.Body, attributeName string, values []st
 	return nil
 }
 
-func addProviderInputs(providerInputs map[string]interface{}, providerBlock *hclwrite.Block) {
+func addProviderInputs(providerInputs map[string]any, providerBlock *hclwrite.Block) {
 	if providerBlock.Type() != "variable" {
 		return
 	}
@@ -465,7 +460,7 @@ func ociModuleSource(sourceURL, moduleSource, version string) string {
 	return fmt.Sprintf("%s/%s?tag=%s", sourceURL, moduleSource, util.NormalizeOCIVersion(version))
 }
 
-func addInputs(inputs map[string]interface{}, moduleBody *hclwrite.Body) {
+func addInputs(inputs map[string]any, moduleBody *hclwrite.Body) {
 	if inputs == nil {
 		return
 	}
@@ -504,8 +499,7 @@ func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, mod
 	filePath := fmt.Sprintf("modules/%s", moduleSource)
 	file, err := t.getTerraformFile(source, filePath, "outputs.tf", release)
 	if err != nil {
-		var fileError model.NotFoundError
-		if errors.As(err, &fileError) {
+		if _, ok := errors.AsType[model.NotFoundError](err); ok {
 			return nil
 		}
 		return err
@@ -524,7 +518,7 @@ func (t *terraform) addOutputs(body *hclwrite.Body, stepType model.StepType, mod
 	return nil
 }
 
-func getTokens(value interface{}) hclwrite.Tokens {
+func getTokens(value any) hclwrite.Tokens {
 	return getBytesTokens([]byte(fmt.Sprintf("%v", value)))
 }
 

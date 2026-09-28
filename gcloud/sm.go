@@ -62,8 +62,7 @@ func (s *sm) GetParameter(name string) (*model.Parameter, error) {
 func (s *sm) ParameterExists(name string) (bool, error) {
 	_, err := s.GetParameter(name)
 	if err != nil {
-		var notFoundErr *model.ParameterNotFoundError
-		if errors.As(err, &notFoundErr) {
+		if _, ok := errors.AsType[*model.ParameterNotFoundError](err); ok {
 			return false, nil
 		}
 		return false, err
@@ -74,8 +73,7 @@ func (s *sm) ParameterExists(name string) (bool, error) {
 func (s *sm) PutParameter(name string, value string) error {
 	param, err := s.GetParameter(name)
 	if err != nil {
-		var notFoundErr *model.ParameterNotFoundError
-		if !errors.As(err, &notFoundErr) {
+		if _, ok := errors.AsType[*model.ParameterNotFoundError](err); !ok {
 			return err
 		}
 	}

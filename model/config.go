@@ -158,9 +158,9 @@ type VPC struct {
 }
 
 type Provider struct {
-	Inputs     map[string]interface{} `yaml:"inputs,omitempty"`
-	Aws        AwsProvider            `yaml:"aws,omitempty"`
-	Kubernetes KubernetesProvider     `yaml:"kubernetes,omitempty"`
+	Inputs     map[string]any     `yaml:"inputs,omitempty"`
+	Aws        AwsProvider        `yaml:"aws,omitempty"`
+	Kubernetes KubernetesProvider `yaml:"kubernetes,omitempty"`
 }
 
 type AwsProvider struct {
@@ -210,19 +210,19 @@ func (k KubernetesProvider) IsEmpty() bool {
 }
 
 type Module struct {
-	Name           string                 `yaml:"name"`
-	Source         string                 `yaml:"source,omitempty"`
-	HttpUsername   string                 `yaml:"http_username,omitempty"`
-	HttpPassword   string                 `yaml:"http_password,omitempty"`
-	Version        string                 `yaml:"version,omitempty"`
-	DefaultModule  bool                   `yaml:"default_module,omitempty"`
-	Inputs         map[string]interface{} `yaml:"inputs,omitempty"`
-	ConfigInputs   map[string]interface{} `yaml:"-"`
-	InputsChecksum []byte                 `yaml:"-"`
-	InputsFile     string                 `yaml:"-"`
-	FileContent    []byte                 `yaml:"-"`
-	Metadata       map[string]string      `yaml:"-"`
-	Values         map[string]interface{} `yaml:"-"`
+	Name           string            `yaml:"name"`
+	Source         string            `yaml:"source,omitempty"`
+	HttpUsername   string            `yaml:"http_username,omitempty"`
+	HttpPassword   string            `yaml:"http_password,omitempty"`
+	Version        string            `yaml:"version,omitempty"`
+	DefaultModule  bool              `yaml:"default_module,omitempty"`
+	Inputs         map[string]any    `yaml:"inputs,omitempty"`
+	ConfigInputs   map[string]any    `yaml:"-"`
+	InputsChecksum []byte            `yaml:"-"`
+	InputsFile     string            `yaml:"-"`
+	FileContent    []byte            `yaml:"-"`
+	Metadata       map[string]string `yaml:"-"`
+	Values         map[string]any    `yaml:"-"`
 }
 
 type StepType string
@@ -261,10 +261,11 @@ const (
 type AgentReplaceType string
 
 const (
-	AgentReplaceTypeVersion   AgentReplaceType = "version"
-	AgentReplaceTypeAccountId AgentReplaceType = "accountId"
-	AgentReplaceTypeRegion    AgentReplaceType = "region"
-	AgentReplaceTypeVaultId   AgentReplaceType = "vaultId"
+	AgentReplaceTypeVersion        AgentReplaceType = "version"
+	AgentReplaceTypeAccountId      AgentReplaceType = "accountId"
+	AgentReplaceTypeOrganizationId AgentReplaceType = "organizationId"
+	AgentReplaceTypeRegion         AgentReplaceType = "region"
+	AgentReplaceTypeVaultId        AgentReplaceType = "vaultId"
 )
 
 type Approve string
@@ -389,8 +390,8 @@ type V1Agent struct {
 	ModuleTypes []string          `json:"module_types" yaml:"module_types"`
 }
 
-func UnmarshalAgentYaml(yamlData []byte) (interface{}, error) {
-	var genericMap map[string]interface{}
+func UnmarshalAgentYaml(yamlData []byte) (any, error) {
+	var genericMap map[string]any
 	err := yaml.Unmarshal(yamlData, &genericMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal agent file yaml: %v", err)

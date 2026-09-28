@@ -12,6 +12,7 @@ type NotificationManager interface {
 	HasNotifier(messageType MessageType) bool
 	Campaign(ctx context.Context, status CampaignStatus, resources Resources, command common.Command, err error)
 	Schedule(command common.Command, status ScheduleAction, schedule string)
+	ScheduleUnchanged(command common.Command, status ScheduleAction, schedule string)
 	Approval(pipeline, step, approvedBy string)
 	ManualApproval(pipelineName, step string, changes PipelineChanges, link string)
 	StepState(status ApplyStatus, stepState StateStep, step *Step, err error)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"slices"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -136,13 +137,7 @@ func validateChangedResourceValues(actionTypes model.Set[string], changes []mode
 		if change.Mode != "managed" {
 			continue
 		}
-		correctType := false
-		for _, action := range change.Change.Actions {
-			if actionTypes.Contains(action) {
-				correctType = true
-				break
-			}
-		}
+		correctType := slices.ContainsFunc(change.Change.Actions, actionTypes.Contains)
 		if !correctType {
 			continue
 		}

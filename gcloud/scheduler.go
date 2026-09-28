@@ -86,7 +86,7 @@ func getValidSchedulerLocation(ctx context.Context, client *scheduler.CloudSched
 	if supportedLocations.Contains(location) {
 		return location, nil
 	}
-	prefix := strings.Split(location, "-")[0]
+	prefix, _, _ := strings.Cut(location, "-")
 	if fallback, ok := locationPrefixFallbacks[prefix]; ok {
 		if supportedLocations.Contains(fallback) {
 			return fallback, nil

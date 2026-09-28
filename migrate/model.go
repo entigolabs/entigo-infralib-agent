@@ -46,10 +46,10 @@ type resourceStateV4 struct {
 }
 
 type instanceObjectStateV4 struct {
-	IndexKey       interface{} `json:"index_key,omitempty"`
-	Status         string      `json:"status,omitempty"`
-	Deposed        string      `json:"deposed,omitempty"`
-	ProviderConfig string      `json:"provider,omitempty"`
+	IndexKey       any    `json:"index_key,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Deposed        string `json:"deposed,omitempty"`
+	ProviderConfig string `json:"provider,omitempty"`
 
 	SchemaVersion           uint64            `json:"schema_version"`
 	AttributesRaw           json.RawMessage   `json:"attributes,omitempty"`
@@ -81,27 +81,27 @@ type importConfig struct {
 }
 
 type importItem struct {
-	Type        string        `yaml:"type"`
-	Name        string        `yaml:"name"`
-	Module      string        `yaml:"module,omitempty"`
-	IndexKeys   []interface{} `yaml:"index_keys,omitempty"`
-	Source      module        `yaml:"source,omitempty"`
-	Destination module        `yaml:"destination,omitempty"`
+	Type        string `yaml:"type"`
+	Name        string `yaml:"name"`
+	Module      string `yaml:"module,omitempty"`
+	IndexKeys   []any  `yaml:"index_keys,omitempty"`
+	Source      module `yaml:"source,omitempty"`
+	Destination module `yaml:"destination,omitempty"`
 }
 
 type module struct {
-	Module    string        `yaml:"module,omitempty"`
-	Name      string        `yaml:"name,omitempty"`
-	IndexKey  interface{}   `yaml:"index_key,omitempty"`
-	IndexKeys []interface{} `yaml:"index_keys,omitempty"`
+	Module    string `yaml:"module,omitempty"`
+	Name      string `yaml:"name,omitempty"`
+	IndexKey  any    `yaml:"index_key,omitempty"`
+	IndexKeys []any  `yaml:"index_keys,omitempty"`
 }
 
 type KeyPair struct {
-	Key1 interface{}
-	Key2 interface{}
+	Key1 any
+	Key2 any
 }
 
-func newKeyPair(key1, key2 interface{}) KeyPair {
+func newKeyPair(key1, key2 any) KeyPair {
 	return KeyPair{Key1: key1, Key2: key2}
 }
 

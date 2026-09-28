@@ -59,7 +59,7 @@ type backendClient struct {
 	pendingLogs []string
 	pendingPlan *v1alpha1.PlanSummary
 
-	droppedLogs uint64
+	droppedLogs atomic.Uint64
 
 	closeOnce sync.Once
 
@@ -133,7 +133,7 @@ func (g *backendClient) SendLog(line string) error {
 	select {
 	case g.logs <- line:
 	default:
-		atomic.AddUint64(&g.droppedLogs, 1)
+		g.droppedLogs.Add(1)
 	}
 	return nil
 }
@@ -149,7 +149,7 @@ func (g *backendClient) SendPlan(summary *v1alpha1.PlanSummary) error {
 }
 
 func (g *backendClient) Disconnect(ctx context.Context, exitCode int, execErr error) error {
-	if dropped := atomic.LoadUint64(&g.droppedLogs); dropped > 0 {
+	if dropped := g.droppedLogs.Load(); dropped > 0 {
 		slog.Warn("wrapper dropped log lines due to backpressure", "count", dropped)
 	}
 	g.exitCode = exitCode

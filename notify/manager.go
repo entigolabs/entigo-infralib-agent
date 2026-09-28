@@ -109,6 +109,10 @@ func (n *NotificationManager) Schedule(command common.Command, action model.Sche
 	n.Notify(model.ScheduleMessage{Command: command, Action: action, Schedule: schedule})
 }
 
+func (n *NotificationManager) ScheduleUnchanged(command common.Command, action model.ScheduleAction, schedule string) {
+	n.Notify(model.ScheduleMessage{Command: command, Action: action, Schedule: schedule, Unchanged: true})
+}
+
 func (n *NotificationManager) Approval(pipelineName, step, approvedBy string) {
 	index, ok := n.getPipelineIndex()
 	if !ok {

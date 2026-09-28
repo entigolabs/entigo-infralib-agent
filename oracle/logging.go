@@ -83,22 +83,20 @@ func (l *Logging) EnsureDevOpsBuildLog(projectId string) error {
 	service := "devops"
 	category := "all"
 	response, err := l.mgmt.CreateLog(l.ctx, logging.CreateLogRequest{
-		LogGroupId: &groupId,
-		CreateLogDetails: logging.CreateLogDetails{
-			DisplayName:       &name,
-			LogType:           logging.CreateLogDetailsLogTypeService,
-			IsEnabled:         new(true),
-			RetentionDuration: &retention,
-			Configuration: &logging.Configuration{
-				CompartmentId: &l.compartmentId,
-				Source: logging.OciService{
-					Service:  &service,
-					Resource: &projectId,
-					Category: &category,
-				},
+		LogGroupId:        &groupId,
+		DisplayName:       &name,
+		LogType:           logging.CreateLogDetailsLogTypeService,
+		IsEnabled:         new(true),
+		RetentionDuration: &retention,
+		Configuration: &logging.Configuration{
+			CompartmentId: &l.compartmentId,
+			Source: logging.OciService{
+				Service:  &service,
+				Resource: &projectId,
+				Category: &category,
 			},
-			FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
+		FreeformTags: map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create devops build log %s: %w", name, err)
@@ -209,11 +207,9 @@ func (l *Logging) getOrCreateLogGroup() (string, error) {
 		}
 	}
 	response, err := l.mgmt.CreateLogGroup(l.ctx, logging.CreateLogGroupRequest{
-		CreateLogGroupDetails: logging.CreateLogGroupDetails{
-			CompartmentId: &l.compartmentId,
-			DisplayName:   &name,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		CompartmentId: &l.compartmentId,
+		DisplayName:   &name,
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create log group %s: %w", name, err)
@@ -294,12 +290,10 @@ func (l *Logging) StepLogs(buildRunId string, since time.Time) ([]string, error)
 	end := ocicommon.SDKTime{Time: time.Now().Add(time.Minute)}
 	limit := logSearchLimit
 	response, err := l.search.SearchLogs(l.ctx, loggingsearch.SearchLogsRequest{
-		Limit: &limit,
-		SearchLogsDetails: loggingsearch.SearchLogsDetails{
-			TimeStart:   &start,
-			TimeEnd:     &end,
-			SearchQuery: &query,
-		},
+		Limit:       &limit,
+		TimeStart:   &start,
+		TimeEnd:     &end,
+		SearchQuery: &query,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to search logs for build run %s: %w", buildRunId, err)
@@ -325,11 +319,11 @@ func extractLines(results []loggingsearch.SearchResult, buildRunId string) []str
 		if result.Data == nil {
 			continue
 		}
-		record, ok := (*result.Data).(map[string]interface{})
+		record, ok := (*result.Data).(map[string]any)
 		if !ok {
 			continue
 		}
-		content, ok := record["logContent"].(map[string]interface{})
+		content, ok := record["logContent"].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -355,11 +349,11 @@ func extractLines(results []loggingsearch.SearchResult, buildRunId string) []str
 // logLineData recovers the line from a search result's data field: OCI keeps a raw
 // string, but wraps plain text (our case) as {"message": "<line>"}. Any other object
 // is re-encoded so no line is silently dropped.
-func logLineData(data interface{}) string {
+func logLineData(data any) string {
 	switch d := data.(type) {
 	case string:
 		return d
-	case map[string]interface{}:
+	case map[string]any:
 		if msg, ok := d["message"].(string); ok {
 			return msg
 		}

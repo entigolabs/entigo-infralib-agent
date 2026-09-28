@@ -316,8 +316,7 @@ func (b *builder) DeleteProject(projectName string, _ model.Step) error {
 		Name: aws.String(projectName),
 	})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil
 		}
 		return err

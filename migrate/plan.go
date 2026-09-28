@@ -237,7 +237,7 @@ func processItem(item *importItem) error {
 	return err
 }
 
-func getDestination(item importItem, rootModule model.PlanModule, rsName string) (string, string, interface{}, error) {
+func getDestination(item importItem, rootModule model.PlanModule, rsName string) (string, string, any, error) {
 	name := item.Destination.Name
 	if name == "" {
 		name = rsName
@@ -285,7 +285,7 @@ func parseNameIndex(module module) (module, error) {
 	return module, nil
 }
 
-func (p *planner) planItemKeys(indexKeys []KeyPair, resource resourceStateV4, identification typeIdentification, index interface{}, dest, source string) ([]string, []string, error) {
+func (p *planner) planItemKeys(indexKeys []KeyPair, resource resourceStateV4, identification typeIdentification, index any, dest, source string) ([]string, []string, error) {
 	separator := "/"
 	if identification.ListSeparator != "" {
 		separator = identification.ListSeparator
@@ -444,7 +444,7 @@ func getPlannedIndexes(indexKeys []KeyPair, resource resourceStateV4) []KeyPair 
 	return indexes
 }
 
-func getResourceInstance(resource resourceStateV4, key interface{}) (instanceObjectStateV4, error) {
+func getResourceInstance(resource resourceStateV4, key any) (instanceObjectStateV4, error) {
 	if key == nil {
 		return resource.Instances[0], nil
 	}
@@ -466,7 +466,7 @@ func getResourceInstance(resource resourceStateV4, key interface{}) (instanceObj
 	return instanceObjectStateV4{}, fmt.Errorf("instance with key %v not found", key)
 }
 
-func compareValues(a, b interface{}) (bool, error) {
+func compareValues(a, b any) (bool, error) {
 	if a == nil && b == nil {
 		return true, nil
 	}
@@ -481,7 +481,7 @@ func compareValues(a, b interface{}) (bool, error) {
 	return false, fmt.Errorf("incompatible types: %T and %T", a, b)
 }
 
-func addIndex(reference string, indexKey interface{}) (string, error) {
+func addIndex(reference string, indexKey any) (string, error) {
 	index, err := getIndexKey(indexKey)
 	if err != nil {
 		return "", err
@@ -492,7 +492,7 @@ func addIndex(reference string, indexKey interface{}) (string, error) {
 	return reference + index, nil
 }
 
-func getIndexKey(indexKey interface{}) (string, error) {
+func getIndexKey(indexKey any) (string, error) {
 	if indexKey == nil {
 		return "", nil
 	}
@@ -513,7 +513,7 @@ func getReplacedIdentification(identification string, instance instanceObjectSta
 	if len(matches) == 0 {
 		return identification, nil
 	}
-	var values map[string]interface{}
+	var values map[string]any
 	err := json.Unmarshal(instance.AttributesRaw, &values)
 	if err != nil {
 		return "", err
@@ -530,13 +530,13 @@ func getReplacedIdentification(identification string, instance instanceObjectSta
 	return identification, nil
 }
 
-func getJsonValue(values map[string]interface{}, key string, separator string) (string, error) {
+func getJsonValue(values map[string]any, key string, separator string) (string, error) {
 	val, found := values[key]
 	if !found {
 		return "", fmt.Errorf("key %s not found", key)
 	}
 	switch v := val.(type) {
-	case []interface{}:
+	case []any:
 		var values []string
 		for _, value := range v {
 			stringValue, err := getStringValue(value)
@@ -555,7 +555,7 @@ func getJsonValue(values map[string]interface{}, key string, separator string) (
 	}
 }
 
-func getStringValue(v interface{}) (string, error) {
+func getStringValue(v any) (string, error) {
 	switch v := v.(type) {
 	case string:
 		return v, nil

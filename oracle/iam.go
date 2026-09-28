@@ -54,8 +54,7 @@ type secretPersistence interface {
 func readPersistedSecret(store secretPersistence, name string) (string, bool, error) {
 	param, err := store.GetParameter(name)
 	if err != nil {
-		var notFound *model.ParameterNotFoundError
-		if errors.As(err, &notFound) {
+		if _, ok := errors.AsType[*model.ParameterNotFoundError](err); ok {
 			return "", false, nil
 		}
 		return "", false, err
@@ -150,10 +149,8 @@ func CreateCustomerSecretKey(csk customerSecretKeyClient, store secretPersistenc
 
 func (i *IAM) createCustomerSecretKey(userId, displayName string) (string, string, error) {
 	response, err := i.client.CreateCustomerSecretKey(i.ctx, identity.CreateCustomerSecretKeyRequest{
-		UserId: &userId,
-		CreateCustomerSecretKeyDetails: identity.CreateCustomerSecretKeyDetails{
-			DisplayName: &displayName,
-		},
+		UserId:      &userId,
+		DisplayName: &displayName,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create customer secret key: %w", err)
@@ -211,10 +208,8 @@ func (i *IAM) CreateAuthToken(store secretPersistence, userId, description strin
 		}
 	}
 	response, err := i.client.CreateAuthToken(i.ctx, identity.CreateAuthTokenRequest{
-		UserId: &userId,
-		CreateAuthTokenDetails: identity.CreateAuthTokenDetails{
-			Description: &description,
-		},
+		UserId:      &userId,
+		Description: &description,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create auth token: %w", err)
@@ -299,13 +294,11 @@ func (i *IAM) getOrCreateUser(name, description string) (string, bool, error) {
 	// marks it as ours.
 	email := fmt.Sprintf("%s@entigo.com", name)
 	created, err := i.client.CreateUser(i.ctx, identity.CreateUserRequest{
-		CreateUserDetails: identity.CreateUserDetails{
-			CompartmentId: &i.tenancyId,
-			Name:          &name,
-			Description:   &description,
-			Email:         &email,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		CompartmentId: &i.tenancyId,
+		Name:          &name,
+		Description:   &description,
+		Email:         &email,
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create user %s: %w", name, err)
@@ -325,12 +318,10 @@ func (i *IAM) getOrCreateGroup(name, description string) (string, error) {
 		return *list.Items[0].Id, nil
 	}
 	created, err := i.client.CreateGroup(i.ctx, identity.CreateGroupRequest{
-		CreateGroupDetails: identity.CreateGroupDetails{
-			CompartmentId: &i.tenancyId,
-			Name:          &name,
-			Description:   &description,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		CompartmentId: &i.tenancyId,
+		Name:          &name,
+		Description:   &description,
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create group %s: %w", name, err)
@@ -341,10 +332,8 @@ func (i *IAM) getOrCreateGroup(name, description string) (string, error) {
 // addUserToGroup is idempotent — an existing membership (HTTP 409) is not an error.
 func (i *IAM) addUserToGroup(userId, groupId string) error {
 	_, err := i.client.AddUserToGroup(i.ctx, identity.AddUserToGroupRequest{
-		AddUserToGroupDetails: identity.AddUserToGroupDetails{
-			UserId:  &userId,
-			GroupId: &groupId,
-		},
+		UserId:  &userId,
+		GroupId: &groupId,
 	})
 	if err != nil {
 		if failure, ok := asServiceError(err); ok && failure.GetHTTPStatusCode() == 409 {
@@ -392,8 +381,8 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) (bool,
 		// Self-heal: an earlier run may have created this policy with a narrower
 		// statement set. Update it to the desired statements.
 		_, err = i.client.UpdatePolicy(i.ctx, identity.UpdatePolicyRequest{
-			PolicyId:            existing.Id,
-			UpdatePolicyDetails: identity.UpdatePolicyDetails{Statements: statements},
+			PolicyId:   existing.Id,
+			Statements: statements,
 		})
 		if err != nil {
 			return false, fmt.Errorf("failed to update policy %s: %w", name, err)
@@ -401,13 +390,11 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) (bool,
 		return true, nil
 	}
 	_, err = i.client.CreatePolicy(i.ctx, identity.CreatePolicyRequest{
-		CreatePolicyDetails: identity.CreatePolicyDetails{
-			CompartmentId: &i.compartmentId,
-			Name:          &name,
-			Description:   &description,
-			Statements:    statements,
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		CompartmentId: &i.compartmentId,
+		Name:          &name,
+		Description:   &description,
+		Statements:    statements,
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		if isConflictStatus(err) {
@@ -740,8 +727,8 @@ func (i *IAM) EnsureApiKey(userId string, rotate bool) (apiKeyCredentials, error
 	}
 	publicPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))
 	response, err := i.client.UploadApiKey(i.ctx, identity.UploadApiKeyRequest{
-		UserId:              &userId,
-		CreateApiKeyDetails: identity.CreateApiKeyDetails{Key: &publicPEM},
+		UserId: &userId,
+		Key:    &publicPEM,
 	})
 	if err != nil {
 		return apiKeyCredentials{}, fmt.Errorf("failed to upload api signing key: %w", err)

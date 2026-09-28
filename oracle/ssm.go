@@ -224,7 +224,7 @@ func (s *SSM) ensureSecret(name, value string) (string, error) {
 // UpdateSecret fail 409 IncorrectState.
 func (s *SSM) applyUpdate(name, id, content string) error {
 	var lastErr error
-	for attempt := 0; attempt < secretUpdateRetries; attempt++ {
+	for range secretUpdateRetries {
 		if err := s.waitForSecretActive(name); err != nil {
 			return err
 		}
@@ -350,14 +350,12 @@ func secretPendingDeletion(state vault.SecretSummaryLifecycleStateEnum) bool {
 
 func (s *SSM) createSecret(name, base64Content string) (string, error) {
 	response, err := s.vaultClient.CreateSecret(s.ctx, vault.CreateSecretRequest{
-		CreateSecretDetails: vault.CreateSecretDetails{
-			CompartmentId: &s.compartmentId,
-			VaultId:       &s.vaultId,
-			KeyId:         &s.keyId,
-			SecretName:    &name,
-			SecretContent: vault.Base64SecretContentDetails{Content: &base64Content},
-			FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-		},
+		CompartmentId: &s.compartmentId,
+		VaultId:       &s.vaultId,
+		KeyId:         &s.keyId,
+		SecretName:    &name,
+		SecretContent: vault.Base64SecretContentDetails{Content: &base64Content},
+		FreeformTags:  map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create secret %s: %w", name, err)
@@ -367,10 +365,8 @@ func (s *SSM) createSecret(name, base64Content string) (string, error) {
 
 func (s *SSM) updateSecret(id, base64Content string) error {
 	_, err := s.vaultClient.UpdateSecret(s.ctx, vault.UpdateSecretRequest{
-		SecretId: &id,
-		UpdateSecretDetails: vault.UpdateSecretDetails{
-			SecretContent: vault.Base64SecretContentDetails{Content: &base64Content},
-		},
+		SecretId:      &id,
+		SecretContent: vault.Base64SecretContentDetails{Content: &base64Content},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update secret %s: %w", id, err)
@@ -450,10 +446,8 @@ func (s *SSM) scheduleDeletion(name string) error {
 	// that once request latency counts (400 InvalidParameter), so leave a day of margin.
 	when := ocicommon.SDKTime{Time: time.Now().Add(48 * time.Hour)}
 	_, err = s.vaultClient.ScheduleSecretDeletion(s.ctx, vault.ScheduleSecretDeletionRequest{
-		SecretId: &id,
-		ScheduleSecretDeletionDetails: vault.ScheduleSecretDeletionDetails{
-			TimeOfDeletion: &when,
-		},
+		SecretId:       &id,
+		TimeOfDeletion: &when,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to schedule deletion of secret %s: %w", name, err)

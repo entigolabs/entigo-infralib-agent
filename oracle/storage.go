@@ -68,15 +68,13 @@ func (s *Storage) CreateBucket(kms *KMS) error {
 		return nil
 	}
 	request := objectstorage.CreateBucketRequest{
-		NamespaceName: &s.namespace,
-		CreateBucketDetails: objectstorage.CreateBucketDetails{
-			Name:             &s.bucket,
-			CompartmentId:    &s.compartmentId,
-			PublicAccessType: objectstorage.CreateBucketDetailsPublicAccessTypeNopublicaccess,
-			Versioning:       objectstorage.CreateBucketDetailsVersioningEnabled,
-			FreeformTags:     map[string]string{model.ResourceTagKey: model.ResourceTagValue},
-			KmsKeyId:         new(kms.KeyId()),
-		},
+		NamespaceName:    &s.namespace,
+		Name:             &s.bucket,
+		CompartmentId:    &s.compartmentId,
+		PublicAccessType: objectstorage.CreateBucketDetailsPublicAccessTypeNopublicaccess,
+		Versioning:       objectstorage.CreateBucketDetailsVersioningEnabled,
+		FreeformTags:     map[string]string{model.ResourceTagKey: model.ResourceTagValue},
+		KmsKeyId:         new(kms.KeyId()),
 	}
 	// The KMS key-access policy granted just before this call is eventually
 	// consistent, so Object Storage may briefly reject the key with

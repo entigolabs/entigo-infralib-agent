@@ -86,7 +86,7 @@ func EqualLists(a, b []string) bool {
 	return true
 }
 
-func GetValueFromStruct(keyWithDots string, object interface{}) (string, error) {
+func GetValueFromStruct(keyWithDots string, object any) (string, error) {
 	keySlice := strings.Split(keyWithDots, ".")
 	v := reflect.ValueOf(object)
 	for _, key := range keySlice {
@@ -107,11 +107,11 @@ func GetValueFromStruct(keyWithDots string, object interface{}) (string, error) 
 	return v.String(), nil
 }
 
-func YamlBytesToMap(b []byte) (map[string]interface{}, error) {
+func YamlBytesToMap(b []byte) (map[string]any, error) {
 	if len(b) == 0 {
 		return nil, nil
 	}
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	err := yaml.Unmarshal(b, &m)
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func YamlBytesToMap(b []byte) (map[string]interface{}, error) {
 	return m, nil
 }
 
-func MapToYamlBytes(m map[string]interface{}) ([]byte, error) {
+func MapToYamlBytes(m map[string]any) ([]byte, error) {
 	b, err := yaml.Marshal(m)
 	if err != nil {
 		return nil, err
@@ -250,12 +250,12 @@ func MinInt(a, b int) int {
 	return b
 }
 
-func MarshalYamlWithJsonTags(v interface{}) ([]byte, error) {
+func MarshalYamlWithJsonTags(v any) ([]byte, error) {
 	jsonBytes, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	var jsonObj interface{}
+	var jsonObj any
 	err = yaml.Unmarshal(jsonBytes, &jsonObj)
 	if err != nil {
 		return nil, err
@@ -263,7 +263,7 @@ func MarshalYamlWithJsonTags(v interface{}) ([]byte, error) {
 	return yaml.Marshal(jsonObj)
 }
 
-func SetChildStringValue(data map[string]interface{}, newValue string, overwrite bool, keys ...string) error {
+func SetChildStringValue(data map[string]any, newValue string, overwrite bool, keys ...string) error {
 	for i, key := range keys {
 		if i == len(keys)-1 {
 			_, exists := data[key]
@@ -274,13 +274,13 @@ func SetChildStringValue(data map[string]interface{}, newValue string, overwrite
 		}
 		val, exists := data[key]
 		if !exists {
-			newval := make(map[string]interface{})
+			newval := make(map[string]any)
 			data[key] = newval
 			data = newval
 			continue
 		}
 		var ok bool
-		data, ok = val.(map[string]interface{})
+		data, ok = val.(map[string]any)
 		if !ok {
 			return fmt.Errorf("value of key %s is not a map[string]interface{}", key)
 		}
@@ -333,10 +333,10 @@ func CalculateHash(content []byte) []byte {
 	return hash.Sum(nil)
 }
 
-func SortKeys(data interface{}) interface{} {
+func SortKeys(data any) any {
 	switch v := data.(type) {
-	case map[interface{}]interface{}:
-		sorted := make(map[interface{}]interface{})
+	case map[any]any:
+		sorted := make(map[any]any)
 		keys := make([]string, 0, len(v))
 		for key := range v {
 			keys = append(keys, key.(string))
@@ -346,7 +346,7 @@ func SortKeys(data interface{}) interface{} {
 			sorted[key] = SortKeys(v[key])
 		}
 		return sorted
-	case []interface{}:
+	case []any:
 		for i, item := range v {
 			v[i] = SortKeys(item)
 		}
@@ -379,18 +379,18 @@ func GetOutputValue(outputs map[string]model.TFOutput, key string) (*string, err
 	return GetInterfaceValue(output.Value, output.Type)
 }
 
-func GetInterfaceValue(output interface{}, outputType interface{}) (*string, error) {
+func GetInterfaceValue(output any, outputType any) (*string, error) {
 	var value string
 	switch v := output.(type) {
 	case string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
 		value = strings.Trim(GetStringValue(v), "\"")
-	case []interface{}:
+	case []any:
 		values := make([]string, 0)
 		for _, value := range v {
 			values = append(values, GetStringValue(value))
 		}
 		value = strings.Join(values, ",")
-	case map[string]interface{}:
+	case map[string]any:
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("tf output %s is a map, returning as json", outputType)))
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
@@ -403,7 +403,7 @@ func GetInterfaceValue(output interface{}, outputType interface{}) (*string, err
 	return &value, nil
 }
 
-func GetStringValue(value interface{}) string {
+func GetStringValue(value any) string {
 	switch v := value.(type) {
 	case string:
 		return fmt.Sprintf(`"%s"`, v)
@@ -512,12 +512,12 @@ func IsVersionOlder(currentVersion, oldVersion string) bool {
 	return semver.LessThan(oldVer)
 }
 
-func DeepCopyYAML(src map[string]interface{}) (map[string]interface{}, error) {
+func DeepCopyYAML(src map[string]any) (map[string]any, error) {
 	content, err := yaml.Marshal(src)
 	if err != nil {
 		return nil, err
 	}
-	var dst map[string]interface{}
+	var dst map[string]any
 	err = yaml.Unmarshal(content, &dst)
 	if err != nil {
 		return nil, err

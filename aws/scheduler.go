@@ -38,8 +38,7 @@ func getCronExpression(cron string) string {
 func (s Scheduler) getUpdateSchedule() (*scheduler.GetScheduleOutput, error) {
 	schedule, err := s.client.GetSchedule(s.ctx, &scheduler.GetScheduleInput{Name: &s.updateSchedule})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil, nil
 		}
 		return nil, err
@@ -70,8 +69,7 @@ func (s Scheduler) createUpdateSchedule(cron, pipelineArn, roleArn string) error
 func (s Scheduler) deleteUpdateSchedule() error {
 	_, err := s.client.DeleteSchedule(s.ctx, &scheduler.DeleteScheduleInput{Name: &s.updateSchedule})
 	if err != nil {
-		var awsError *types.ResourceNotFoundException
-		if errors.As(err, &awsError) {
+		if _, ok := errors.AsType[*types.ResourceNotFoundException](err); ok {
 			return nil
 		}
 	}
