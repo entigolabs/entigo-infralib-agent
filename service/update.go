@@ -2067,19 +2067,7 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 	if err != nil {
 		return nil, err
 	}
-
-	providerType := u.resources.GetProviderType()
-	switch providerType {
-	case model.AWS:
-		providerType = "aws"
-	case model.GCLOUD:
-		providerType = "google"
-	case model.ORACLE:
-		providerType = "oracle"
-	case model.AZURE:
-		providerType = "azure"
-	}
-	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
+	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, u.getProviderFileType())
 	providerInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
@@ -2146,19 +2134,7 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 	if err != nil {
 		return nil, err
 	}
-
-	providerType := u.resources.GetProviderType()
-	switch providerType {
-	case model.AWS:
-		providerType = "aws"
-	case model.GCLOUD:
-		providerType = "google"
-	case model.ORACLE:
-		providerType = "oracle"
-	case model.AZURE:
-		providerType = "azure"
-	}
-	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, providerType)
+	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, u.getProviderFileType())
 	providerValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
@@ -2173,6 +2149,21 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
 	return values, nil
+}
+
+func (u *updater) getProviderFileType() string {
+	providerType := u.resources.GetProviderType()
+	switch providerType {
+	case model.AWS:
+		providerType = "aws"
+	case model.GCLOUD:
+		providerType = "google"
+	case model.ORACLE:
+		providerType = "oracle"
+	case model.AZURE:
+		providerType = "azure"
+	}
+	return string(providerType)
 }
 
 func mergeMaps(baseInputs map[string]any, patchInputs map[string]any) (map[string]any, error) {
