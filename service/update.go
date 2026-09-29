@@ -2149,6 +2149,8 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 		providerType = "aws"
 	case model.GCLOUD:
 		providerType = "google"
+	case model.ORACLE:
+		providerType = "oracle"
 	}
 	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, providerType)
 	providerValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
