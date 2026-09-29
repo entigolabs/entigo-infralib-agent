@@ -2153,6 +2153,8 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 		providerType = "aws"
 	case model.GCLOUD:
 		providerType = "google"
+	case model.ORACLE:
+		providerType = "oracle"
 	case model.AZURE:
 		providerType = "azure"
 	}
