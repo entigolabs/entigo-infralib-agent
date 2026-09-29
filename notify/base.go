@@ -27,6 +27,8 @@ func (b *BaseNotifier) HandleCampaign(msg model.CampaignMessage) error {
 		message += fmt.Sprintf("project Id %s, location %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
 	case model.ORACLE:
 		message += fmt.Sprintf("compartment Id %s, region %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
+	case model.AZURE:
+		message += fmt.Sprintf("subscription Id %s, location %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
 	default:
 		message += fmt.Sprintf("account Id %s, region %s", msg.Resources.GetAccount(), msg.Resources.GetRegion())
 	}

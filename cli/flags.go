@@ -70,7 +70,40 @@ func getProviderFlags() []cli.Flag {
 		&oracleCompartmentIdFlag,
 		&oracleProfileFlag,
 		&oracleConfigFileFlag,
+		&azureSubscriptionIdFlag,
+		&azureLocationFlag,
+		&azureResourceGroupFlag,
 	}
+}
+
+var azureSubscriptionIdFlag = cli.StringFlag{
+	Name:        "azure-subscription-id",
+	Aliases:     []string{"asid"},
+	Sources:     cli.EnvVars(common.AzureSubscriptionIdEnv),
+	Value:       "",
+	Usage:       "azure subscription id where resources are created; selects the azure provider when set",
+	Destination: &flags.Azure.SubscriptionId,
+	Required:    false,
+}
+
+var azureLocationFlag = cli.StringFlag{
+	Name:        "azure-location",
+	Aliases:     []string{"aloc"},
+	Sources:     cli.EnvVars(model.AzureRegion),
+	Value:       "",
+	Usage:       "azure location used when creating resources",
+	Destination: &flags.Azure.Location,
+	Required:    false,
+}
+
+var azureResourceGroupFlag = cli.StringFlag{
+	Name:        "azure-resource-group",
+	Aliases:     []string{"arg"},
+	Sources:     cli.EnvVars(common.AzureResourceGroupEnv),
+	Value:       "",
+	Usage:       "existing azure resource group for the agent resources, defaults to <prefix>-infralib-<location> which the agent creates",
+	Destination: &flags.Azure.ResourceGroup,
+	Required:    false,
 }
 
 var oracleRegionFlag = cli.StringFlag{

@@ -163,6 +163,7 @@ func (e PipelineStateNotificationKind) Valid() bool {
 // Defines values for ProviderType.
 const (
 	AWS    ProviderType = "AWS"
+	AZURE  ProviderType = "AZURE"
 	GCLOUD ProviderType = "GCLOUD"
 	ORACLE ProviderType = "ORACLE"
 )
@@ -171,6 +172,8 @@ const (
 func (e ProviderType) Valid() bool {
 	switch e {
 	case AWS:
+		return true
+	case AZURE:
 		return true
 	case GCLOUD:
 		return true

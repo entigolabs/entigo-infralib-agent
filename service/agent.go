@@ -99,6 +99,8 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 		image = model.AgentImageGCloud
 	case model.ORACLE:
 		image = model.AgentImageOracle
+	case model.AZURE:
+		image = model.AgentImageAzure
 	}
 	tfCache := strconv.FormatBool(a.terraformCache)
 	if project.Image == image+":"+version && tfCache == project.TerraformCache {

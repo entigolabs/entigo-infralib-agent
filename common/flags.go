@@ -14,6 +14,9 @@ const (
 	OracleCompartmentIdEnv = "OCI_COMPARTMENT_ID"
 	OracleProfileEnv       = "OCI_PROFILE"
 	OracleConfigFileEnv    = "OCI_CONFIG_FILE"
+
+	AzureSubscriptionIdEnv = "AZURE_SUBSCRIPTION_ID"
+	AzureResourceGroupEnv  = "AZURE_RESOURCE_GROUP"
 )
 
 type Flags struct {
@@ -29,6 +32,7 @@ type Flags struct {
 	GCloud                  GCloud
 	AWS                     AWS
 	Oracle                  Oracle
+	Azure                   Azure
 	ServiceAccount          ServiceAccount
 	Delete                  DeleteFlags
 	Params                  Params
@@ -62,6 +66,16 @@ type Oracle struct {
 	CompartmentId string
 	Profile       string
 	ConfigFile    string
+}
+
+// Azure holds the subscription and location the agent's resources are created in.
+// SubscriptionId selects the Azure provider when set. Credentials are resolved by the
+// SDK default chain: environment, managed identity or the Azure CLI login.
+// ResourceGroup is an existing group to use instead of the agent-owned <prefix>-infralib-<location>.
+type Azure struct {
+	SubscriptionId string
+	Location       string
+	ResourceGroup  string
 }
 
 type ServiceAccount struct {

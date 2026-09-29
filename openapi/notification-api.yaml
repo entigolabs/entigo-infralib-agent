@@ -270,11 +270,11 @@ components:
 
     CampaignStatus:
       type: string
-      enum: [ started, success, failure, terminated ]
+      enum: [ started, success, skipped, failure, terminated ]
 
     ProviderType:
       type: string
-      enum: [ AWS, GCLOUD, ORACLE ]
+      enum: [ AWS, AZURE, GCLOUD, ORACLE ]
 
     PlanEntity:
       type: object

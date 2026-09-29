@@ -1548,6 +1548,8 @@ func (u *updater) proxyModuleType() string {
 		return "gar-proxy"
 	} else if u.resources.GetProviderType() == model.ORACLE {
 		return "ocir-proxy"
+	} else if u.resources.GetProviderType() == model.AZURE {
+		return "acr-proxy"
 	}
 	return "ecr-proxy"
 }
@@ -2074,6 +2076,8 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 		providerType = "google"
 	case model.ORACLE:
 		providerType = "oracle"
+	case model.AZURE:
+		providerType = "azure"
 	}
 	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
 	providerInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
@@ -2149,6 +2153,8 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 		providerType = "aws"
 	case model.GCLOUD:
 		providerType = "google"
+	case model.AZURE:
+		providerType = "azure"
 	}
 	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, providerType)
 	providerValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)

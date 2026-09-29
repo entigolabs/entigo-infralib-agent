@@ -11,6 +11,7 @@ const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const ProjectImageGCloud = "docker.io/entigolabs/entigo-infralib-google"
 const ProjectImageOracle = "docker.io/entigolabs/entigo-infralib-oracle"
+const ProjectImageAzure = "docker.io/entigolabs/entigo-infralib-azure"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 
 // const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
@@ -18,6 +19,7 @@ const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigola
 
 // AgentImageOracle is provisional; final home is OCIR once the oracle base image build lands.
 const AgentImageOracle = "docker.io/entigolabs/entigo-infralib-agent"
+const AgentImageAzure = "docker.io/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
@@ -27,12 +29,14 @@ const (
 	AWS    ProviderType = "AWS"
 	GCLOUD ProviderType = "GCLOUD"
 	ORACLE ProviderType = "ORACLE"
+	AZURE  ProviderType = "AZURE"
 )
 
 const (
 	AWSRegion    = "AWS_REGION"
 	GoogleRegion = "GOOGLE_REGION"
 	OracleRegion = "OCI_REGION"
+	AzureRegion  = "AZURE_LOCATION"
 )
 
 const (

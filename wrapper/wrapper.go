@@ -234,7 +234,7 @@ func (w *Wrapper) getPlanPath() string {
 	}
 	// Oracle must be checked before AWS: the OCI s3-compatible backend needs
 	// AWS_REGION set, which would otherwise match the AWS branch below.
-	if os.Getenv(model.OracleRegion) != "" {
+	if os.Getenv(model.OracleRegion) != "" || os.Getenv(model.AzureRegion) != "" {
 		return "/tmp/project"
 	}
 	if os.Getenv(model.GoogleRegion) != "" {

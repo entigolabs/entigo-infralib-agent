@@ -63,6 +63,8 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 	case model.ORACLE:
 		regionKey = model.OracleRegion
 		compartmentId = flags.Oracle.CompartmentId
+	case model.AZURE:
+		regionKey = model.AzureRegion
 	}
 	var backendEnv map[string]string
 	if provider, ok := resources.(model.BackendEnvProvider); ok {

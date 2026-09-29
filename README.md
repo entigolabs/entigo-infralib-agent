@@ -230,7 +230,7 @@ Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is w
 
 For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding cloud resources. Bootstrap adds that value as an environment variable for the agent pipeline.
 
-The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, and Oracle Cloud when `--oci-compartment-id` is set. Oracle also requires `--oci-region`.
+The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, Oracle Cloud when `--oci-compartment-id` is set and Azure when `--azure-subscription-id` is set. Oracle also requires `--oci-region` and Azure `--azure-location`. Azure credentials are resolved by the Azure SDK default chain (environment, managed identity or the `az login` session). Azure Container Apps job names are limited to 32 characters and each step gets `<prefix>-<step>-apply-destroy`, so with a 10 character prefix step names can be at most 7 characters, the agent fails before creating resources otherwise.
 
 ### bootstrap
 
@@ -248,6 +248,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * start - start pipeline execution after creating (default: **true**) [$START]
 
@@ -274,6 +277,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
@@ -305,6 +311,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
@@ -335,6 +344,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * steps - **optional** comma separated list of steps to destroy [$STEPS]
@@ -364,6 +376,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]. For Oracle, the agent-owned KMS vault and key that encrypt the bucket are scheduled for deletion (revertible in the console for ~7 days) only when the bucket is deleted.
@@ -381,6 +396,8 @@ This account can be used for running the agent in a CI/CD pipeline.
 
 On Oracle Cloud the account is a user in a group whose compartment-scoped policy grants only what a steady-state run needs — no policy management and no KMS/bucket creation, so it runs an already-bootstrapped deployment but cannot bootstrap one or widen its own access. The command itself needs a tenancy administrator, since OCI creates users and groups only in the tenancy root.
 
+On Azure the account is a managed identity `<prefix>-sa` with Contributor, Key Vault Administrator and Storage Blob Data Contributor on the agent's resource group. Like the other providers it runs an already-bootstrapped deployment but cannot bootstrap one, since that creates role assignments. It signs in through a federated credential, see trust-role.
+
 Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
 
 OPTIONS:
@@ -394,9 +411,12 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
-* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. Not supported on Oracle Cloud (no impersonation), where the command always outputs an API signing key and a ready-to-paste `~/.oci/config` profile. [$TRUST_ROLE]
+* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. Not supported on Oracle Cloud (no impersonation), where the command always outputs an API signing key and a ready-to-paste `~/.oci/config` profile. Required for Azure, where the service account is a managed identity with no secrets: the value is `<oidc issuer url>|<subject>`, e.g. `https://token.actions.githubusercontent.com|repo:org/repo:ref:refs/heads/main`, and the command outputs the client, tenant and subscription ids for the CI/CD system's Azure login. [$TRUST_ROLE]
 * remove-user - optional, used with trust-role, removes an existing service account user in AWS or credentials in GCloud, default **false**. [$REMOVE_USER]
 
 Example
@@ -420,6 +440,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * force - overwrite existing local files, default **false**. **Warning!** Force deletes the `/config` subfolder before writing. [$FORCE]
 
 Example
@@ -464,6 +487,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-infralib-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * key - key for the custom parameter [$KEY]
 * value - value for the custom parameter [$VALUE]
 * overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]
@@ -849,6 +875,10 @@ Supported locations can change in the future. If configured location starts supp
 #### Oracle
 
 Scheduling is not yet supported for Oracle Cloud. A configured `update_cron` is ignored with a warning; run the agent's update command on an external schedule (e.g. a cron job or CI pipeline) instead.
+
+#### Azure
+
+Uses the schedule trigger of the agent update Container Apps job. [Cron expression format](https://learn.microsoft.com/en-us/azure/container-apps/jobs#scheduled-jobs) is `Minutes Hours Day-of-month Month Day-of-week`.
 
 ## Migration Helper
 
