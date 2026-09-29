@@ -230,7 +230,7 @@ Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is w
 
 For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding cloud resources. Bootstrap adds that value as an environment variable for the agent pipeline.
 
-The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, Oracle Cloud when `--oci-compartment-id` is set and Azure when `--azure-subscription-id` is set. Oracle also requires `--oci-region` and Azure `--azure-location`. Azure credentials are resolved by the Azure SDK default chain (environment, managed identity or the `az login` session). Azure Container Apps job names are limited to 32 characters and each step gets `<prefix>-<step>-apply-destroy`, so with a 10 character prefix step names can be at most 7 characters, the agent fails before creating resources otherwise.
+The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, Oracle Cloud when `--oci-compartment-id` is set and Azure when `--azure-subscription-id` is set. Oracle also requires `--oci-region` and Azure `--azure-location`. Azure credentials are resolved by the Azure SDK default chain (environment, managed identity or the `az login` session). Step executions get the agent's resource group as `AZURE_RESOURCE_GROUP`, the base image looks up the AKS cluster and container registry from it. Azure Container Apps job names are limited to 32 characters and each step gets `<prefix>-<step>-apply-destroy`, so with a 10 character prefix step names can be at most 7 characters, the agent fails before creating resources otherwise.
 
 ### bootstrap
 

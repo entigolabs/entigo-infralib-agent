@@ -485,6 +485,7 @@ func (b *Builder) stepEnv(prefixStep string, command model.ActionCommand, step m
 		"INFRALIB_STEP":               step.Name,
 		model.AzureRegion:             b.location,
 		common.AzureSubscriptionIdEnv: b.subscriptionId,
+		common.AzureResourceGroupEnv:  b.resourceGroup,
 		"AZURE_CLIENT_ID":             b.identity.ClientId,
 		"ARM_SUBSCRIPTION_ID":         b.subscriptionId,
 		"ARM_TENANT_ID":               b.tenantId,

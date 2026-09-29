@@ -30,8 +30,9 @@ type azureService struct {
 
 type Resources struct {
 	model.CloudResources
-	TenantId string
-	VaultId  string
+	TenantId      string
+	VaultId       string
+	ResourceGroup string
 }
 
 // GetBackendConfigVars is the azurerm backend config. Shared key access is disabled on
@@ -51,6 +52,7 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 func (r Resources) GetBackendEnv() map[string]string {
 	return map[string]string{
 		common.AzureSubscriptionIdEnv: r.Account,
+		common.AzureResourceGroupEnv:  r.ResourceGroup,
 		"ARM_SUBSCRIPTION_ID":         r.Account,
 		"ARM_USE_AZUREAD":             "true",
 	}
@@ -91,6 +93,7 @@ func (a *azureService) baseResources(tenantId string, storage *Storage) Resource
 		Account:        a.subscriptionId,
 		OrganizationId: tenantId,
 		TenantId:       tenantId,
+		ResourceGroup:  a.resourceGroup,
 	}
 }
 
