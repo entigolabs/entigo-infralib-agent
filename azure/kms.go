@@ -59,7 +59,6 @@ func (k *KMS) EnsureVault(skipDelay bool) error {
 	createMode := armkeyvault.CreateModeDefault
 	_, err = k.vaults.GetDeleted(k.ctx, k.name, k.location, nil)
 	if err == nil {
-		log.Printf("Recovering soft-deleted key vault %s\n", k.name)
 		createMode = armkeyvault.CreateModeRecover
 	} else if !isNotFound(err) {
 		return fmt.Errorf("failed to get deleted key vault %s: %w", k.name, err)
@@ -97,7 +96,11 @@ func (k *KMS) EnsureVault(skipDelay bool) error {
 		return fmt.Errorf("failed to create key vault %s: %w", k.name, err)
 	}
 	k.setVault(response.Vault)
-	log.Printf("Created key vault %s\n", k.name)
+	if createMode == armkeyvault.CreateModeRecover {
+		log.Printf("Recovered soft-deleted key vault %s\n", k.name)
+	} else {
+		log.Printf("Created key vault %s\n", k.name)
+	}
 	return nil
 }
 
@@ -129,7 +132,7 @@ func (k *KMS) EnsureKey() error {
 	if err != nil {
 		return err
 	}
-	return retryUntilAuthorized(k.ctx, "creating the agent key", func() error {
+	return retryUntilAuthorized(k.ctx, "accessing the agent key", func() error {
 		_, err := client.GetKey(k.ctx, k.keyName, "", nil)
 		if err == nil {
 			return nil

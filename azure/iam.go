@@ -258,8 +258,17 @@ func isAuthorizationFailed(err error) bool {
 	return isStatus(err, http.StatusForbidden) && errorCode(err) == "AuthorizationFailed"
 }
 
+// DeleteRoleAssignment checks existence first: deleting a missing assignment can still be
+// denied, e.g. by an Owner condition against deleting Owner assignments.
 func (i *IAM) DeleteRoleAssignment(scope, principalId, roleId string) error {
-	_, err := i.assignments.Delete(i.ctx, scope, deterministicUUID(scope, principalId, roleId), nil)
+	name := deterministicUUID(scope, principalId, roleId)
+	if _, err := i.assignments.Get(i.ctx, scope, name, nil); err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	_, err := i.assignments.Delete(i.ctx, scope, name, nil)
 	if err != nil && !isNotFound(err) {
 		return err
 	}
