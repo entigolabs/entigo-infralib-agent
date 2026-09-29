@@ -110,6 +110,8 @@ continues to work without it.
   * [Notifications](#notifications)
   * [Encryption](#encryption)
   * [Scheduling](#scheduling)
+* [State](#state)
+  * [Rollback](#rollback)
 * [Migration Helper](#migration-helper)
   * [Commands](#migration-commands)
       * [Migrate Config](#migrate-config)
@@ -849,6 +851,34 @@ Supported locations can change in the future. If configured location starts supp
 #### Oracle
 
 Scheduling is not yet supported for Oracle Cloud. A configured `update_cron` is ignored with a warning; run the agent's update command on an external schedule (e.g. a cron job or CI pipeline) instead.
+
+## State
+
+Agent stores the current state of the applied modules in a cloud provider bucket as a `state.yaml` file:
+
+```yaml
+steps:
+  - name: name of the step
+    applied_at: timestamp when the step was successfully applied
+    modules:
+      - name: name of the module
+        applied_version: semver, last successfully applied or skipped version
+        version: semver, last version that was attempted to be applied
+        source: source of the module, matching the source url of the source which includes the module
+```
+
+Agent updates the state file after each successful execution or skipping of a step. If a step fails, then the state file is not updated and the last successfully applied version is kept. This means that if `update` command fails then the next `run` command will re-apply the last successfully applied version of the module, while the next `update` command will attempt to re-apply the last attempted version of the module.
+
+When the source of a module changes, agent will treat it as a new provisioning and will use the latest or configured version of the new source. Source can change if a different source includes the module than previously.
+
+### Rollback
+
+**Warning!** Rolling back versions can only be done if the module changes are backwards compatible. For example, kubernetes version upgrades can't be downgraded.
+Carefully verify the planned changes before approving the pipeline when rolling back versions.
+
+Rolling back module versions can be done in 2 ways:
+1. **Recommended** Set the config source `force_version` value to `true` and `version` to the desired version.
+2. **Advanced** Download the state file and modify the versions in the state file to the desired version. Upload the modified state file back to the bucket. Run the agent with `run` command and it will apply the specified versions. **Warning! Use at your own risk.** This can also be used to skip versions when there are no breaking changes between versions.
 
 ## Migration Helper
 
