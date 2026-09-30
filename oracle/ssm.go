@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/secrets"
 	"github.com/oracle/oci-go-sdk/v65/vault"
@@ -236,7 +237,7 @@ func (s *SSM) applyUpdate(name, id, content string) error {
 			return err
 		}
 		lastErr = err
-		if waitErr := s.sleep(); waitErr != nil {
+		if waitErr := util.Sleep(s.ctx, s.secretPoll); waitErr != nil {
 			return waitErr
 		}
 	}
@@ -265,18 +266,9 @@ func (s *SSM) waitForSecretActive(name string) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out waiting for secret %s to become active (state %s)", name, state)
 		}
-		if err = s.sleep(); err != nil {
+		if err = util.Sleep(s.ctx, s.secretPoll); err != nil {
 			return err
 		}
-	}
-}
-
-func (s *SSM) sleep() error {
-	select {
-	case <-s.ctx.Done():
-		return s.ctx.Err()
-	case <-time.After(s.secretPoll):
-		return nil
 	}
 }
 

@@ -106,12 +106,6 @@ func getImage(imageVersion, imageSource string) string {
 	return fmt.Sprintf("%s:%s", imageSource, imageVersion)
 }
 
-func stepCommands(stepType model.StepType) []model.ActionCommand {
-	plan, apply := model.GetCommands(stepType)
-	planDestroy, applyDestroy := model.GetDestroyCommands(stepType)
-	return []model.ActionCommand{plan, apply, planDestroy, applyDestroy}
-}
-
 func (b *Builder) CreateProject(projectName, _, _ string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
 	environmentId, err := b.environment.ForSubnet(stepSubnet(vpcConfig))
 	if err != nil {
@@ -124,7 +118,7 @@ func (b *Builder) CreateProject(projectName, _, _ string, step model.Step, image
 	}
 	log.Printf("Reconciling container apps jobs for step %s\n", projectName)
 	var group errgroup.Group
-	for _, command := range stepCommands(step.Type) {
+	for _, command := range model.GetStepCommands(step.Type) {
 		container := &armappcontainers.Container{
 			Name:      new(containerNameStep),
 			Image:     &image,
@@ -145,7 +139,7 @@ func (b *Builder) UpdateProject(projectName, repoURL, stepName string, step mode
 // DeleteProject also deletes the step's client module secrets, once no job references them.
 func (b *Builder) DeleteProject(projectName string, step model.Step) error {
 	var group errgroup.Group
-	for _, command := range stepCommands(step.Type) {
+	for _, command := range model.GetStepCommands(step.Type) {
 		group.Go(func() error {
 			return b.deleteJob(jobName(projectName, command))
 		})
@@ -438,7 +432,7 @@ func (b *Builder) waitForExecution(job, execution string) error {
 				return fmt.Errorf("execution %s of job %s ended with status %s", execution, job, *response.Properties.Status)
 			}
 		}
-		if err = sleep(b.ctx, executionPoll); err != nil {
+		if err = util.Sleep(b.ctx, executionPoll); err != nil {
 			return err
 		}
 	}

@@ -2,17 +2,15 @@ package azure
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const managementScope = "https://management.azure.com/.default"
@@ -37,21 +35,13 @@ func currentPrincipal(ctx context.Context, credential azcore.TokenCredential) (p
 	if err != nil {
 		return principal{}, fmt.Errorf("failed to get azure access token: %w", err)
 	}
-	parts := strings.Split(token.Token, ".")
-	if len(parts) != 3 {
-		return principal{}, errors.New("azure access token is not a JWT")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return principal{}, fmt.Errorf("failed to decode azure access token: %w", err)
-	}
 	var claims struct {
 		Oid    string `json:"oid"`
 		Tid    string `json:"tid"`
 		IdType string `json:"idtyp"`
 		Scope  string `json:"scp"`
 	}
-	if err = json.Unmarshal(payload, &claims); err != nil {
+	if err = util.DecodeJWTClaims(token.Token, &claims); err != nil {
 		return principal{}, fmt.Errorf("failed to parse azure access token: %w", err)
 	}
 	if claims.Oid == "" || claims.Tid == "" {

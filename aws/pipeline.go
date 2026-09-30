@@ -974,10 +974,8 @@ func (p *Pipeline) waitAndStopAutoExecution(pipelineName string, timeout time.Du
 			slog.Warn("no auto-execution appeared to intercept", "pipeline", pipelineName, "timeout", timeout)
 			return nil
 		}
-		select {
-		case <-p.ctx.Done():
-			return p.ctx.Err()
-		case <-time.After(1 * time.Second):
+		if err := util.Sleep(p.ctx, 1*time.Second); err != nil {
+			return err
 		}
 	}
 }

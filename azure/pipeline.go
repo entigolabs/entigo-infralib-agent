@@ -157,7 +157,7 @@ func (p *Pipeline) waitForManualApproval(pipelineName, applyJob, planExecution s
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("manual approval for %s timed out after %s", pipelineName, approvalTimeout)
 		}
-		if err = sleep(p.ctx, executionPoll); err != nil {
+		if err = util.Sleep(p.ctx, executionPoll); err != nil {
 			return "", err
 		}
 	}

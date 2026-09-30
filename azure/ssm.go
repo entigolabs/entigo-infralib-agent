@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const secretRecoveryTimeout = 2 * time.Minute
@@ -178,7 +179,7 @@ func (s *SSM) recoverSecret(key string) error {
 		if !isNotFound(err) || time.Now().After(deadline) {
 			return fmt.Errorf("failed to wait for recovered secret %s: %w", key, err)
 		}
-		if err = sleep(s.ctx, 5*time.Second); err != nil {
+		if err = util.Sleep(s.ctx, 5*time.Second); err != nil {
 			return err
 		}
 	}

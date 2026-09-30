@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 )
@@ -89,10 +90,8 @@ func (s *Storage) CreateBucket(kms *KMS) error {
 			return err
 		}
 		log.Printf("KMS key not yet authorized for Object Storage, retrying bucket %s creation\n", s.bucket)
-		select {
-		case <-s.ctx.Done():
-			return s.ctx.Err()
-		case <-time.After(bucketKmsPropagationPoll):
+		if err := util.Sleep(s.ctx, bucketKmsPropagationPoll); err != nil {
+			return err
 		}
 	}
 	log.Printf("Created Oracle Object Storage bucket %s\n", s.bucket)

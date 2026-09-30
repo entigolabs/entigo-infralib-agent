@@ -262,6 +262,12 @@ func GetDestroyCommands(stepType StepType) (ActionCommand, ActionCommand) {
 	}
 }
 
+func GetStepCommands(stepType StepType) []ActionCommand {
+	plan, apply := GetCommands(stepType)
+	planDestroy, applyDestroy := GetDestroyCommands(stepType)
+	return []ActionCommand{plan, apply, planDestroy, applyDestroy}
+}
+
 type TFOutput struct {
 	Sensitive bool
 	Type      any

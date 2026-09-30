@@ -191,7 +191,7 @@ func (b *Builder) ensureStepPipelines(projectName string, step model.Step) error
 	// Reconcile the commands concurrently — each blocks ~20s on OCI's async
 	// provisioning work request, which would otherwise serialize into ~100s per step.
 	var group errgroup.Group
-	for _, command := range stepCommands(step.Type) {
+	for _, command := range model.GetStepCommands(step.Type) {
 		displayName := runName(projectName, command)
 		params := b.nonSecretParams(projectName, command, step, project)
 		group.Go(func() error {
@@ -235,14 +235,6 @@ func (b *Builder) specFile(projectName string, project *containerProject) string
 		return agentSpecFile(b.cloudPrefix)
 	}
 	return specFileFor(projectName)
-}
-
-// stepCommands lists every action command a step can execute: the plan/apply pair
-// plus their destroy counterparts.
-func stepCommands(stepType model.StepType) []model.ActionCommand {
-	plan, apply := model.GetCommands(stepType)
-	planDestroy, applyDestroy := model.GetDestroyCommands(stepType)
-	return []model.ActionCommand{plan, apply, planDestroy, applyDestroy}
 }
 
 // trigger starts a build run against an already-created pipeline by display name,

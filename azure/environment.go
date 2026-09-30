@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/operationalinsights/armoperationalinsights/v2"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const (
@@ -194,7 +195,7 @@ func (e *Environment) ensureWorkspace() (string, string, error) {
 func (e *Environment) waitForDeletion(name string) error {
 	deadline := time.Now().Add(deletionTimeout)
 	for {
-		if err := sleep(e.ctx, pollInterval); err != nil {
+		if err := util.Sleep(e.ctx, pollInterval); err != nil {
 			return err
 		}
 		_, err := e.environments.Get(e.ctx, e.resourceGroup, name, nil)

@@ -5,8 +5,11 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -358,6 +361,31 @@ func HashCode(value string) string {
 	hasher := fnv.New32a()
 	_, _ = hasher.Write([]byte(value))
 	return strings.ToLower(fmt.Sprintf("%x", hasher.Sum32()))
+}
+
+// Sleep returns the context's error when it's cancelled before the duration passes.
+func Sleep(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// DecodeJWTClaims unmarshals the token payload into claims without verifying the signature.
+func DecodeJWTClaims(token string, claims any) error {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return errors.New("token is not a JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(payload, claims)
 }
 
 func GetOutputStringValue(outputs map[string]model.TFOutput, key string) (string, error) {

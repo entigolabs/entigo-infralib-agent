@@ -1,14 +1,13 @@
 package azure
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const (
@@ -53,8 +52,7 @@ func agentKeyName(prefix string) string {
 }
 
 func nameHash(parts ...string) string {
-	sum := sha256.Sum256([]byte(strings.Join(parts, "/")))
-	return hex.EncodeToString(sum[:])[:nameHashLen]
+	return util.HashCode(strings.Join(parts, "/"))
 }
 
 // storageAccountName is globally unique, 3-24 lowercase letters and digits.
@@ -98,7 +96,7 @@ func checkJobName(name string) error {
 func validateJobNames(prefix string, steps []model.Step) error {
 	owners := map[string]string{}
 	for _, step := range steps {
-		for _, command := range stepCommands(step.Type) {
+		for _, command := range model.GetStepCommands(step.Type) {
 			name := jobName(fmt.Sprintf("%s-%s", prefix, step.Name), command)
 			if len(name) > maxJobNameLen {
 				return fmt.Errorf("step %s name is too long for azure, job name %s is longer than %d characters, use a step name of at most %d characters",

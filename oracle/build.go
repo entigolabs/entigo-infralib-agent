@@ -15,6 +15,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -407,10 +408,8 @@ func (d *DevOpsBuilder) withConflictRetry(desc string, op func() error) error {
 			return err
 		}
 		log.Printf("%s hit a transaction conflict; retrying in %s\n", desc, pipelineConflictInterval)
-		select {
-		case <-d.ctx.Done():
-			return d.ctx.Err()
-		case <-time.After(pipelineConflictInterval):
+		if err := util.Sleep(d.ctx, pipelineConflictInterval); err != nil {
+			return err
 		}
 	}
 }
@@ -692,10 +691,8 @@ func (d *DevOpsBuilder) withGitAuthRetry(op func() error) error {
 			return err
 		}
 		log.Printf("DevOps git rejected the new auth token (not yet propagated); retrying in %s\n", gitAuthRetryInterval)
-		select {
-		case <-d.ctx.Done():
-			return d.ctx.Err()
-		case <-time.After(gitAuthRetryInterval):
+		if err := util.Sleep(d.ctx, gitAuthRetryInterval); err != nil {
+			return err
 		}
 	}
 }
@@ -780,10 +777,8 @@ func (d *DevOpsBuilder) waitForWorkRequest(workRequestId *string) error {
 			devops.OperationStatusNeedsAttention:
 			return fmt.Errorf("devops work request %s ended as %s", *workRequestId, response.Status)
 		}
-		select {
-		case <-d.ctx.Done():
-			return d.ctx.Err()
-		case <-time.After(pollInterval):
+		if err := util.Sleep(d.ctx, pollInterval); err != nil {
+			return err
 		}
 	}
 }
@@ -802,10 +797,8 @@ func (d *DevOpsBuilder) waitForBuildRun(buildRunId string) (int, error) {
 		case devops.BuildRunLifecycleStateFailed, devops.BuildRunLifecycleStateCanceled:
 			return 1, nil
 		}
-		select {
-		case <-d.ctx.Done():
-			return 0, d.ctx.Err()
-		case <-time.After(pollInterval):
+		if err := util.Sleep(d.ctx, pollInterval); err != nil {
+			return 0, err
 		}
 	}
 }

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/devops"
 )
@@ -117,10 +117,8 @@ func (g *Gate) WaitForApproval(deploymentId string) error {
 		case devops.DeploymentLifecycleStateFailed, devops.DeploymentLifecycleStateCanceled:
 			return fmt.Errorf("approval deployment %s was rejected or canceled", deploymentId)
 		}
-		select {
-		case <-g.ctx.Done():
-			return g.ctx.Err()
-		case <-time.After(pollInterval):
+		if err := util.Sleep(g.ctx, pollInterval); err != nil {
+			return err
 		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const (
@@ -145,7 +146,7 @@ func (s *Storage) createAccount(kms *KMS, encryptionIdentity string) error {
 			log.Println("Waiting for the managed identity key access to propagate before creating the storage account")
 			logged = true
 		}
-		if err = sleep(s.ctx, pollInterval); err != nil {
+		if err = util.Sleep(s.ctx, pollInterval); err != nil {
 			return err
 		}
 	}

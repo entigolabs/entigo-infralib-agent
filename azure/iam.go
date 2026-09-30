@@ -2,7 +2,6 @@ package azure
 
 import (
 	"context"
-	"crypto/sha1"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
+	"github.com/entigolabs/entigo-infralib-agent/util"
+	"github.com/google/uuid"
 )
 
 const (
@@ -216,7 +217,7 @@ func (i *IAM) AssignRole(scope, principalId, principalType, roleId string) error
 		if errorCode(err) != "PrincipalNotFound" || time.Now().After(deadline) {
 			return fmt.Errorf("failed to assign role %s to %s on %s: %w", roleId, principalId, scope, err)
 		}
-		if err = sleep(i.ctx, pollInterval); err != nil {
+		if err = util.Sleep(i.ctx, pollInterval); err != nil {
 			return err
 		}
 	}
@@ -276,19 +277,7 @@ func (i *IAM) DeleteRoleAssignment(scope, principalId, roleId string) error {
 }
 
 func deterministicUUID(parts ...string) string {
-	sum := sha1.Sum([]byte(fmt.Sprint(parts)))
-	sum[6] = (sum[6] & 0x0f) | 0x50
-	sum[8] = (sum[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
-}
-
-func sleep(ctx context.Context, duration time.Duration) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(duration):
-		return nil
-	}
+	return uuid.NewSHA1(uuid.Nil, []byte(strings.Join(parts, "/"))).String()
 }
 
 // retryUntilAuthorized retries call while it fails with 403, which is how data-plane
@@ -305,7 +294,7 @@ func retryUntilAuthorized(ctx context.Context, action string, call func() error)
 			log.Printf("Waiting for role assignments to propagate before %s\n", action)
 			logged = true
 		}
-		if err = sleep(ctx, pollInterval); err != nil {
+		if err = util.Sleep(ctx, pollInterval); err != nil {
 			return err
 		}
 	}

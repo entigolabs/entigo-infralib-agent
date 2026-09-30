@@ -2,8 +2,6 @@ package oracle
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"golang.org/x/sync/errgroup"
 )
@@ -364,10 +363,8 @@ func (o *oracleService) waitForAgentAccess() {
 				policyPropagationTimeout, errSummary(err))))
 			return
 		}
-		select {
-		case <-o.ctx.Done():
+		if util.Sleep(o.ctx, policyPropagationInterval) != nil {
 			return
-		case <-time.After(policyPropagationInterval):
 		}
 	}
 }
@@ -621,18 +618,10 @@ func (o *oracleService) userId() string {
 // checked: the claim only names the user credentials get attached to, and the SDK still
 // authenticates every API call with the token itself.
 func subjectFromJWT(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
 	var claims struct {
 		Sub string `json:"sub"`
 	}
-	if err = json.Unmarshal(payload, &claims); err != nil {
+	if err := util.DecodeJWTClaims(token, &claims); err != nil {
 		return ""
 	}
 	return claims.Sub
