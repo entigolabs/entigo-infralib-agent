@@ -121,7 +121,9 @@ func (e *Environment) ensure(name string, vnet *armappcontainers.VnetConfigurati
 		return err
 	}
 	if vnet != nil {
-		log.Printf("Creating container apps environment %s in subnet %s, this can take several minutes\n", name, *vnet.InfrastructureSubnetID)
+		log.Printf("Creating container apps environment %s in subnet %s, this can take up to 10 minutes\n", name, *vnet.InfrastructureSubnetID)
+	} else {
+		log.Printf("Creating container apps environment %s, this can take up to 10 minutes\n", name)
 	}
 	poller, err := e.environments.BeginCreateOrUpdate(e.ctx, e.resourceGroup, name, armappcontainers.ManagedEnvironment{
 		Location: &e.location,
