@@ -906,9 +906,11 @@ When the source of a module changes, agent will treat it as a new provisioning a
 **Warning!** Rolling back versions can only be done if the module changes are backwards compatible. For example, kubernetes version upgrades can't be downgraded.
 Carefully verify the planned changes before approving the pipeline when rolling back versions.
 
+**Warning! Use at your own risk.** This can also be used to perform a roll forward to skip versions when there are no breaking changes between versions.
+
 Rolling back module versions can be done in 2 ways:
 1. **Recommended** Set the config source `force_version` value to `true` and `version` to the desired version.
-2. **Advanced** Download the state file and modify the versions in the state file to the desired version. Upload the modified state file back to the bucket. Run the agent with `run` command and it will apply the specified versions. **Warning! Use at your own risk.** This can also be used to skip versions when there are no breaking changes between versions.
+2. **Advanced** Download the state file and modify the versions in the state file to the desired version. Upload the modified state file back to the bucket. Run the agent with `run` command and it will apply the specified versions.
 
 
 ## Migration Helper
