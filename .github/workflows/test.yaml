@@ -57,7 +57,7 @@ jobs:
           LOCATION: europe-west1
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ZONE: europe-west1-a
-          OCI_REGION: eu-frankfurt-1
+          OCI_REGION: eu-frankfurt-2
           OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
           OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
