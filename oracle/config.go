@@ -35,7 +35,9 @@ func getBucketName(cloudPrefix, region string) string {
 }
 
 // s3Endpoint is the S3-compatible Object Storage endpoint used by the terraform
-// s3 backend, e.g. https://<namespace>.compat.objectstorage.<region>.oraclecloud.com
+// s3 backend, e.g. https://<namespace>.compat.objectstorage.<region>.oraclecloud.com.
+// The domain follows the region's realm (oraclecloud.eu for EU Sovereign Cloud).
 func s3Endpoint(namespace, region string) string {
-	return fmt.Sprintf("https://%s.compat.objectstorage.%s.oraclecloud.com", namespace, region)
+	return fmt.Sprintf("https://%s.compat.objectstorage.%s.%s", namespace, region,
+		ocicommon.StringToRegion(region).SecondLevelDomain())
 }
