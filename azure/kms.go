@@ -9,7 +9,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
-	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const (
@@ -51,16 +50,17 @@ func NewKMS(ctx context.Context, credential azcore.TokenCredential, subscription
 	}, nil
 }
 
+func (k *KMS) Name() string     { return k.name }
 func (k *KMS) VaultId() string  { return k.vaultId }
 func (k *KMS) VaultURI() string { return k.vaultURI }
 func (k *KMS) KeyName() string  { return k.keyName }
 
-func (k *KMS) EnsureVault(skipDelay bool) error {
+func (k *KMS) EnsureVault() error {
 	found, err := k.Resolve()
 	if err != nil || found {
 		return err
 	}
-	createMode, err := k.createMode(skipDelay)
+	createMode, err := k.createMode()
 	if err != nil {
 		return err
 	}
@@ -93,9 +93,8 @@ func (k *KMS) EnsureVault(skipDelay bool) error {
 	return nil
 }
 
-// createMode recovers a soft-deleted vault, since it still holds the name. A new vault
-// needs a name that's free globally.
-func (k *KMS) createMode(skipDelay bool) (armkeyvault.CreateMode, error) {
+// createMode recovers a soft-deleted vault, since it still holds the name.
+func (k *KMS) createMode() (armkeyvault.CreateMode, error) {
 	_, err := k.vaults.GetDeleted(k.ctx, k.name, k.location, nil)
 	if err == nil {
 		return armkeyvault.CreateModeRecover, nil
@@ -103,22 +102,34 @@ func (k *KMS) createMode(skipDelay bool) (armkeyvault.CreateMode, error) {
 	if !isNotFound(err) {
 		return "", fmt.Errorf("failed to get deleted key vault %s: %w", k.name, err)
 	}
+	return armkeyvault.CreateModeDefault, nil
+}
+
+// checkNameAvailable fails when a new vault's name is taken globally. A soft-deleted vault
+// keeps its name for recovery.
+func (k *KMS) checkNameAvailable() error {
+	createMode, err := k.createMode()
+	if err != nil || createMode == armkeyvault.CreateModeRecover {
+		return err
+	}
 	available, err := k.vaults.CheckNameAvailability(k.ctx, armkeyvault.VaultCheckNameAvailabilityParameters{
 		Name: &k.name,
 		Type: new("Microsoft.KeyVault/vaults"),
 	}, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to check key vault name %s: %w", k.name, err)
+		return fmt.Errorf("failed to check key vault name %s: %w", k.name, err)
 	}
 	if available.NameAvailable != nil && !*available.NameAvailable {
-		return "", fmt.Errorf("key vault name %s is taken in another resource group or subscription, use another prefix", k.name)
+		return fmt.Errorf("key vault name %s is taken in another resource group or subscription, use another prefix", k.name)
 	}
-	util.DelayResourceCreation("Key vault", k.name, skipDelay)
-	return armkeyvault.CreateModeDefault, nil
+	return nil
 }
 
 // Resolve finds the vault without creating it.
 func (k *KMS) Resolve() (bool, error) {
+	if k.vaultId != "" {
+		return true, nil
+	}
 	existing, err := k.vaults.Get(k.ctx, k.resourceGroup, k.name, nil)
 	if err == nil {
 		k.setVault(existing.Vault)

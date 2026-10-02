@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -24,6 +25,7 @@ type azureService struct {
 	credential     azcore.TokenCredential
 	pipeline       common.Pipeline
 	skipDelay      bool
+	store          *stateStore
 	resources      Resources
 }
 
@@ -126,16 +128,16 @@ func (a *azureService) baseResources(tenantId string, storage *Storage) Resource
 	}
 }
 
+// SetupMinimalResources sets up the store once, SetupResources reuses it.
 func (a *azureService) SetupMinimalResources() (model.Resources, error) {
-	iam, err := a.ensureResourceGroup()
-	if err != nil {
-		return nil, err
+	if a.store == nil {
+		store, err := a.setupStore()
+		if err != nil {
+			return nil, err
+		}
+		a.store = store
 	}
-	store, err := a.setupStore(iam)
-	if err != nil {
-		return nil, err
-	}
-	a.resources = store.resources
+	a.resources = a.store.resources
 	return a.resources, nil
 }
 
@@ -146,20 +148,15 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 	if err := validateJobNames(a.cloudPrefix, config.Steps); err != nil {
 		return nil, err
 	}
-	iam, err := a.ensureResourceGroup()
-	if err != nil {
+	if _, err := a.SetupMinimalResources(); err != nil {
 		return nil, err
 	}
-	var store *stateStore
-	// Creating the environment takes over 10 minutes, so a failed store setup cancels the
+	store := a.store
+	// Creating the environment takes over 10 minutes, so a failed role assignment cancels the
 	// wait. Azure still finishes the creation, which the next Ensure waits for.
 	group, groupCtx := errgroup.WithContext(a.ctx)
 	group.Go(func() error {
-		var err error
-		if store, err = a.setupStore(iam); err != nil {
-			return err
-		}
-		return a.assignJobRole(iam, store.identity)
+		return a.assignJobRole(store.iam, store.identity)
 	})
 	group.Go(func() error {
 		environment, err := NewEnvironment(groupCtx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix)
@@ -168,7 +165,7 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 		}
 		return environment.Ensure()
 	})
-	if err = group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		return nil, err
 	}
 	environment, err := a.newEnvironment()
@@ -212,6 +209,7 @@ func (a *azureService) assignJobRole(iam *IAM, jobIdentity identity) error {
 
 type stateStore struct {
 	resources Resources
+	iam       *IAM
 	ssm       *SSM
 	identity  identity
 }
@@ -221,8 +219,12 @@ type stateStore struct {
 // can only use keys, so changes to the job identity can't break the encryption. The vault
 // and the identities don't depend on each other, so they're created concurrently. The job
 // identity's Owner role is only for jobs, so SetupResources assigns it.
-func (a *azureService) setupStore(iam *IAM) (*stateStore, error) {
+func (a *azureService) setupStore() (*stateStore, error) {
 	executor, err := currentPrincipal(a.ctx, a.credential)
+	if err != nil {
+		return nil, err
+	}
+	iam, err := a.newIAM()
 	if err != nil {
 		return nil, err
 	}
@@ -230,10 +232,38 @@ func (a *azureService) setupStore(iam *IAM) (*stateStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	storage, err := a.newStorage()
+	if err != nil {
+		return nil, err
+	}
+	groupExists, err := iam.ResourceGroupExists()
+	if err != nil {
+		return nil, err
+	}
+	// The vault and the storage account live in the resource group
+	vaultExists, storageExists := false, false
+	if groupExists {
+		if vaultExists, err = kms.Resolve(); err != nil {
+			return nil, err
+		}
+		if storageExists, err = storage.Resolve(); err != nil {
+			return nil, err
+		}
+	}
+	if !vaultExists {
+		if err = a.checkNewDeployment(kms, storage, storageExists); err != nil {
+			return nil, err
+		}
+	}
+	if !groupExists {
+		if err = iam.CreateResourceGroup(); err != nil {
+			return nil, err
+		}
+	}
 	var jobIdentity, storageIdentity identity
 	var group errgroup.Group
 	group.Go(func() error {
-		if err := kms.EnsureVault(a.skipDelay); err != nil {
+		if err := kms.EnsureVault(); err != nil {
 			return err
 		}
 		if err := iam.AssignRole(kms.VaultId(), executor, roleKeyVaultAdministrator); err != nil {
@@ -260,10 +290,6 @@ func (a *azureService) setupStore(iam *IAM) (*stateStore, error) {
 	if err = iam.AssignRole(kms.VaultId(), jobIdentity.principal(), roleKeyVaultAdministrator); err != nil {
 		return nil, err
 	}
-	storage, err := a.newStorage()
-	if err != nil {
-		return nil, err
-	}
 	if err = storage.CreateAccount(kms, storageIdentity.Id); err != nil {
 		return nil, err
 	}
@@ -283,7 +309,23 @@ func (a *azureService) setupStore(iam *IAM) (*stateStore, error) {
 	resources := a.baseResources(executor.TenantId, storage)
 	resources.SSM = ssm
 	resources.VaultId = kms.VaultId()
-	return &stateStore{resources: resources, ssm: ssm, identity: jobIdentity}, nil
+	return &stateStore{resources: resources, iam: iam, ssm: ssm, identity: jobIdentity}, nil
+}
+
+// checkNewDeployment runs before anything is created, since without the vault the deployment
+// is new or was deleted: the global names must be free and the operator gets time to cancel a
+// run against the wrong subscription.
+func (a *azureService) checkNewDeployment(kms *KMS, storage *Storage, storageExists bool) error {
+	if err := kms.checkNameAvailable(); err != nil {
+		return err
+	}
+	if !storageExists {
+		if err := storage.checkNameAvailable(); err != nil {
+			return err
+		}
+	}
+	util.DelayResourceCreation("Key vault", kms.Name(), a.skipDelay)
+	return nil
 }
 
 func (a *azureService) GetResources() (model.Resources, error) {
@@ -315,7 +357,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 		}
 		resources.VaultId = kms.VaultId()
 	} else {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Key vault %s not found", vaultName(a.cloudPrefix, a.subscriptionId, a.location))))
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Key vault %s not found", kms.Name())))
 	}
 	resources.SSM = ssm
 	iam, err := a.newIAM()

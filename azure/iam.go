@@ -77,14 +77,26 @@ func NewIAM(ctx context.Context, credential azcore.TokenCredential, subscription
 }
 
 func (i *IAM) EnsureResourceGroup() error {
+	exists, err := i.ResourceGroupExists()
+	if err != nil || exists {
+		return err
+	}
+	return i.CreateResourceGroup()
+}
+
+func (i *IAM) ResourceGroupExists() (bool, error) {
 	_, err := i.groups.Get(i.ctx, i.resourceGroup, nil)
 	if err == nil {
-		return nil
+		return true, nil
 	}
-	if !isNotFound(err) {
-		return fmt.Errorf("failed to get resource group %s: %w", i.resourceGroup, err)
+	if isNotFound(err) {
+		return false, nil
 	}
-	_, err = i.groups.CreateOrUpdate(i.ctx, i.resourceGroup, armresources.ResourceGroup{
+	return false, fmt.Errorf("failed to get resource group %s: %w", i.resourceGroup, err)
+}
+
+func (i *IAM) CreateResourceGroup() error {
+	_, err := i.groups.CreateOrUpdate(i.ctx, i.resourceGroup, armresources.ResourceGroup{
 		Location: &i.location,
 		Tags:     resourceTags(),
 	}, nil)
