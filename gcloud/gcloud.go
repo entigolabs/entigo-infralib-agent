@@ -17,6 +17,8 @@ import (
 	"google.golang.org/api/option"
 )
 
+const providerDomain = "googleapis.com"
+
 type gcloudService struct {
 	ctx            context.Context
 	cloudPrefix    string
@@ -119,6 +121,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 		Region:         g.location,
 		Account:        g.projectId,
 		OrganizationId: organizationId,
+		ProviderDomain: providerDomain,
 	}, nil
 }
 
@@ -155,6 +158,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 		Region:         g.location,
 		Account:        g.projectId,
 		OrganizationId: organizationId,
+		ProviderDomain: providerDomain,
 	}
 	if g.pipeline.Type == string(common.PipelineTypeLocal) {
 		return resources, nil
@@ -222,6 +226,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 		Region:         g.location,
 		Account:        g.projectId,
 		OrganizationId: organizationId,
+		ProviderDomain: providerDomain,
 	}
 	return g.resources, nil
 }

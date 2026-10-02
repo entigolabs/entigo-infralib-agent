@@ -112,6 +112,7 @@ func (o *oracleService) bucketResources() (Resources, *Storage, error) {
 		Region:         o.region,
 		Account:        o.compartmentId,
 		OrganizationId: tenancyId,
+		ProviderDomain: ocicommon.StringToRegion(o.region).SecondLevelDomain(),
 		Namespace:      storage.Namespace(),
 		S3Endpoint:     s3Endpoint(storage.Namespace(), o.region),
 	}, storage, nil

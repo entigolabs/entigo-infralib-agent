@@ -739,9 +739,10 @@ Step, module and input field values can be overwritten by using replacement tags
 |-----------------|-----------------------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------|
 | `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                                   |
 |                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                                    |
-|                 | organizationId              | `.agent.organizationId`               | AWS organization ID, Google Cloud organization ID or Oracle tenancy OCID. Empty if not in an organization.|
+|                 | organizationId              | `.agent.organizationId`               | AWS organization ID, Google Cloud organization ID or Oracle tenancy OCID. Empty if not in an organization.    |
 |                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                             |
 |                 | vaultId                     | `.agent.vaultId`                      | Managed Oracle Vault OCID, only supported for Oracle provider.                                                |
+|                 | providerDomain              | `.agent.providerDomain`               | Cloud provider domain of the region, e.g. `amazonaws.com`, `googleapis.com` or `oraclecloud.com`.             |
 | `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.                      |
 | `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                                           |
 |                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                         |
