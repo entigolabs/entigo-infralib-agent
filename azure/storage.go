@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -29,7 +30,9 @@ type Storage struct {
 	accounts      *armstorage.AccountsClient
 	blobServices  *armstorage.BlobServicesClient
 	policies      *armstorage.ManagementPoliciesClient
+	credential    azcore.TokenCredential
 	client        *azblob.Client
+	domain        string
 	resourceGroup string
 	location      string
 	account       string
@@ -50,16 +53,12 @@ func NewStorage(ctx context.Context, credential azcore.TokenCredential, subscrip
 	if err != nil {
 		return nil, err
 	}
-	client, err := azblob.NewClient(fmt.Sprintf("https://%s.blob.core.windows.net/", account), credential, nil)
-	if err != nil {
-		return nil, err
-	}
 	return &Storage{
 		ctx:           ctx,
 		accounts:      accounts,
 		blobServices:  blobServices,
 		policies:      policies,
-		client:        client,
+		credential:    credential,
 		resourceGroup: resourceGroup,
 		location:      location,
 		account:       account,
@@ -70,11 +69,62 @@ func NewStorage(ctx context.Context, credential azcore.TokenCredential, subscrip
 
 func (s *Storage) AccountId() string { return s.accountId }
 
+// Domain is the storage endpoint suffix of the account's cloud, empty until the account is resolved.
+func (s *Storage) Domain() string { return s.domain }
+
+// Resolve loads the account's blob endpoint without creating the account.
+func (s *Storage) Resolve() (bool, error) {
+	if s.client != nil {
+		return true, nil
+	}
+	existing, err := s.accounts.GetProperties(s.ctx, s.resourceGroup, s.account, nil)
+	if err == nil {
+		return true, s.setAccount(existing.Account)
+	}
+	if isNotFound(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to get storage account %s: %w", s.account, err)
+}
+
+func (s *Storage) setAccount(account armstorage.Account) error {
+	if account.Properties == nil || account.Properties.PrimaryEndpoints == nil || account.Properties.PrimaryEndpoints.Blob == nil {
+		return fmt.Errorf("storage account %s has no blob endpoint", s.account)
+	}
+	endpoint := *account.Properties.PrimaryEndpoints.Blob
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to parse blob endpoint %s: %w", endpoint, err)
+	}
+	_, domain, found := strings.Cut(parsed.Hostname(), ".blob.")
+	if !found {
+		return fmt.Errorf("unexpected blob endpoint %s", endpoint)
+	}
+	client, err := azblob.NewClient(endpoint, s.credential, nil)
+	if err != nil {
+		return err
+	}
+	s.client = client
+	s.domain = domain
+	return nil
+}
+
+func (s *Storage) blobClient() (*azblob.Client, error) {
+	found, err := s.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("storage account %s not found", s.account)
+	}
+	return s.client, nil
+}
+
 // CreateAccount creates the account encrypted with the agent's key, accessed through
 // the managed identity, which must already hold a key role on the vault. A fresh role
 // assignment surfaces as a key access error until it propagates, so that is retried.
 func (s *Storage) CreateAccount(kms *KMS, encryptionIdentity string) error {
-	exists, err := s.accountExists()
+	exists, err := s.Resolve()
 	if err != nil {
 		return err
 	}
@@ -132,12 +182,13 @@ func (s *Storage) createAccount(kms *KMS, encryptionIdentity string) error {
 	logged := false
 	for {
 		poller, err := s.accounts.BeginCreate(s.ctx, s.resourceGroup, s.account, parameters, nil)
+		var created armstorage.AccountsClientCreateResponse
 		if err == nil {
-			_, err = poller.PollUntilDone(s.ctx, nil)
+			created, err = poller.PollUntilDone(s.ctx, nil)
 		}
 		if err == nil {
 			log.Printf("Created storage account %s\n", s.account)
-			return nil
+			return s.setAccount(created.Account)
 		}
 		if !isKeyAccessError(err) || time.Now().After(deadline) {
 			return fmt.Errorf("failed to create storage account %s: %w", s.account, err)
@@ -155,17 +206,6 @@ func (s *Storage) createAccount(kms *KMS, encryptionIdentity string) error {
 func isKeyAccessError(err error) bool {
 	code := errorCode(err)
 	return strings.Contains(code, "KeyVault") || strings.Contains(err.Error(), "Key Vault")
-}
-
-func (s *Storage) accountExists() (bool, error) {
-	_, err := s.accounts.GetProperties(s.ctx, s.resourceGroup, s.account, nil)
-	if err == nil {
-		return true, nil
-	}
-	if isNotFound(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("failed to get storage account %s: %w", s.account, err)
 }
 
 func (s *Storage) ensureBlobServices() error {
@@ -211,8 +251,12 @@ func (s *Storage) ensureLifecycle() error {
 
 // EnsureContainer uses the data plane, so a fresh blob role is retried until it applies.
 func (s *Storage) EnsureContainer() error {
+	client, err := s.blobClient()
+	if err != nil {
+		return err
+	}
 	return retryUntilAuthorized(s.ctx, "creating the storage container", func() error {
-		_, err := s.client.CreateContainer(s.ctx, containerName, nil)
+		_, err := client.CreateContainer(s.ctx, containerName, nil)
 		if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
 			return err
 		}
@@ -221,7 +265,7 @@ func (s *Storage) EnsureContainer() error {
 }
 
 func (s *Storage) BucketExists() (bool, error) {
-	exists, err := s.accountExists()
+	exists, err := s.Resolve()
 	if err != nil || !exists {
 		return exists, err
 	}
@@ -251,7 +295,11 @@ func (s *Storage) GetRepoMetadata() (*model.RepositoryMetadata, error) {
 }
 
 func (s *Storage) PutFile(file string, content []byte) error {
-	_, err := s.client.UploadBuffer(s.ctx, containerName, file, content, nil)
+	client, err := s.blobClient()
+	if err != nil {
+		return err
+	}
+	_, err = client.UploadBuffer(s.ctx, containerName, file, content, nil)
 	if err != nil {
 		return fmt.Errorf("failed to put blob %s: %w", file, err)
 	}
@@ -259,7 +307,11 @@ func (s *Storage) PutFile(file string, content []byte) error {
 }
 
 func (s *Storage) GetFile(file string) ([]byte, error) {
-	response, err := s.client.DownloadStream(s.ctx, containerName, file, nil)
+	client, err := s.blobClient()
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.DownloadStream(s.ctx, containerName, file, nil)
 	if err != nil {
 		if bloberror.HasCode(err, bloberror.BlobNotFound) {
 			return nil, nil
@@ -275,7 +327,11 @@ func (s *Storage) GetFile(file string) ([]byte, error) {
 }
 
 func (s *Storage) DeleteFile(file string) error {
-	_, err := s.client.DeleteBlob(s.ctx, containerName, file, nil)
+	client, err := s.blobClient()
+	if err != nil {
+		return err
+	}
+	_, err = client.DeleteBlob(s.ctx, containerName, file, nil)
 	if err != nil && !bloberror.HasCode(err, bloberror.BlobNotFound) {
 		return err
 	}
@@ -292,7 +348,11 @@ func (s *Storage) DeleteFiles(files []string) error {
 }
 
 func (s *Storage) CheckFolderExists(folder string) (bool, error) {
-	pager := s.client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
+	client, err := s.blobClient()
+	if err != nil {
+		return false, err
+	}
+	pager := client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
 		Prefix:     new(folderPrefix(folder)),
 		MaxResults: new(int32(1)),
 	})
@@ -307,8 +367,12 @@ func (s *Storage) CheckFolderExists(folder string) (bool, error) {
 }
 
 func (s *Storage) ListFolderFiles(folder string) ([]string, error) {
+	client, err := s.blobClient()
+	if err != nil {
+		return nil, err
+	}
 	var files []string
-	pager := s.client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
+	pager := client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
 		Prefix: new(folderPrefix(folder)),
 	})
 	for pager.More() {

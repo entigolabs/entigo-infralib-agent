@@ -92,6 +92,7 @@ func (a *azureService) baseResources(tenantId string, storage *Storage) Resource
 		Region:         a.location,
 		Account:        a.subscriptionId,
 		OrganizationId: tenantId,
+		ProviderDomain: storage.Domain(),
 		TenantId:       tenantId,
 		ResourceGroup:  a.resourceGroup,
 	}
@@ -259,6 +260,9 @@ func (a *azureService) GetResources() (model.Resources, error) {
 	storage, err := NewStorage(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location,
 		storageAccountName(a.cloudPrefix, a.subscriptionId, a.location))
 	if err != nil {
+		return nil, err
+	}
+	if _, err = storage.Resolve(); err != nil {
 		return nil, err
 	}
 	resources := a.baseResources(executor.TenantId, storage)
