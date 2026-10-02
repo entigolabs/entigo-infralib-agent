@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,6 +27,7 @@ type awsService struct {
 	cloudPrefix    string
 	accountId      string
 	organizationId string
+	providerDomain string
 	resources      Resources
 	pipeline       common.Pipeline
 	skipDelay      bool
@@ -47,6 +49,15 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
+func getProviderDomain(ctx context.Context, region string) (string, error) {
+	endpoint, err := sts.NewDefaultEndpointResolverV2().ResolveEndpoint(ctx,
+		sts.EndpointParameters{Region: aws.String(region)})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve sts endpoint for region %s: %w", region, err)
+	}
+	return strings.TrimPrefix(endpoint.URI.Host, fmt.Sprintf("sts.%s.", region)), nil
+}
+
 func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeline common.Pipeline, skipBucketDelay bool) (model.CloudProvider, error) {
 	awsConfig, err := GetAWSConfig(ctx, awsFlags.RoleArn)
 	if err != nil {
@@ -62,12 +73,17 @@ func NewAWS(ctx context.Context, cloudPrefix string, awsFlags common.AWS, pipeli
 	if err != nil {
 		return nil, err
 	}
+	providerDomain, err := getProviderDomain(ctx, awsConfig.Region)
+	if err != nil {
+		return nil, err
+	}
 	return &awsService{
 		ctx:            ctx,
 		awsConfig:      awsConfig,
 		cloudPrefix:    cloudPrefix,
 		accountId:      accountId,
 		organizationId: organizationId,
+		providerDomain: providerDomain,
 		pipeline:       pipeline,
 		skipDelay:      skipBucketDelay,
 	}, nil
@@ -113,6 +129,7 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 		Region:         a.awsConfig.Region,
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
+		ProviderDomain: a.providerDomain,
 	}
 	return a.resources, nil
 }
@@ -142,6 +159,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		Region:         a.awsConfig.Region,
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
+		ProviderDomain: a.providerDomain,
 		DynamoDBTable:  *dynamoDBTable.TableName,
 		IAM:            iam,
 	}
@@ -194,6 +212,7 @@ func (a *awsService) GetResources() (model.Resources, error) {
 		Region:         a.awsConfig.Region,
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
+		ProviderDomain: a.providerDomain,
 		IAM:            NewIAM(a.ctx, a.awsConfig, a.accountId),
 		CloudWatch:     cloudwatch,
 	}

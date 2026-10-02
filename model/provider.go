@@ -92,6 +92,7 @@ type Resources interface {
 	GetAccount() string
 	GetOrganizationId() string
 	GetVaultId() (string, error)
+	GetProviderDomain() string
 }
 
 type Bucket interface {
@@ -164,6 +165,7 @@ type CloudResources struct {
 	Region         string
 	Account        string
 	OrganizationId string
+	ProviderDomain string
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -208,6 +210,10 @@ func (c CloudResources) GetOrganizationId() string {
 
 func (c CloudResources) GetVaultId() (string, error) {
 	return "", fmt.Errorf("GetVaultId not supported by provider %s", c.ProviderType)
+}
+
+func (c CloudResources) GetProviderDomain() string {
+	return c.ProviderDomain
 }
 
 type RepositoryMetadata struct {
