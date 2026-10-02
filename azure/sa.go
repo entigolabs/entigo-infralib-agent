@@ -47,11 +47,12 @@ func (a *azureService) CreateServiceAccount(SAFlags common.ServiceAccount) error
 	if err != nil {
 		return err
 	}
-	iam, err := NewIAM(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location)
+	executor, err := currentPrincipal(a.ctx, a.credential)
 	if err != nil {
 		return err
 	}
-	if err = iam.EnsureResourceGroup(); err != nil {
+	iam, err := a.ensureResourceGroup()
+	if err != nil {
 		return err
 	}
 	name := serviceAccountName(a.cloudPrefix)
@@ -60,7 +61,7 @@ func (a *azureService) CreateServiceAccount(SAFlags common.ServiceAccount) error
 		return err
 	}
 	for _, role := range serviceAccountRoles {
-		if err = iam.AssignRole(iam.resourceGroupScope(), account.PrincipalId, "ServicePrincipal", role); err != nil {
+		if err = iam.AssignRole(iam.resourceGroupScope(), account.principal(), role); err != nil {
 			return err
 		}
 	}
@@ -74,7 +75,7 @@ func (a *azureService) CreateServiceAccount(SAFlags common.ServiceAccount) error
 	}
 	if err == nil && existing.Properties != nil {
 		if *existing.Properties.Issuer == issuer && *existing.Properties.Subject == subject {
-			printServiceAccount(name, account.ClientId, a.subscriptionId, a.tenantId())
+			printServiceAccount(name, account.ClientId, a.subscriptionId, executor.TenantId)
 			return nil
 		}
 		if !SAFlags.RotateCredentials {
@@ -94,16 +95,8 @@ func (a *azureService) CreateServiceAccount(SAFlags common.ServiceAccount) error
 		return fmt.Errorf("failed to create federated credential for %s: %w", name, err)
 	}
 	log.Printf("Service account %s trusts %s from %s\n", name, subject, issuer)
-	printServiceAccount(name, account.ClientId, a.subscriptionId, a.tenantId())
+	printServiceAccount(name, account.ClientId, a.subscriptionId, executor.TenantId)
 	return nil
-}
-
-func (a *azureService) tenantId() string {
-	executor, err := currentPrincipal(a.ctx, a.credential)
-	if err != nil {
-		return ""
-	}
-	return executor.TenantId
 }
 
 func printServiceAccount(name, clientId, subscriptionId, tenantId string) {
@@ -111,22 +104,9 @@ func printServiceAccount(name, clientId, subscriptionId, tenantId string) {
 }
 
 func (a *azureService) deleteServiceAccount(iam *IAM) {
-	name := serviceAccountName(a.cloudPrefix)
-	account, err := iam.GetIdentity(name)
-	if err != nil {
-		if !isNotFound(err) {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get service account %s: %s", name, err)))
-		}
-		return
-	}
+	roles := map[string]string{}
 	for _, role := range serviceAccountRoles {
-		if err = iam.DeleteRoleAssignment(iam.resourceGroupScope(), account.PrincipalId, role); err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete role %s assignment of %s: %s", role, name, err)))
-		}
+		roles[role] = iam.resourceGroupScope()
 	}
-	if err = iam.DeleteIdentity(name); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete service account %s: %s", name, err)))
-		return
-	}
-	log.Printf("Deleted service account %s\n", name)
+	deleteIdentity(iam, serviceAccountName(a.cloudPrefix), roles)
 }

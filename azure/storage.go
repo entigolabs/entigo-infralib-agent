@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	versionRetentionDays = 1
-	keyAccessTimeout     = 5 * time.Minute
+	versionRetentionDays    = 14
+	softDeleteRetentionDays = 7
+	keyAccessTimeout        = 5 * time.Minute
 )
 
 // Storage is a single blob container in the agent's storage account. Shared key
@@ -129,15 +130,8 @@ func (s *Storage) CreateAccount(kms *KMS, encryptionIdentity string) error {
 		return err
 	}
 	if !exists {
-		available, err := s.accounts.CheckNameAvailability(s.ctx, armstorage.AccountCheckNameAvailabilityParameters{
-			Name: &s.account,
-			Type: new("Microsoft.Storage/storageAccounts"),
-		}, nil)
-		if err != nil {
-			return fmt.Errorf("failed to check storage account name %s: %w", s.account, err)
-		}
-		if available.NameAvailable != nil && !*available.NameAvailable {
-			return fmt.Errorf("storage account name %s is taken in another resource group or subscription, use another prefix", s.account)
+		if err = s.checkNameAvailable(); err != nil {
+			return err
 		}
 		if err = s.createAccount(kms, encryptionIdentity); err != nil {
 			return err
@@ -147,6 +141,20 @@ func (s *Storage) CreateAccount(kms *KMS, encryptionIdentity string) error {
 		return err
 	}
 	return s.ensureLifecycle()
+}
+
+func (s *Storage) checkNameAvailable() error {
+	available, err := s.accounts.CheckNameAvailability(s.ctx, armstorage.AccountCheckNameAvailabilityParameters{
+		Name: &s.account,
+		Type: new("Microsoft.Storage/storageAccounts"),
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to check storage account name %s: %w", s.account, err)
+	}
+	if available.NameAvailable != nil && !*available.NameAvailable {
+		return fmt.Errorf("storage account name %s is taken in another resource group or subscription, use another prefix", s.account)
+	}
+	return nil
 }
 
 func (s *Storage) createAccount(kms *KMS, encryptionIdentity string) error {
@@ -212,10 +220,18 @@ func (s *Storage) ensureBlobServices() error {
 	_, err := s.blobServices.SetServiceProperties(s.ctx, s.resourceGroup, s.account, armstorage.BlobServiceProperties{
 		BlobServiceProperties: &armstorage.BlobServicePropertiesProperties{
 			IsVersioningEnabled: new(true),
+			DeleteRetentionPolicy: &armstorage.DeleteRetentionPolicy{
+				Enabled: new(true),
+				Days:    new(int32(softDeleteRetentionDays)),
+			},
+			ContainerDeleteRetentionPolicy: &armstorage.DeleteRetentionPolicy{
+				Enabled: new(true),
+				Days:    new(int32(softDeleteRetentionDays)),
+			},
 		},
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("failed to enable versioning for storage account %s: %w", s.account, err)
+		return fmt.Errorf("failed to set data protection for storage account %s: %w", s.account, err)
 	}
 	return nil
 }
@@ -411,8 +427,13 @@ func folderPrefix(folder string) string {
 	return folder + "/"
 }
 
+// Delete checks existence first, since ARM answers deleting a missing account with 204.
 func (s *Storage) Delete() error {
-	_, err := s.accounts.Delete(s.ctx, s.resourceGroup, s.account, nil)
+	found, err := s.Resolve()
+	if err != nil || !found {
+		return err
+	}
+	_, err = s.accounts.Delete(s.ctx, s.resourceGroup, s.account, nil)
 	if err != nil && !isNotFound(err) {
 		return err
 	}

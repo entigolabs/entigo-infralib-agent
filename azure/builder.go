@@ -160,7 +160,7 @@ func (b *Builder) DeleteProject(projectName string, step model.Step) error {
 	return nil
 }
 
-func (b *Builder) CreateAgentProject(projectName string, _ string, imageVersion string, cmd common.Command) error {
+func (b *Builder) CreateAgentProject(projectName, _, imageVersion string, cmd common.Command) error {
 	cron := b.agentSchedule(cmd)
 	if err := b.ensureJob(jobName(projectName, ""), b.environment.Id(), b.agentContainer(imageVersion, cmd), nil, cron); err != nil {
 		return err
@@ -172,15 +172,16 @@ func (b *Builder) CreateAgentProject(projectName string, _ string, imageVersion 
 }
 
 func (b *Builder) UpdateAgentProject(projectName, version, _ string) error {
-	job, err := b.getJob(jobName(projectName, ""))
+	name := jobName(projectName, "")
+	job, err := b.getJob(name)
 	if err != nil {
 		return err
 	}
 	if job == nil {
-		return fmt.Errorf("job %s not found", jobName(projectName, ""))
+		return fmt.Errorf("job %s not found", name)
 	}
 	cmd := common.Command(strings.TrimPrefix(projectName, model.GetAgentPrefix(b.cloudPrefix)+"-"))
-	return b.ensureJob(jobName(projectName, ""), b.environment.Id(), b.agentContainer(version, cmd), nil, b.agentSchedule(cmd))
+	return b.ensureJob(name, b.environment.Id(), b.agentContainer(version, cmd), nil, b.agentSchedule(cmd))
 }
 
 func (b *Builder) agentSchedule(cmd common.Command) *string {
@@ -190,6 +191,47 @@ func (b *Builder) agentSchedule(cmd common.Command) *string {
 	return &b.updateCron
 }
 
+// reconcileSchedule moves the update job to the configured cron. The job is only
+// created by bootstrap, so a missing job is left for it, and CreateAgentProject notifies.
+func (b *Builder) reconcileSchedule() error {
+	name := jobName(model.GetAgentProjectName(model.GetAgentPrefix(b.cloudPrefix), common.UpdateCommand), "")
+	job, err := b.getJob(name)
+	if err != nil {
+		return err
+	}
+	if job == nil {
+		if b.updateCron == "" {
+			b.manager.ScheduleUnchanged(common.UpdateCommand, model.ScheduleRemoved, "")
+		}
+		return nil
+	}
+	current := scheduleCron(job)
+	if current == b.updateCron {
+		action := model.ScheduleAdded
+		if current == "" {
+			action = model.ScheduleRemoved
+		}
+		b.manager.ScheduleUnchanged(common.UpdateCommand, action, b.updateCron)
+		return nil
+	}
+	container, err := jobContainer(name, job)
+	if err != nil {
+		return err
+	}
+	if err = b.ensureJob(name, *job.Properties.EnvironmentID, container, nil, b.agentSchedule(common.UpdateCommand)); err != nil {
+		return err
+	}
+	switch {
+	case b.updateCron == "":
+		b.manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, b.updateCron)
+	case current == "":
+		b.manager.Schedule(common.UpdateCommand, model.ScheduleAdded, b.updateCron)
+	default:
+		b.manager.Schedule(common.UpdateCommand, model.ScheduleModified, b.updateCron)
+	}
+	return nil
+}
+
 func (b *Builder) agentContainer(version string, cmd common.Command) *armappcontainers.Container {
 	env := map[string]string{
 		common.PrefixEnv:              b.cloudPrefix,
@@ -197,6 +239,7 @@ func (b *Builder) agentContainer(version string, cmd common.Command) *armappcont
 		model.AzureRegion:             b.location,
 		common.AzureResourceGroupEnv:  b.resourceGroup,
 		"AZURE_CLIENT_ID":             b.identity.ClientId,
+		"AZURE_TOKEN_CREDENTIALS":     "ManagedIdentityCredential",
 		"TERRAFORM_CACHE":             strconv.FormatBool(b.terraformCache),
 	}
 	return &armappcontainers.Container{
@@ -210,11 +253,15 @@ func (b *Builder) agentContainer(version string, cmd common.Command) *armappcont
 }
 
 func (b *Builder) GetProject(projectName string) (*model.Project, error) {
-	job, err := b.getJob(jobName(projectName, ""))
+	name := jobName(projectName, "")
+	job, err := b.getJob(name)
 	if err != nil || job == nil {
 		return nil, err
 	}
-	container := job.Properties.Template.Containers[0]
+	container, err := jobContainer(name, job)
+	if err != nil {
+		return nil, err
+	}
 	project := &model.Project{Name: projectName, Image: *container.Image}
 	for _, env := range container.Env {
 		if env.Name != nil && *env.Name == "TERRAFORM_CACHE" && env.Value != nil {
@@ -248,25 +295,6 @@ func (b *Builder) ensureJob(name, environmentId string, container *armappcontain
 			return err
 		}
 	}
-	configuration := &armappcontainers.JobConfiguration{
-		ReplicaTimeout:    new(int32(jobTimeoutSeconds)),
-		ReplicaRetryLimit: new(int32(0)),
-		Secrets:           secrets,
-	}
-	if cron != nil {
-		configuration.TriggerType = new(armappcontainers.TriggerTypeSchedule)
-		configuration.ScheduleTriggerConfig = &armappcontainers.JobConfigurationScheduleTriggerConfig{
-			CronExpression:         cron,
-			Parallelism:            new(int32(1)),
-			ReplicaCompletionCount: new(int32(1)),
-		}
-	} else {
-		configuration.TriggerType = new(armappcontainers.TriggerTypeManual)
-		configuration.ManualTriggerConfig = &armappcontainers.JobConfigurationManualTriggerConfig{
-			Parallelism:            new(int32(1)),
-			ReplicaCompletionCount: new(int32(1)),
-		}
-	}
 	poller, err := b.jobs.BeginCreateOrUpdate(b.ctx, b.resourceGroup, name, armappcontainers.Job{
 		Location: &b.location,
 		Tags:     resourceTags(),
@@ -276,8 +304,8 @@ func (b *Builder) ensureJob(name, environmentId string, container *armappcontain
 		},
 		Properties: &armappcontainers.JobProperties{
 			EnvironmentID:       &environmentId,
-			WorkloadProfileName: new("Consumption"),
-			Configuration:       configuration,
+			WorkloadProfileName: new(consumptionProfile),
+			Configuration:       jobConfiguration(secrets, cron),
 			Template: &armappcontainers.JobTemplate{
 				Containers: []*armappcontainers.Container{container},
 			},
@@ -290,6 +318,50 @@ func (b *Builder) ensureJob(name, environmentId string, container *armappcontain
 		return fmt.Errorf("failed to create container apps job %s: %w", name, err)
 	}
 	return nil
+}
+
+// jobConfiguration runs one replica without retries. Without a cron the job only runs when started.
+func jobConfiguration(secrets []*armappcontainers.Secret, cron *string) *armappcontainers.JobConfiguration {
+	configuration := &armappcontainers.JobConfiguration{
+		ReplicaTimeout:    new(int32(jobTimeoutSeconds)),
+		ReplicaRetryLimit: new(int32(0)),
+		Secrets:           secrets,
+	}
+	if cron == nil {
+		configuration.TriggerType = new(armappcontainers.TriggerTypeManual)
+		configuration.ManualTriggerConfig = &armappcontainers.JobConfigurationManualTriggerConfig{
+			Parallelism:            new(int32(1)),
+			ReplicaCompletionCount: new(int32(1)),
+		}
+		return configuration
+	}
+	configuration.TriggerType = new(armappcontainers.TriggerTypeSchedule)
+	configuration.ScheduleTriggerConfig = &armappcontainers.JobConfigurationScheduleTriggerConfig{
+		CronExpression:         cron,
+		Parallelism:            new(int32(1)),
+		ReplicaCompletionCount: new(int32(1)),
+	}
+	return configuration
+}
+
+// scheduleCron is the cron of a scheduled job, empty for a manually started one.
+func scheduleCron(job *armappcontainers.Job) string {
+	if job.Properties == nil || job.Properties.Configuration == nil {
+		return ""
+	}
+	configuration := job.Properties.Configuration
+	if configuration.TriggerType == nil || *configuration.TriggerType != armappcontainers.TriggerTypeSchedule ||
+		configuration.ScheduleTriggerConfig == nil || configuration.ScheduleTriggerConfig.CronExpression == nil {
+		return ""
+	}
+	return *configuration.ScheduleTriggerConfig.CronExpression
+}
+
+func jobContainer(name string, job *armappcontainers.Job) (*armappcontainers.Container, error) {
+	if job.Properties == nil || job.Properties.Template == nil || len(job.Properties.Template.Containers) == 0 {
+		return nil, fmt.Errorf("container apps job %s has no container", name)
+	}
+	return job.Properties.Template.Containers[0], nil
 }
 
 func (b *Builder) getJob(name string) (*armappcontainers.Job, error) {
@@ -343,8 +415,11 @@ func (b *Builder) startJob(name string) (string, error) {
 		return "", model.NewNotFoundError(fmt.Sprintf("container apps job %s", name))
 	}
 	var options *armappcontainers.JobsClientBeginStartOptions
-	if overrides := b.campaignOverrides(); overrides != nil && len(job.Properties.Template.Containers) > 0 {
-		container := job.Properties.Template.Containers[0]
+	if overrides := b.campaignOverrides(); overrides != nil {
+		container, err := jobContainer(name, job)
+		if err != nil {
+			return "", err
+		}
 		options = &armappcontainers.JobsClientBeginStartOptions{Template: &armappcontainers.JobExecutionTemplate{
 			Containers: []*armappcontainers.JobExecutionContainer{{
 				Name:      container.Name,
@@ -371,11 +446,15 @@ func (b *Builder) startJob(name string) (string, error) {
 	return *response.Name, nil
 }
 
+func campaignEnv(campaignId string, pipelineIndex int) map[string]string {
+	return map[string]string{"CAMPAIGN_ID": campaignId, "PIPELINE_INDEX": strconv.Itoa(pipelineIndex)}
+}
+
 func (b *Builder) campaignOverrides() map[string]string {
 	if b.campaignId == "" {
 		return nil
 	}
-	return map[string]string{"CAMPAIGN_ID": b.campaignId, "PIPELINE_INDEX": strconv.Itoa(b.pipelineIndex)}
+	return campaignEnv(b.campaignId, b.pipelineIndex)
 }
 
 // setJobEnv changes env values in the job's own template, which a Portal execution uses.
@@ -384,13 +463,16 @@ func (b *Builder) setJobEnv(name string, overrides map[string]string) error {
 	if err != nil {
 		return err
 	}
-	if job == nil || job.Properties == nil || job.Properties.Template == nil || len(job.Properties.Template.Containers) == 0 {
+	if job == nil {
 		return model.NewNotFoundError(fmt.Sprintf("container apps job %s", name))
 	}
-	template := job.Properties.Template
-	template.Containers[0].Env = overrideEnv(template.Containers[0].Env, overrides)
+	container, err := jobContainer(name, job)
+	if err != nil {
+		return err
+	}
+	container.Env = overrideEnv(container.Env, overrides)
 	poller, err := b.jobs.BeginUpdate(b.ctx, b.resourceGroup, name, armappcontainers.JobPatchProperties{
-		Properties: &armappcontainers.JobPatchPropertiesProperties{Template: template},
+		Properties: &armappcontainers.JobPatchPropertiesProperties{Template: job.Properties.Template},
 	}, nil)
 	if err == nil {
 		_, err = poller.PollUntilDone(b.ctx, nil)
@@ -486,9 +568,8 @@ func (b *Builder) stepEnv(prefixStep string, command model.ActionCommand, step m
 		"ARM_CLIENT_ID":               b.identity.ClientId,
 		"ARM_USE_MSI":                 "true",
 		"ARM_USE_AZUREAD":             "true",
-		"CAMPAIGN_ID":                 model.CampaignSentinelNone,
-		"PIPELINE_INDEX":              "0",
 	}
+	maps.Copy(env, campaignEnv(model.CampaignSentinelNone, 0))
 	for source, auth := range authSources {
 		hash := util.HashCode(source)
 		env[fmt.Sprintf(model.GitSourceEnvFormat, hash)] = source
@@ -511,8 +592,8 @@ func (b *Builder) stepEnv(prefixStep string, command model.ActionCommand, step m
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				name := strings.ToUpper(module.Name)
-				env[fmt.Sprintf("GIT_AUTH_USERNAME_%s", name)] = module.HttpUsername
-				env[fmt.Sprintf("GIT_AUTH_SOURCE_%s", name)] = module.Source
+				env[fmt.Sprintf(model.GitUsernameEnvFormat, name)] = module.HttpUsername
+				env[fmt.Sprintf(model.GitSourceEnvFormat, name)] = module.Source
 			}
 		}
 	}
@@ -524,7 +605,7 @@ func (b *Builder) stepEnv(prefixStep string, command model.ActionCommand, step m
 // secret fails the job creation, so only existing ones are referenced.
 func (b *Builder) stepSecrets(step model.Step, authSources map[string]model.SourceAuth) ([]*armappcontainers.Secret, []*armappcontainers.EnvironmentVar, error) {
 	refs := map[string]string{}
-	wrapperExists, err := b.ssm.secretExists(model.WrapperConfigSecretName(b.cloudPrefix))
+	wrapperExists, err := b.ssm.ParameterExists(model.WrapperConfigSecretName(b.cloudPrefix))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -544,7 +625,7 @@ func (b *Builder) stepSecrets(step model.Step, authSources map[string]model.Sour
 			if err = b.ssm.ensureSecret(name, module.HttpPassword); err != nil {
 				return nil, nil, err
 			}
-			refs[fmt.Sprintf("GIT_AUTH_PASSWORD_%s", strings.ToUpper(module.Name))] = name
+			refs[fmt.Sprintf(model.GitPasswordEnvFormat, strings.ToUpper(module.Name))] = name
 		}
 	}
 	var secrets []*armappcontainers.Secret

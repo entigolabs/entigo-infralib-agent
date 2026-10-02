@@ -12,7 +12,11 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
-const vaultRetentionDays = 7
+const (
+	vaultRetentionDays = 7
+	keyRotationAfter   = "P18M"
+	keyExpiry          = "P2Y"
+)
 
 // KMS is the agent-owned Key Vault and key. The key encrypts the storage account
 // (customer-managed key), which requires purge protection, so a deleted vault keeps
@@ -56,24 +60,9 @@ func (k *KMS) EnsureVault(skipDelay bool) error {
 	if err != nil || found {
 		return err
 	}
-	createMode := armkeyvault.CreateModeDefault
-	_, err = k.vaults.GetDeleted(k.ctx, k.name, k.location, nil)
-	if err == nil {
-		createMode = armkeyvault.CreateModeRecover
-	} else if !isNotFound(err) {
-		return fmt.Errorf("failed to get deleted key vault %s: %w", k.name, err)
-	} else {
-		available, err := k.vaults.CheckNameAvailability(k.ctx, armkeyvault.VaultCheckNameAvailabilityParameters{
-			Name: &k.name,
-			Type: new("Microsoft.KeyVault/vaults"),
-		}, nil)
-		if err != nil {
-			return fmt.Errorf("failed to check key vault name %s: %w", k.name, err)
-		}
-		if available.NameAvailable != nil && !*available.NameAvailable {
-			return fmt.Errorf("key vault name %s is taken in another resource group or subscription, use another prefix", k.name)
-		}
-		util.DelayResourceCreation("Key vault", k.name, skipDelay)
+	createMode, err := k.createMode(skipDelay)
+	if err != nil {
+		return err
 	}
 	poller, err := k.vaults.BeginCreateOrUpdate(k.ctx, k.resourceGroup, k.name, armkeyvault.VaultCreateOrUpdateParameters{
 		Location: &k.location,
@@ -102,6 +91,30 @@ func (k *KMS) EnsureVault(skipDelay bool) error {
 		log.Printf("Created key vault %s\n", k.name)
 	}
 	return nil
+}
+
+// createMode recovers a soft-deleted vault, since it still holds the name. A new vault
+// needs a name that's free globally.
+func (k *KMS) createMode(skipDelay bool) (armkeyvault.CreateMode, error) {
+	_, err := k.vaults.GetDeleted(k.ctx, k.name, k.location, nil)
+	if err == nil {
+		return armkeyvault.CreateModeRecover, nil
+	}
+	if !isNotFound(err) {
+		return "", fmt.Errorf("failed to get deleted key vault %s: %w", k.name, err)
+	}
+	available, err := k.vaults.CheckNameAvailability(k.ctx, armkeyvault.VaultCheckNameAvailabilityParameters{
+		Name: &k.name,
+		Type: new("Microsoft.KeyVault/vaults"),
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to check key vault name %s: %w", k.name, err)
+	}
+	if available.NameAvailable != nil && !*available.NameAvailable {
+		return "", fmt.Errorf("key vault name %s is taken in another resource group or subscription, use another prefix", k.name)
+	}
+	util.DelayResourceCreation("Key vault", k.name, skipDelay)
+	return armkeyvault.CreateModeDefault, nil
 }
 
 // Resolve finds the vault without creating it.
@@ -135,7 +148,7 @@ func (k *KMS) EnsureKey() error {
 	return retryUntilAuthorized(k.ctx, "accessing the agent key", func() error {
 		_, err := client.GetKey(k.ctx, k.keyName, "", nil)
 		if err == nil {
-			return nil
+			return k.ensureRotation(client)
 		}
 		if !isNotFound(err) {
 			return err
@@ -150,11 +163,28 @@ func (k *KMS) EnsureKey() error {
 			_, err = client.RecoverDeletedKey(k.ctx, k.keyName, nil)
 			return err
 		}
-		if err == nil {
-			log.Printf("Created key %s in key vault %s\n", k.keyName, k.name)
+		if err != nil {
+			return err
 		}
-		return err
+		log.Printf("Created key %s in key vault %s\n", k.keyName, k.name)
+		return k.ensureRotation(client)
 	})
+}
+
+// ensureRotation rotates the key before its versions expire. The storage account references
+// the key without a version, so it moves to a new version within a day.
+func (k *KMS) ensureRotation(client *azkeys.Client) error {
+	_, err := client.UpdateKeyRotationPolicy(k.ctx, k.keyName, azkeys.KeyRotationPolicy{
+		Attributes: &azkeys.KeyRotationPolicyAttributes{ExpiryTime: new(keyExpiry)},
+		LifetimeActions: []*azkeys.LifetimeAction{{
+			Action:  &azkeys.LifetimeActionType{Type: new(azkeys.KeyRotationPolicyActionRotate)},
+			Trigger: &azkeys.LifetimeActionTrigger{TimeAfterCreate: new(keyRotationAfter)},
+		}},
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to set rotation policy of key %s: %w", k.keyName, err)
+	}
+	return nil
 }
 
 // Delete soft-deletes the vault; purge protection keeps it recoverable for the retention period.

@@ -1,6 +1,7 @@
 package azure
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log"
@@ -22,6 +23,7 @@ const (
 	roleContributor                = "b24988ac-6180-42a0-ab88-20f7382dd24c"
 	roleStorageBlobDataContributor = "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
 	roleKeyVaultAdministrator      = "00482a5a-887f-4fb3-b363-3b7fe8e74483"
+	roleKeyVaultCryptoEncryption   = "e147488a-f6f5-4113-8e2d-b22465e65bf6"
 
 	principalPropagationTimeout = 3 * time.Minute
 	pollInterval                = 10 * time.Second
@@ -40,6 +42,7 @@ type IAM struct {
 
 type identity struct {
 	Id          string
+	Name        string
 	PrincipalId string
 	ClientId    string
 }
@@ -161,10 +164,17 @@ func (i *IAM) DeleteIdentity(name string) error {
 	return nil
 }
 
+func (i identity) principal() principal {
+	return principal{ObjectId: i.PrincipalId, Name: i.Name, Type: armauthorization.PrincipalTypeServicePrincipal}
+}
+
 func toIdentity(msi armmsi.Identity) identity {
 	result := identity{}
 	if msi.ID != nil {
 		result.Id = *msi.ID
+	}
+	if msi.Name != nil {
+		result.Name = *msi.Name
 	}
 	if msi.Properties != nil {
 		if msi.Properties.PrincipalID != nil {
@@ -189,8 +199,8 @@ func (i *IAM) resourceGroupScope() string {
 // An existing assignment at or above the scope is kept, so a principal without
 // roleAssignments/write, like the job identity with Contributor, can run it too.
 // A just-created principal may not have replicated yet, so PrincipalNotFound is retried.
-func (i *IAM) AssignRole(scope, principalId, principalType, roleId string) error {
-	assigned, err := i.hasRole(scope, principalId, roleId)
+func (i *IAM) AssignRole(scope string, assignee principal, roleId string) error {
+	assigned, err := i.hasRole(scope, assignee.ObjectId, roleId)
 	if err != nil {
 		return err
 	}
@@ -198,14 +208,15 @@ func (i *IAM) AssignRole(scope, principalId, principalType, roleId string) error
 		return nil
 	}
 	definitionId := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleDefinitions/%s", i.subscriptionScope(), roleId)
-	name := deterministicUUID(scope, principalId, roleId)
+	name := deterministicUUID(scope, assignee.ObjectId, roleId)
 	deadline := time.Now().Add(principalPropagationTimeout)
+	logged := false
 	for {
 		_, err := i.assignments.Create(i.ctx, scope, name, armauthorization.RoleAssignmentCreateParameters{
 			Properties: &armauthorization.RoleAssignmentProperties{
-				PrincipalID:      &principalId,
+				PrincipalID:      &assignee.ObjectId,
 				RoleDefinitionID: &definitionId,
-				PrincipalType:    new(armauthorization.PrincipalType(principalType)),
+				PrincipalType:    &assignee.Type,
 			},
 		}, nil)
 		if err == nil {
@@ -215,7 +226,11 @@ func (i *IAM) AssignRole(scope, principalId, principalType, roleId string) error
 			return nil
 		}
 		if errorCode(err) != "PrincipalNotFound" || time.Now().After(deadline) {
-			return fmt.Errorf("failed to assign role %s to %s on %s: %w", roleId, principalId, scope, err)
+			return fmt.Errorf("failed to assign role %s to %s on %s: %w", roleId, assignee.ObjectId, scope, err)
+		}
+		if !logged {
+			log.Printf("Waiting for %s to replicate in Entra ID before assigning its roles\n", cmp.Or(assignee.Name, assignee.ObjectId))
+			logged = true
 		}
 		if err = util.Sleep(i.ctx, pollInterval); err != nil {
 			return err
@@ -253,10 +268,6 @@ func (i *IAM) hasRole(scope, principalId, roleId string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func isAuthorizationFailed(err error) bool {
-	return isStatus(err, http.StatusForbidden) && errorCode(err) == "AuthorizationFailed"
 }
 
 // DeleteRoleAssignment checks existence first: deleting a missing assignment can still be

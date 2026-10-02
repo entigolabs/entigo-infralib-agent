@@ -24,19 +24,19 @@ const (
 
 var jobNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 
-func resourceGroupName(prefix, location string) string {
-	return fmt.Sprintf("%s-infralib-%s", prefix, location)
-}
-
 func resourceGroup(azure common.Azure, prefix string) string {
 	if azure.ResourceGroup != "" {
 		return azure.ResourceGroup
 	}
-	return resourceGroupName(prefix, azure.Location)
+	return fmt.Sprintf("%s-infralib-%s", prefix, azure.Location)
 }
 
 func identityName(prefix string) string {
 	return prefix + "-infralib"
+}
+
+func storageIdentityName(prefix string) string {
+	return prefix + "-infralib-storage"
 }
 
 func environmentName(prefix string) string {
@@ -57,15 +57,13 @@ func nameHash(parts ...string) string {
 
 // storageAccountName is globally unique, 3-24 lowercase letters and digits.
 func storageAccountName(prefix, subscriptionId, location string) string {
-	base := keepChars(strings.ToLower(prefix), false)
-	base = truncate(base, maxStorageLen-nameHashLen)
+	base := truncate(strings.ReplaceAll(slug(prefix), "-", ""), maxStorageLen-nameHashLen)
 	return base + nameHash(prefix, subscriptionId, location)
 }
 
 // vaultName is globally unique, 3-24 chars, starts with a letter, no consecutive hyphens.
 func vaultName(prefix, subscriptionId, location string) string {
-	base := strings.Trim(keepChars(strings.ToLower(prefix), true), "-")
-	base = strings.TrimRight(truncate(base, maxVaultLen-nameHashLen-1), "-")
+	base := strings.TrimRight(truncate(slug(prefix), maxVaultLen-nameHashLen-1), "-")
 	if base == "" || base[0] < 'a' || base[0] > 'z' {
 		base = "ei" + base
 		base = strings.TrimRight(truncate(base, maxVaultLen-nameHashLen-1), "-")
@@ -81,7 +79,7 @@ func jobName(projectName string, command model.ActionCommand) string {
 	if command != "" {
 		name += "-" + strings.TrimPrefix(string(command), "argocd-")
 	}
-	return strings.Trim(keepChars(strings.ToLower(name), true), "-")
+	return slug(name)
 }
 
 func checkJobName(name string) error {
@@ -116,37 +114,23 @@ func validateJobNames(prefix string, steps []model.Step) error {
 
 // secretName maps an SSM key to a Key Vault secret name: letters, digits and hyphens.
 func secretName(name string) string {
-	name = strings.TrimLeft(name, "/")
-	var b strings.Builder
-	for _, r := range name {
+	name = strings.Map(func(r rune) rune {
 		if isAlnum(r) || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
+			return r
 		}
-	}
-	return truncate(b.String(), 127)
+		return '-'
+	}, strings.TrimLeft(name, "/"))
+	return truncate(name, 127)
 }
 
 // appSecretName maps an env var name to a Container Apps secret name: lowercase letters, digits and hyphens.
 func appSecretName(envName string) string {
-	return strings.Trim(keepChars(strings.ToLower(envName), true), "-")
+	return slug(envName)
 }
 
-func keepChars(value string, hyphen bool) string {
-	var b strings.Builder
-	lastHyphen := false
-	for _, r := range value {
-		switch {
-		case isAlnum(r):
-			b.WriteRune(r)
-			lastHyphen = false
-		case hyphen && !lastHyphen:
-			b.WriteRune('-')
-			lastHyphen = true
-		}
-	}
-	return b.String()
+// slug joins the runs of letters and digits in value with single hyphens, lowercased.
+func slug(value string) string {
+	return strings.Join(strings.FieldsFunc(strings.ToLower(value), func(r rune) bool { return !isAlnum(r) }), "-")
 }
 
 func isAlnum(r rune) bool {

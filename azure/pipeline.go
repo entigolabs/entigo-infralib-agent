@@ -131,17 +131,18 @@ func (p *Pipeline) waitForManualApproval(pipelineName, applyJob, planExecution s
 	log.Printf("Waiting for manual approval of %s: run job %s in the Azure Portal to apply, or set its tag %s=%s to reject. %s\n",
 		pipelineName, applyJob, approvalTagKey, approvalReject, link)
 	deadline := time.Now().Add(approvalTimeout)
+	tagsFailing := false
 	for {
 		tags, err := p.getTags(scope)
-		if err != nil {
+		if err != nil && !tagsFailing {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to read approval tags of %s: %s", applyJob, err)))
-		} else {
-			if owner := tags[executionTagKey]; owner != "" && owner != planExecution {
-				return "", fmt.Errorf("manual approval for %s was superseded by a newer execution", pipelineName)
-			}
-			if tags[approvalTagKey] == approvalReject {
-				return "", fmt.Errorf("manual approval for %s was rejected", pipelineName)
-			}
+		}
+		tagsFailing = err != nil
+		if owner := tags[executionTagKey]; owner != "" && owner != planExecution {
+			return "", fmt.Errorf("manual approval for %s was superseded by a newer execution", pipelineName)
+		}
+		if tags[approvalTagKey] == approvalReject {
+			return "", fmt.Errorf("manual approval for %s was rejected", pipelineName)
 		}
 		execution, err := p.builder.newExecution(applyJob, known)
 		if err != nil {
@@ -169,7 +170,7 @@ func (p *Pipeline) resetCampaignEnv(scope, applyJob, planExecution string) {
 	if err != nil || tags[executionTagKey] != planExecution {
 		return
 	}
-	err = p.builder.setJobEnv(applyJob, map[string]string{"CAMPAIGN_ID": model.CampaignSentinelNone, "PIPELINE_INDEX": "0"})
+	err = p.builder.setJobEnv(applyJob, campaignEnv(model.CampaignSentinelNone, 0))
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to reset campaign of %s: %s", applyJob, err)))
 	}

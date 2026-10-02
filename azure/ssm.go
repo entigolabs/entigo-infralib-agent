@@ -103,11 +103,6 @@ func (s *SSM) secretURI(name string) string {
 	return fmt.Sprintf("%s/secrets/%s", strings.TrimSuffix(s.vaultURI, "/"), secretName(name))
 }
 
-func (s *SSM) secretExists(name string) (bool, error) {
-	_, found, err := s.readSecret(secretName(name))
-	return found, err
-}
-
 func (s *SSM) readSecret(key string) (string, bool, error) {
 	if s.client == nil {
 		return "", false, nil

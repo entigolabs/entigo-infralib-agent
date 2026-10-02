@@ -9,7 +9,6 @@ import (
 	"os"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"golang.org/x/sync/errgroup"
@@ -83,6 +82,35 @@ func NewAzure(ctx context.Context, cloudPrefix string, azure common.Azure, pipel
 	}, nil
 }
 
+func (a *azureService) newIAM() (*IAM, error) {
+	return NewIAM(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location)
+}
+
+func (a *azureService) ensureResourceGroup() (*IAM, error) {
+	iam, err := a.newIAM()
+	if err != nil {
+		return nil, err
+	}
+	if err = iam.EnsureResourceGroup(); err != nil {
+		return nil, err
+	}
+	return iam, nil
+}
+
+func (a *azureService) newKMS(tenantId string) (*KMS, error) {
+	return NewKMS(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, tenantId,
+		vaultName(a.cloudPrefix, a.subscriptionId, a.location), agentKeyName(a.cloudPrefix))
+}
+
+func (a *azureService) newStorage() (*Storage, error) {
+	return NewStorage(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location,
+		storageAccountName(a.cloudPrefix, a.subscriptionId, a.location))
+}
+
+func (a *azureService) newEnvironment() (*Environment, error) {
+	return NewEnvironment(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix)
+}
+
 func (a *azureService) baseResources(tenantId string, storage *Storage) Resources {
 	return Resources{
 		ProviderType:   model.AZURE,
@@ -99,7 +127,11 @@ func (a *azureService) baseResources(tenantId string, storage *Storage) Resource
 }
 
 func (a *azureService) SetupMinimalResources() (model.Resources, error) {
-	store, err := a.setupStore()
+	iam, err := a.ensureResourceGroup()
+	if err != nil {
+		return nil, err
+	}
+	store, err := a.setupStore(iam)
 	if err != nil {
 		return nil, err
 	}
@@ -114,28 +146,33 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 	if err := validateJobNames(a.cloudPrefix, config.Steps); err != nil {
 		return nil, err
 	}
-	iam, err := NewIAM(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location)
+	iam, err := a.ensureResourceGroup()
 	if err != nil {
 		return nil, err
 	}
-	if err = iam.EnsureResourceGroup(); err != nil {
-		return nil, err
-	}
-	environment, err := NewEnvironment(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix)
-	if err != nil {
-		return nil, err
-	}
-	var store *store
-	var group errgroup.Group
+	var store *stateStore
+	// Creating the environment takes over 10 minutes, so a failed store setup cancels the
+	// wait. Azure still finishes the creation, which the next Ensure waits for.
+	group, groupCtx := errgroup.WithContext(a.ctx)
 	group.Go(func() error {
 		var err error
-		if store, err = a.setupStore(); err != nil {
+		if store, err = a.setupStore(iam); err != nil {
 			return err
 		}
-		return a.assignJobRole(iam, store.identity.PrincipalId)
+		return a.assignJobRole(iam, store.identity)
 	})
-	group.Go(environment.Ensure)
+	group.Go(func() error {
+		environment, err := NewEnvironment(groupCtx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix)
+		if err != nil {
+			return err
+		}
+		return environment.Ensure()
+	})
 	if err = group.Wait(); err != nil {
+		return nil, err
+	}
+	environment, err := a.newEnvironment()
+	if err != nil {
 		return nil, err
 	}
 	resources := store.resources
@@ -147,7 +184,7 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 	}
 	builder.SetUpdateCron(config.Schedule.UpdateCron)
 	builder.SetNotificationManager(manager)
-	if err = a.reconcileSchedule(builder, config.Schedule, manager); err != nil {
+	if err = builder.reconcileSchedule(); err != nil {
 		return nil, err
 	}
 	pipeline, err := NewPipeline(a.ctx, a.credential, a.subscriptionId, builder, resources.Bucket, manager)
@@ -163,50 +200,43 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 // assignJobRole gives the job identity Owner, like the AWS build role's AdministratorAccess, since
 // modules create role assignments. An operator whose Owner is conditioned against delegating
 // privileged roles, the Azure recommended default, can only give Contributor.
-func (a *azureService) assignJobRole(iam *IAM, principalId string) error {
-	err := iam.AssignRole(iam.subscriptionScope(), principalId, "ServicePrincipal", roleOwner)
+func (a *azureService) assignJobRole(iam *IAM, jobIdentity identity) error {
+	err := iam.AssignRole(iam.subscriptionScope(), jobIdentity.principal(), roleOwner)
 	if !isAuthorizationFailed(err) {
 		return err
 	}
 	slog.Warn(common.PrefixWarning(fmt.Sprintf("Not allowed to assign Owner to managed identity %s, assigning Contributor instead. Modules that create role assignments will fail until an administrator assigns Owner to it",
 		identityName(a.cloudPrefix))))
-	return iam.AssignRole(iam.subscriptionScope(), principalId, "ServicePrincipal", roleContributor)
+	return iam.AssignRole(iam.subscriptionScope(), jobIdentity.principal(), roleContributor)
 }
 
-type store struct {
+type stateStore struct {
 	resources Resources
 	ssm       *SSM
 	identity  identity
 }
 
-// setupStore creates the trust root: the agent's vault and key, the managed identity
-// and the storage account encrypted with the key through that identity. The vault and
-// the identity don't depend on each other, so they're created concurrently. The
+// setupStore creates the trust root: the agent's vault and key, the job identity and the
+// storage account. The storage account reaches the key through its own identity, which
+// can only use keys, so changes to the job identity can't break the encryption. The vault
+// and the identities don't depend on each other, so they're created concurrently. The job
 // identity's Owner role is only for jobs, so SetupResources assigns it.
-func (a *azureService) setupStore() (*store, error) {
+func (a *azureService) setupStore(iam *IAM) (*stateStore, error) {
 	executor, err := currentPrincipal(a.ctx, a.credential)
 	if err != nil {
 		return nil, err
 	}
-	iam, err := NewIAM(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location)
+	kms, err := a.newKMS(executor.TenantId)
 	if err != nil {
 		return nil, err
 	}
-	if err = iam.EnsureResourceGroup(); err != nil {
-		return nil, err
-	}
-	kms, err := NewKMS(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, executor.TenantId,
-		vaultName(a.cloudPrefix, a.subscriptionId, a.location), agentKeyName(a.cloudPrefix))
-	if err != nil {
-		return nil, err
-	}
-	var jobIdentity identity
+	var jobIdentity, storageIdentity identity
 	var group errgroup.Group
 	group.Go(func() error {
 		if err := kms.EnsureVault(a.skipDelay); err != nil {
 			return err
 		}
-		if err := iam.AssignRole(kms.VaultId(), executor.ObjectId, executor.Type, roleKeyVaultAdministrator); err != nil {
+		if err := iam.AssignRole(kms.VaultId(), executor, roleKeyVaultAdministrator); err != nil {
 			return err
 		}
 		return kms.EnsureKey()
@@ -216,28 +246,32 @@ func (a *azureService) setupStore() (*store, error) {
 		jobIdentity, err = iam.EnsureIdentity(identityName(a.cloudPrefix))
 		return err
 	})
+	group.Go(func() error {
+		var err error
+		storageIdentity, err = iam.EnsureIdentity(storageIdentityName(a.cloudPrefix))
+		return err
+	})
 	if err = group.Wait(); err != nil {
 		return nil, err
 	}
-	if err = iam.AssignRole(kms.VaultId(), jobIdentity.PrincipalId, "ServicePrincipal", roleKeyVaultAdministrator); err != nil {
+	if err = iam.AssignRole(kms.VaultId(), storageIdentity.principal(), roleKeyVaultCryptoEncryption); err != nil {
 		return nil, err
 	}
-	storage, err := NewStorage(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location,
-		storageAccountName(a.cloudPrefix, a.subscriptionId, a.location))
+	if err = iam.AssignRole(kms.VaultId(), jobIdentity.principal(), roleKeyVaultAdministrator); err != nil {
+		return nil, err
+	}
+	storage, err := a.newStorage()
 	if err != nil {
 		return nil, err
 	}
-	if err = storage.CreateAccount(kms, jobIdentity.Id); err != nil {
+	if err = storage.CreateAccount(kms, storageIdentity.Id); err != nil {
 		return nil, err
 	}
-	for _, principalId := range []string{executor.ObjectId, jobIdentity.PrincipalId} {
-		principalType := "ServicePrincipal"
-		if principalId == executor.ObjectId {
-			principalType = executor.Type
-		}
-		if err = iam.AssignRole(storage.AccountId(), principalId, principalType, roleStorageBlobDataContributor); err != nil {
-			return nil, err
-		}
+	if err = iam.AssignRole(storage.AccountId(), executor, roleStorageBlobDataContributor); err != nil {
+		return nil, err
+	}
+	if err = iam.AssignRole(storage.AccountId(), jobIdentity.principal(), roleStorageBlobDataContributor); err != nil {
+		return nil, err
 	}
 	if err = storage.EnsureContainer(); err != nil {
 		return nil, err
@@ -249,7 +283,7 @@ func (a *azureService) setupStore() (*store, error) {
 	resources := a.baseResources(executor.TenantId, storage)
 	resources.SSM = ssm
 	resources.VaultId = kms.VaultId()
-	return &store{resources: resources, ssm: ssm, identity: jobIdentity}, nil
+	return &stateStore{resources: resources, ssm: ssm, identity: jobIdentity}, nil
 }
 
 func (a *azureService) GetResources() (model.Resources, error) {
@@ -257,8 +291,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
-	storage, err := NewStorage(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location,
-		storageAccountName(a.cloudPrefix, a.subscriptionId, a.location))
+	storage, err := a.newStorage()
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +299,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 		return nil, err
 	}
 	resources := a.baseResources(executor.TenantId, storage)
-	kms, err := NewKMS(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, executor.TenantId,
-		vaultName(a.cloudPrefix, a.subscriptionId, a.location), agentKeyName(a.cloudPrefix))
+	kms, err := a.newKMS(executor.TenantId)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +318,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Key vault %s not found", vaultName(a.cloudPrefix, a.subscriptionId, a.location))))
 	}
 	resources.SSM = ssm
-	iam, err := NewIAM(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location)
+	iam, err := a.newIAM()
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +326,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 	if err != nil && !isNotFound(err) {
 		return nil, err
 	}
-	environment, err := NewEnvironment(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix)
+	environment, err := a.newEnvironment()
 	if err != nil {
 		return nil, err
 	}
@@ -317,55 +349,8 @@ func (a *azureService) PrepareDestroy(resources model.Resources) (model.Resource
 	return resources, nil
 }
 
-// reconcileSchedule moves the update job to the configured cron. The job is only
-// created by bootstrap, so a missing job is left for it, and CreateAgentProject notifies.
-func (a *azureService) reconcileSchedule(builder *Builder, schedule model.Schedule, manager model.NotificationManager) error {
-	name := jobName(model.GetAgentProjectName(model.GetAgentPrefix(a.cloudPrefix), common.UpdateCommand), "")
-	job, err := builder.getJob(name)
-	if err != nil {
-		return err
-	}
-	if job == nil {
-		if schedule.UpdateCron == "" {
-			manager.ScheduleUnchanged(common.UpdateCommand, model.ScheduleRemoved, "")
-		}
-		return nil
-	}
-	current := ""
-	configuration := job.Properties.Configuration
-	if configuration != nil && configuration.ScheduleTriggerConfig != nil && configuration.ScheduleTriggerConfig.CronExpression != nil &&
-		configuration.TriggerType != nil && *configuration.TriggerType == armappcontainers.TriggerTypeSchedule {
-		current = *configuration.ScheduleTriggerConfig.CronExpression
-	}
-	if current == schedule.UpdateCron {
-		action := model.ScheduleAdded
-		if current == "" {
-			action = model.ScheduleRemoved
-		}
-		manager.ScheduleUnchanged(common.UpdateCommand, action, schedule.UpdateCron)
-		return nil
-	}
-	var cron *string
-	if schedule.UpdateCron != "" {
-		cron = &schedule.UpdateCron
-	}
-	if err = builder.ensureJob(name, *job.Properties.EnvironmentID, job.Properties.Template.Containers[0], nil, cron); err != nil {
-		return err
-	}
-	switch {
-	case schedule.UpdateCron == "":
-		manager.Schedule(common.UpdateCommand, model.ScheduleRemoved, schedule.UpdateCron)
-	case current == "":
-		manager.Schedule(common.UpdateCommand, model.ScheduleAdded, schedule.UpdateCron)
-	default:
-		manager.Schedule(common.UpdateCommand, model.ScheduleModified, schedule.UpdateCron)
-	}
-	return nil
-}
-
 func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) error {
-	builder, ok := a.resources.GetBuilder().(*Builder)
-	if ok {
+	if builder, ok := a.resources.GetBuilder().(*Builder); ok {
 		agentPrefix := model.GetAgentPrefix(a.cloudPrefix)
 		for _, cmd := range []common.Command{common.RunCommand, common.UpdateCommand} {
 			name := jobName(model.GetAgentProjectName(agentPrefix, cmd), "")
@@ -374,14 +359,16 @@ func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) 
 			}
 		}
 	}
-	environment, err := NewEnvironment(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.cloudPrefix)
+	// Only an empty resource group is deleted, so the environment must be gone first
+	deletesGroup := deleteBucket && a.ownsGroup
+	environment, err := a.newEnvironment()
 	if err == nil {
-		err = environment.Delete(deleteBucket && a.ownsGroup)
+		err = environment.Delete(deletesGroup)
 	}
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete container apps environment: %s", err)))
 	}
-	iam, err := NewIAM(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location)
+	iam, err := a.newIAM()
 	if err != nil {
 		return err
 	}
@@ -389,41 +376,73 @@ func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) 
 		a.deleteServiceAccount(iam)
 	}
 	if !deleteBucket {
-		log.Printf("Storage account %s, key vault and managed identity %s will not be deleted, delete them manually if needed\n",
-			a.resources.GetBucketName(), identityName(a.cloudPrefix))
+		log.Printf("Storage account %s, key vault and managed identities %s and %s will not be deleted, delete them manually if needed\n",
+			a.resources.GetBucketName(), identityName(a.cloudPrefix), storageIdentityName(a.cloudPrefix))
 		return nil
 	}
 	if err = a.resources.GetBucket().Delete(); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete storage account %s: %s", a.resources.GetBucketName(), err)))
-		slog.Warn(common.PrefixWarning("Key vault and managed identity are kept because the storage account is encrypted with them"))
+		slog.Warn(common.PrefixWarning("Key vault and managed identities are kept because the storage account is encrypted with them"))
 		return nil
 	}
-	jobIdentity, err := iam.GetIdentity(identityName(a.cloudPrefix))
-	if err == nil {
-		for _, role := range []string{roleOwner, roleContributor} {
-			if err = iam.DeleteRoleAssignment(iam.subscriptionScope(), jobIdentity.PrincipalId, role); err != nil {
-				slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete role %s assignment of %s: %s", role, identityName(a.cloudPrefix), err)))
-			}
-		}
-	}
-	if err = iam.DeleteIdentity(identityName(a.cloudPrefix)); err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete managed identity %s: %s", identityName(a.cloudPrefix), err)))
-	}
-	kms, err := NewKMS(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, a.resources.TenantId,
-		vaultName(a.cloudPrefix, a.subscriptionId, a.location), agentKeyName(a.cloudPrefix))
-	if err == nil {
-		err = kms.Delete()
-	}
-	if err != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete key vault: %s", err)))
-	}
-	if !a.ownsGroup {
+	a.deleteVaultAndIdentities(iam)
+	if !deletesGroup {
 		return nil
 	}
 	if err = iam.DeleteResourceGroupIfEmpty(); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete resource group %s: %s", a.resourceGroup, err)))
 	}
 	return nil
+}
+
+// deleteVaultAndIdentities deletes the identities with the vault, since their roles on it would be left behind.
+func (a *azureService) deleteVaultAndIdentities(iam *IAM) {
+	vaultId := ""
+	kms, err := a.newKMS(a.resources.TenantId)
+	if err == nil {
+		_, err = kms.Resolve()
+		vaultId = kms.VaultId()
+	}
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get key vault: %s", err)))
+	}
+	deleteIdentity(iam, identityName(a.cloudPrefix), map[string]string{
+		roleOwner:                 iam.subscriptionScope(),
+		roleContributor:           iam.subscriptionScope(),
+		roleKeyVaultAdministrator: vaultId,
+	})
+	deleteIdentity(iam, storageIdentityName(a.cloudPrefix), map[string]string{roleKeyVaultCryptoEncryption: vaultId})
+	if vaultId == "" {
+		return
+	}
+	if err = kms.Delete(); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete key vault: %s", err)))
+	}
+}
+
+// deleteIdentity removes the identity's role assignments first, since assignments of a
+// deleted principal are left behind. roles maps a role to its scope, an empty scope is skipped.
+func deleteIdentity(iam *IAM, name string, roles map[string]string) {
+	found, err := iam.GetIdentity(name)
+	if err != nil {
+		if !isNotFound(err) {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get managed identity %s: %s", name, err)))
+		}
+		return
+	}
+	for role, scope := range roles {
+		if scope == "" {
+			continue
+		}
+		if err = iam.DeleteRoleAssignment(scope, found.PrincipalId, role); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete role %s assignment of %s: %s", role, name, err)))
+		}
+	}
+	if err = iam.DeleteIdentity(name); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete managed identity %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted managed identity %s\n", name)
 }
 
 func (a *azureService) AddEncryption(_ string, _ map[string]model.TFOutput) error {

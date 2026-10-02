@@ -10,16 +10,18 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
 const managementScope = "https://management.azure.com/.default"
 
-// principal is the identity the agent executes as, read from its ARM access token.
+// principal is who a role is assigned to. The agent's own is read from its ARM access token.
 type principal struct {
 	ObjectId string
 	TenantId string
-	Type     string
+	Name     string
+	Type     armauthorization.PrincipalType
 }
 
 func newCredential() (azcore.TokenCredential, error) {
@@ -48,9 +50,9 @@ func currentPrincipal(ctx context.Context, credential azcore.TokenCredential) (p
 		return principal{}, errors.New("azure access token has no oid or tid claim")
 	}
 	// Only delegated (user) tokens carry scp; guest users have no upn.
-	principalType := "ServicePrincipal"
+	principalType := armauthorization.PrincipalTypeServicePrincipal
 	if claims.IdType == "user" || claims.Scope != "" {
-		principalType = "User"
+		principalType = armauthorization.PrincipalTypeUser
 	}
 	return principal{ObjectId: claims.Oid, TenantId: claims.Tid, Type: principalType}, nil
 }
@@ -62,6 +64,10 @@ func isStatus(err error, codes ...int) bool {
 
 func isNotFound(err error) bool {
 	return isStatus(err, http.StatusNotFound)
+}
+
+func isAuthorizationFailed(err error) bool {
+	return isStatus(err, http.StatusForbidden) && errorCode(err) == "AuthorizationFailed"
 }
 
 func errorCode(err error) string {
