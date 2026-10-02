@@ -42,7 +42,8 @@ import (
 // loop forwards every EI_<NAME> into `docker run -e <NAME>`. The spec is generated per
 // step and pushed to the shared hosted repo only when its content changes.
 const (
-	pollInterval = 5 * time.Second
+	pollInterval   = 5 * time.Second
+	projectService = "DevOps build pipeline"
 	// imageParam carries the base image per run (avoids re-pushing the spec on every
 	// version bump). Consumed by the spec, not forwarded into the container.
 	imageParam = "IMAGE"

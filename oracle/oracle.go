@@ -106,6 +106,7 @@ func (o *oracleService) bucketResources() (Resources, *Storage, error) {
 	}
 	return Resources{
 		ProviderType:   model.ORACLE,
+		ProjectService: projectService,
 		Bucket:         storage,
 		BucketName:     bucket,
 		CloudPrefix:    o.cloudPrefix,
@@ -265,7 +266,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	if err = gate.Ensure(); err != nil {
 		return nil, fmt.Errorf("failed to set up approval gate: %w", err)
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	resources.Pipeline = NewPipeline(o.ctx, builder, gate, logs, resources.Bucket, o.cloudPrefix, manager)
 	o.warnScheduleUnsupported(config.Schedule)
 	return resources, nil
@@ -655,7 +656,7 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 		build.Resolve() // find-only: no project/log/IAM/git creation
 		builder.devopsBuild = build
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	// No gate: destroy executions run with ApproveForce and never hit approval.
 	resources.Pipeline = NewPipeline(o.ctx, builder, nil, logs, resources.Bucket, o.cloudPrefix, nil)
 	return resources, nil

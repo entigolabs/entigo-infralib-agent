@@ -16,6 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const projectService = "CodeBuild project"
+
 type BuildSpec struct {
 	Version   string
 	Phases    Phases

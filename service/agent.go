@@ -31,11 +31,11 @@ func NewAgent(resources model.Resources, terraformCache bool) Agent {
 }
 
 func (a *agent) CreatePipeline(version string, start bool) error {
-	err := a.createCodeBuild(version, common.RunCommand)
+	err := a.createProject(version, common.RunCommand)
 	if err != nil {
 		return err
 	}
-	err = a.createCodeBuild(version, common.UpdateCommand)
+	err = a.createProject(version, common.UpdateCommand)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (a *agent) CreatePipeline(version string, start bool) error {
 	return nil
 }
 
-func (a *agent) createCodeBuild(version string, cmd common.Command) error {
+func (a *agent) createProject(version string, cmd common.Command) error {
 	projectName := model.GetAgentProjectName(a.name, cmd)
 	project, err := a.resources.GetBuilder().GetProject(projectName)
 	if err != nil {
@@ -110,6 +110,6 @@ func (a *agent) updateProjectImage(project *model.Project, version string) (bool
 	if err != nil {
 		return false, err
 	}
-	log.Printf("Updated Agent CodeBuild project %s image version to %s\n", project.Name, version)
+	log.Printf("Updated Agent %s %s image version to %s\n", a.resources.GetProjectService(), project.Name, version)
 	return true, nil
 }

@@ -20,6 +20,7 @@ import (
 
 const (
 	containerNameStep     = "infralib"
+	projectService        = "Container Apps job"
 	containerNameAgent    = "agent"
 	jobTimeoutSeconds     = 28800
 	executionPoll         = 10 * time.Second

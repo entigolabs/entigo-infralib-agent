@@ -122,6 +122,7 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 	}
 	a.resources = Resources{
 		ProviderType:   model.AWS,
+		ProjectService: projectService,
 		Bucket:         s3,
 		SSM:            NewSSM(a.ctx, a.awsConfig),
 		CloudPrefix:    a.cloudPrefix,
@@ -152,6 +153,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 
 	a.resources = Resources{
 		ProviderType:   model.AWS,
+		ProjectService: projectService,
 		Bucket:         s3,
 		SSM:            NewSSM(a.ctx, a.awsConfig),
 		CloudPrefix:    a.cloudPrefix,
@@ -183,7 +185,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
 		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), a.cloudPrefix, s3, manager)
 	a.resources.CloudWatch = cloudwatch
-	a.resources.CodeBuild = codeBuild
+	a.resources.Builder = codeBuild
 	a.resources.Pipeline = codePipeline
 	err = a.createSchedule(config.Schedule, iam, manager)
 	if err != nil {
@@ -203,8 +205,9 @@ func (a *awsService) GetResources() (model.Resources, error) {
 	s3 := NewS3(a.ctx, a.awsConfig, bucket)
 	a.resources = Resources{
 		ProviderType:   model.AWS,
+		ProjectService: projectService,
 		Bucket:         s3,
-		CodeBuild:      codeBuild,
+		Builder:        codeBuild,
 		Pipeline:       NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, s3, nil),
 		CloudPrefix:    a.cloudPrefix,
 		BucketName:     bucket,

@@ -116,6 +116,7 @@ func (a *azureService) newEnvironment() (*Environment, error) {
 func (a *azureService) baseResources(tenantId string, storage *Storage) Resources {
 	return Resources{
 		ProviderType:   model.AZURE,
+		ProjectService: projectService,
 		Bucket:         storage,
 		BucketName:     storage.account,
 		CloudPrefix:    a.cloudPrefix,
@@ -188,7 +189,7 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 	if err != nil {
 		return nil, err
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	resources.Pipeline = pipeline
 	a.resources = resources
 	return a.resources, nil
@@ -381,7 +382,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	resources.Pipeline = pipeline
 	a.resources = resources
 	return a.resources, nil

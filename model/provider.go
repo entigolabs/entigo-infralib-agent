@@ -88,6 +88,7 @@ type Resources interface {
 	GetBucket() Bucket
 	GetPipeline() Pipeline
 	GetBuilder() Builder
+	GetProjectService() string
 	GetSSM() SSM
 	GetCloudPrefix() string
 	GetBucketName() string
@@ -162,7 +163,8 @@ type CloudResources struct {
 	ProviderType   ProviderType
 	Bucket         Bucket
 	Pipeline       Pipeline
-	CodeBuild      Builder
+	Builder        Builder
+	ProjectService string
 	SSM            SSM
 	CloudPrefix    string
 	BucketName     string
@@ -185,7 +187,12 @@ func (c CloudResources) GetPipeline() Pipeline {
 }
 
 func (c CloudResources) GetBuilder() Builder {
-	return c.CodeBuild
+	return c.Builder
+}
+
+// GetProjectService names the cloud resource of a builder project in messages, e.g. "CodeBuild project".
+func (c CloudResources) GetProjectService() string {
+	return c.ProjectService
 }
 
 func (c CloudResources) GetSSM() SSM {
