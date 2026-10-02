@@ -353,7 +353,9 @@ func (e *Environment) Delete(wait bool) error {
 	if err := e.deleteEnvironment(wait); err != nil {
 		return err
 	}
-	poller, err := e.workspaces.BeginDelete(e.ctx, e.resourceGroup, e.workspace, &armoperationalinsights.WorkspacesClientBeginDeleteOptions{Force: new(true)})
+	// Soft-deleted, so a new deployment within 14 days recovers it. A workspace created again
+	// under the name of a force-deleted one served the old workspace's data and hid new logs.
+	poller, err := e.workspaces.BeginDelete(e.ctx, e.resourceGroup, e.workspace, nil)
 	if err == nil {
 		_, err = poller.PollUntilDone(e.ctx, nil)
 	}
