@@ -24,6 +24,9 @@ const (
 	secretActiveTimeout = 2 * time.Minute
 	defaultSecretPoll   = 3 * time.Second
 	secretUpdateRetries = 5
+	// A just-revived vault reports ACTIVE before it finishes restoring its secrets;
+	// until then cancelling a secret's deletion is rejected 409 IncorrectState.
+	secretCancelTimeout = 3 * time.Minute
 )
 
 // readRetryPolicy is the SDK default minus IncorrectState, which a pending-deletion secret
@@ -302,24 +305,39 @@ func (s *SSM) findSecret(name string) (string, vault.SecretSummaryLifecycleState
 }
 
 // cancelDeletion reverses a scheduled deletion and waits for the secret to return
-// to ACTIVE so a subsequent update doesn't race the state transition.
+// to ACTIVE so a subsequent update doesn't race the state transition. A 409 is
+// retried while the secret is still pending deletion (its vault is still restoring);
+// a secret no longer pending was restored by its revived vault in the meantime.
 func (s *SSM) cancelDeletion(name, id string) error {
-	_, err := s.vaultClient.CancelSecretDeletion(s.ctx, vault.CancelSecretDeletionRequest{SecretId: &id})
-	if err != nil && !s.revivedMeanwhile(name, err) {
-		return fmt.Errorf("failed to cancel scheduled deletion of secret %s: %w", name, err)
+	deadline := time.Now().Add(secretCancelTimeout)
+	logged := false
+	for {
+		_, err := s.vaultClient.CancelSecretDeletion(s.ctx, vault.CancelSecretDeletionRequest{SecretId: &id})
+		if err == nil {
+			break
+		}
+		if !isIncorrectState(err) {
+			return fmt.Errorf("failed to cancel scheduled deletion of secret %s: %w", name, err)
+		}
+		_, state, found, findErr := s.findSecret(name)
+		if findErr != nil {
+			return findErr
+		}
+		if !found || !secretPendingDeletion(state) {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("failed to cancel scheduled deletion of secret %s: %w", name, err)
+		}
+		if !logged {
+			log.Printf("Waiting for Vault to allow reviving secret %s\n", name)
+			logged = true
+		}
+		if err = s.sleep(); err != nil {
+			return err
+		}
 	}
 	return s.waitForSecretActive(name)
-}
-
-// revivedMeanwhile reports a cancel that lost the race to a revived vault restoring the
-// secret itself — its deletion cascaded from the vault, so the vault's restore undoes it
-// with a lag, and CancelSecretDeletion then 409s on the already ACTIVE secret.
-func (s *SSM) revivedMeanwhile(name string, err error) bool {
-	if !isIncorrectState(err) {
-		return false
-	}
-	_, state, found, findErr := s.findSecret(name)
-	return findErr == nil && found && !secretPendingDeletion(state)
 }
 
 // isIncorrectState reports the OCI 409 "IncorrectState" a mutation returns while the
