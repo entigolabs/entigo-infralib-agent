@@ -97,6 +97,7 @@ type Resources interface {
 	GetAccount() string
 	GetOrganizationId() string
 	GetVaultId() (string, error)
+	GetResourceGroup() (string, error)
 	GetProviderDomain() string
 }
 
@@ -221,6 +222,10 @@ func (c CloudResources) GetOrganizationId() string {
 
 func (c CloudResources) GetVaultId() (string, error) {
 	return "", fmt.Errorf("GetVaultId not supported by provider %s", c.ProviderType)
+}
+
+func (c CloudResources) GetResourceGroup() (string, error) {
+	return "", fmt.Errorf("GetResourceGroup not supported by provider %s", c.ProviderType)
 }
 
 func (c CloudResources) GetProviderDomain() string {

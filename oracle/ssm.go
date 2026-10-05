@@ -333,7 +333,7 @@ func (s *SSM) cancelDeletion(name, id string) error {
 			log.Printf("Waiting for Vault to allow reviving secret %s\n", name)
 			logged = true
 		}
-		if err = s.sleep(); err != nil {
+		if err = util.Sleep(s.ctx, s.secretPoll); err != nil {
 			return err
 		}
 	}

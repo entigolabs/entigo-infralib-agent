@@ -267,6 +267,8 @@ const (
 	AgentReplaceTypeRegion         AgentReplaceType = "region"
 	AgentReplaceTypeVaultId        AgentReplaceType = "vaultId"
 	AgentReplaceTypeProviderDomain AgentReplaceType = "providerDomain"
+	AgentReplaceTypeResourceGroup  AgentReplaceType = "resourceGroup"
+	AgentReplaceTypeUniqueSuffix   AgentReplaceType = "uniqueSuffix"
 )
 
 type Approve string

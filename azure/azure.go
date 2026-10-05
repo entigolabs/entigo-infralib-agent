@@ -20,6 +20,7 @@ type azureService struct {
 	cloudPrefix    string
 	subscriptionId string
 	location       string
+	regionCode     string
 	resourceGroup  string
 	ownsGroup      bool
 	credential     azcore.TokenCredential
@@ -66,7 +67,18 @@ func (r Resources) GetVaultId() (string, error) {
 	return r.VaultId, nil
 }
 
+func (r Resources) GetResourceGroup() (string, error) {
+	return r.ResourceGroup, nil
+}
+
 func NewAzure(ctx context.Context, cloudPrefix string, azure common.Azure, pipeline common.Pipeline, skipBucketDelay bool) (model.CloudProvider, error) {
+	if err := checkPrefix(cloudPrefix); err != nil {
+		return nil, err
+	}
+	code, err := regionCode(azure.Location)
+	if err != nil {
+		return nil, err
+	}
 	credential, err := newCredential()
 	if err != nil {
 		return nil, err
@@ -76,6 +88,7 @@ func NewAzure(ctx context.Context, cloudPrefix string, azure common.Azure, pipel
 		cloudPrefix:    cloudPrefix,
 		subscriptionId: azure.SubscriptionId,
 		location:       azure.Location,
+		regionCode:     code,
 		resourceGroup:  resourceGroup(azure, cloudPrefix),
 		ownsGroup:      azure.ResourceGroup == "",
 		credential:     credential,
@@ -101,12 +114,12 @@ func (a *azureService) ensureResourceGroup() (*IAM, error) {
 
 func (a *azureService) newKMS(tenantId string) (*KMS, error) {
 	return NewKMS(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location, tenantId,
-		vaultName(a.cloudPrefix, a.subscriptionId, a.location), agentKeyName(a.cloudPrefix))
+		vaultName(a.cloudPrefix, a.subscriptionId, a.location, a.regionCode), agentKeyName(a.cloudPrefix))
 }
 
 func (a *azureService) newStorage() (*Storage, error) {
 	return NewStorage(a.ctx, a.credential, a.subscriptionId, a.resourceGroup, a.location,
-		storageAccountName(a.cloudPrefix, a.subscriptionId, a.location))
+		storageAccountName(a.cloudPrefix, a.subscriptionId, a.location, a.regionCode))
 }
 
 func (a *azureService) newEnvironment() (*Environment, error) {

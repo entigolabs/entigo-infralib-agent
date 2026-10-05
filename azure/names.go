@@ -13,8 +13,6 @@ import (
 const (
 	containerName     = "tfstate"
 	maxJobNameLen     = 32
-	maxVaultLen       = 24
-	maxStorageLen     = 24
 	nameHashLen       = 8
 	longestJobCommand = "apply-destroy"
 	secretNameTag     = "infralib-name"
@@ -23,6 +21,84 @@ const (
 )
 
 var jobNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
+
+// Codes taken from Azure Backup Geo-code mapping
+var regionCodes = map[string]string{
+	"australiacentral":   "acl",
+	"australiacentral2":  "acl2",
+	"australiaeast":      "ae",
+	"australiasoutheast": "ase",
+	"austriaeast":        "ate", // not assigned by Microsoft
+	"belgiumcentral":     "bec", // not assigned by Microsoft
+	"brazilsouth":        "brs",
+	"brazilsoutheast":    "bse",
+	"canadacentral":      "cnc",
+	"canadaeast":         "cne",
+	"centralindia":       "inc",
+	"centralus":          "cus",
+	"chilecentral":       "clc",
+	"denmarkeast":        "dke", // not assigned by Microsoft
+	"eastasia":           "ea",
+	"eastus":             "eus",
+	"eastus2":            "eus2",
+	"francecentral":      "frc",
+	"francesouth":        "frs",
+	"germanynorth":       "gn",
+	"germanywestcentral": "gwc",
+	"indiasouthcentral":  "isc",
+	"indonesiacentral":   "idc",
+	"israelcentral":      "ilc",
+	"italynorth":         "itn",
+	"japaneast":          "jpe",
+	"japanwest":          "jpw",
+	"koreacentral":       "krc",
+	"koreasouth":         "krs",
+	"malaysiawest":       "myw",
+	"mexicocentral":      "mxc",
+	"newzealandnorth":    "nzn",
+	"northcentralus":     "ncus",
+	"northeurope":        "ne",
+	"norwayeast":         "nwe",
+	"norwaywest":         "nww",
+	"polandcentral":      "plc",
+	"qatarcentral":       "qac",
+	"southafricanorth":   "san",
+	"southafricawest":    "saw",
+	"southcentralus":     "scus",
+	"southeastasia":      "sea",
+	"southindia":         "ins",
+	"spaincentral":       "spc",
+	"swedencentral":      "sdc",
+	"switzerlandnorth":   "szn",
+	"switzerlandwest":    "szw",
+	"uaecentral":         "uac",
+	"uaenorth":           "uan",
+	"uksouth":            "uks",
+	"ukwest":             "ukw",
+	"westcentralus":      "wcus",
+	"westeurope":         "we",
+	"westindia":          "inw",
+	"westus":             "wus",
+	"westus2":            "wus2",
+	"westus3":            "wus3",
+}
+
+// regionCode is in the globally unique names, as the region is in AWS bucket names.
+func regionCode(location string) (string, error) {
+	code, ok := regionCodes[location]
+	if !ok {
+		return "", fmt.Errorf("unsupported azure location %s, use a location name like swedencentral", location)
+	}
+	return code, nil
+}
+
+// checkPrefix keeps the vault name valid, which must start with a letter.
+func checkPrefix(prefix string) error {
+	if prefix == "" || prefix[0] < 'a' || prefix[0] > 'z' {
+		return fmt.Errorf("azure prefix must start with a lowercase letter: %s", prefix)
+	}
+	return nil
+}
 
 func resourceGroup(azure common.Azure, prefix string) string {
 	if azure.ResourceGroup != "" {
@@ -52,23 +128,18 @@ func agentKeyName(prefix string) string {
 }
 
 func nameHash(parts ...string) string {
-	return util.HashCode(strings.Join(parts, "/"))
+	return util.ShortHash(strings.Join(parts, "/"), nameHashLen)
 }
 
-// storageAccountName is globally unique, 3-24 lowercase letters and digits.
-func storageAccountName(prefix, subscriptionId, location string) string {
-	base := truncate(strings.ReplaceAll(slug(prefix), "-", ""), maxStorageLen-nameHashLen)
-	return base + nameHash(prefix, subscriptionId, location)
+// storageAccountName is globally unique, 3-24 lowercase letters and digits. A prefix of at most
+// 10 characters and a region code of at most 4 always fit.
+func storageAccountName(prefix, subscriptionId, location, code string) string {
+	return strings.ReplaceAll(slug(prefix), "-", "") + code + util.UniqueSuffix(prefix, subscriptionId, location)
 }
 
 // vaultName is globally unique, 3-24 chars, starts with a letter, no consecutive hyphens.
-func vaultName(prefix, subscriptionId, location string) string {
-	base := strings.TrimRight(truncate(slug(prefix), maxVaultLen-nameHashLen-1), "-")
-	if base == "" || base[0] < 'a' || base[0] > 'z' {
-		base = "ei" + base
-		base = strings.TrimRight(truncate(base, maxVaultLen-nameHashLen-1), "-")
-	}
-	return base + "-" + nameHash(prefix, subscriptionId, location)
+func vaultName(prefix, subscriptionId, location, code string) string {
+	return slug(prefix) + "-" + code + "-" + util.UniqueSuffix(prefix, subscriptionId, location)
 }
 
 // jobName is a Container Apps job name: lowercase letters, digits and single hyphens. A step
