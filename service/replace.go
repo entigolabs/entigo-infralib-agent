@@ -539,13 +539,13 @@ func (u *updater) getModuleOutputs(step model.Step, cache paramCache) (map[strin
 		return nil, err
 	}
 	if file == nil {
-		slog.Debug(fmt.Sprintf("terraform output file %s not found", filePath))
+		slog.Debug(fmt.Sprintf("OpenTofu output file %s not found", filePath))
 		cache[filePath] = make(map[string]model.TFOutput)
 		return cache[filePath], nil
 	}
 	err = json.Unmarshal(file, &outputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %w", filePath, err)
+		return nil, fmt.Errorf("failed to unmarshal OpenTofu tfOutput file %s: %w", filePath, err)
 	}
 	cache[filePath] = outputs
 	return outputs, nil
@@ -823,12 +823,12 @@ func getModuleOutputs(step model.Step, prefix string, bucket model.Bucket) (map[
 	}
 	outputs := make(map[string]model.TFOutput)
 	if file == nil {
-		slog.Debug(fmt.Sprintf("terraform output file %s not found", filePath))
+		slog.Debug(fmt.Sprintf("OpenTofu output file %s not found", filePath))
 		return outputs, nil
 	}
 	err = json.Unmarshal(file, &outputs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal terraform tfOutput file %s: %s", filePath, err)
+		return nil, fmt.Errorf("failed to unmarshal OpenTofu tfOutput file %s: %s", filePath, err)
 	}
 	return outputs, nil
 }

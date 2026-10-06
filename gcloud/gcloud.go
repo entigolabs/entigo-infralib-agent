@@ -178,7 +178,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, err
 	}
-	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), g.cloudPrefix)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, serviceAccount, *g.pipeline.TerraformCache.Value, g.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
@@ -205,7 +205,7 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage service: %s", err)
 	}
-	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, "", true, true, g.cloudPrefix)
+	builder, err := NewBuilder(g.ctx, g.options, g.projectId, g.location, g.zone, "", true, g.cloudPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create builder: %s", err)
 	}
@@ -279,7 +279,7 @@ func (g *gcloudService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 		g.DeleteServiceAccount(iam)
 	}
 	if !deleteBucket {
-		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
+		log.Printf("OpenTofu state bucket %s will not be deleted, delete it manually if needed\n", g.resources.GetBucketName())
 		return nil
 	}
 	err = g.resources.GetBucket().Delete()

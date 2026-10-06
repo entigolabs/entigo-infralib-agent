@@ -42,7 +42,7 @@ func newS3ProbeClient(endpoint, region, accessKey, secretKey string) *s3.Client 
 }
 
 // probeS3 makes one cheap authenticated read exercising the same signing path as
-// the entrypoint copy and the terraform backend.
+// the entrypoint copy and the OpenTofu backend.
 func probeS3(ctx context.Context, client *s3.Client, bucket string) error {
 	_, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(bucket),

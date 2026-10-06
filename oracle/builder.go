@@ -31,7 +31,6 @@ type Builder struct {
 	s3Endpoint     string
 	accessKey      string
 	secretKey      string
-	enableOpenTofu bool
 	terraformCache bool
 	cloudPrefix    string
 	devopsBuild    *DevOpsBuilder
@@ -62,7 +61,7 @@ type containerProject struct {
 	AgentCmd    common.Command // set for agent projects
 }
 
-func NewBuilder(ctx context.Context, secrets secretResolver, region, compartmentId, bucket, s3Endpoint, accessKey, secretKey string, enableOpenTofu, terraformCache bool, cloudPrefix string) *Builder {
+func NewBuilder(ctx context.Context, secrets secretResolver, region, compartmentId, bucket, s3Endpoint, accessKey, secretKey string, terraformCache bool, cloudPrefix string) *Builder {
 	return &Builder{
 		ctx:            ctx,
 		secrets:        secrets,
@@ -72,7 +71,6 @@ func NewBuilder(ctx context.Context, secrets secretResolver, region, compartment
 		s3Endpoint:     s3Endpoint,
 		accessKey:      accessKey,
 		secretKey:      secretKey,
-		enableOpenTofu: enableOpenTofu,
 		terraformCache: terraformCache,
 		cloudPrefix:    cloudPrefix,
 		projects:       map[string]*containerProject{},
@@ -352,9 +350,7 @@ func (b *Builder) nonSecretParams(prefixStep string, command model.ActionCommand
 	}
 	if step.Type == model.StepTypeTerraform {
 		env["TERRAFORM_CACHE"] = fmt.Sprintf("%t", b.terraformCache)
-		if b.enableOpenTofu {
-			env["TF_TOOL"] = model.TofuTfTool
-		}
+		env["TF_TOOL"] = model.TofuTfTool
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				name := strings.ToUpper(module.Name)
@@ -418,6 +414,6 @@ func (b *Builder) secretRefs(step model.Step, project *containerProject) (map[st
 }
 
 // awsSecretAccessKeySecret is the Vault secret name for the CSK secret half the
-// terraform s3 backend consumes as AWS_SECRET_ACCESS_KEY (distinct from the full CSK
+// OpenTofu s3 backend consumes as AWS_SECRET_ACCESS_KEY (distinct from the full CSK
 // JSON persisted under customerSecretKeyObject).
 const awsSecretAccessKeySecret = "oracle-aws-secret-access-key"

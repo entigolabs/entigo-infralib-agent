@@ -211,7 +211,7 @@ func PlanFilePath(planPath, prefixStep string) string {
 
 func (w *Wrapper) sendPlan() {
 	if w.stepType != model.StepTypeTerraform {
-		return // only terraform produces the terraform show -json plan
+		return // only OpenTofu produces the tofu show -json plan
 	}
 	if w.prefixStep == "" {
 		slog.Warn("TF_VAR_prefix flag not set, can't find the plan")

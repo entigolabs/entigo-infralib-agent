@@ -152,7 +152,7 @@ type Destination interface {
 	UpdateFiles(branch, folder string, files map[string]File) error
 }
 
-// BackendEnvProvider is optionally implemented by Resources whose terraform
+// BackendEnvProvider is optionally implemented by Resources whose OpenTofu
 // backend needs extra environment variables at execution time — e.g. Oracle's
 // S3-compatible Object Storage endpoint and region for the s3 backend. Providers
 // that need nothing extra simply don't implement it.

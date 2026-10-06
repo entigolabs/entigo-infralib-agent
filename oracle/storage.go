@@ -295,7 +295,7 @@ func (s *Storage) Delete() error {
 		return nil
 	}
 	log.Printf("Emptying bucket %s...\n", s.bucket)
-	// In-progress multipart uploads (terraform writes large state via multipart) keep
+	// In-progress multipart uploads (OpenTofu writes large state via multipart) keep
 	// the bucket non-empty even after every object version is gone, so abort them too.
 	if err = s.abortMultipartUploads(); err != nil {
 		return err

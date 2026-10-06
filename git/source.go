@@ -412,7 +412,7 @@ func getReleaseHash(repo *git.Repository, release string) (*plumbing.Hash, error
 	return nil, err
 }
 
-func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, error) {
+func (s *SourceClient) CalculateChecksums(release string, modules model.Set[string]) (map[string][]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -422,7 +422,7 @@ func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, er
 	}
 
 	checksums := make(map[string][]byte)
-	err = s.generateModulesChecksums(checksums)
+	err = s.generateModulesChecksums(checksums, modules)
 	if err != nil {
 		return nil, err
 	}
@@ -433,37 +433,22 @@ func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, er
 	return checksums, nil
 }
 
-func (s *SourceClient) generateModulesChecksums(checksums map[string][]byte) error {
-	exists, err := s.directoryExists("modules")
-	if !exists || err != nil {
-		return err
-	}
-	parents, err := s.worktree.Filesystem.ReadDir("modules")
-	if err != nil {
-		return err
-	}
-	for _, parent := range parents {
-		if !parent.IsDir() {
-			continue
-		}
-		parentPath := filepath.Join("modules", parent.Name())
-		modules, err := s.worktree.Filesystem.ReadDir(parentPath)
+func (s *SourceClient) generateModulesChecksums(checksums map[string][]byte, modules model.Set[string]) error {
+	for module := range modules {
+		exists, err := s.directoryExists(module)
 		if err != nil {
 			return err
 		}
-		for _, module := range modules {
-			if !module.IsDir() {
-				continue
-			}
-			fullPath := filepath.Join(parentPath, module.Name())
-			sum, err := s.directoryChecksum(fullPath)
-			if err != nil {
-				return err
-			}
-			checksums[fullPath] = sum
+		if !exists {
+			continue
 		}
+		sum, err := s.directoryChecksum(module, model.NewSet[string]())
+		if err != nil {
+			return err
+		}
+		checksums[module] = sum
 	}
-	return err
+	return nil
 }
 
 func (s *SourceClient) generateProvidersChecksums(checksums map[string][]byte) error {
@@ -506,7 +491,13 @@ func (s *SourceClient) directoryExists(path string) (bool, error) {
 	return true, nil
 }
 
-func (s *SourceClient) directoryChecksum(dir string) ([]byte, error) {
+func (s *SourceClient) directoryChecksum(dir string, visiting model.Set[string]) ([]byte, error) {
+	if visiting.Contains(dir) {
+		return nil, fmt.Errorf("symlink cycle detected at %s", dir)
+	}
+	visiting.Add(dir)
+	defer visiting.Remove(dir)
+
 	var keys []string
 	sums := make(map[string][]byte)
 	infos, err := s.worktree.Filesystem.ReadDir(dir)
@@ -519,9 +510,12 @@ func (s *SourceClient) directoryChecksum(dir string) ([]byte, error) {
 			continue
 		}
 		var sum []byte
-		if info.IsDir() {
-			sum, err = s.directoryChecksum(filepath.Join(dir, info.Name()))
-		} else {
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			sum, err = s.symlinkChecksum(filepath.Join(dir, info.Name()), visiting)
+		case info.IsDir():
+			sum, err = s.directoryChecksum(filepath.Join(dir, info.Name()), visiting)
+		default:
 			sum, err = fileChecksum(s.worktree, filepath.Join(dir, info.Name()))
 		}
 		if err != nil {
@@ -540,6 +534,35 @@ func (s *SourceClient) directoryChecksum(dir string) ([]byte, error) {
 		}
 	}
 	return h.Sum(nil), nil
+}
+
+func (s *SourceClient) symlinkChecksum(link string, visiting model.Set[string]) ([]byte, error) {
+	if visiting.Contains(link) {
+		return nil, fmt.Errorf("symlink cycle detected at %s", link)
+	}
+	visiting.Add(link)
+	defer visiting.Remove(link)
+
+	target, err := s.worktree.Filesystem.Readlink(link)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.IsAbs(target) {
+		return nil, fmt.Errorf("absolute symlink %s -> %s is not supported", link, target)
+	}
+	resolved := filepath.Join(filepath.Dir(link), target)
+	info, err := s.worktree.Filesystem.Lstat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve symlink %s -> %s: %w", link, target, err)
+	}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return s.symlinkChecksum(resolved, visiting)
+	case info.IsDir():
+		return s.directoryChecksum(resolved, visiting)
+	default:
+		return fileChecksum(s.worktree, resolved)
+	}
 }
 
 func fileChecksum(worktree *git.Worktree, file string) ([]byte, error) {

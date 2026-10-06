@@ -310,12 +310,12 @@ func (p *planner) planItemKeys(indexKeys []KeyPair, resource resourceStateV4, id
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to add index to reference %s: %s", dest, err)
 		}
-		importCommand := fmt.Sprintf("terraform import \"%s\" \"%s\"", indexed, id)
+		importCommand := fmt.Sprintf("tofu import \"%s\" \"%s\"", indexed, id)
 		indexed, err = addIndex(source, keys.Key1)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to add index to reference %s: %s", source, err)
 		}
-		stateRmCommand := fmt.Sprintf("terraform state rm \"%s\"", indexed)
+		stateRmCommand := fmt.Sprintf("tofu state rm \"%s\"", indexed)
 		imports = append(imports, importCommand)
 		removes = append(removes, stateRmCommand)
 	}

@@ -28,11 +28,6 @@ type Config struct {
 
 const TofuTfTool = "tofu"
 
-// IsOpenTofuEnabled defaults to true when unset (nil).
-func (c Config) IsOpenTofuEnabled() bool {
-	return c.EnableOpenTofu == nil || *c.EnableOpenTofu
-}
-
 type ConfigSource struct {
 	URL             string   `yaml:"url"`
 	Version         string   `yaml:"version,omitempty"`
@@ -368,7 +363,7 @@ type Storage interface {
 	GetFile(path, release string) ([]byte, error)
 	FileExists(path, release string) bool
 	PathExists(path, release string) (bool, error)
-	CalculateChecksums(release string) (map[string][]byte, error)
+	CalculateChecksums(release string, modules Set[string]) (map[string][]byte, error)
 }
 
 // SourceRepository is a Storage backed by a versioned remote (git tags or OCI

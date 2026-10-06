@@ -28,22 +28,21 @@ const executeScript = "entrypoint-core.sh"
 const localPlanPath = "/tmp/project"
 
 type LocalPipeline struct {
-	ctx            context.Context
-	prefix         string
-	regionKey      string
-	region         string
-	project        string
-	zone           string
-	compartmentId  string
-	bucket         string
-	backendEnv     map[string]string
-	enableOpenTofu bool
-	pipeline       common.Pipeline
-	inputLock      sync.Mutex
-	manager        model.NotificationManager
-	wrapper        *model.NotificationApi
-	campaignId     string
-	pipelineIndex  int
+	ctx           context.Context
+	prefix        string
+	regionKey     string
+	region        string
+	project       string
+	zone          string
+	compartmentId string
+	bucket        string
+	backendEnv    map[string]string
+	pipeline      common.Pipeline
+	inputLock     sync.Mutex
+	manager       model.NotificationManager
+	wrapper       *model.NotificationApi
+	campaignId    string
+	pipelineIndex int
 }
 
 func (l *LocalPipeline) SetPipelineIndex(index int) {
@@ -71,20 +70,19 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 		backendEnv = provider.GetBackendEnv()
 	}
 	return &LocalPipeline{
-		ctx:            ctx,
-		prefix:         resources.GetCloudPrefix(),
-		regionKey:      regionKey,
-		region:         resources.GetRegion(),
-		project:        project,
-		zone:           zone,
-		compartmentId:  compartmentId,
-		bucket:         resources.GetBucketName(),
-		backendEnv:     backendEnv,
-		pipeline:       pipeline,
-		manager:        manager,
-		enableOpenTofu: config.IsOpenTofuEnabled(),
-		wrapper:        getWrapperConfig(config.Notifications),
-		campaignId:     campaignId,
+		ctx:           ctx,
+		prefix:        resources.GetCloudPrefix(),
+		regionKey:     regionKey,
+		region:        resources.GetRegion(),
+		project:       project,
+		zone:          zone,
+		compartmentId: compartmentId,
+		bucket:        resources.GetBucketName(),
+		backendEnv:    backendEnv,
+		pipeline:      pipeline,
+		manager:       manager,
+		wrapper:       getWrapperConfig(config.Notifications),
+		campaignId:    campaignId,
 	}
 }
 
@@ -187,10 +185,8 @@ func (l *LocalPipeline) getEnv(prefixStep string, command model.ActionCommand, s
 		}
 	}
 	if step.Type == model.StepTypeTerraform {
-		env = append(env, fmt.Sprintf("TERRAFORM_CACHE=%t", *l.pipeline.TerraformCache.Value))
-		if l.enableOpenTofu {
-			env = append(env, fmt.Sprintf("TF_TOOL=%s", model.TofuTfTool))
-		}
+		env = append(env, fmt.Sprintf("TERRAFORM_CACHE=%t", *l.pipeline.TerraformCache.Value),
+			fmt.Sprintf("TF_TOOL=%s", model.TofuTfTool))
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				env = append(env, fmt.Sprintf("GIT_AUTH_USERNAME_%s=%s", strings.ToUpper(module.Name), module.HttpUsername),
