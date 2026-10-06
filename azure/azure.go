@@ -189,7 +189,7 @@ func (a *azureService) SetupResources(manager model.NotificationManager, config 
 	resources := store.resources
 	builder, err := NewBuilder(a.ctx, a.credential, store.ssm, a.subscriptionId, resources.TenantId, a.resourceGroup,
 		a.location, environment, store.identity, resources.BucketName, a.cloudPrefix,
-		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled())
+		*a.pipeline.TerraformCache.Value)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +387,7 @@ func (a *azureService) GetResources() (model.Resources, error) {
 		return nil, err
 	}
 	builder, err := NewBuilder(a.ctx, a.credential, ssm, a.subscriptionId, executor.TenantId, a.resourceGroup,
-		a.location, environment, jobIdentity, resources.BucketName, a.cloudPrefix, true, false)
+		a.location, environment, jobIdentity, resources.BucketName, a.cloudPrefix, true)
 	if err != nil {
 		return nil, err
 	}

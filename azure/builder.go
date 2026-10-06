@@ -45,14 +45,13 @@ type Builder struct {
 	bucket         string
 	cloudPrefix    string
 	terraformCache bool
-	enableOpenTofu bool
 	updateCron     string
 	campaignId     string
 	pipelineIndex  int
 	manager        model.NotificationManager
 }
 
-func NewBuilder(ctx context.Context, credential azcore.TokenCredential, ssm *SSM, subscriptionId, tenantId, resourceGroup, location string, environment *Environment, jobIdentity identity, bucket, cloudPrefix string, terraformCache, enableOpenTofu bool) (*Builder, error) {
+func NewBuilder(ctx context.Context, credential azcore.TokenCredential, ssm *SSM, subscriptionId, tenantId, resourceGroup, location string, environment *Environment, jobIdentity identity, bucket, cloudPrefix string, terraformCache bool) (*Builder, error) {
 	jobs, err := armappcontainers.NewJobsClient(subscriptionId, credential, nil)
 	if err != nil {
 		return nil, err
@@ -80,7 +79,6 @@ func NewBuilder(ctx context.Context, credential azcore.TokenCredential, ssm *SSM
 		bucket:         bucket,
 		cloudPrefix:    cloudPrefix,
 		terraformCache: terraformCache,
-		enableOpenTofu: enableOpenTofu,
 	}, nil
 }
 
@@ -587,9 +585,7 @@ func (b *Builder) stepEnv(prefixStep string, command model.ActionCommand, step m
 	}
 	if step.Type == model.StepTypeTerraform {
 		env["TERRAFORM_CACHE"] = strconv.FormatBool(b.terraformCache)
-		if b.enableOpenTofu {
-			env["TF_TOOL"] = model.TofuTfTool
-		}
+		env["TF_TOOL"] = model.TofuTfTool
 		for _, module := range step.Modules {
 			if util.IsClientModule(module) {
 				name := strings.ToUpper(module.Name)
