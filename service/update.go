@@ -349,7 +349,7 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 			return sourceKey, nil
 		}
 	}
-	return model.SourceKey{}, fmt.Errorf("no source contains module")
+	return model.SourceKey{}, fmt.Errorf("no source contains module %s", module.Source)
 }
 
 func moduleMustExist(source *model.Source, stepType model.StepType, module model.Module, version string) error {
@@ -368,12 +368,15 @@ func moduleMustExist(source *model.Source, stepType model.StepType, module model
 		source.URL, module.Source)
 }
 
-func moduleExists(source *model.Source, stepType model.StepType, module model.Module, version string) (bool, error) {
-	moduleSource := module.Source
+func getModulePath(stepType model.StepType, moduleSource string) string {
 	if stepType == model.StepTypeArgoCD {
-		moduleSource = fmt.Sprintf("k8s/%s", moduleSource)
+		return fmt.Sprintf("modules/k8s/%s", moduleSource)
 	}
-	moduleKey := fmt.Sprintf("modules/%s", moduleSource)
+	return fmt.Sprintf("modules/%s", moduleSource)
+}
+
+func moduleExists(source *model.Source, stepType model.StepType, module model.Module, version string) (bool, error) {
+	moduleKey := getModulePath(stepType, module.Source)
 	if source.ForcedVersion != "" {
 		exists, err := source.Storage.PathExists(moduleKey, source.ForcedVersion)
 		if err != nil {
@@ -803,11 +806,7 @@ func (u *updater) getChangedModules(step model.Step) []string {
 			changed = append(changed, module.Name)
 			continue
 		}
-		source := module.Source
-		if step.Type == model.StepTypeArgoCD {
-			source = fmt.Sprintf("k8s/%s", module.Source)
-		}
-		moduleKey := fmt.Sprintf("modules/%s", source)
+		moduleKey := getModulePath(step.Type, module.Source)
 		previousChecksum, ok := moduleSource.PreviousChecksums[moduleKey]
 		if !ok {
 			slog.Debug(fmt.Sprintf("Module %s not found in previous checksums", module.Name))
@@ -1467,7 +1466,7 @@ func (u *updater) postCallbackWithStep(status model.ApplyStatus, stepState model
 	if u.manager == nil || !u.manager.HasNotifier(model.MessageTypeProgress) {
 		return
 	}
-	log.Printf("Notifying step %s status '%s'", stepState.Name, status)
+	slog.Debug(fmt.Sprintf("Notifying step %s status '%s'", stepState.Name, status))
 	u.manager.StepState(status, stepState, step, err)
 }
 
@@ -1973,6 +1972,7 @@ func (u *updater) getBaseImageVersion(step model.Step, index int) string {
 }
 
 func (u *updater) updateChecksums(index int) error {
+	modulePaths := u.getSourceModulePaths()
 	for key, source := range u.sources {
 		if index != 1 && len(source.Releases)-1 < index {
 			continue
@@ -1985,7 +1985,7 @@ func (u *updater) updateChecksums(index int) error {
 				release = source.Releases[index].Original()
 			}
 		}
-		checksums, err := source.Storage.CalculateChecksums(release)
+		checksums, err := source.Storage.CalculateChecksums(release, modulePaths[key])
 		if err != nil {
 			return fmt.Errorf("failed to get checksums for %s: %s", source.URL, err)
 		}
@@ -1993,6 +1993,23 @@ func (u *updater) updateChecksums(index int) error {
 		u.sources[key] = source
 	}
 	return nil
+}
+
+func (u *updater) getSourceModulePaths() map[model.SourceKey]model.Set[string] {
+	paths := make(map[model.SourceKey]model.Set[string])
+	for _, step := range u.steps {
+		for _, module := range step.Modules {
+			if util.IsClientModule(module) {
+				continue
+			}
+			key := u.moduleSources[module.Source]
+			if paths[key] == nil {
+				paths[key] = model.NewSet[string]()
+			}
+			paths[key].Add(getModulePath(step.Type, module.Source))
+		}
+	}
+	return paths
 }
 
 func (u *updater) updateIncludedStepFiles(step model.Step, reservedFiles, excludedFolders model.Set[string], includedFiles map[string]model.File) error {

@@ -225,13 +225,13 @@ func (s *SourceClient) PathExists(path, release string) (bool, error) {
 	return info.IsDir(), nil
 }
 
-func (s *SourceClient) CalculateChecksums(release string) (map[string][]byte, error) {
+func (s *SourceClient) CalculateChecksums(release string, modules model.Set[string]) (map[string][]byte, error) {
 	dir, err := s.ensureExtracted(release)
 	if err != nil {
 		return nil, err
 	}
 	checksums := make(map[string][]byte)
-	if err := generateModulesChecksums(dir, checksums); err != nil {
+	if err := generateModulesChecksums(dir, modules, checksums); err != nil {
 		return nil, err
 	}
 	if err := generateProvidersChecksums(dir, checksums); err != nil {
@@ -341,42 +341,20 @@ func writeZipEntry(f *zip.File, target string) error {
 	return err
 }
 
-func generateModulesChecksums(root string, checksums map[string][]byte) error {
-	exists, err := directoryExists(filepath.Join(root, "modules"))
-	if !exists || err != nil {
-		return err
-	}
-	parents, err := os.ReadDir(filepath.Join(root, "modules"))
-	if err != nil {
-		return err
-	}
-	for _, parent := range parents {
-		if !parent.IsDir() {
-			continue
-		}
-		if err := checksumModuleParent(root, parent.Name(), checksums); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checksumModuleParent(root, parentName string, checksums map[string][]byte) error {
-	parentPath := filepath.Join("modules", parentName)
-	modules, err := os.ReadDir(filepath.Join(root, parentPath))
-	if err != nil {
-		return err
-	}
-	for _, module := range modules {
-		if !module.IsDir() {
-			continue
-		}
-		fullPath := filepath.Join(parentPath, module.Name())
-		sum, err := directoryChecksum(filepath.Join(root, fullPath))
+func generateModulesChecksums(root string, modules model.Set[string], checksums map[string][]byte) error {
+	for module := range modules {
+		exists, err := directoryExists(filepath.Join(root, module))
 		if err != nil {
 			return err
 		}
-		checksums[fullPath] = sum
+		if !exists {
+			continue
+		}
+		sum, err := directoryChecksum(filepath.Join(root, module))
+		if err != nil {
+			return err
+		}
+		checksums[module] = sum
 	}
 	return nil
 }

@@ -42,6 +42,6 @@ func (l *local) PathExists(path, _ string) (bool, error) {
 	return info.IsDir(), nil
 }
 
-func (l *local) CalculateChecksums(_ string) (map[string][]byte, error) {
+func (l *local) CalculateChecksums(_ string, _ model.Set[string]) (map[string][]byte, error) {
 	return make(map[string][]byte), nil
 }
