@@ -1,9 +1,6 @@
 #!/bin/bash
 # Common functions shared across all cloud providers
 
-# TF_TOOL controls which binary is used: terraform (default) or tofu
-TF_TOOL=${TF_TOOL:-terraform}
-
 # Run Go tests
 run_tests() {
     if [ ! -f go.mod ]; then
@@ -43,12 +40,12 @@ prepare_terraform() {
 
 # Run terraform plan
 terraform_plan() {
-    $TF_TOOL plan -no-color -out ${TF_VAR_prefix}.tf-plan -input=false
+    tofu plan -no-color -out ${TF_VAR_prefix}.tf-plan -input=false
     if [ $? -ne 0 ]; then
         echo "Failed to create TF plan!"
         exit 6
     fi
-    $TF_TOOL show -json ${TF_VAR_prefix}.tf-plan > plan.json
+    tofu show -json ${TF_VAR_prefix}.tf-plan > plan.json
     if [ $? -ne 0 ]; then
         echo "Failed to create json plan from TF plan!"
         exit 6
@@ -57,7 +54,7 @@ terraform_plan() {
 
 # Run terraform plan for destroy
 terraform_plan_destroy() {
-    $TF_TOOL plan -destroy -no-color -out ${TF_VAR_prefix}.tf-plan-destroy -input=false
+    tofu plan -destroy -no-color -out ${TF_VAR_prefix}.tf-plan-destroy -input=false
     if [ $? -ne 0 ]; then
         echo "Failed to create TF destroy plan!"
         exit 6
@@ -66,12 +63,12 @@ terraform_plan_destroy() {
 
 # Run terraform apply
 terraform_apply() {
-    $TF_TOOL apply -no-color -input=false ${TF_VAR_prefix}.tf-plan
+    tofu apply -no-color -input=false ${TF_VAR_prefix}.tf-plan
     if [ $? -ne 0 ]; then
         echo "Apply failed!"
         exit 11
     fi
-    $TF_TOOL output > terraform-output.json
+    tofu output > terraform-output.json
     if [ $? -ne 0 ]; then
         echo "Output failed!"
         exit 12
@@ -81,7 +78,7 @@ terraform_apply() {
 
 # Run terraform apply for destroy
 terraform_apply_destroy() {
-    $TF_TOOL apply -no-color -input=false ${TF_VAR_prefix}.tf-plan-destroy
+    tofu apply -no-color -input=false ${TF_VAR_prefix}.tf-plan-destroy
     if [ $? -ne 0 ]; then
         echo "Apply destroy failed!"
         exit 11
@@ -225,9 +222,9 @@ terraform_init() {
     find .terraform/providers -name 'terraform-provider-*' -exec chmod +x {} +
 
     # tofu requires -reconfigure when taking over a Terraform-initialized backend
-    $TF_TOOL init -input=false -reconfigure -backend-config=backend.conf
+    tofu init -input=false -reconfigure -backend-config=backend.conf
     if [ $? -ne 0 ]; then
-        echo "Terraform init failed."
+        echo "OpenTofu init failed."
         exit 14
     fi
 }

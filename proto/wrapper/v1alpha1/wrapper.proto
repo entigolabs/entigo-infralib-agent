@@ -61,7 +61,7 @@ enum Command {
 message HandshakeAck {}
 
 // LogBatch is one or more raw stdout lines from the entrypoint. Lines are
-// batched per Send to amortize gRPC per-message overhead — terraform emits
+// batched per Send to amortize gRPC per-message overhead — OpenTofu emits
 // in bursts and a per-line stream would saturate the channel buffer.
 message LogBatch {
   repeated string lines = 1;

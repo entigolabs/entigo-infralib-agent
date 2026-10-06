@@ -464,10 +464,6 @@ func processModuleInputs(stepName string, module *model.Module, basePath string,
 }
 
 func ProcessConfig(config *model.Config, providerType model.ProviderType) {
-	if config.EnableOpenTofu == nil {
-		enabled := true
-		config.EnableOpenTofu = &enabled
-	}
 	processSources(config)
 	processSteps(config, providerType)
 }
@@ -546,11 +542,20 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 }
 
 func ValidateConfig(config model.Config, state *model.State) error {
+	if config.EnableOpenTofu != nil {
+		if *config.EnableOpenTofu {
+			slog.Warn(common.PrefixWarning("'enable_opentofu' is deprecated and will be removed in a future release. " +
+				"OpenTofu is enabled by default; remove this field from your config."))
+		} else {
+			return errors.New("'enable_opentofu: false' is no longer supported because Terraform support has been removed. " +
+				"OpenTofu is always used; delete the 'enable_opentofu' field from your config")
+		}
+	}
 	if len(config.Sources) == 0 {
 		return fmt.Errorf("at least one source must be provided")
 	}
 	for index, source := range config.Sources {
-		if err := validateSource(index, source, config.IsOpenTofuEnabled()); err != nil {
+		if err := validateSource(index, source); err != nil {
 			return err
 		}
 	}
@@ -571,12 +576,9 @@ func ValidateConfig(config model.Config, state *model.State) error {
 	return validateSteps(config, state)
 }
 
-func validateSource(index int, source model.ConfigSource, tofuEnabled bool) error {
+func validateSource(index int, source model.ConfigSource) error {
 	if source.URL == "" {
 		return fmt.Errorf("%d. source URL is not set", index+1)
-	}
-	if util.IsOCISource(source.URL) && !tofuEnabled {
-		return fmt.Errorf("source %s can't use OCI if OpenTofu hasn't been enabled", source.URL)
 	}
 	if source.Include != nil && source.Exclude != nil {
 		return fmt.Errorf("source %s can't have both include and exclude", source.URL)

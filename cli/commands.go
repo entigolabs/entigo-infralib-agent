@@ -133,7 +133,7 @@ var migrateConfigCommand = cli.Command{
 var migratePlanCommand = cli.Command{
 	Name:    string(common.MigratePlanCommand),
 	Aliases: []string{"mp"},
-	Usage:   "compile a migration plan for terraform",
+	Usage:   "compile a migration plan for OpenTofu",
 	Action:  action(common.MigratePlanCommand),
 	Flags:   cliFlags(common.MigratePlanCommand),
 }
@@ -141,7 +141,7 @@ var migratePlanCommand = cli.Command{
 var migrateValidateCommand = cli.Command{
 	Name:    string(common.MigrateValidateCommand),
 	Aliases: []string{"mv"},
-	Usage:   "validate a terraform plan file based on the import config",
+	Usage:   "validate a OpenTofu plan file based on the import config",
 	Action:  action(common.MigrateValidateCommand),
 	Flags:   cliFlags(common.MigrateValidateCommand),
 }

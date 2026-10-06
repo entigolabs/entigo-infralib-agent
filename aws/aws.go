@@ -181,7 +181,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		return nil, err
 	}
 	codePipeline := NewPipeline(a.ctx, a.awsConfig, pipelineRoleArn, cloudwatch, logGroup, logStream,
-		*a.pipeline.TerraformCache.Value, config.IsOpenTofuEnabled(), a.cloudPrefix, s3, manager)
+		*a.pipeline.TerraformCache.Value, a.cloudPrefix, s3, manager)
 	a.resources.CloudWatch = cloudwatch
 	a.resources.CodeBuild = codeBuild
 	a.resources.Pipeline = codePipeline
@@ -205,7 +205,7 @@ func (a *awsService) GetResources() (model.Resources, error) {
 		ProviderType:   model.AWS,
 		Bucket:         s3,
 		CodeBuild:      codeBuild,
-		Pipeline:       NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, true, a.cloudPrefix, s3, nil),
+		Pipeline:       NewPipeline(a.ctx, a.awsConfig, "", cloudwatch, logGroup, logGroup, true, a.cloudPrefix, s3, nil),
 		CloudPrefix:    a.cloudPrefix,
 		BucketName:     bucket,
 		SSM:            NewSSM(a.ctx, a.awsConfig),
@@ -261,7 +261,7 @@ func (a *awsService) DeleteResources(deleteBucket, deleteServiceAccount bool) er
 		a.DeleteServiceAccount()
 	}
 	if !deleteBucket {
-		log.Printf("Terraform state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
+		log.Printf("OpenTofu state bucket %s will not be deleted, delete it manually if needed\n", a.resources.GetBucketName())
 		return nil
 	}
 	err = a.resources.GetBucket().Delete()

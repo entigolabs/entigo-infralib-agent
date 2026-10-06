@@ -28,11 +28,6 @@ type Config struct {
 
 const TofuTfTool = "tofu"
 
-// IsOpenTofuEnabled defaults to true when unset (nil).
-func (c Config) IsOpenTofuEnabled() bool {
-	return c.EnableOpenTofu == nil || *c.EnableOpenTofu
-}
-
 type ConfigSource struct {
 	URL             string   `yaml:"url"`
 	Version         string   `yaml:"version,omitempty"`

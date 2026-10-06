@@ -65,7 +65,6 @@ type Pipeline struct {
 	logGroup       string
 	logStream      string
 	terraformCache bool
-	enableOpenTofu bool
 	cloudPrefix    string
 	bucket         model.Bucket
 	manager        model.NotificationManager
@@ -81,7 +80,7 @@ func (p *Pipeline) SetPipelineIndex(index int) {
 	p.pipelineIndex = strconv.Itoa(index)
 }
 
-func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache, enableOpenTofu bool, cloudPrefix string, bucket model.Bucket, manager model.NotificationManager) *Pipeline {
+func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, cloudPrefix string, bucket model.Bucket, manager model.NotificationManager) *Pipeline {
 	return &Pipeline{
 		ctx:            ctx,
 		region:         awsConfig.Region,
@@ -94,7 +93,6 @@ func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, clou
 		cloudPrefix:    cloudPrefix,
 		bucket:         bucket,
 		manager:        manager,
-		enableOpenTofu: enableOpenTofu,
 	}
 }
 
@@ -913,7 +911,7 @@ func getCodeBuildRunId(actions []types.ActionExecutionDetail) (string, error) {
 		}
 		return parts[1], nil
 	}
-	return "", fmt.Errorf("couldn't find a terraform plan action")
+	return "", fmt.Errorf("couldn't find an OpenTofu plan action")
 }
 
 func (p *Pipeline) approveStage(pipelineName string) (approvalStatus, error) {
@@ -1020,10 +1018,8 @@ func (p *Pipeline) getEnvironmentVariablesByType(command model.ActionCommand, st
 
 func (p *Pipeline) getTerraformEnvironmentVariables(command model.ActionCommand, stepName string, step model.Step, bucket string, authSources map[string]model.SourceAuth) (string, error) {
 	vars := p.buildEnvVars(command, stepName, step, bucket, authSources)
-	vars = append(vars, envVar{Name: "TERRAFORM_CACHE", Value: fmt.Sprintf("%t", p.terraformCache)})
-	if p.enableOpenTofu {
-		vars = append(vars, envVar{Name: "TF_TOOL", Value: model.TofuTfTool})
-	}
+	vars = append(vars, envVar{Name: "TERRAFORM_CACHE", Value: fmt.Sprintf("%t", p.terraformCache)},
+		envVar{Name: "TF_TOOL", Value: model.TofuTfTool})
 	for _, module := range step.Modules {
 		if !util.IsClientModule(module) {
 			continue

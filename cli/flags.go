@@ -240,7 +240,7 @@ var deleteBucketFlag = cli.BoolFlag{
 	Name:        "delete-bucket",
 	Aliases:     []string{"db"},
 	Sources:     cli.EnvVars("DELETE_BUCKET"),
-	Usage:       "delete the bucket used by terraform state",
+	Usage:       "delete the bucket used by OpenTofu state",
 	Destination: &flags.Delete.DeleteBucket,
 }
 
@@ -286,7 +286,7 @@ var printLogsFlag = cli.BoolFlag{
 	Name:        "print-logs",
 	Aliases:     []string{"pl"},
 	Sources:     cli.EnvVars("PRINT_LOGS"),
-	Usage:       "print terraform/helm logs to stdout when using local pipelines",
+	Usage:       "print OpenTofu/helm logs to stdout when using local pipelines",
 	Value:       true,
 	DefaultText: "true",
 	Destination: &flags.Pipeline.PrintLogs,
@@ -297,7 +297,7 @@ var terraformCacheFlag = cli.GenericFlag{
 	Name:        "terraform-cache",
 	Aliases:     []string{"tc"},
 	Sources:     cli.EnvVars("TERRAFORM_CACHE"),
-	Usage:       "use terraform caching",
+	Usage:       "use OpenTofu caching",
 	DefaultText: "true",
 	Value:       &flags.Pipeline.TerraformCache,
 	Required:    false,
@@ -359,7 +359,7 @@ var stateFileFlag = cli.StringFlag{
 	Sources:     cli.EnvVars("STATE_FILE"),
 	DefaultText: "",
 	Value:       "",
-	Usage:       "path for terraform state file",
+	Usage:       "path for OpenTofu state file",
 	Destination: &flags.Migrate.StateFile,
 	Required:    true,
 }
@@ -383,7 +383,7 @@ var planFileFlag = cli.StringFlag{
 	Sources:     cli.EnvVars("PLAN_FILE"),
 	DefaultText: "",
 	Value:       "",
-	Usage:       "path for terraform plan file",
+	Usage:       "path for OpenTofu plan file",
 	Destination: &flags.Migrate.PlanFile,
 	Required:    true,
 }

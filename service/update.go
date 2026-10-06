@@ -1305,7 +1305,7 @@ func (u *updater) updateTerraformFiles(step model.Step, moduleVersions map[strin
 	}
 	provider, providers, err := u.terraform.GetTerraformProvider(step, moduleVersions, sourceVersions)
 	if err != nil {
-		return false, nil, nil, fmt.Errorf("failed to create terraform provider: %w", err)
+		return false, nil, nil, fmt.Errorf("failed to create OpenTofu provider: %w", err)
 	}
 	modifiedProvider, delayedKeyTypes, err := u.replaceStringValues(step, string(provider), index, make(paramCache))
 	if err != nil {

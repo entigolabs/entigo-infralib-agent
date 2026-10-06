@@ -32,7 +32,7 @@ type kmsState struct {
 }
 
 // KMS provisions and owns the agent's own KMS vault and master key, deliberately
-// independent of any terraform kms module: the agent's resources (bucket
+// independent of any OpenTofu kms module: the agent's resources (bucket
 // encryption + the Vault secret store) point at a key no module can delete out
 // from under them (the race AWS suffers when its kms module is removed). One
 // DEFAULT vault and one AES-256 key, both named <prefix>-infralib, found-or-created

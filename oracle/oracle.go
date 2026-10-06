@@ -37,7 +37,7 @@ type Resources struct {
 	VaultId    string
 }
 
-// GetBackendConfigVars emits the flat part of the terraform s3 backend config
+// GetBackendConfigVars emits the flat part of the OpenTofu s3 backend config
 // (backend.conf). Endpoint, region and credentials go via env (GetBackendEnv) since
 // backend.conf can't express the nested `endpoints` block and must not carry secrets.
 // The skip_* flags disable AWS calls OCI's S3-compatible API doesn't implement.
@@ -55,7 +55,7 @@ func (r Resources) GetBackendConfigVars(key string) map[string]string {
 	}
 }
 
-// GetBackendEnv supplies the terraform s3 backend endpoint and region via env. The
+// GetBackendEnv supplies the OpenTofu s3 backend endpoint and region via env. The
 // credentials are added when a Customer Secret Key has been provisioned
 // (provisionBackendCredentials); otherwise they fall back to the operator's env.
 func (r Resources) GetBackendEnv() map[string]string {
@@ -237,7 +237,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 		}
 		resources.SSM = ssm
 		resources.VaultId = kms.VaultId()
-		log.Println("Provisioning terraform state backend credentials")
+		log.Println("Provisioning OpenTofu state backend credentials")
 		git, err = o.provisionBackendCredentials(gctx, &resources, ssm, true)
 		return err
 	})
@@ -252,8 +252,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	}
 
 	builder := NewBuilder(o.ctx, ssm, o.region, o.compartmentId, resources.BucketName,
-		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, config.IsOpenTofuEnabled(),
-		o.terraformCacheEnabled(), o.cloudPrefix)
+		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, o.terraformCacheEnabled(), o.cloudPrefix)
 	builder.devopsBuild = build
 	// Inject the git push credentials resolved above so pushSpec does no Vault/IAM calls.
 	build.SetGitAuth(git.username, git.token, git.fresh)
@@ -414,7 +413,7 @@ func (a agentGitAuth) complete() bool {
 }
 
 // provisionBackendCredentials resolves the credentials the agent's own traffic needs: the
-// S3-compatible Customer Secret Key for the terraform state backend (always) and, when
+// S3-compatible Customer Secret Key for the OpenTofu state backend (always) and, when
 // needGit is set, the DevOps git auth token + username. They belong to the EXECUTING user —
 // OCI creates users only in the tenancy root, and the agent creates nothing outside its
 // compartment, so it mints no service account for them (the `sa` command is the sole
@@ -475,7 +474,7 @@ func (o *oracleService) consumeCredentials(ctx context.Context, resources *Resou
 		}
 	} else {
 		slog.Warn(common.PrefixWarning("No persisted Customer Secret Key and no user to create one for (a resource " +
-			"principal owns none); the terraform s3 backend will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from " +
+			"principal owns none); the OpenTofu s3 backend will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from " +
 			"the environment. Run the agent once with user credentials to seed and persist one automatically."))
 	}
 	if needGit && !git.complete() {
@@ -509,7 +508,7 @@ func (o *oracleService) loadPersistedGitAuth(secrets secretPersistence, needGit 
 
 // seedStateCredentials mints the state-backend CSK on the executing user, the first time
 // the Vault holds none. A new key must propagate before it's broadly usable, so wait for a
-// stable streak of successful probes before handing it to terraform.
+// stable streak of successful probes before handing it to OpenTofu.
 func (o *oracleService) seedStateCredentials(ctx context.Context, resources *Resources, secrets secretPersistence, iam *IAM, userId string) error {
 	access, secret, err := CreateCustomerSecretKey(iam, secrets, userId, stateKeyName(o.cloudPrefix))
 	if err != nil {
@@ -659,7 +658,7 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Could not resolve logging: %s", err)))
 	}
 	builder := NewBuilder(o.ctx, ssm, o.region, o.compartmentId, resources.BucketName,
-		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, false, o.terraformCacheEnabled(), o.cloudPrefix)
+		resources.S3Endpoint, resources.AccessKey, resources.SecretKey, o.terraformCacheEnabled(), o.cloudPrefix)
 	if build, err := NewDevOpsBuilder(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Could not create DevOps builder: %s", err)))
 	} else {
@@ -674,7 +673,7 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 
 // PrepareDestroy resolves the state-backend Customer Secret Key so a local destroy can
 // reach the s3-compatible backend — GetResources skips credential provisioning, so its
-// resources carry no AccessKey and terraform destroy would fail "AWS_ACCESS_KEY_ID is not
+// resources carry no AccessKey and OpenTofu destroy would fail "AWS_ACCESS_KEY_ID is not
 // set". Returns a copy with the CSK populated (Resources is a value boxed in the
 // interface, so it can't be mutated in place). needGit is false — destroy never pushes.
 func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resources, error) {
@@ -726,7 +725,7 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	// The KMS key encrypts the bucket, so schedule the vault for deletion only after the
 	// bucket is gone; if the bucket is kept, keep the key too.
 	if !deleteBucket {
-		log.Printf("Terraform state bucket %s and the KMS vault/key that encrypts it will not be deleted; "+
+		log.Printf("OpenTofu state bucket %s and the KMS vault/key that encrypts it will not be deleted; "+
 			"delete the bucket and schedule the KMS vault deletion manually if needed\n", resources.BucketName)
 		return nil
 	}

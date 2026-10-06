@@ -488,7 +488,7 @@ func (*HandshakeAck) Descriptor() ([]byte, []int) {
 }
 
 // LogBatch is one or more raw stdout lines from the entrypoint. Lines are
-// batched per Send to amortize gRPC per-message overhead — terraform emits
+// batched per Send to amortize gRPC per-message overhead — OpenTofu emits
 // in bursts and a per-line stream would saturate the channel buffer.
 type LogBatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`

@@ -35,7 +35,7 @@ go install github.com/entigolabs/entigo-infralib-agent@latest
 ```
 
 ```bash
-docker pull entigolabs/entigo-infralib-agent            # Docker Hub
+docker pull entigolabs/entigo-infralib-agent                  # Docker Hub
 docker pull public.ecr.aws/entigolabs/entigo-infralib-agent   # ECR Public
 ```
 
@@ -59,7 +59,7 @@ What this means in practice:
 - **Running the agent to manage your own infrastructure carries no source
   obligation.** The AGPL covers this program, not the infrastructure it
   provisions or the applications you deploy on the resulting platform. Your
-  config files, Terraform inputs and workloads are yours.
+  config files, OpenTofu inputs and workloads are yours.
 - **If you modify the agent and let others interact with it over a network,
   the AGPL requires you to offer them the modified source.** This is the
   clause that distinguishes the AGPL from the GPL, and it is the one to read
@@ -260,7 +260,7 @@ bin/ei-agent bootstrap --config=config.yaml --prefix=infralib
 
 ### run
 
-Processes config steps, creates and executes CodePipelines which apply Entigo Infralib terraform modules.
+Processes config steps, creates and executes CodePipelines which apply Entigo Infralib OpenTofu modules.
 Run command only executes a single cycle of the pipeline. Can be used to apply config changes.
 
 OPTIONS:
@@ -280,9 +280,9 @@ OPTIONS:
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
-* print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
-* logs-path - **optional** path for storing terraform/helm logs when running local pipelines [$LOGS_PATH]
-* terraform-cache - use terraform caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
+* print-logs - print OpenTofu/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing OpenTofu/helm logs when running local pipelines [$LOGS_PATH]
+* terraform-cache - use OpenTofu caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
 
 Example
 ```bash
@@ -291,7 +291,7 @@ bin/ei-agent run --config=config.yaml --prefix=infralib
 
 ### update
 
-Processes config steps, creates and executes CodePipelines which apply Entigo Infralib terraform modules.
+Processes config steps, creates and executes CodePipelines which apply Entigo Infralib OpenTofu modules.
 Update command updates all modules to the latest or specified versions. Returns if there are no updates available.
 
 OPTIONS:
@@ -310,9 +310,9 @@ OPTIONS:
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
-* print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
-* logs-path - **optional** path for storing terraform/helm logs when running local pipelines [$LOGS_PATH]
-* terraform-cache - use terraform caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
+* print-logs - print OpenTofu/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing OpenTofu/helm logs when running local pipelines [$LOGS_PATH]
+* terraform-cache - use OpenTofu caching (default: **true**, when using pipeline-type local, default is **false**) [$TERRAFORM_CACHE]
 
 Example
 ```bash
@@ -341,8 +341,8 @@ OPTIONS:
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * steps - **optional** comma separated list of steps to destroy [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
-* print-logs - print terraform/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
-* logs-path - **optional** path for storing terraform/helm  logs when running local pipelines [$LOGS_PATH]
+* print-logs - print OpenTofu/helm logs to stdout when using local execution (default: **true**) [$PRINT_LOGS]
+* logs-path - **optional** path for storing OpenTofu/helm  logs when running local pipelines [$LOGS_PATH]
 
 Example
 ```bash
@@ -352,7 +352,7 @@ bin/ei-agent destroy --config=config.yaml --prefix=infralib
 ### delete
 
 Processes config steps, removes resources used by the agent, including buckets, pipelines, and roles/service accounts.
-**Warning!** Execute destroy pipelines in reverse config order before running this command. This command will remove all pipelines and resources created by terraform will otherwise remain.
+**Warning!** Execute destroy pipelines in reverse config order before running this command. This command will remove all pipelines and resources created by OpenTofu will otherwise remain.
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
@@ -368,7 +368,7 @@ OPTIONS:
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
-* delete-bucket - delete the bucket used by terraform state (default: **false**) [$DELETE_BUCKET]. For Oracle, the agent-owned KMS vault and key that encrypt the bucket are scheduled for deletion (revertible in the console for ~7 days) only when the bucket is deleted.
+* delete-bucket - delete the bucket used by OpenTofu state (default: **false**) [$DELETE_BUCKET]. For Oracle, the agent-owned KMS vault and key that encrypt the bucket are scheduled for deletion (revertible in the console for ~7 days) only when the bucket is deleted.
 * delete-service-account - delete the service account created by service-account command (default: **false**) [$DELETE_SERVICE_ACCOUNT]
 
 Example
@@ -486,7 +486,7 @@ bin/ei-agent version
 
 ## Config
 
-Config is provided with a yaml file:
+Config is provided with a YAML file:
 
 ```yaml
 prefix: string
@@ -537,7 +537,7 @@ schedule:
 agent_version: latest | semver
 base_image_source: string
 base_image_version: stable | semver
-enable_opentofu: bool
+enable_opentofu: deprecated - bool
 use_oci_proxy: bool
 provider:
   inputs: map[string]string
@@ -554,7 +554,7 @@ provider:
 steps:
   - name: string
     type: terraform | argocd-apps
-    approve: minor | major | never | always | force | reject
+    approve: deprecated - minor | major | never | always | force | reject
     manual_approve_run: always | changes | removes | never | reject
     manual_approve_update: always | changes | removes | never | reject
     base_image_source: string
@@ -591,7 +591,7 @@ Complex values need to be as multiline strings with | symbol.
 
 Source version is overwritten by module version. Default version is **stable** which means latest release of the source repository.
 
-* prefix - prefix used for AWS/GCloud/Oracle resources, bucket folders/files and terraform resources, limit 10 characters, overwritten by the prefix flag/env var
+* prefix - prefix used for AWS/GCloud/Oracle resources, bucket folders/files and OpenTofu resources, limit 10 characters, overwritten by the prefix flag/env var
 * sources - list of source repositories for Entigo Infralib modules
   * url - url of the source repository or path to the local directory. Path must start with `./` or `../` Path will set force_version to true and use `local` as the version. Path only works with the local pipeline execution type.
   * version - highest version of Entigo Infralib modules to use
@@ -636,15 +636,15 @@ Source version is overwritten by module version. Default version is **stable** w
 * agent_version - image version of Entigo Infralib Agent to use
 * base_image_source - source of Entigo Infralib Base Image to use
 * base_image_version - image version of Entigo Infralib Base Image to use, default uses the version from step
-* enable_opentofu - make Infralib use OpenTofu instead of Terraform, default **true**.
+* enable_opentofu - **deprecated**, make Infralib use OpenTofu instead of Terraform, default **true**.
 * use_oci_proxy - replace OCI source url host with proxy if registry proxy module has been applied, excluding modules that are part of the same step as the proxy module, default **false**
-* provider - provider values to add for all terraform steps
+* provider - provider values to add for all OpenTofu steps
   * inputs - variables for provider tf file
   * aws - aws provider default, ignore tags and endpoints to add
   * kubernetes - kubernetes provider ignore annotations and labels to add
 * steps - list of steps to execute
   * name - name of the step
-  * type - type of the step
+  * type - type of the step `terraform | argocd-apps`
   * approve - **deprecated**, approval type for the step, possible values `minor | major | never | always | force | reject`, default **always**. More info in [Auto approval logic](#auto-approval-logic)
   * manual_approve_update - approval type for the step when using the update command, possible values `always | changes | removes | never | reject`, default **removes**. More info in [Auto approval logic](#auto-approval-logic)
   * manual_approve_run - approval type for the step when using the run command, possible values `always | changes | removes | never | reject`, default **changes**. More info in [Auto approval logic](#auto-approval-logic)
@@ -659,7 +659,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
   * modules - list of modules to apply
     * name - name of the module
-    * source - source of the terraform module, can be an external git repository beginning with git:: or git@
+    * source - source of the OpenTofu module, can be an external git repository beginning with git:: or git@
     * version - highest version of the module to use
     * http_username - username for external repository authentication
     * http_password - password for external repository authentication
@@ -720,23 +720,23 @@ Step, module and input field values can be overwritten by using replacement tags
 | `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.                      |
 | `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                                           |
 |                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                         |
-| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from Terraform output from specific step/module. Defaults to empty string.                     |
-| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from Terraform output from specific step/module.                                                        |
+| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from OpenTofu output from specific step/module. Defaults to empty string.                      |
+| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from OpenTofu output from specific step/module.                                                         |
 | `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM or OCI Vault.                                                         |
 | `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                                       |
 | `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps              |
 | `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                                     |
 | `toptmodule`    | type                        | `.toptmodule.eks`                     | Optional name of the module with a specified type.                                                            |
-| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from Terraform output based on module type. Defaults to empty string.                          |
+| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from OpenTofu output based on module type. Defaults to empty string.                           |
 | `toptin`        | type.key                    | `.toptin.argocd.argocd.global.domain` | Optional value from a module inputs in the current step, fallback same as `tinput`. Defaults to empty string. |
-| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from Terraform output based on module type.                                                             |
+| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from OpenTofu output based on module type.                                                              |
 | `tsmodule`      | type                        | `.tsmodule.eks`                       | Name of the typed module in the current step.                                                                 |
 
-For output types, if the value is not found from terraform output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or OCI Vault.
+For output types, if the value is not found from OpenTofu output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or OCI Vault.
 
-For example, `{{ .output.stepName.moduleName.key-1 }}` will be overwritten with the value from terraform output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
+For example, `{{ .output.stepName.moduleName.key-1 }}` will be overwritten with the value from OpenTofu output `moduleName__key-1`. As a fallback, uses SSM Parameter Store parameter `/entigo-infralib/config.prefix-stepName-moduleName-parentStep/key-1`.
 
-It's possible to build a custom array by using yaml multiline string, even mixing replaced values with inputted values. For example creating a list of strings for terraform:
+It's possible to build a custom array by using yaml multiline string, even mixing replaced values with inputted values. For example creating a list of strings for OpenTofu:
 ```yaml
 inputs:
   key-1: |
@@ -745,7 +745,7 @@ inputs:
 
 #### List indexes
 
-If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`. In case of terraform output, it's also possible to use a map key as the index, e.g. `{{ .output.stepName.moduleName.key-1[key-2] }}`.
+If the parameter type is StringList then it's possible to use an index to get a specific value, e.g. `{{ .output.stepName.moduleName.key-1[0] }}` or a slice by using a range, e.g. `[0-1]`. In case of OpenTofu output, it's also possible to use a map key as the index, e.g. `{{ .output.stepName.moduleName.key-1[key-2] }}`.
 
 #### Escaping replacement tags
 
@@ -769,7 +769,7 @@ inputs:
 
 ### Including files in steps
 
-It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and named files for every module `module-name.yaml`. Files will be copied into the step directory which is used by terraform and ArgoCD as step context.
+It's possible to include files in steps by adding the files into a `./config/<stepName>/include` subdirectory. File names can't include `main.tf`, `provider.tf` or `backend.conf` as they are reserved for the agent. For ArgoCD, reserved name is `argocd.yaml` and named files for every module `module-name.yaml`. Files will be copied into the step directory which is used by OpenTofu and ArgoCD as step context.
 
 ### Including CA certificates
 
@@ -812,7 +812,7 @@ When configuring API notifications, the agent will send requests to the specifie
 
 Agent uses default cloud provider encryption settings if no encryption module is present in config.
 
-Currently, infralib only supports customer provided encryption in AWS with KMS. When KMS module is present in the config file, agent will use the KMS arn from the module terraform output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets. Agent applies those changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in S3 after the KMS module was applied will be encrypted with it.
+Currently, infralib only supports customer provided encryption in AWS with KMS. When KMS module is present in the config file, agent will use the KMS arn from the module OpenTofu output to configure the S3 bucket and CloudWatch log groups to use KMS by default. Agent will also use the KMS when creating Parameter Store parameters and Secret Manager secrets. Agent applies those changes only when a previous execution has successfully applied the KMS module. Meaning, only objects that have been put in S3 after the KMS module was applied will be encrypted with it.
 
 Oracle Cloud manages encryption differently: the agent provisions and owns its own KMS vault and key automatically and uses it to encrypt the state bucket and every Vault-stored parameter and secret. It does not consume a KMS module from the config (the encryption module and customer-provided key apply to AWS only), so no encryption configuration is required.
 
@@ -885,13 +885,13 @@ Rolling back module versions can be done in 2 ways:
 
 ## Migration Helper
 
-Agent includes 3 commands to help migrate from existing terraform state to Entigo Infralib modules: [migrate-config](#migrate-config), [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
+Agent includes 3 commands to help migrate from existing OpenTofu state to Entigo Infralib modules: [migrate-config](#migrate-config), [migrate-plan](#migrate-plan) and [migrate-validate](#migrate-validate).
 
-Config command requires a terraform v4 state file. Plan and validate commands require the state file and a terraform plan file. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine the approval type `reject` with `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into json format by using terraform.
+Config command requires a OpenTofu v4 state file. Plan and validate commands require the state file and an OpenTofu plan file. Infralib state and plan files can be obtained from the bucket used by agent. It's possible to combine the approval type `reject` with `run` command argument `steps` to generate plan files without applying them for the chosen steps. Plan files need to be manually converted into JSON format by using OpenTofu.
 
 First generate an import configuration with `migrate-config`. Modify the generated lines to remove any resources that don't need migrating. If needed, split any config items into source and destination blocks. That's only necessary if source and destination don't have any matching fields from name, module and indexes.
 
-Using the import config, generate terraform import commands with the `migrate-plan` command. After executing the commands, run the pipelines with the approval type `reject` to generate a new plan. Optionally, use the `migrate-validate` command to validate the new plan along with the new state.
+Using the import config, generate OpenTofu import commands with the `migrate-plan` command. After executing the commands, run the pipelines with the approval type `reject` to generate a new plan. Optionally, use the `migrate-validate` command to validate the new plan along with the new state.
 
 ### Migration Commands
 
@@ -901,7 +901,7 @@ Outputs a list of resources with instance indexes based on the state file that a
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the previous terraform state file [$STATE_FILE]
+* state-file - path to the previous OpenTofu state file [$STATE_FILE]
 * import-file - **optional**, path to the import file [$IMPORT_FILE]
 
 Example
@@ -911,12 +911,12 @@ bin/ei-agent migrate-config --state-file=state-file.json
 
 #### migrate-plan
 
-Generates import and rm terraform commands based on the input files. **Warning!** Always check the import and rm commands before executing them. More info in [Migration Helper](#migration-helper).
+Generates import and rm OpenTofu commands based on the input files. **Warning!** Always check the import and rm commands before executing them. More info in [Migration Helper](#migration-helper).
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the previous terraform state file [$STATE_FILE]
-* plan-file - path to the terraform plan file [$PLAN_FILE]
+* state-file - path to the previous OpenTofu state file [$STATE_FILE]
+* plan-file - path to the OpenTofu plan file [$PLAN_FILE]
 * import-file - path to the import file [$IMPORT_FILE]
 * types-file - **optional**, path for type identifications file [$TYPES_FILE]
 
@@ -927,7 +927,7 @@ bin/ei-agent migrate-plan --state-file=state-file.json --plan-file=plan.json --i
 
 #### migrate-validate
 
-Validate a terraform plan file based on the import config and infralib terraform state. Outputs 3 types of warnings:
+Validate an OpenTofu plan file based on the import config and infralib OpenTofu state. Outputs 3 types of warnings:
 1. If plan wants to create or remove a resource that should be in the infralib state file.
 2. If plan wants to create or remove a resource that has the same type as the type in the import file.
 3. If plan wants to change a value of a resource.
@@ -936,8 +936,8 @@ More info in [Migration Helper](#migration-helper).
 
 OPTIONS:
 * logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
-* state-file - path to the new terraform state file [$STATE_FILE]
-* plan-file - path to the terraform plan file [$PLAN_FILE]
+* state-file - path to the new OpenTofu state file [$STATE_FILE]
+* plan-file - path to the OpenTofu plan file [$PLAN_FILE]
 * import-file - path to the import file [$IMPORT_FILE]
 
 Example
@@ -986,7 +986,7 @@ Plan command generates import commands for the destination resources and rm comm
 
 ### Type Identifications File
 
-Type identifications file is used to map a resource type to an identification used by terraform for the import command. Agent will replace any placeholder `{}` values with values from the resource instance attributes. Default file is located in `migrate/types.yaml`.
+Type identifications file is used to map a resource type to an identification used by OpenTofu for the import command. Agent will replace any placeholder `{}` values with values from the resource instance attributes. Default file is located in `migrate/types.yaml`.
 
 ```yaml
 typeIdentifications:
@@ -995,6 +995,6 @@ typeIdentifications:
     types: []string
 ```
 
-* identification - identification used by terraform for the import command, e.g `"{id}"`
+* identification - identification used by OpenTofu for the import command, e.g `"{id}"`
 * listSeparator - optional, separator for identification values that are lists, default `/`
 * types - list of resource types that use the identification

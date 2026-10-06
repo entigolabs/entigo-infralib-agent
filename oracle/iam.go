@@ -143,7 +143,7 @@ func CreateCustomerSecretKey(csk customerSecretKeyClient, store secretPersistenc
 	if err = store.PutSecret(customerSecretKeyObject, string(data)); err != nil {
 		return "", "", err
 	}
-	log.Printf("Provisioned Oracle Customer Secret Key %s for terraform state access\n", id)
+	log.Printf("Provisioned Oracle Customer Secret Key %s for OpenTofu state access\n", id)
 	return id, secret, nil
 }
 
@@ -411,7 +411,7 @@ func (i *IAM) ensurePolicy(name, description string, statements []string) (bool,
 
 // EnsureDevOpsBuildAccess grants the DevOps build pipelines' resource principal the
 // permissions it needs: fetching+decrypting the step's Vault secrets (the spec's
-// vaultVariables) and — because the RP is forwarded into the step container where terraform
+// vaultVariables) and — because the RP is forwarded into the step container where OpenTofu
 // runs — managing the infrastructure the steps create.
 func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
 	_, err := i.ensurePolicy(fmt.Sprintf("%s-infralib", cloudPrefix), "Entigo infralib devops build access",
@@ -428,7 +428,7 @@ func (i *IAM) EnsureDevOpsBuildAccess(cloudPrefix string) error {
 // (request.principal.compartment.tag is the compartment's tags, not the pipeline's), so
 // tightening further means enumerating request.principal.id per pipeline. Consequence:
 // every build pipeline in the compartment gets this grant, so the compartment should hold
-// nothing but this deployment. Deliberately NO tenancy-level grants — steps whose terraform
+// nothing but this deployment. Deliberately NO tenancy-level grants — steps whose OpenTofu
 // creates tenancy IAM are unsupported and fail in the step, not here.
 func devOpsBuildStatements(compartmentId string) []string {
 	return []string{
@@ -501,7 +501,7 @@ func agentAccessStatements(grant agentGrant, compartmentId, bucketName string) [
 		grant.statement("use", "key-delegate", compartmentId),
 		grant.statement("manage", "secret-family", compartmentId),
 		grant.statement("manage", "buckets", compartmentId),
-		// Covers terraform's s3 backend traffic too: it is signed with this user's CSK.
+		// Covers OpenTofu's s3 backend traffic too: it is signed with this user's CSK.
 		grant.statement("manage", "objects", compartmentId, fmt.Sprintf("target.bucket.name = '%s'", bucketName)),
 		grant.statement("manage", "devops-family", compartmentId),
 		// CreateLog is a log-groups permission; searching the plan output reads log-content.
@@ -671,7 +671,7 @@ func (i *IAM) deletePolicyByName(name string) {
 // run mutates or reads, and NONE of the bootstrap's privileges: no policy management (so it
 // cannot widen its own access the way agentAccessStatements does) and no KMS/vault/bucket
 // creation (the trust root already exists, so it only finds+uses it). Everything is
-// compartment-scoped. The terraform-state S3 traffic is signed with the Vault-persisted
+// compartment-scoped. The OpenTofu-state S3 traffic is signed with the Vault-persisted
 // Customer Secret Key of whoever bootstrapped; the object-storage grants cover it either way,
 // since this SA can seed a key of its own (self-credential management needs no policy).
 func cicdServiceAccountStatements(group, compartmentId, bucketName string) []string {
@@ -692,7 +692,7 @@ func cicdServiceAccountStatements(group, compartmentId, bucketName string) []str
 		// (terraform-output.json + custom params via this identity; state itself via CSK).
 		fmt.Sprintf("Allow group %s to read buckets in compartment id %s", group, compartmentId),
 		fmt.Sprintf("Allow group %s to manage objects in compartment id %s where target.bucket.name='%s'", group, compartmentId, bucketName),
-		// Logging: find and search the DevOps service log to parse terraform plan changes.
+		// Logging: find and search the DevOps service log to parse OpenTofu plan changes.
 		fmt.Sprintf("Allow group %s to read log-groups in compartment id %s", group, compartmentId),
 		fmt.Sprintf("Allow group %s to read log-content in compartment id %s", group, compartmentId),
 		// Notifications: publish manual-approval messages to the approvals topic.

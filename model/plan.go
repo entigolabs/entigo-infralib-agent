@@ -9,7 +9,7 @@ func PlanBucketKey(pipelineName string) string {
 	return fmt.Sprintf("%s/plan.json", pipelineName)
 }
 
-// Plan is the OpenTofu/Terraform `terraform show -json <planfile>` output
+// Plan is the OpenTofu `tofu show -json <planfile>` output
 // schema. Only the fields downstream code reads are listed; unmodelled fields
 // pass through Unmarshal unread.
 type Plan struct {
@@ -134,11 +134,11 @@ type PlanResourceConfig struct {
 	Expressions  json.RawMessage `json:"expressions"`
 }
 
-// Changes derives the PipelineChanges counts from a plan, matching terraform's
+// Changes derives the PipelineChanges counts from a plan, matching OpenTofu's
 // own `Plan: X to import, Y to add, Z to change, W to destroy` summary: a
 // replace folds into both add and destroy, and an import is counted
 // independently of the resource's action. Output-only plans yield zero counts
-// with NoChanges=false (terraform still applies to save the output values),
+// with NoChanges=false (OpenTofu still applies to save the output values),
 // while a plan with neither resource nor output changes is NoChanges=true.
 func (p Plan) Changes() PipelineChanges {
 	changes := PipelineChanges{}
