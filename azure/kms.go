@@ -69,7 +69,7 @@ func (k *KMS) EnsureVault() error {
 		Tags:     resourceTags(),
 		Properties: &armkeyvault.VaultProperties{
 			TenantID:                  &k.tenantId,
-			SKU:                       &armkeyvault.SKU{Family: new(armkeyvault.SKUFamilyA), Name: new(armkeyvault.SKUNameStandard)},
+			SKU:                       &armkeyvault.SKU{Family: new(armkeyvault.SKUFamilyA), Name: new(armkeyvault.SKUNamePremium)},
 			EnableRbacAuthorization:   new(true),
 			EnablePurgeProtection:     new(true),
 			EnableSoftDelete:          new(true),
