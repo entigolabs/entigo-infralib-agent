@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -24,9 +25,9 @@ const (
 	secretActiveTimeout = 2 * time.Minute
 	defaultSecretPoll   = 3 * time.Second
 	secretUpdateRetries = 5
-	// A just-revived vault reports ACTIVE before it finishes restoring its secrets;
-	// until then cancelling a secret's deletion is rejected 409 IncorrectState.
-	secretCancelTimeout = 3 * time.Minute
+	// A just-revived vault reports ACTIVE to KMS minutes before the secrets service
+	// stops rejecting its secret mutations with 409 IncorrectState; 3 min wasn't enough.
+	secretCancelTimeout = 10 * time.Minute
 )
 
 // readRetryPolicy is the SDK default minus IncorrectState, which a pending-deletion secret
@@ -309,11 +310,15 @@ func (s *SSM) findSecret(name string) (string, vault.SecretSummaryLifecycleState
 // retried while the secret is still pending deletion (its vault is still restoring);
 // a secret no longer pending was restored by its revived vault in the meantime.
 func (s *SSM) cancelDeletion(name, id string) error {
-	deadline := time.Now().Add(secretCancelTimeout)
+	start := time.Now()
+	deadline := start.Add(secretCancelTimeout)
 	logged := false
 	for {
 		_, err := s.vaultClient.CancelSecretDeletion(s.ctx, vault.CancelSecretDeletionRequest{SecretId: &id})
 		if err == nil {
+			if logged {
+				slog.Debug(fmt.Sprintf("Revived Vault secret %s after %s\n", name, time.Since(start).Round(time.Second)))
+			}
 			break
 		}
 		if !isIncorrectState(err) {
@@ -327,7 +332,7 @@ func (s *SSM) cancelDeletion(name, id string) error {
 			break
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("failed to cancel scheduled deletion of secret %s: %w", name, err)
+			return fmt.Errorf("timed out after %s cancelling scheduled deletion of secret %s: %w", secretCancelTimeout, name, err)
 		}
 		if !logged {
 			log.Printf("Waiting for Vault to allow reviving secret %s\n", name)
