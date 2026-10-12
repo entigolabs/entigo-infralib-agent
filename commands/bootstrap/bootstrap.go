@@ -21,7 +21,7 @@ func Bootstrap(ctx context.Context, flags *common.Flags) error {
 	if err != nil {
 		return err
 	}
-	config, err := service.GetBaseConfig(resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
+	config, err := service.GetConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket(), false)
 	if err != nil {
 		return err
 	}

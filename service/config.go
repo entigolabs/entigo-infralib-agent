@@ -54,7 +54,7 @@ func GetProviderPrefix(flags *common.Flags) (string, error) {
 }
 
 func GetFullConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) (model.Config, error) {
-	return getConfig(ssm, prefix, configFile, bucket, true)
+	return GetConfig(ssm, prefix, configFile, bucket, true)
 }
 
 func GetRootConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket) (model.Config, error) {
@@ -72,10 +72,10 @@ func GetRootConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket
 }
 
 func GetBaseConfig(prefix, configFile string, bucket model.Bucket) (model.Config, error) {
-	return getConfig(nil, prefix, configFile, bucket, false)
+	return GetConfig(nil, prefix, configFile, bucket, false)
 }
 
-func getConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) (model.Config, error) {
+func GetConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucket, addInputs bool) (model.Config, error) {
 	if configFile != "" {
 		return GetLocalConfig(ssm, prefix, configFile, bucket, addInputs)
 	}
