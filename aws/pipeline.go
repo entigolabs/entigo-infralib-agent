@@ -387,8 +387,21 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Created destroy CodePipeline %s\n", pipelineName)
-
+	if err := p.disableDestroyTransitions(pipelineName); err != nil {
+		return err
+	}
 	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
+}
+
+func (p *Pipeline) disableDestroyTransitions(pipelineName string) error {
+	reason := "Disable pipeline transition to prevent accidental destruction of infrastructure"
+	for _, stage := range []string{destroyName, approveStageName, applyDestroyName} {
+		err := p.disableStageTransition(pipelineName, stage, reason)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
