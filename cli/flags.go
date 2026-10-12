@@ -101,7 +101,7 @@ var azureResourceGroupFlag = cli.StringFlag{
 	Aliases:     []string{"arg"},
 	Sources:     cli.EnvVars(common.AzureResourceGroupEnv),
 	Value:       "",
-	Usage:       "existing azure resource group for the agent resources, defaults to <prefix>-infralib-<location> which the agent creates",
+	Usage:       "existing azure resource group for the agent resources, defaults to <prefix>-<location> which the agent creates",
 	Destination: &flags.Azure.ResourceGroup,
 	Required:    false,
 }

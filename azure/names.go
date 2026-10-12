@@ -104,23 +104,23 @@ func resourceGroup(azure common.Azure, prefix string) string {
 	if azure.ResourceGroup != "" {
 		return azure.ResourceGroup
 	}
-	return fmt.Sprintf("%s-infralib-%s", prefix, azure.Location)
+	return fmt.Sprintf("%s-%s", prefix, azure.Location)
 }
 
 func identityName(prefix string) string {
-	return prefix + "-infralib"
+	return prefix + "-agent"
 }
 
 func storageIdentityName(prefix string) string {
-	return prefix + "-infralib-storage"
+	return prefix + "-storage"
 }
 
 func environmentName(prefix string) string {
-	return truncate(prefix+"-infralib", 60)
+	return prefix + "-jobs"
 }
 
 func workspaceName(prefix string) string {
-	return truncate(prefix+"-infralib", 63)
+	return prefix + "-log"
 }
 
 func agentKeyName(prefix string) string {

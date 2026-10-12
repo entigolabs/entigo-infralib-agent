@@ -71,7 +71,7 @@ type Oracle struct {
 // Azure holds the subscription and location the agent's resources are created in.
 // SubscriptionId selects the Azure provider when set. Credentials are resolved by the
 // SDK default chain: environment, managed identity or the Azure CLI login.
-// ResourceGroup is an existing group to use instead of the agent-owned <prefix>-infralib-<location>.
+// ResourceGroup is an existing group to use instead of the agent-owned <prefix>-<location>.
 type Azure struct {
 	SubscriptionId string
 	Location       string
