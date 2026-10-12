@@ -265,18 +265,22 @@ func (s *Storage) ensureLifecycle() error {
 	return nil
 }
 
-// EnsureContainer uses the data plane, so a fresh blob role is retried until it applies.
+// EnsureContainer waits for a fresh blob role to apply. Creating the container needs only
+// containers/write, which Owner and Contributor grant too, so blob access is probed by listing.
 func (s *Storage) EnsureContainer() error {
 	client, err := s.blobClient()
 	if err != nil {
 		return err
 	}
-	return retryUntilAuthorized(s.ctx, "creating the storage container", func() error {
+	return retryUntilAuthorized(s.ctx, "accessing the storage container", func() error {
 		_, err := client.CreateContainer(s.ctx, containerName, nil)
 		if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
 			return err
 		}
-		return nil
+		_, err = client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
+			MaxResults: new(int32(1)),
+		}).NextPage(s.ctx)
+		return err
 	})
 }
 
