@@ -12,6 +12,7 @@ import (
 
 const (
 	containerName     = "tfstate"
+	accessProbe       = "agent-access-probe"
 	maxJobNameLen     = 32
 	nameHashLen       = 8
 	longestJobCommand = "apply-destroy"

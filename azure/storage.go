@@ -266,7 +266,8 @@ func (s *Storage) ensureLifecycle() error {
 }
 
 // EnsureContainer waits for a fresh blob role to apply. Creating the container needs only
-// containers/write, which Owner and Contributor grant too, so blob access is probed by listing.
+// containers/write, which Owner and Contributor grant too, so blob access is probed by writing,
+// as a blob read role elsewhere can authorize reads already.
 func (s *Storage) EnsureContainer() error {
 	client, err := s.blobClient()
 	if err != nil {
@@ -277,9 +278,10 @@ func (s *Storage) EnsureContainer() error {
 		if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
 			return err
 		}
-		_, err = client.NewListBlobsFlatPager(containerName, &azblob.ListBlobsFlatOptions{
-			MaxResults: new(int32(1)),
-		}).NextPage(s.ctx)
+		if _, err = client.UploadBuffer(s.ctx, containerName, accessProbe, []byte{}, nil); err != nil {
+			return err
+		}
+		_, err = client.DeleteBlob(s.ctx, containerName, accessProbe, nil)
 		return err
 	})
 }
