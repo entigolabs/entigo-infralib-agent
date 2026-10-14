@@ -126,6 +126,32 @@ type Pipeline interface {
 	// Empty campaignId means "no campaign" — wrapper runs transparently.
 	SetCampaignId(campaignId string)
 	SetPipelineIndex(index int)
+	SetApprovals(approvals ApprovalRegistry)
+}
+
+// Approver applies an external approval decision to a step waiting on manual approval.
+type Approver func(approve bool) error
+
+type ApprovalRegistry interface {
+	Register(step string, approver Approver) ApprovalWait
+}
+
+type ApprovalWait interface {
+	// Resolve records a decision observed by the wait loop, e.g. one made in the provider console.
+	Resolve(approved bool)
+	Close()
+}
+
+type noopApprovalWait struct{}
+
+func (noopApprovalWait) Resolve(bool) {}
+func (noopApprovalWait) Close()       {}
+
+func RegisterApproval(registry ApprovalRegistry, step string, approver Approver) ApprovalWait {
+	if registry == nil {
+		return noopApprovalWait{}
+	}
+	return registry.Register(step, approver)
 }
 
 type Builder interface {

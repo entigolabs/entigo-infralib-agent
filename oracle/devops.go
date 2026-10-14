@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -14,6 +15,8 @@ import (
 
 const approvalStageName = "manual-approval"
 
+var ErrApprovalRejected = errors.New("approval was rejected")
+
 // Gate is the manual-approval gate for cloud pipeline executions. Each step gets
 // its own DevOps deployment pipeline with a single Manual Approval stage — OCI
 // allows only one running deployment per pipeline, so parallel steps can't share
@@ -25,7 +28,18 @@ type Gate struct {
 	cloudPrefix string
 	projectId   string
 	mu          sync.Mutex
-	pipelines   map[string]string // step pipeline name → pipeline OCID
+	pipelines   map[string]approvalPipeline // step pipeline name → deployment pipeline
+}
+
+type approvalPipeline struct {
+	id      string
+	stageId string
+}
+
+// Approval is a deployment paused at its pipeline's approval stage.
+type Approval struct {
+	DeploymentId string
+	stageId      string
 }
 
 func NewGate(ctx context.Context, provider ocicommon.ConfigurationProvider, region, cloudPrefix string) (*Gate, error) {
@@ -40,7 +54,7 @@ func NewGate(ctx context.Context, provider ocicommon.ConfigurationProvider, regi
 		ctx:         ctx,
 		client:      client,
 		cloudPrefix: cloudPrefix,
-		pipelines:   map[string]string{},
+		pipelines:   map[string]approvalPipeline{},
 	}, nil
 }
 
@@ -58,51 +72,73 @@ func (g *Gate) Ensure() error {
 // RequestApproval creates a deployment that pauses at the step pipeline's approval
 // stage. The summary becomes the deployment display name so the approver sees what
 // they are deciding on in the console list.
-func (g *Gate) RequestApproval(pipelineName, summary string) (string, error) {
-	pipelineId, err := g.ensureStepPipeline(pipelineName)
+func (g *Gate) RequestApproval(pipelineName, summary string) (Approval, error) {
+	pipeline, err := g.ensureStepPipeline(pipelineName)
 	if err != nil {
-		return "", err
+		return Approval{}, err
 	}
 	if len(summary) > 100 { // deployment display name limit
 		summary = summary[:100]
 	}
 	response, err := g.client.CreateDeployment(g.ctx, devops.CreateDeploymentRequest{
 		CreateDeploymentDetails: devops.CreateDeployPipelineDeploymentDetails{
-			DeployPipelineId: &pipelineId,
+			DeployPipelineId: &pipeline.id,
 			DisplayName:      &summary,
 			FreeformTags:     map[string]string{model.ResourceTagKey: model.ResourceTagValue},
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create approval deployment: %w", err)
+		return Approval{}, fmt.Errorf("failed to create approval deployment: %w", err)
 	}
-	return *response.GetId(), nil
+	return Approval{DeploymentId: *response.GetId(), stageId: pipeline.stageId}, nil
+}
+
+func (g *Gate) Decide(approval Approval, approve bool) error {
+	action := devops.ApproveDeploymentDetailsActionApprove
+	reason := "Approved through Entigo portal"
+	if !approve {
+		action = devops.ApproveDeploymentDetailsActionReject
+		reason = "Rejected through Entigo portal"
+	}
+	_, err := g.client.ApproveDeployment(g.ctx, devops.ApproveDeploymentRequest{
+		DeploymentId:  &approval.DeploymentId,
+		DeployStageId: &approval.stageId,
+		Action:        action,
+		Reason:        &reason,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to decide approval deployment %s: %w", approval.DeploymentId, err)
+	}
+	return nil
 }
 
 // ensureStepPipeline gets or creates the step's approval pipeline; the id cache is
 // mutex-guarded because steps run in parallel goroutines.
-func (g *Gate) ensureStepPipeline(pipelineName string) (string, error) {
+func (g *Gate) ensureStepPipeline(pipelineName string) (approvalPipeline, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if pipelineId, ok := g.pipelines[pipelineName]; ok {
-		return pipelineId, nil
+	if pipeline, ok := g.pipelines[pipelineName]; ok {
+		return pipeline, nil
 	}
 	if g.projectId == "" {
-		return "", fmt.Errorf("approval gate is not initialized")
+		return approvalPipeline{}, fmt.Errorf("approval gate is not initialized")
 	}
 	pipelineId, err := g.ensurePipeline(g.projectId, pipelineName)
 	if err != nil {
-		return "", err
+		return approvalPipeline{}, err
 	}
-	if err = g.ensureApprovalStage(pipelineId); err != nil {
-		return "", err
+	stageId, err := g.ensureApprovalStage(pipelineId)
+	if err != nil {
+		return approvalPipeline{}, err
 	}
-	g.pipelines[pipelineName] = pipelineId
-	return pipelineId, nil
+	pipeline := approvalPipeline{id: pipelineId, stageId: stageId}
+	g.pipelines[pipelineName] = pipeline
+	return pipeline, nil
 }
 
 // WaitForApproval blocks until the deployment resolves. Approval → nil;
-// rejection or cancellation → error, which fails the step and halts dependents.
+// rejection (ErrApprovalRejected) or cancellation → error, which fails the step
+// and halts dependents.
 func (g *Gate) WaitForApproval(deploymentId string) error {
 	log.Printf("Waiting for manual approval of deployment %s in the OCI Console (DevOps project %s-infralib)\n",
 		deploymentId, g.cloudPrefix)
@@ -115,12 +151,34 @@ func (g *Gate) WaitForApproval(deploymentId string) error {
 		case devops.DeploymentLifecycleStateSucceeded:
 			return nil
 		case devops.DeploymentLifecycleStateFailed, devops.DeploymentLifecycleStateCanceled:
-			return fmt.Errorf("approval deployment %s was rejected or canceled", deploymentId)
+			if rejected(response.Deployment) {
+				return fmt.Errorf("approval deployment %s: %w", deploymentId, ErrApprovalRejected)
+			}
+			return fmt.Errorf("approval deployment %s was canceled or failed", deploymentId)
 		}
 		if err := util.Sleep(g.ctx, pollInterval); err != nil {
 			return err
 		}
 	}
+}
+
+func rejected(deployment devops.Deployment) bool {
+	progress := deployment.GetDeploymentExecutionProgress()
+	if progress == nil {
+		return false
+	}
+	for _, stage := range progress.DeployStageExecutionProgress {
+		approval, ok := stage.(devops.ManualApprovalDeployStageExecutionProgress)
+		if !ok {
+			continue
+		}
+		for _, action := range approval.ApprovalActions {
+			if action.Action == devops.ApprovalActionActionReject {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (g *Gate) ensurePipeline(projectId, displayName string) (string, error) {
@@ -149,20 +207,20 @@ func (g *Gate) ensurePipeline(projectId, displayName string) (string, error) {
 	return *created.Id, nil
 }
 
-func (g *Gate) ensureApprovalStage(pipelineId string) error {
+func (g *Gate) ensureApprovalStage(pipelineId string) (string, error) {
 	displayName := approvalStageName
 	list, err := g.client.ListDeployStages(g.ctx, devops.ListDeployStagesRequest{
 		DeployPipelineId: &pipelineId,
 		DisplayName:      &displayName,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list deploy stages: %w", err)
+		return "", fmt.Errorf("failed to list deploy stages: %w", err)
 	}
 	if len(list.Items) > 0 {
-		return nil
+		return *list.Items[0].GetId(), nil
 	}
 	approvals := 1
-	_, err = g.client.CreateDeployStage(g.ctx, devops.CreateDeployStageRequest{
+	created, err := g.client.CreateDeployStage(g.ctx, devops.CreateDeployStageRequest{
 		CreateDeployStageDetails: devops.CreateManualApprovalDeployStageDetails{
 			DeployPipelineId: &pipelineId,
 			DisplayName:      &displayName,
@@ -175,7 +233,7 @@ func (g *Gate) ensureApprovalStage(pipelineId string) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create manual approval stage: %w", err)
+		return "", fmt.Errorf("failed to create manual approval stage: %w", err)
 	}
-	return nil
+	return *created.GetId(), nil
 }

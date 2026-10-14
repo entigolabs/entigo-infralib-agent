@@ -47,7 +47,8 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Notific
 	pipelineIndex := parsePipelineIndex(flags.PipelineIndex)
 	// Provisioning must not depend on the backend — fall back to transparent
 	// mode on any init failure.
-	client, err := getBackendClient(config, campaignId, flags.Insecure)
+	insecure := flags.Insecure || (config != nil && config.Insecure)
+	client, err := getBackendClient(config, campaignId, insecure)
 	if err != nil {
 		slog.Error("wrapper backend init failed, running entrypoint without log forwarding", "err", err)
 		client = nil

@@ -47,3 +47,7 @@ func PrintVersion() {
 		log.Printf("  GitTag: %s\n", version.GitTag)
 	}
 }
+
+func GetVersion() string {
+	return version
+}

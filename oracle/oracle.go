@@ -677,7 +677,7 @@ func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resourc
 // DeleteResources tears down the provider-level resources the agent owns. Per-step build
 // pipelines and the git-source/wrapper Vault secrets are already removed by the delete
 // command executor (service/delete.go); this covers everything else: the shared DevOps
-// project (cascading to its repo and pipelines), the approval topic, the service log
+// project (with its repo and pipelines), the approval topic, the service log
 // group, the credentials the agent put on the executing user, the state bucket and — last,
 // because it encrypts the bucket — the KMS vault the agent created and shares with the
 // modules. The KMS vault/key/secrets have no hard delete: they are scheduled for deletion
@@ -692,8 +692,8 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	if err != nil {
 		return err
 	}
-	// DevOps project (cascades to its build-spec repo, build pipelines and approval
-	// deployment pipelines) plus the approval notification topic.
+	// DevOps project with its build-spec repo, build pipelines and approval deployment
+	// pipelines, plus the approval notification topic.
 	if build, err := NewDevOpsBuilder(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to create DevOps builder for teardown: %s", err)))
 	} else {

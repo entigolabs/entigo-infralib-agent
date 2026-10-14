@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dario.cat/mergo"
+	"github.com/entigolabs/entigo-infralib-agent/agentstream"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/git"
@@ -53,6 +54,7 @@ type updater struct {
 	pipelineFlags common.Pipeline
 	localPipeline *LocalPipeline
 	manager       model.NotificationManager
+	approvals     *agentstream.Approvals
 	moduleSources map[string]model.SourceKey
 	sources       map[model.SourceKey]*model.Source
 	firstRunDone  map[string]bool
@@ -68,7 +70,7 @@ type updater struct {
 	verifyGroup singleflight.Group
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID, approvals *agentstream.Approvals) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
@@ -102,6 +104,9 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		if wrapperConfigured {
 			resources.GetPipeline().SetCampaignId(campaignId.String())
 		}
+		if approvals != nil {
+			resources.GetPipeline().SetApprovals(approvals)
+		}
 	}
 	return &updater{
 		ctx:           ctx,
@@ -116,6 +121,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		pipelineFlags: pipeline,
 		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags, manager, config, campaignId.String()),
 		manager:       manager,
+		approvals:     approvals,
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
@@ -493,6 +499,9 @@ func (u *updater) setPipelineIndex(index int) {
 		pipelineIndex = 1
 	}
 	u.manager.SetCurrentPipelineIndex(pipelineIndex)
+	if u.approvals != nil {
+		u.approvals.SetPipelineIndex(pipelineIndex)
+	}
 	if u.resources.GetPipeline() != nil {
 		u.resources.GetPipeline().SetPipelineIndex(pipelineIndex)
 	}

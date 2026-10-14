@@ -68,6 +68,7 @@ type Pipeline struct {
 	builder        *Builder
 	logging        *Logging
 	manager        model.NotificationManager
+	approvals      model.ApprovalRegistry
 	campaignId     string
 }
 
@@ -82,6 +83,10 @@ func (p *Pipeline) SetPipelineIndex(index int) {
 	if p.builder != nil {
 		p.builder.SetPipelineIndex(index)
 	}
+}
+
+func (p *Pipeline) SetApprovals(approvals model.ApprovalRegistry) {
+	p.approvals = approvals
 }
 
 func NewPipeline(ctx context.Context, options []option.ClientOption, projectId string, location string, prefix string, serviceAccount string, storage *GStorage, builder *Builder, logging *Logging, manager model.NotificationManager) (*Pipeline, error) {
@@ -551,6 +556,16 @@ func (p *Pipeline) waitForPlanRollout(rolloutOp *deploy.CreateRolloutOperation) 
 	}
 }
 
+func (p *Pipeline) approver(rolloutName string) model.Approver {
+	return func(approve bool) error {
+		_, err := p.client.ApproveRollout(p.ctx, &deploypb.ApproveRolloutRequest{
+			Name:     rolloutName,
+			Approved: approve,
+		})
+		return err
+	}
+}
+
 func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation, pipelineName string, step model.Step, executionName string, autoApprove bool, pipeChanges *model.PipelineChanges, approve model.ManualApprove) error {
 	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Hour)
 	defer cancel()
@@ -560,6 +575,12 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 	}
 	approved := false
 	notified := false
+	var wait model.ApprovalWait
+	defer func() {
+		if wait != nil {
+			wait.Close()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -597,6 +618,9 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 					}
 				} else {
 					log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+					if wait == nil {
+						wait = model.RegisterApproval(p.approvals, step.Name, p.approver(rollout.GetName()))
+					}
 					if !notified && p.manager != nil {
 						p.manager.ManualApproval(pipelineName, step.Name, *pipeChanges, p.getLink(pipelineName))
 						notified = true
@@ -604,6 +628,16 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 				}
 				time.Sleep(pollingDelay * time.Second)
 				continue
+			}
+			if wait != nil {
+				switch rollout.GetApprovalState() {
+				case deploypb.Rollout_APPROVED:
+					wait.Resolve(true)
+				case deploypb.Rollout_REJECTED:
+					wait.Resolve(false)
+				}
+				wait.Close()
+				wait = nil
 			}
 			if rollout.GetApprovalState() == deploypb.Rollout_APPROVED && notified {
 				p.manager.Approval(pipelineName, step.Name, "")

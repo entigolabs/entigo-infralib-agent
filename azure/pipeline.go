@@ -26,11 +26,12 @@ const (
 // job's approval tag to reject rejects it. The apply job's execution tag names the plan
 // execution that owns it, so a newer plan supersedes an older one waiting for approval.
 type Pipeline struct {
-	ctx     context.Context
-	builder *Builder
-	tags    *armresources.TagsClient
-	bucket  model.Bucket
-	manager model.NotificationManager
+	ctx       context.Context
+	builder   *Builder
+	tags      *armresources.TagsClient
+	bucket    model.Bucket
+	manager   model.NotificationManager
+	approvals model.ApprovalRegistry
 }
 
 func NewPipeline(ctx context.Context, credential azcore.TokenCredential, subscriptionId string, builder *Builder, bucket model.Bucket, manager model.NotificationManager) (*Pipeline, error) {
@@ -47,6 +48,10 @@ func (p *Pipeline) SetCampaignId(campaignId string) {
 
 func (p *Pipeline) SetPipelineIndex(index int) {
 	p.builder.SetPipelineIndex(index)
+}
+
+func (p *Pipeline) SetApprovals(approvals model.ApprovalRegistry) {
+	p.approvals = approvals
 }
 
 func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, _ model.Bucket, _ map[string]model.SourceAuth) (*string, error) {
@@ -125,6 +130,8 @@ func (p *Pipeline) waitForManualApproval(pipelineName, applyJob, planExecution s
 		return "", err
 	}
 	link := p.builder.jobLink(applyJob)
+	wait := model.RegisterApproval(p.approvals, step.Name, p.approver(scope, applyJob, known))
+	defer wait.Close()
 	if p.manager != nil {
 		p.manager.ManualApproval(pipelineName, step.Name, *changes, link)
 	}
@@ -142,6 +149,7 @@ func (p *Pipeline) waitForManualApproval(pipelineName, applyJob, planExecution s
 			return "", fmt.Errorf("manual approval for %s was superseded by a newer execution", pipelineName)
 		}
 		if tags[approvalTagKey] == approvalReject {
+			wait.Resolve(false)
 			return "", fmt.Errorf("manual approval for %s was rejected", pipelineName)
 		}
 		execution, err := p.builder.newExecution(applyJob, known)
@@ -149,6 +157,7 @@ func (p *Pipeline) waitForManualApproval(pipelineName, applyJob, planExecution s
 			return "", err
 		}
 		if execution != "" {
+			wait.Resolve(true)
 			log.Printf("Approved %s, apply execution %s started\n", pipelineName, execution)
 			if p.manager != nil {
 				p.manager.Approval(pipelineName, step.Name, "")
@@ -173,6 +182,22 @@ func (p *Pipeline) resetCampaignEnv(scope, applyJob, planExecution string) {
 	err = p.builder.setJobEnv(applyJob, campaignEnv(model.CampaignSentinelNone, 0))
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to reset campaign of %s: %s", applyJob, err)))
+	}
+}
+
+func (p *Pipeline) approver(scope, applyJob string, known map[string]bool) model.Approver {
+	return func(approve bool) error {
+		if !approve {
+			return p.setTags(scope, map[string]string{approvalTagKey: approvalReject})
+		}
+		// The apply job may already have been started in the Portal or by an earlier
+		// attempt whose start result was lost.
+		execution, err := p.builder.newExecution(applyJob, known)
+		if err != nil || execution != "" {
+			return err
+		}
+		_, err = p.builder.startJob(applyJob)
+		return err
 	}
 }
 

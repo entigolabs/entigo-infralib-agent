@@ -22,7 +22,7 @@ const (
 	// after the call returns and a second mutation before it settles is rejected 409
 	// IncorrectState. So every write waits for ACTIVE first (up to secretActiveTimeout)
 	// and retries a few times if it still races the transition.
-	secretActiveTimeout = 2 * time.Minute
+	secretActiveTimeout = 5 * time.Minute
 	defaultSecretPoll   = 3 * time.Second
 	secretUpdateRetries = 5
 	// A just-revived vault reports ACTIVE to KMS minutes before the secrets service

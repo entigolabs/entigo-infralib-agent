@@ -99,6 +99,7 @@ type NotificationApi struct {
 	WrapperURL string            `yaml:"wrapper_url,omitempty" json:"wrapper_url,omitempty"`
 	Headers    map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	OAuth      *ApiOauth         `yaml:"oauth,omitempty" json:"oauth,omitempty"`
+	Insecure   bool              `yaml:"insecure,omitempty" json:"insecure,omitempty"`
 }
 
 type ApiOauth struct {

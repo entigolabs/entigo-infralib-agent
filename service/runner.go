@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/entigolabs/entigo-infralib-agent/agentstream"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
 	"github.com/entigolabs/entigo-infralib-agent/notify"
@@ -24,9 +26,18 @@ type Runner struct {
 	manager      model.NotificationManager
 	campaignId   uuid.UUID
 	finalize     sync.Once
+	logTee       *agentstream.LogTee
+	backend      *agentstream.Stream
+	approvals    *agentstream.Approvals
 }
 
-func NewRunner(ctx context.Context, command common.Command, flags *common.Flags) (*Runner, error) {
+func NewRunner(ctx context.Context, command common.Command, flags *common.Flags) (runner *Runner, err error) {
+	logTee := agentstream.InstallLogTee()
+	defer func() {
+		if err != nil {
+			logTee.Uninstall()
+		}
+	}()
 	provider, err := GetCloudProvider(ctx, flags)
 	if err != nil {
 		return nil, err
@@ -44,6 +55,7 @@ func NewRunner(ctx context.Context, command common.Command, flags *common.Flags)
 	if err != nil {
 		return nil, err
 	}
+	backend, approvals := startBackend(config.Notifications, campaignId, command, flags, logTee)
 	return &Runner{
 		ctx:          ctx,
 		command:      command,
@@ -53,10 +65,35 @@ func NewRunner(ctx context.Context, command common.Command, flags *common.Flags)
 		rootConfig:   config,
 		manager:      manager,
 		campaignId:   campaignId,
+		logTee:       logTee,
+		backend:      backend,
+		approvals:    approvals,
 	}, nil
 }
 
-func (r *Runner) Run() error {
+func startBackend(notifications []model.ConfigNotification, campaignId uuid.UUID, command common.Command, flags *common.Flags, logTee *agentstream.LogTee) (*agentstream.Stream, *agentstream.Approvals) {
+	api := getWrapperConfig(notifications)
+	if api == nil {
+		logTee.Uninstall()
+		return nil, nil
+	}
+	var approvals *agentstream.Approvals
+	if flags.Pipeline.Type != string(common.PipelineTypeLocal) {
+		approvals = agentstream.NewApprovals()
+	}
+	backend, err := agentstream.New(api, campaignId.String(), command, approvals)
+	if err != nil {
+		logTee.Uninstall()
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to set up backend connection, agent logs won't be streamed: %s", err)))
+		return nil, nil
+	}
+	logTee.Attach(backend.SendLog)
+	backend.Start()
+	return backend, approvals
+}
+
+func (r *Runner) Run() (err error) {
+	defer func() { r.disconnectBackend(err) }()
 	r.manager.Modules(r.minResources, r.command, r.rootConfig)
 	defer r.notifyTerminationIfCanceled()
 	r.manager.Campaign(r.ctx, model.CampaignStatusStarted, r.minResources, r.command, nil)
@@ -73,7 +110,7 @@ func (r *Runner) Run() error {
 	if err != nil {
 		return r.notifyError(fmt.Errorf("failed to set up encryption: %s", err))
 	}
-	updater, err := NewUpdater(r.ctx, r.flags, resources, r.manager, r.command, r.campaignId)
+	updater, err := NewUpdater(r.ctx, r.flags, resources, r.manager, r.command, r.campaignId, r.approvals)
 	if err != nil {
 		return r.notifyError(err)
 	}
@@ -105,6 +142,25 @@ func (r *Runner) notifyTerminationIfCanceled() {
 		r.manager.Campaign(shutdownCtx, model.CampaignStatusTerminated, r.minResources, r.command,
 			fmt.Errorf("agent was terminated"))
 	})
+}
+
+func (r *Runner) disconnectBackend(err error) {
+	r.logTee.Uninstall()
+	if r.backend == nil {
+		return
+	}
+	if r.ctx.Err() != nil {
+		err = fmt.Errorf("agent was terminated")
+	}
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminationNotifyTimeout)
+	defer cancel()
+	if disconnectErr := r.backend.Disconnect(ctx, exitCode, err); disconnectErr != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to disconnect from backend: %s", disconnectErr)))
+	}
 }
 
 func (r *Runner) updateAgentJob(resources model.Resources) error {

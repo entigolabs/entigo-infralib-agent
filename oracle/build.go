@@ -814,6 +814,7 @@ func (d *DevOpsBuilder) DeleteBuildResources() {
 		// DeleteProject does not reliably cascade build pipelines, so remove every one in
 		// the project explicitly (both per-step and agent run/update pipelines).
 		d.deleteAllBuildPipelines(projectId)
+		d.deleteDeployPipelines(projectId, nil)
 		response, err := d.client.DeleteProject(d.ctx, devops.DeleteProjectRequest{ProjectId: &projectId})
 		if err != nil {
 			slog.Warn(common.PrefixWarning(fmt.Sprintf(
@@ -937,6 +938,57 @@ func (d *DevOpsBuilder) deleteStepPipelines(step string) {
 			d.deleteBuildPipeline(*item.Id)
 		}
 	}
+}
+
+// deleteDeployPipelines removes the project's approval deployment pipelines, all of them
+// when displayName is nil. Stages go first and every deletion is waited on, since
+// DeleteDeployPipeline and DeleteProject 409 while children remain. Best-effort.
+func (d *DevOpsBuilder) deleteDeployPipelines(projectId string, displayName *string) {
+	var page *string
+	for {
+		list, err := d.client.ListDeployPipelines(d.ctx, devops.ListDeployPipelinesRequest{
+			ProjectId:   &projectId,
+			DisplayName: displayName,
+			Page:        page,
+		})
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list deploy pipelines for deletion: %s", err)))
+			return
+		}
+		for _, item := range list.Items {
+			d.deleteDeployPipeline(*item.Id, *item.DisplayName)
+		}
+		if list.OpcNextPage == nil {
+			return
+		}
+		page = list.OpcNextPage
+	}
+}
+
+func (d *DevOpsBuilder) deleteDeployPipeline(pipelineId, name string) {
+	stages, err := d.client.ListDeployStages(d.ctx, devops.ListDeployStagesRequest{DeployPipelineId: &pipelineId})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to list stages of deploy pipeline %s: %s", name, err)))
+	} else {
+		for _, stage := range stages.Items {
+			response, err := d.client.DeleteDeployStage(d.ctx, devops.DeleteDeployStageRequest{DeployStageId: stage.GetId()})
+			if err == nil {
+				err = d.waitForWorkRequest(response.OpcWorkRequestId)
+			}
+			if err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete deploy stage %s: %s", *stage.GetId(), err)))
+			}
+		}
+	}
+	response, err := d.client.DeleteDeployPipeline(d.ctx, devops.DeleteDeployPipelineRequest{DeployPipelineId: &pipelineId})
+	if err == nil {
+		err = d.waitForWorkRequest(response.OpcWorkRequestId)
+	}
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete deploy pipeline %s: %s", name, err)))
+		return
+	}
+	log.Printf("Deleted DevOps deploy pipeline %s\n", name)
 }
 
 // deleteBuildPipeline removes a build pipeline, first deleting its stages — OCI rejects
