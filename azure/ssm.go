@@ -109,7 +109,7 @@ func (s *SSM) readSecret(key string) (string, bool, error) {
 	}
 	var value string
 	var found bool
-	err := retryUntilAuthorized(s.ctx, "reading key vault secrets", func() error {
+	err := retryUntilAccessible(s.ctx, "reading key vault secrets", func() error {
 		response, err := s.client.GetSecret(s.ctx, key, "", nil)
 		if err != nil {
 			if isNotFound(err) {

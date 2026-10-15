@@ -303,19 +303,30 @@ func deterministicUUID(parts ...string) string {
 	return uuid.NewSHA1(uuid.Nil, []byte(strings.Join(parts, "/"))).String()
 }
 
-// retryUntilAuthorized retries call while it fails with 403, which is how data-plane
-// role assignments that haven't propagated yet surface.
-func retryUntilAuthorized(ctx context.Context, action string, call func() error) error {
+// retryUntilAccessible retries call while it fails with 403, which is how data-plane role
+// assignments that haven't propagated yet surface, or while the hostname doesn't resolve, which
+// lags behind a created or recovered resource and is cached by resolvers.
+func retryUntilAccessible(ctx context.Context, action string, call func() error) error {
 	deadline := time.Now().Add(principalPropagationTimeout)
-	logged := false
+	loggedAuthorization, loggedHost := false, false
 	for {
 		err := call()
-		if err == nil || !isStatus(err, http.StatusForbidden) || time.Now().After(deadline) {
+		if err == nil || time.Now().After(deadline) {
 			return err
 		}
-		if !logged {
-			log.Printf("Waiting for role assignments to propagate before %s\n", action)
-			logged = true
+		switch {
+		case isStatus(err, http.StatusForbidden):
+			if !loggedAuthorization {
+				log.Printf("Waiting for role assignments to propagate before %s\n", action)
+				loggedAuthorization = true
+			}
+		case isHostNotFound(err):
+			if !loggedHost {
+				log.Printf("Waiting for the hostname to resolve before %s\n", action)
+				loggedHost = true
+			}
+		default:
+			return err
 		}
 		if err = util.Sleep(ctx, pollInterval); err != nil {
 			return err

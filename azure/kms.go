@@ -150,13 +150,13 @@ func (k *KMS) setVault(vault armkeyvault.Vault) {
 	}
 }
 
-// EnsureKey needs a data-plane role on the vault; a fresh assignment is retried until it applies.
+// EnsureKey needs a data-plane role on the vault and its hostname resolving; both are retried.
 func (k *KMS) EnsureKey() error {
 	client, err := azkeys.NewClient(k.vaultURI, k.credential, nil)
 	if err != nil {
 		return err
 	}
-	return retryUntilAuthorized(k.ctx, "accessing the agent key", func() error {
+	return retryUntilAccessible(k.ctx, "accessing the agent key", func() error {
 		_, err := client.GetKey(k.ctx, k.keyName, "", nil)
 		if err == nil {
 			return k.ensureRotation(client)

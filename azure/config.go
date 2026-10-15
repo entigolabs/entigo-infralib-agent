@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 
@@ -64,6 +65,11 @@ func isStatus(err error, codes ...int) bool {
 
 func isNotFound(err error) bool {
 	return isStatus(err, http.StatusNotFound)
+}
+
+func isHostNotFound(err error) bool {
+	dnsError, ok := errors.AsType[*net.DNSError](err)
+	return ok && dnsError.IsNotFound
 }
 
 func isAuthorizationFailed(err error) bool {

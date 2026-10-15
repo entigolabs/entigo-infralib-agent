@@ -273,7 +273,7 @@ func (s *Storage) EnsureContainer() error {
 	if err != nil {
 		return err
 	}
-	return retryUntilAuthorized(s.ctx, "accessing the storage container", func() error {
+	return retryUntilAccessible(s.ctx, "accessing the storage container", func() error {
 		_, err := client.CreateContainer(s.ctx, containerName, nil)
 		if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
 			return err
