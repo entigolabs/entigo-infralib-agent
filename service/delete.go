@@ -135,7 +135,7 @@ func (d *deleter) Destroy() error {
 	}
 	d.resources = resources
 	localPipeline := getLocalPipeline(d.ctx, resources, ProcessPipelineFlags(d.flags.Pipeline), d.flags, nil, d.config, "")
-	state, err := getLatestState(resources.GetBucket())
+	state, err := GetLatestState(resources.GetBucket())
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get latest state: %v", err)))
 	}
@@ -197,5 +197,5 @@ func (d *deleter) removeStepFromState(state *model.State, step model.Step) error
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return d.resources.GetBucket().PutFile(stateFile, stateBytes)
+	return d.resources.GetBucket().PutFile(StateFile, stateBytes)
 }

@@ -15,6 +15,11 @@ func (f *Flags) validate(cmd Command) error {
 		fallthrough
 	case BootstrapCommand:
 		fallthrough
+	case StateCommand:
+		if f.State.Pull && f.State.Push {
+			return fmt.Errorf("pull and push can't be used together")
+		}
+		fallthrough
 	case PullCommand:
 		if f.Config == "" && f.Prefix == "" {
 			return fmt.Errorf("config or prefix must be set")

@@ -34,6 +34,9 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(append(baseFlags, getProviderFlags()...), &rotateCredentialsFlag, &removeUserFlag, &trustRoleFlag)
 	case common.ListCustomCommand:
 		return append(baseFlags, getProviderFlags()...)
+	case common.StateCommand:
+		return append(append(baseFlags, getProviderFlags()...), &statePullFlag, &statePushFlag, &stateFileNameFlag,
+			&forceFlag, &yesFlag)
 	case common.BootstrapCommand:
 		return append(append(baseFlags, getProviderFlags()...), &terraformCacheFlag, &startFlag)
 	case common.DestroyCommand:
@@ -534,5 +537,30 @@ var insecureFlag = cli.BoolFlag{
 	Usage:       "allow insecure connections for the wrapper grpc connection",
 	Value:       false,
 	Destination: &flags.Wrapper.Insecure,
+	Required:    false,
+}
+
+var statePullFlag = cli.BoolFlag{
+	Name:        "pull",
+	Usage:       "download the agent state file",
+	Value:       false,
+	Destination: &flags.State.Pull,
+	Required:    false,
+}
+
+var statePushFlag = cli.BoolFlag{
+	Name:        "push",
+	Usage:       "upload the agent state file",
+	Value:       false,
+	Destination: &flags.State.Push,
+	Required:    false,
+}
+
+var stateFileNameFlag = cli.StringFlag{
+	Name:        "file",
+	Sources:     cli.EnvVars("AGENT_STATE_FILE"),
+	Value:       "state.yaml",
+	Usage:       "local agent state file path for pull and push",
+	Destination: &flags.State.File,
 	Required:    false,
 }

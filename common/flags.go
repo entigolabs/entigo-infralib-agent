@@ -38,6 +38,7 @@ type Flags struct {
 	Params                  Params
 	Migrate                 Migrate
 	Wrapper                 Wrapper
+	State                   State
 	OfflineTrustBundle      string
 }
 
@@ -82,6 +83,12 @@ type ServiceAccount struct {
 	RemoveUser        bool
 	RotateCredentials bool
 	TrustRole         string
+}
+
+type State struct {
+	Pull bool
+	Push bool
+	File string
 }
 
 type DeleteFlags struct {

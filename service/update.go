@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	stateFile       = "state.yaml"
+	StateFile       = "state.yaml"
 	ssmPrefix       = "/entigo-infralib"
 	ociManifestFile = "manifest.json"
 )
@@ -75,7 +75,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	if err != nil {
 		return nil, err
 	}
-	state, err := getLatestState(resources.GetBucket())
+	state, err := GetLatestState(resources.GetBucket())
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +130,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	}, nil
 }
 
-func getLatestState(bucket model.Bucket) (*model.State, error) {
-	file, err := bucket.GetFile(stateFile)
+func GetLatestState(bucket model.Bucket) (*model.State, error) {
+	file, err := bucket.GetFile(StateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state file: %v", err)
 	}
@@ -1440,7 +1440,7 @@ func (u *updater) putStateFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.GetBucket().PutFile(stateFile, stateBytes)
+	return u.resources.GetBucket().PutFile(StateFile, stateBytes)
 }
 
 func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Step, status model.ApplyStatus, index int) error {

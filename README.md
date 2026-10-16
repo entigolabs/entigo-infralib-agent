@@ -97,6 +97,7 @@ continues to work without it.
     * [Delete](#delete)
     * [Service Account](#service-account)
     * [Pull](#pull)
+    * [State](#state)
     * [Custom Parameters](#custom-parameters)
 * [Config](#config)
   * [Including and excluding modules in sources](#including-and-excluding-modules-in-sources)
@@ -110,7 +111,7 @@ continues to work without it.
   * [Notifications](#notifications)
   * [Encryption](#encryption)
   * [Scheduling](#scheduling)
-* [State](#state)
+* [State](#state-1)
   * [Rollback](#rollback)
 * [Migration Helper](#migration-helper)
   * [Commands](#migration-commands)
@@ -450,6 +451,42 @@ OPTIONS:
 Example
 ```bash
 bin/ei-agent pull --prefix=infralib
+```
+
+### state
+
+Without `pull` or `push`, reads `state.yaml` from the agent bucket and prints the applied module versions as YAML grouped by source, version and step. Modules whose last attempted version differs from the applied version are listed under `planned`. Custom modules and modules that have never been applied are listed under `custom` and `not_applied`. More info in [State](#state-1).
+
+With `pull`, downloads the state file from the bucket into the local `file`. Use the `force` flag to overwrite an existing local file.
+
+With `push`, validates the local `file`, prints its applied versions and asks for confirmation before uploading it to the bucket. **Warning!** A misconfigured state file can break agent `run` and `update` executions.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* config - config file path and name, used to read the prefix [$CONFIG]
+* prefix - prefix used when creating cloud resources [$PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
+* pull - download the state file, default **false**
+* push - upload the state file, default **false**
+* file - local state file path for `pull` and `push`, default **state.yaml** [$AGENT_STATE_FILE]
+* force - overwrite an existing local file on `pull`, default **false** [$FORCE]
+* yes - skip the `push` confirmation prompt, default **false** [$YES]
+
+Example
+```bash
+bin/ei-agent state --prefix=infralib
+bin/ei-agent state --prefix=infralib --pull
+bin/ei-agent state --prefix=infralib --push --file=state.yaml
 ```
 
 ### provision
