@@ -47,7 +47,8 @@ func NewWrapper(ctx context.Context, flags common.Wrapper, config *model.Notific
 	pipelineIndex := parsePipelineIndex(flags.PipelineIndex)
 	// Provisioning must not depend on the backend — fall back to transparent
 	// mode on any init failure.
-	client, err := getBackendClient(config, campaignId, flags.Insecure)
+	insecure := flags.Insecure || (config != nil && config.Insecure)
+	client, err := getBackendClient(config, campaignId, insecure)
 	if err != nil {
 		slog.Error("wrapper backend init failed, running entrypoint without log forwarding", "err", err)
 		client = nil
@@ -234,7 +235,7 @@ func (w *Wrapper) getPlanPath() string {
 	}
 	// Oracle must be checked before AWS: the OCI s3-compatible backend needs
 	// AWS_REGION set, which would otherwise match the AWS branch below.
-	if os.Getenv(model.OracleRegion) != "" {
+	if os.Getenv(model.OracleRegion) != "" || os.Getenv(model.AzureRegion) != "" {
 		return "/tmp/project"
 	}
 	if os.Getenv(model.GoogleRegion) != "" {

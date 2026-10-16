@@ -102,6 +102,8 @@ func (t *terraform) modifyBackendType(body *hclwrite.Body) {
 		// OCI Object Storage exposes an S3-compatible API; the endpoint, region
 		// and credentials are supplied via backend.conf + env (see oracle.Resources).
 		backendBlock.SetLabels([]string{"s3"})
+	case model.AZURE:
+		backendBlock.SetLabels([]string{"azurerm"})
 	}
 }
 

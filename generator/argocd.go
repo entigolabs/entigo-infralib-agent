@@ -74,6 +74,8 @@ func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, 
 		cloudProvider = "google"
 	case model.ORACLE:
 		cloudProvider = "oracle"
+	case model.AZURE:
+		cloudProvider = "azure"
 	default:
 		cloudProvider = "aws"
 	}

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/entigolabs/entigo-infralib-agent/agentstream"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -62,6 +63,8 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 	case model.ORACLE:
 		regionKey = model.OracleRegion
 		compartmentId = flags.Oracle.CompartmentId
+	case model.AZURE:
+		regionKey = model.AzureRegion
 	}
 	var backendEnv map[string]string
 	if provider, ok := resources.(model.BackendEnvProvider); ok {
@@ -129,13 +132,12 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		PlanPath:      localPlanPath,
 		CampaignId:    l.campaignId,
 		PipelineIndex: strconv.Itoa(l.pipelineIndex),
-		//		Insecure:      true, // Development only
 	}
 	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer
 	writers := []io.Writer{&stdoutBuf}
 	if l.pipeline.PrintLogs {
-		writers = append(writers, log.Writer())
+		writers = append(writers, agentstream.Unwrap(log.Writer()))
 	}
 	file := l.getLogFileWriter(prefixStep, command)
 	if file != nil {

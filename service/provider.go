@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/entigolabs/entigo-infralib-agent/aws"
+	"github.com/entigolabs/entigo-infralib-agent/azure"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/gcloud"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -18,6 +19,10 @@ func GetCloudProvider(ctx context.Context, flags *common.Flags) (model.CloudProv
 		return nil, err
 	}
 	pipelineFlags := ProcessPipelineFlags(flags.Pipeline)
+	if flags.Azure.SubscriptionId != "" {
+		log.Println("Using Azure with subscription ID: ", flags.Azure.SubscriptionId)
+		return azure.NewAzure(ctx, strings.ToLower(prefix), flags.Azure, pipelineFlags, flags.SkipBucketCreationDelay)
+	}
 	if flags.Oracle.CompartmentId != "" {
 		log.Println("Using Oracle Cloud with compartment ID: ", flags.Oracle.CompartmentId)
 		return oracle.NewOracle(ctx, strings.ToLower(prefix), flags.Oracle, pipelineFlags, flags.SkipBucketCreationDelay)
@@ -30,6 +35,14 @@ func GetCloudProvider(ctx context.Context, flags *common.Flags) (model.CloudProv
 }
 
 func GetResourceProvider(ctx context.Context, flags *common.Flags) (model.ResourceProvider, error) {
+	if flags.Azure.SubscriptionId != "" {
+		log.Println("Using Azure with subscription ID: ", flags.Azure.SubscriptionId)
+		prefix, err := GetProviderPrefix(flags)
+		if err != nil {
+			prefix = ""
+		}
+		return azure.NewAzureProvider(ctx, flags.Azure, strings.ToLower(prefix))
+	}
 	if flags.Oracle.CompartmentId != "" {
 		log.Println("Using Oracle Cloud with compartment ID: ", flags.Oracle.CompartmentId)
 		prefix, err := GetProviderPrefix(flags) // Oracle SSM/state buckets are prefix-derived; empty is tolerated for prefix-less commands.

@@ -398,6 +398,10 @@ func (u *updater) getReplacementAgentValue(key string, index int) (string, error
 		return u.resources.GetVaultId()
 	} else if parts[0] == string(model.AgentReplaceTypeProviderDomain) {
 		return u.resources.GetProviderDomain(), nil
+	} else if parts[0] == string(model.AgentReplaceTypeResourceGroup) {
+		return u.resources.GetResourceGroup()
+	} else if parts[0] == string(model.AgentReplaceTypeUniqueSuffix) {
+		return util.UniqueSuffix(u.resources.GetCloudPrefix(), u.resources.GetAccount(), u.resources.GetRegion()), nil
 	}
 	return "", fmt.Errorf("unknown agent replace type %s", parts[0])
 }

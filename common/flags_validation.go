@@ -15,6 +15,11 @@ func (f *Flags) validate(cmd Command) error {
 		fallthrough
 	case BootstrapCommand:
 		fallthrough
+	case StateCommand:
+		if f.State.Pull && f.State.Push {
+			return fmt.Errorf("pull and push can't be used together")
+		}
+		fallthrough
 	case PullCommand:
 		if f.Config == "" && f.Prefix == "" {
 			return fmt.Errorf("config or prefix must be set")
@@ -23,6 +28,12 @@ func (f *Flags) validate(cmd Command) error {
 	case SACommand, AddCustomCommand, DeleteCustomCommand, GetCustomCommand, ListCustomCommand:
 		if f.Prefix == "" && f.Config == "" {
 			return fmt.Errorf("config or prefix must be set")
+		}
+		if f.Azure.SubscriptionId != "" {
+			if f.Azure.Location == "" {
+				return fmt.Errorf("azure location must be set")
+			}
+			return nil
 		}
 		if f.Oracle.CompartmentId != "" {
 			if f.Oracle.Region == "" {

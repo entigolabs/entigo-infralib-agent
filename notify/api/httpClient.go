@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"golang.org/x/oauth2"
 )
 
@@ -80,7 +81,7 @@ func (c *HttpClient) doWithRetry(req *http.Request, body *bytes.Reader) (*http.R
 		if attempt == c.retries-1 {
 			break
 		}
-		if err := sleep(req.Context(), retryDelay(resp, attempt)); err != nil {
+		if err := util.Sleep(req.Context(), retryDelay(resp, attempt)); err != nil {
 			return nil, err
 		}
 	}
@@ -103,17 +104,6 @@ func retryDelay(resp *http.Response, attempt int) time.Duration {
 		}
 	}
 	return time.Duration(attempt*2) * time.Second
-}
-
-func sleep(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 func getFailedResponseError(resp *http.Response) error {
