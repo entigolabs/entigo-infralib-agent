@@ -137,7 +137,7 @@ func (a *Approvals) Decide(req *v1alpha1.ApprovalRequest) *v1alpha1.ApprovalResu
 	if !approve {
 		action = "Rejected"
 	}
-	log.Printf("%s step %s through the portal, requested by %s\n", action, key.step, req.GetRequestedBy())
+	log.Printf("%s step %s through the portal by %s\n", action, key.step, req.GetRequestedBy())
 	result.Outcome = v1alpha1.ApprovalOutcome_APPROVAL_OUTCOME_SUCCESS
 	return result
 }

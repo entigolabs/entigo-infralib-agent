@@ -239,7 +239,7 @@ func (c *Client[Req, Resp]) reconnect(delay time.Duration) (BidiStream[Req, Resp
 			return stream, streamCancel, true
 		}
 		if code := status.Code(err); code == codes.Unimplemented || code == codes.InvalidArgument {
-			slog.Error("Stream rejected by backend, giving up", "stream", c.name, "err", err)
+			slog.Error("Stream rejected by backend, won't retry", "stream", c.name, "err", err)
 			c.finished <- err
 			return nil, nil, false
 		}
@@ -353,7 +353,7 @@ func (c *Client[Req, Resp]) runReceive(stream BidiStream[Req, Resp], recvErrCh c
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				slog.Info("Stream listener stopped due to context cancellation.", "stream", c.name)
 			} else if errors.Is(err, io.EOF) {
-				slog.Info("Server closed the stream gracefully.", "stream", c.name)
+				slog.Debug("Server closed the stream gracefully.", "stream", c.name)
 			} else {
 				slog.Error("Stream listener stopped with an unexpected error", "stream", c.name, "error", err)
 			}
