@@ -220,6 +220,7 @@ func (c *Client[Req, Resp]) supervise(stream BidiStream[Req, Resp], streamCancel
 // Returns false after reporting the outcome to finished.
 func (c *Client[Req, Resp]) reconnect(delay time.Duration) (BidiStream[Req, Resp], context.CancelFunc, bool) {
 	backoffDur := initialBackoff
+	loggedError := false
 	for {
 		select {
 		case <-c.done:
@@ -243,7 +244,10 @@ func (c *Client[Req, Resp]) reconnect(delay time.Duration) (BidiStream[Req, Resp
 			c.finished <- err
 			return nil, nil, false
 		}
-		slog.Error("Stream connect failed", "stream", c.name, "err", err)
+		if !loggedError {
+			slog.Error("Stream connect failed", "stream", c.name, "err", err)
+			loggedError = true
+		}
 	}
 }
 

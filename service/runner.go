@@ -159,7 +159,7 @@ func (r *Runner) disconnectBackend(err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), terminationNotifyTimeout)
 	defer cancel()
 	if disconnectErr := r.backend.Disconnect(ctx, exitCode, err); disconnectErr != nil {
-		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to disconnect from backend: %s", disconnectErr)))
+		slog.Debug(common.PrefixWarning(fmt.Sprintf("Failed to disconnect from backend: %s", disconnectErr)))
 	}
 }
 
