@@ -266,7 +266,7 @@ components:
 
     ApplyStatus:
       type: string
-      enum: [ success, failure, skipped, starting ]
+      enum: [ success, failure, skipped, starting, applying ]
 
     CampaignStatus:
       type: string

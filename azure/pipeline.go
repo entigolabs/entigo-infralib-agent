@@ -71,7 +71,7 @@ func (p *Pipeline) StartPipelineExecution(pipelineName, _ string, step model.Ste
 	return &execution, nil
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove, applying func()) error {
 	if executionId == nil {
 		return fmt.Errorf("no execution id for pipeline %s", pipelineName)
 	}
@@ -106,6 +106,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, execu
 	if err != nil {
 		return err
 	}
+	applying()
 	if err = p.builder.waitForExecution(applyJob, execution); err != nil {
 		return fmt.Errorf("apply failed for %s: %w", pipelineName, err)
 	}

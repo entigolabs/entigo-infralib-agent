@@ -87,7 +87,7 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 	}
 }
 
-func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth, approve model.ManualApprove) error {
+func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth, approve model.ManualApprove, applying func()) error {
 	prefixStep := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	log.Printf("Starting local pipeline %s", prefixStep)
 	planCommand, applyCommand := model.GetCommands(step.Type)
@@ -102,6 +102,7 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, 
 	if !approved {
 		return nil
 	}
+	applying()
 	_, err = l.executeWrapper(prefixStep, applyCommand, step, sourceAuths)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefixStep, err)

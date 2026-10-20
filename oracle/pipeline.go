@@ -84,7 +84,7 @@ func (p *Pipeline) StartPipelineExecution(pipelineName, _ string, step model.Ste
 	return &buildRunId, nil
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove, applying func()) error {
 	if executionId == nil {
 		return fmt.Errorf("no execution id for pipeline %s", pipelineName)
 	}
@@ -113,6 +113,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, execu
 			return err
 		}
 	}
+	applying()
 	_, applyCommand := model.GetCommands(step.Type)
 	return p.runToCompletion(projectName, pipelineName, applyCommand, step)
 }

@@ -660,7 +660,7 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	return ""
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove, applying func()) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
@@ -722,6 +722,9 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executio
 			}
 			if previous == approvalStatusWaiting && status == approvalStatusApproved {
 				wait.Resolve(true)
+			}
+			if previous != approvalStatusApproved && status == approvalStatusApproved && applying != nil {
+				applying()
 			}
 		}
 	}
@@ -1193,7 +1196,7 @@ func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) er
 	if err != nil {
 		return err
 	}
-	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step, "")
+	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step, "", nil)
 }
 
 func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {

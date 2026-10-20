@@ -74,6 +74,7 @@ const (
 	ApplyStatusFailure  ApplyStatus = "failure"
 	ApplyStatusSkipped  ApplyStatus = "skipped"
 	ApplyStatusStarting ApplyStatus = "starting"
+	ApplyStatusApplying ApplyStatus = "applying"
 )
 
 type SourceVersion struct {

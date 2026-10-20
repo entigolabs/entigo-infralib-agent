@@ -935,11 +935,12 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	autoApprove := getAutoApprove(*stepState)
 	var err error
 	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step), u.getManualApproval(step))
+		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step), u.getManualApproval(step),
+			u.applyingCallback(stepState))
 	} else if firstRun {
-		err = u.createExecuteStepPipelines(step, autoApprove, index)
+		err = u.createExecuteStepPipelines(step, stepState, autoApprove, index)
 	} else {
-		err = u.executeStepPipelines(step, autoApprove, index)
+		err = u.executeStepPipelines(step, stepState, autoApprove, index)
 	}
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)
@@ -1029,7 +1030,7 @@ func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]mod
 	}
 }
 
-func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, index int) error {
+func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, autoApprove bool, index int) error {
 	bucket := u.resources.GetBucket()
 	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
@@ -1046,7 +1047,7 @@ func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, 
 	if err != nil {
 		return fmt.Errorf("failed to create %s: %w", u.resources.GetProjectService(), err)
 	}
-	return u.createExecutePipelines(stepName, stepName, step, autoApprove, bucket, sources)
+	return u.createExecutePipelines(stepName, stepName, step, stepState, autoApprove, bucket, sources)
 }
 
 func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
@@ -1063,12 +1064,13 @@ func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
 	}
 }
 
-func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket, authSources map[string]model.SourceAuth) error {
+func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, stepState *model.StateStep, autoApprove bool, bucket model.Bucket, authSources map[string]model.SourceAuth) error {
 	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, bucket, authSources)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step, u.getManualApproval(step))
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step,
+		u.getManualApproval(step), u.applyingCallback(stepState))
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -1110,7 +1112,7 @@ func (u *updater) getStepAuthSources(step model.Step) map[string]model.SourceAut
 	return authSources
 }
 
-func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index int) error {
+func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, autoApprove bool, index int) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	vpcConfig := u.getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
@@ -1133,7 +1135,8 @@ func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index 
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
-	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step, u.getManualApproval(step))
+	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step,
+		u.getManualApproval(step), u.applyingCallback(stepState))
 }
 
 func getAutoApprove(state model.StateStep) bool {
@@ -1464,6 +1467,12 @@ func (u *updater) postCallBackWithMetadata(stepState *model.StateStep, step mode
 		u.postCallbackWithStep(status, *stepState, &modifiedStep, nil)
 	} else {
 		slog.Error(common.PrefixError(fmt.Errorf("error replacing step %s metadata values: %v", step.Name, err)))
+	}
+}
+
+func (u *updater) applyingCallback(stepState *model.StateStep) func() {
+	return func() {
+		u.postCallback(model.ApplyStatusApplying, *stepState, nil)
 	}
 }
 

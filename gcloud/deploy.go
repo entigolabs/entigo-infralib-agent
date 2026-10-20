@@ -442,7 +442,7 @@ func (p *Pipeline) StartAgentExecution(pipelineName string) error {
 	return err
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string, releaseId *string, autoApprove bool, step model.Step, approve model.ManualApprove, applying func()) error {
 	if releaseId == nil {
 		return fmt.Errorf("release id is nil")
 	}
@@ -507,6 +507,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
+	applying()
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, applyCommand), true)
 	return err
 }

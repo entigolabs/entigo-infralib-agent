@@ -120,7 +120,7 @@ type Pipeline interface {
 	UpdatePipeline(pipelineName, stepName string, step Step, bucket string, authSources map[string]SourceAuth) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
-	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove) error
+	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove, applying func()) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
 	// Empty campaignId means "no campaign" — wrapper runs transparently.

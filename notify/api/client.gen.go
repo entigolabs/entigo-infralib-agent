@@ -21,6 +21,7 @@ import (
 
 // Defines values for ApplyStatus.
 const (
+	ApplyStatusApplying ApplyStatus = "applying"
 	ApplyStatusFailure  ApplyStatus = "failure"
 	ApplyStatusSkipped  ApplyStatus = "skipped"
 	ApplyStatusStarting ApplyStatus = "starting"
@@ -30,6 +31,8 @@ const (
 // Valid indicates whether the value is a known member of the ApplyStatus enum.
 func (e ApplyStatus) Valid() bool {
 	switch e {
+	case ApplyStatusApplying:
+		return true
 	case ApplyStatusFailure:
 		return true
 	case ApplyStatusSkipped:
