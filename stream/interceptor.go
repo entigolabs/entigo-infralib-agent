@@ -29,7 +29,7 @@ func (i *AuthInterceptor) StreamClient() grpc.StreamClientInterceptor {
 }
 
 func (i *AuthInterceptor) applyMetadata(ctx context.Context) context.Context {
-	kv := make([]string, 0, (len(i.headers)+1)*2)
+	var kv []string
 	if i.tokenSource != nil {
 		token, err := i.tokenSource.Token()
 		if err != nil {
