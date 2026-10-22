@@ -21,6 +21,7 @@ import (
 
 // Defines values for ApplyStatus.
 const (
+	ApplyStatusApplying ApplyStatus = "applying"
 	ApplyStatusFailure  ApplyStatus = "failure"
 	ApplyStatusSkipped  ApplyStatus = "skipped"
 	ApplyStatusStarting ApplyStatus = "starting"
@@ -30,6 +31,8 @@ const (
 // Valid indicates whether the value is a known member of the ApplyStatus enum.
 func (e ApplyStatus) Valid() bool {
 	switch e {
+	case ApplyStatusApplying:
+		return true
 	case ApplyStatusFailure:
 		return true
 	case ApplyStatusSkipped:
@@ -163,6 +166,7 @@ func (e PipelineStateNotificationKind) Valid() bool {
 // Defines values for ProviderType.
 const (
 	AWS    ProviderType = "AWS"
+	AZURE  ProviderType = "AZURE"
 	GCLOUD ProviderType = "GCLOUD"
 	ORACLE ProviderType = "ORACLE"
 )
@@ -171,6 +175,8 @@ const (
 func (e ProviderType) Valid() bool {
 	switch e {
 	case AWS:
+		return true
+	case AZURE:
 		return true
 	case GCLOUD:
 		return true

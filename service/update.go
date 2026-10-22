@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dario.cat/mergo"
+	"github.com/entigolabs/entigo-infralib-agent/agentstream"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/git"
@@ -29,7 +30,7 @@ import (
 )
 
 const (
-	stateFile       = "state.yaml"
+	StateFile       = "state.yaml"
 	ssmPrefix       = "/entigo-infralib"
 	ociManifestFile = "manifest.json"
 )
@@ -53,6 +54,7 @@ type updater struct {
 	pipelineFlags common.Pipeline
 	localPipeline *LocalPipeline
 	manager       model.NotificationManager
+	approvals     *agentstream.Approvals
 	moduleSources map[string]model.SourceKey
 	sources       map[model.SourceKey]*model.Source
 	firstRunDone  map[string]bool
@@ -68,12 +70,12 @@ type updater struct {
 	verifyGroup singleflight.Group
 }
 
-func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID) (Updater, error) {
+func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resources, manager model.NotificationManager, command common.Command, campaignId uuid.UUID, approvals *agentstream.Approvals) (Updater, error) {
 	config, err := GetFullConfig(resources.GetSSM(), resources.GetCloudPrefix(), flags.Config, resources.GetBucket())
 	if err != nil {
 		return nil, err
 	}
-	state, err := getLatestState(resources.GetBucket())
+	state, err := GetLatestState(resources.GetBucket())
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +104,9 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		if wrapperConfigured {
 			resources.GetPipeline().SetCampaignId(campaignId.String())
 		}
+		if approvals != nil {
+			resources.GetPipeline().SetApprovals(approvals)
+		}
 	}
 	return &updater{
 		ctx:           ctx,
@@ -116,6 +121,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 		pipelineFlags: pipeline,
 		localPipeline: getLocalPipeline(ctx, resources, pipeline, flags, manager, config, campaignId.String()),
 		manager:       manager,
+		approvals:     approvals,
 		moduleSources: moduleSources,
 		sources:       sources,
 		firstRunDone:  make(map[string]bool),
@@ -124,8 +130,8 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	}, nil
 }
 
-func getLatestState(bucket model.Bucket) (*model.State, error) {
-	file, err := bucket.GetFile(stateFile)
+func GetLatestState(bucket model.Bucket) (*model.State, error) {
+	file, err := bucket.GetFile(StateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state file: %v", err)
 	}
@@ -493,6 +499,9 @@ func (u *updater) setPipelineIndex(index int) {
 		pipelineIndex = 1
 	}
 	u.manager.SetCurrentPipelineIndex(pipelineIndex)
+	if u.approvals != nil {
+		u.approvals.SetPipelineIndex(pipelineIndex)
+	}
 	if u.resources.GetPipeline() != nil {
 		u.resources.GetPipeline().SetPipelineIndex(pipelineIndex)
 	}
@@ -926,11 +935,12 @@ func (u *updater) executePipeline(firstRun bool, step model.Step, stepState *mod
 	autoApprove := getAutoApprove(*stepState)
 	var err error
 	if u.pipelineFlags.Type == string(common.PipelineTypeLocal) {
-		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step), u.getManualApproval(step))
+		err = u.localPipeline.executeLocalPipeline(step, autoApprove, u.getStepAuthSources(step), u.getManualApproval(step),
+			u.applyingCallback(stepState))
 	} else if firstRun {
-		err = u.createExecuteStepPipelines(step, autoApprove, index)
+		err = u.createExecuteStepPipelines(step, stepState, autoApprove, index)
 	} else {
-		err = u.executeStepPipelines(step, autoApprove, index)
+		err = u.executeStepPipelines(step, stepState, autoApprove, index)
 	}
 	if err != nil {
 		u.postCallback(model.ApplyStatusFailure, *stepState, err)
@@ -1020,7 +1030,7 @@ func (u *updater) updateStepFiles(step model.Step, moduleVersions map[string]mod
 	}
 }
 
-func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, index int) error {
+func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.StateStep, autoApprove bool, index int) error {
 	bucket := u.resources.GetBucket()
 	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
@@ -1035,9 +1045,9 @@ func (u *updater) createExecuteStepPipelines(step model.Step, autoApprove bool, 
 	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource,
 		vpcConfig, sources)
 	if err != nil {
-		return fmt.Errorf("failed to create CodeBuild project: %w", err)
+		return fmt.Errorf("failed to create %s: %w", u.resources.GetProjectService(), err)
 	}
-	return u.createExecutePipelines(stepName, stepName, step, autoApprove, bucket, sources)
+	return u.createExecutePipelines(stepName, stepName, step, stepState, autoApprove, bucket, sources)
 }
 
 func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
@@ -1054,12 +1064,13 @@ func (u *updater) getVpcConfig(step model.Step) *model.VpcConfig {
 	}
 }
 
-func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, autoApprove bool, bucket model.Bucket, authSources map[string]model.SourceAuth) error {
+func (u *updater) createExecutePipelines(projectName string, stepName string, step model.Step, stepState *model.StateStep, autoApprove bool, bucket model.Bucket, authSources map[string]model.SourceAuth) error {
 	executionId, err := u.resources.GetPipeline().CreatePipeline(projectName, stepName, step, bucket, authSources)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline %s: %w", projectName, err)
 	}
-	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step, u.getManualApproval(step))
+	err = u.resources.GetPipeline().WaitPipelineExecution(projectName, projectName, executionId, autoApprove, step,
+		u.getManualApproval(step), u.applyingCallback(stepState))
 	if err != nil {
 		return fmt.Errorf("failed to wait for pipeline %s execution: %w", projectName, err)
 	}
@@ -1101,7 +1112,7 @@ func (u *updater) getStepAuthSources(step model.Step) map[string]model.SourceAut
 	return authSources
 }
 
-func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index int) error {
+func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, autoApprove bool, index int) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	vpcConfig := u.getVpcConfig(step)
 	imageVersion, imageSource := u.getBaseImage(step, index)
@@ -1124,7 +1135,8 @@ func (u *updater) executeStepPipelines(step model.Step, autoApprove bool, index 
 	if err != nil {
 		return fmt.Errorf("failed to start pipeline %s execution: %w", stepName, err)
 	}
-	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step, u.getManualApproval(step))
+	return u.resources.GetPipeline().WaitPipelineExecution(stepName, stepName, executionId, autoApprove, step,
+		u.getManualApproval(step), u.applyingCallback(stepState))
 }
 
 func getAutoApprove(state model.StateStep) bool {
@@ -1431,7 +1443,7 @@ func (u *updater) putStateFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	return u.resources.GetBucket().PutFile(stateFile, stateBytes)
+	return u.resources.GetBucket().PutFile(StateFile, stateBytes)
 }
 
 func (u *updater) putAppliedStateFile(stepState *model.StateStep, step model.Step, status model.ApplyStatus, index int) error {
@@ -1455,6 +1467,12 @@ func (u *updater) postCallBackWithMetadata(stepState *model.StateStep, step mode
 		u.postCallbackWithStep(status, *stepState, &modifiedStep, nil)
 	} else {
 		slog.Error(common.PrefixError(fmt.Errorf("error replacing step %s metadata values: %v", step.Name, err)))
+	}
+}
+
+func (u *updater) applyingCallback(stepState *model.StateStep) func() {
+	return func() {
+		u.postCallback(model.ApplyStatusApplying, *stepState, nil)
 	}
 }
 
@@ -1547,6 +1565,8 @@ func (u *updater) proxyModuleType() string {
 		return "gar-proxy"
 	} else if u.resources.GetProviderType() == model.ORACLE {
 		return "ocir-proxy"
+	} else if u.resources.GetProviderType() == model.AZURE {
+		return "acr-proxy"
 	}
 	return "ecr-proxy"
 }
@@ -2082,17 +2102,7 @@ func (u *updater) getModuleInputs(module model.Module, moduleSource string, sour
 	if err != nil {
 		return nil, err
 	}
-
-	providerType := u.resources.GetProviderType()
-	switch providerType {
-	case model.AWS:
-		providerType = "aws"
-	case model.GCLOUD:
-		providerType = "google"
-	case model.ORACLE:
-		providerType = "oracle"
-	}
-	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, providerType)
+	filePath = fmt.Sprintf("modules/%s/agent_input_%s.yaml", moduleSource, u.getProviderFileType())
 	providerInputs, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
@@ -2159,17 +2169,7 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 	if err != nil {
 		return nil, err
 	}
-
-	providerType := u.resources.GetProviderType()
-	switch providerType {
-	case model.AWS:
-		providerType = "aws"
-	case model.GCLOUD:
-		providerType = "google"
-	case model.ORACLE:
-		providerType = "oracle"
-	}
-	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, providerType)
+	filePath = fmt.Sprintf("modules/%s/values-%s.yaml", moduleSource, u.getProviderFileType())
 	providerValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
 	if err != nil {
 		return nil, err
@@ -2184,6 +2184,21 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
 	return values, nil
+}
+
+func (u *updater) getProviderFileType() string {
+	providerType := u.resources.GetProviderType()
+	switch providerType {
+	case model.AWS:
+		providerType = "aws"
+	case model.GCLOUD:
+		providerType = "google"
+	case model.ORACLE:
+		providerType = "oracle"
+	case model.AZURE:
+		providerType = "azure"
+	}
+	return string(providerType)
 }
 
 func mergeMaps(baseInputs map[string]any, patchInputs map[string]any) (map[string]any, error) {

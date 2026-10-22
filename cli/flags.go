@@ -34,6 +34,9 @@ func appendCmdSpecificFlags(baseFlags []cli.Flag, cmd common.Command) []cli.Flag
 		return append(append(baseFlags, getProviderFlags()...), &rotateCredentialsFlag, &removeUserFlag, &trustRoleFlag)
 	case common.ListCustomCommand:
 		return append(baseFlags, getProviderFlags()...)
+	case common.StateCommand:
+		return append(append(baseFlags, getProviderFlags()...), &statePullFlag, &statePushFlag, &stateFileNameFlag,
+			&forceFlag, &yesFlag)
 	case common.BootstrapCommand:
 		return append(append(baseFlags, getProviderFlags()...), &terraformCacheFlag, &startFlag)
 	case common.DestroyCommand:
@@ -70,7 +73,40 @@ func getProviderFlags() []cli.Flag {
 		&oracleCompartmentIdFlag,
 		&oracleProfileFlag,
 		&oracleConfigFileFlag,
+		&azureSubscriptionIdFlag,
+		&azureLocationFlag,
+		&azureResourceGroupFlag,
 	}
+}
+
+var azureSubscriptionIdFlag = cli.StringFlag{
+	Name:        "azure-subscription-id",
+	Aliases:     []string{"asid"},
+	Sources:     cli.EnvVars(common.AzureSubscriptionIdEnv),
+	Value:       "",
+	Usage:       "azure subscription id where resources are created; selects the azure provider when set",
+	Destination: &flags.Azure.SubscriptionId,
+	Required:    false,
+}
+
+var azureLocationFlag = cli.StringFlag{
+	Name:        "azure-location",
+	Aliases:     []string{"aloc"},
+	Sources:     cli.EnvVars(model.AzureRegion),
+	Value:       "",
+	Usage:       "azure location used when creating resources",
+	Destination: &flags.Azure.Location,
+	Required:    false,
+}
+
+var azureResourceGroupFlag = cli.StringFlag{
+	Name:        "azure-resource-group",
+	Aliases:     []string{"arg"},
+	Sources:     cli.EnvVars(common.AzureResourceGroupEnv),
+	Value:       "",
+	Usage:       "existing azure resource group for the agent resources, defaults to <prefix>-<location> which the agent creates",
+	Destination: &flags.Azure.ResourceGroup,
+	Required:    false,
 }
 
 var oracleRegionFlag = cli.StringFlag{
@@ -501,5 +537,30 @@ var insecureFlag = cli.BoolFlag{
 	Usage:       "allow insecure connections for the wrapper grpc connection",
 	Value:       false,
 	Destination: &flags.Wrapper.Insecure,
+	Required:    false,
+}
+
+var statePullFlag = cli.BoolFlag{
+	Name:        "pull",
+	Usage:       "download the agent state file",
+	Value:       false,
+	Destination: &flags.State.Pull,
+	Required:    false,
+}
+
+var statePushFlag = cli.BoolFlag{
+	Name:        "push",
+	Usage:       "upload the agent state file",
+	Value:       false,
+	Destination: &flags.State.Push,
+	Required:    false,
+}
+
+var stateFileNameFlag = cli.StringFlag{
+	Name:        "file",
+	Sources:     cli.EnvVars("AGENT_STATE_FILE"),
+	Value:       "state.yaml",
+	Usage:       "local agent state file path for pull and push",
+	Destination: &flags.State.File,
 	Required:    false,
 }

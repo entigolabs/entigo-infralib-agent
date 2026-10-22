@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package wrapper.v1alpha1;
+
+import "wrapper/v1alpha1/wrapper.proto";
+
+option go_package = "github.com/entigolabs/entigo-infralib-agent/gen/wrapper/v1alpha1;v1alpha1";
+
+// InfralibAgentService carries the agent's own logs for a campaign and lets the
+// backend send approval decisions for steps the agent is waiting on.
+service InfralibAgentService {
+  rpc Connect(stream ConnectRequest) returns (stream ConnectResponse);
+}
+
+message ConnectRequest {
+  oneof payload {
+    AgentHandshake handshake = 1;
+    LogBatch log_batch = 2;
+    Ping ping = 3;
+    ExecutionComplete complete = 4;
+    ApprovalResult approval_result = 5;
+  }
+}
+
+message ConnectResponse {
+  oneof payload {
+    HandshakeAck handshake_ack = 1;
+    Ping ping = 2;
+    StreamComplete complete = 3;
+    ApprovalRequest approval_request = 4;
+  }
+}
+
+// AgentHandshake binds the stream to a single agent execution (campaign). Sent
+// once as the first request message.
+message AgentHandshake {
+  string campaign_id = 1;
+  AgentCommand command = 2;
+  string version = 3;
+  // True when this client acts on ApprovalRequests. The backend routes each
+  // approval only to a stream that declared it.
+  bool handles_approvals = 4;
+}
+
+enum AgentCommand {
+  AGENT_COMMAND_UNSPECIFIED = 0;
+  AGENT_COMMAND_RUN = 1;
+  AGENT_COMMAND_UPDATE = 2;
+}
+
+// ApprovalRequest is the backend's decision for a step waiting on manual
+// approval. The backend re-sends requests without an ApprovalResult after a
+// reconnect.
+message ApprovalRequest {
+  string approval_id = 1;
+  string step = 2;
+  int32 pipeline_index = 3;
+  ApprovalDecision decision = 4;
+  string requested_by = 5;
+}
+
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  APPROVAL_DECISION_APPROVE = 1;
+  APPROVAL_DECISION_REJECT = 2;
+}
+
+// ApprovalResult acknowledges an ApprovalRequest.
+message ApprovalResult {
+  string approval_id = 1;
+  ApprovalOutcome outcome = 2;
+  // Details for NOT_WAITING and FAILED.
+  string error = 3;
+}
+
+enum ApprovalOutcome {
+  APPROVAL_OUTCOME_UNSPECIFIED = 0;
+  // The step's approval state matches the requested decision, whether this
+  // request applied it or an earlier one did.
+  APPROVAL_OUTCOME_SUCCESS = 1;
+  // The step was already approved, conflicting with a requested rejection.
+  APPROVAL_OUTCOME_ALREADY_APPROVED = 2;
+  // The step was already rejected, conflicting with a requested approval.
+  APPROVAL_OUTCOME_ALREADY_REJECTED = 3;
+  // No wait for the step and pipeline index is known to the client.
+  APPROVAL_OUTCOME_NOT_WAITING = 4;
+  // Applying the decision failed; the backend may retry with the same approval_id.
+  APPROVAL_OUTCOME_FAILED = 5;
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/commands/pull"
 	agentRun "github.com/entigolabs/entigo-infralib-agent/commands/run"
 	"github.com/entigolabs/entigo-infralib-agent/commands/sa"
+	"github.com/entigolabs/entigo-infralib-agent/commands/state"
 	"github.com/entigolabs/entigo-infralib-agent/commands/update"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/urfave/cli/v3"
@@ -49,6 +50,8 @@ func run(ctx context.Context, cmd common.Command) error {
 		return sa.Run(ctx, flags)
 	case common.PullCommand:
 		return pull.Run(ctx, flags)
+	case common.StateCommand:
+		return state.Run(ctx, flags)
 	case common.AddCustomCommand, common.DeleteCustomCommand, common.GetCustomCommand, common.ListCustomCommand:
 		return params.Custom(ctx, flags, cmd)
 	case common.MigrateConfigCommand:

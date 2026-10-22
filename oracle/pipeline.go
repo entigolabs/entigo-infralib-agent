@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -31,6 +32,7 @@ type Pipeline struct {
 	logs        *Logging
 	bucket      model.Bucket
 	manager     model.NotificationManager
+	approvals   model.ApprovalRegistry
 	cloudPrefix string
 }
 
@@ -56,6 +58,10 @@ func (p *Pipeline) SetPipelineIndex(index int) {
 	p.builder.SetPipelineIndex(index)
 }
 
+func (p *Pipeline) SetApprovals(approvals model.ApprovalRegistry) {
+	p.approvals = approvals
+}
+
 func (p *Pipeline) CreatePipeline(projectName, stepName string, step model.Step, _ model.Bucket, _ map[string]model.SourceAuth) (*string, error) {
 	if err := p.builder.ensureStepPipelines(projectName, step); err != nil {
 		return nil, err
@@ -78,7 +84,7 @@ func (p *Pipeline) StartPipelineExecution(pipelineName, _ string, step model.Ste
 	return &buildRunId, nil
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove, applying func()) error {
 	if executionId == nil {
 		return fmt.Errorf("no execution id for pipeline %s", pipelineName)
 	}
@@ -107,6 +113,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName, projectName string, execu
 			return err
 		}
 	}
+	applying()
 	_, applyCommand := model.GetCommands(step.Type)
 	return p.runToCompletion(projectName, pipelineName, applyCommand, step)
 }
@@ -119,16 +126,24 @@ func (p *Pipeline) waitForManualApproval(pipelineName string, step model.Step, c
 	}
 	summary := fmt.Sprintf("%s: %d to add, %d to change, %d to destroy", pipelineName,
 		changes.Added, changes.Changed, changes.Destroyed)
-	deploymentId, err := p.gate.RequestApproval(pipelineName, summary)
+	approval, err := p.gate.RequestApproval(pipelineName, summary)
 	if err != nil {
 		return err
 	}
+	wait := model.RegisterApproval(p.approvals, step.Name, func(approve bool) error {
+		return p.gate.Decide(approval, approve)
+	})
+	defer wait.Close()
 	if p.manager != nil {
 		p.manager.ManualApproval(pipelineName, step.Name, *changes, "")
 	}
-	if err = p.gate.WaitForApproval(deploymentId); err != nil {
+	if err = p.gate.WaitForApproval(approval.DeploymentId); err != nil {
+		if errors.Is(err, ErrApprovalRejected) {
+			wait.Resolve(false)
+		}
 		return fmt.Errorf("manual approval for %s: %w", pipelineName, err)
 	}
+	wait.Resolve(true)
 	if p.manager != nil {
 		p.manager.Approval(pipelineName, step.Name, "")
 	}
@@ -169,6 +184,9 @@ func (p *Pipeline) triggerToCompletion(projectName string, command model.ActionC
 
 func (p *Pipeline) DeletePipeline(projectName string) error {
 	p.builder.devopsBuild.deleteStepPipelines(projectName)
+	if p.builder.devopsBuild.projectId != "" {
+		p.builder.devopsBuild.deleteDeployPipelines(p.builder.devopsBuild.projectId, &projectName)
+	}
 	return nil
 }
 

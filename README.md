@@ -97,6 +97,7 @@ continues to work without it.
     * [Delete](#delete)
     * [Service Account](#service-account)
     * [Pull](#pull)
+    * [State](#state)
     * [Custom Parameters](#custom-parameters)
 * [Config](#config)
   * [Including and excluding modules in sources](#including-and-excluding-modules-in-sources)
@@ -110,7 +111,7 @@ continues to work without it.
   * [Notifications](#notifications)
   * [Encryption](#encryption)
   * [Scheduling](#scheduling)
-* [State](#state)
+* [State](#state-1)
   * [Rollback](#rollback)
 * [Migration Helper](#migration-helper)
   * [Commands](#migration-commands)
@@ -232,7 +233,7 @@ Mounting `~/.oci` at the host's own path (rather than a fixed `/root/.oci`) is w
 
 For bootstrap, run and update commands you must either provide a config file or a prefix value. This is required for creating and finding cloud resources. Bootstrap adds that value as an environment variable for the agent pipeline.
 
-The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, and Oracle Cloud when `--oci-compartment-id` is set. Oracle also requires `--oci-region`.
+The cloud provider is selected by the credentials/flags supplied: AWS by default, Google Cloud when `--project-id` is set, Oracle Cloud when `--oci-compartment-id` is set and Azure when `--azure-subscription-id` is set. Oracle also requires `--oci-region` and Azure `--azure-location`. Azure credentials are resolved by the Azure SDK default chain (environment, managed identity or the `az login` session). Step executions get the agent's resource group as `AZURE_RESOURCE_GROUP`, the base image looks up the AKS cluster and container registry from it. Azure Container Apps job names are limited to 32 characters and each step gets `<prefix>-<step>-apply-destroy`, so with a 10 character prefix step names can be at most 7 characters, the agent fails before creating resources otherwise.
 
 ### bootstrap
 
@@ -250,6 +251,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * start - start pipeline execution after creating (default: **true**) [$START]
 
@@ -276,6 +280,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * allow-parallel - allow running steps in parallel on first execution cycle (default: **true**) [$ALLOW_PARALLEL]
@@ -307,6 +314,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - **optional** role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * steps - **optional** comma separated list of steps to run [$STEPS]
 * pipeline-type - pipeline execution type (local | cloud), local is meant to be run inside the infralib image (default: **cloud**) [$PIPELINE_TYPE]
@@ -337,6 +347,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * steps - **optional** comma separated list of steps to destroy [$STEPS]
@@ -366,6 +379,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * yes - skip confirmation prompt (default: **false**) [$YES]
 * delete-bucket - delete the bucket used by OpenTofu state (default: **false**) [$DELETE_BUCKET]. For Oracle, the agent-owned KMS vault and key that encrypt the bucket are scheduled for deletion (revertible in the console for ~7 days) only when the bucket is deleted.
@@ -383,6 +399,8 @@ This account can be used for running the agent in a CI/CD pipeline.
 
 On Oracle Cloud the account is a user in a group whose compartment-scoped policy grants only what a steady-state run needs — no policy management and no KMS/bucket creation, so it runs an already-bootstrapped deployment but cannot bootstrap one or widen its own access. The command itself needs a tenancy administrator, since OCI creates users and groups only in the tenancy root.
 
+On Azure the account is a managed identity `<prefix>-sa` with Contributor, Key Vault Administrator and Storage Blob Data Contributor on the agent's resource group. Like the other providers it runs an already-bootstrapped deployment but cannot bootstrap one, since that creates role assignments. It signs in through a federated credential, see trust-role.
+
 Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
 
 OPTIONS:
@@ -396,9 +414,12 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * role-arn - role arn for assume role, used when creating aws resources in external account [$ROLE_ARN]
 * rotate-credentials - optional, generate new credentials for an existing service account, default **false**. **Warning!** This will delete any previous keys. [$ROTATE_CREDENTIALS]
-* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. Not supported on Oracle Cloud (no impersonation), where the command always outputs an API signing key and a ready-to-paste `~/.oci/config` profile. [$TRUST_ROLE]
+* trust-role - optional, instead of generating keys adds a trust relationship in AWS role or allows impersonation of the service account in GCloud. Value needs to be arn for AWS and full principal for GCloud, e.g. `serviceAccount:email` or `user:email`. Not supported on Oracle Cloud (no impersonation), where the command always outputs an API signing key and a ready-to-paste `~/.oci/config` profile. Required for Azure, where the service account is a managed identity with no secrets: the value is `<oidc issuer url>|<subject>`, e.g. `https://token.actions.githubusercontent.com|repo:org/repo:ref:refs/heads/main`, and the command outputs the client, tenant and subscription ids for the CI/CD system's Azure login. [$TRUST_ROLE]
 * remove-user - optional, used with trust-role, removes an existing service account user in AWS or credentials in GCloud, default **false**. [$REMOVE_USER]
 
 Example
@@ -422,11 +443,50 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * force - overwrite existing local files, default **false**. **Warning!** Force deletes the `/config` subfolder before writing. [$FORCE]
 
 Example
 ```bash
 bin/ei-agent pull --prefix=infralib
+```
+
+### state
+
+Without `pull` or `push`, reads `state.yaml` from the agent bucket and prints the applied module versions as YAML grouped by source, version and step. Modules whose last attempted version differs from the applied version are listed under `planned`. Custom modules and modules that have never been applied are listed under `custom` and `not_applied`. More info in [State](#state-1).
+
+With `pull`, downloads the state file from the bucket into the local `file`. Use the `force` flag to overwrite an existing local file.
+
+With `push`, validates the local `file`, prints its applied versions and asks for confirmation before uploading it to the bucket. **Warning!** A misconfigured state file can break agent `run` and `update` executions.
+
+OPTIONS:
+* logging - logging level (debug | info | warn | error) (default: **info**) [$LOGGING]
+* config - config file path and name, used to read the prefix [$CONFIG]
+* prefix - prefix used when creating cloud resources [$PREFIX]
+* project-id - project id used when creating gcloud resources [$PROJECT_ID]
+* location - location used when creating gcloud resources [$LOCATION]
+* zone - zone used in gcloud run jobs [$ZONE]
+* google-application-credentials-json - optional, gcloud service account credentials JSON string [$GOOGLE_APPLICATION_CREDENTIALS_JSON]
+* oci-region - oracle cloud region used when creating oracle resources [$OCI_REGION]
+* oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
+* oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
+* oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
+* pull - download the state file, default **false**
+* push - upload the state file, default **false**
+* file - local state file path for `pull` and `push`, default **state.yaml** [$AGENT_STATE_FILE]
+* force - overwrite an existing local file on `pull`, default **false** [$FORCE]
+* yes - skip the `push` confirmation prompt, default **false** [$YES]
+
+Example
+```bash
+bin/ei-agent state --prefix=infralib
+bin/ei-agent state --prefix=infralib --pull
+bin/ei-agent state --prefix=infralib --push --file=state.yaml
 ```
 
 ### provision
@@ -466,6 +526,9 @@ OPTIONS:
 * oci-compartment-id - oracle cloud compartment ocid where resources are created, selects the oracle provider when set [$OCI_COMPARTMENT_ID]
 * oci-profile - oracle cloud config file profile used for credentials, empty uses the default profile [$OCI_PROFILE]
 * oci-config-file - path to the oracle cloud config file used for credentials, empty uses ~/.oci/config [$OCI_CONFIG_FILE]
+* azure-subscription-id - azure subscription id where resources are created, selects the azure provider when set [$AZURE_SUBSCRIPTION_ID]
+* azure-location - azure location used when creating resources, required with azure-subscription-id [$AZURE_LOCATION]
+* azure-resource-group - existing azure resource group for the agent resources, defaults to `<prefix>-<location>` which the agent creates and deletes when empty; a provided group must not be shared by the same prefix in another location [$AZURE_RESOURCE_GROUP]
 * key - key for the custom parameter [$KEY]
 * value - value for the custom parameter [$VALUE]
 * overwrite - overwrite existing custom parameter value, default **false** [$OVERWRITE]
@@ -653,7 +716,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * vpc - vpc values to add
     * attach - attach vpc to code build/cloud run job, if other fields are empty then uses default vpc based on typed output of a vpc module, default **nil**. When nil, the value will be set based on the step type, for `argocd-apps` steps the value will be set to `true`
     * id - vpc id for code build/cloud run job, gcloud default `{{ .toutput.vpc.vpc_name }}`, aws default `{{ .toutput.vpc.vpc_id }}`
-    * subnet_ids - vpc subnet ids for code build/cloud run job/container instance, gcloud default `[{{ .toutput.vpc.private_subnets[0] }}]`, aws default `[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]`, oracle no default (a step that attaches its own vpc must set this, otherwise the container runs in the agent's bootstrap subnet)
+    * subnet_ids - vpc subnet ids for code build/cloud run job/container instance, gcloud default `[{{ .toutput.vpc.private_subnets[0] }}]`, aws default `[{{ .toptout.vpc.control_subnets | .toutput.vpc.private_subnets }}]`, oracle no default (a step that attaches its own vpc must set this, otherwise the container runs in the agent's bootstrap subnet), azure default `[{{ .toutput.vpc.pipeline_subnets[0] }}]` (the step runs in the Container Apps environment that already uses the first subnet, the agent doesn't create one)
     * security_group_ids - vpc security group ids for code build/cloud run job, gcloud no default, aws default `[{{ .toutput.vpc.pipeline_security_group }}]`
   * kubernetes_cluster_name - kubernetes cluster name for argocd-apps steps, gcloud default `{{ .toutput.gke.cluster_name }}`, aws default `{{ .toutput.eks.cluster_name }}`
   * argocd_namespace - kubernetes namespace for argocd-apps steps, default **argocd**
@@ -709,28 +772,30 @@ When using the `approve` property, auto approve type is only considered when res
 
 Step, module and input field values can be overwritten by using replacement tags `{{ .type.key }}`. Possible replacement tags are:
 
-| Type            | Key / Format                | Example                               | Description                                                                                                   |
-|-----------------|-----------------------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                                   |
-|                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                                    |
-|                 | organizationId              | `.agent.organizationId`               | AWS organization ID, Google Cloud organization ID or Oracle tenancy OCID. Empty if not in an organization.    |
-|                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                             |
-|                 | vaultId                     | `.agent.vaultId`                      | Managed Oracle Vault OCID, only supported for Oracle provider.                                                |
-|                 | providerDomain              | `.agent.providerDomain`               | Cloud provider domain of the region, e.g. `amazonaws.com`, `googleapis.com` or `oraclecloud.com`.             |
-| `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.                      |
-| `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                                           |
-|                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                         |
-| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from OpenTofu output from specific step/module. Defaults to empty string.                      |
-| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from OpenTofu output from specific step/module.                                                         |
-| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM or OCI Vault.                                                         |
-| `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                                       |
-| `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps              |
-| `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                                     |
-| `toptmodule`    | type                        | `.toptmodule.eks`                     | Optional name of the module with a specified type.                                                            |
-| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from OpenTofu output based on module type. Defaults to empty string.                           |
-| `toptin`        | type.key                    | `.toptin.argocd.argocd.global.domain` | Optional value from a module inputs in the current step, fallback same as `tinput`. Defaults to empty string. |
-| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from OpenTofu output based on module type.                                                              |
-| `tsmodule`      | type                        | `.tsmodule.eks`                       | Name of the typed module in the current step.                                                                 |
+| Type            | Key / Format                | Example                               | Description                                                                                                                                                               |
+|-----------------|-----------------------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `agent`         | version.stepName.moduleName | `.agent.version.infra.eks`            | Configured version of the specified module.                                                                                                                               |
+|                 | accountId                   | `.agent.accountId`                    | Configured AWS account ID.                                                                                                                                                |
+|                 | organizationId              | `.agent.organizationId`               | AWS organization ID, Google Cloud organization ID or Oracle tenancy OCID. Empty if not in an organization.                                                                |
+|                 | region                      | `.agent.region`                       | Configured cloud provider region.                                                                                                                                         |
+|                 | resourceGroup               | `.agent.resourceGroup`                | Resource group of the agent's resources, only supported for Azure provider.                                                                                               |
+|                 | uniqueSuffix                | `.agent.uniqueSuffix`                 | 8 lowercase letters and digits hashed from prefix, account (AWS account, Google project, Oracle compartment or Azure subscription) and region, for globally unique names. |
+|                 | vaultId                     | `.agent.vaultId`                      | Managed Oracle Vault OCID, only supported for Oracle provider.                                                                                                            |
+|                 | providerDomain              | `.agent.providerDomain`               | Cloud provider domain of the region, e.g. `amazonaws.com`, `googleapis.com` or `oraclecloud.com`.                                                                         |
+| `config`        | fieldName                   | `.config.prefix`                      | Value from the provided config field. Config replacement does not support indexed paths.                                                                                  |
+| `module`        | name                        | `.module.name`                        | Name of the module itself (for module inputs and input files only).                                                                                                       |
+|                 | source                      | `.module.source`                      | Source of the module itself (for module inputs and input files only).                                                                                                     |
+| `optout`        | stepName.moduleName.key     | `.optout.infra.eks.cluster_arn`       | Optional value from OpenTofu output from specific step/module. Defaults to empty string.                                                                                  |
+| `output`        | stepName.moduleName.key     | `.output.infra.eks.cluster_arn`       | Value from OpenTofu output from specific step/module.                                                                                                                     |
+| `output-custom` | key                         | `.output-custom.param-key`            | Value from AWS SSM parameter, GCloud SM or OCI Vault.                                                                                                                     |
+| `step`          | name                        | `.step.name`                          | Name of the step containing the module.                                                                                                                                   |
+| `tinput`        | type.Key                    | `.tinput.argocd.argocd.global.domain` | Value from a module inputs in the current step. Falls back to values files for argocd-apps steps                                                                          |
+| `tmodule`       | type                        | `.tmodule.eks`                        | Name of the module with a specified type.                                                                                                                                 |
+| `toptmodule`    | type                        | `.toptmodule.eks`                     | Optional name of the module with a specified type.                                                                                                                        |
+| `toptout`       | type.key                    | `.toptout.eks.cluster_arn`            | Optional value from OpenTofu output based on module type. Defaults to empty string.                                                                                       |
+| `toptin`        | type.key                    | `.toptin.argocd.argocd.global.domain` | Optional value from a module inputs in the current step, fallback same as `tinput`. Defaults to empty string.                                                             |
+| `toutput`       | type.key                    | `.toutput.eks.cluster_arn`            | Value from OpenTofu output based on module type.                                                                                                                          |
+| `tsmodule`      | type                        | `.tsmodule.eks`                       | Name of the typed module in the current step.                                                                                                                             |
 
 For output types, if the value is not found from OpenTofu output, then the value is requested from AWS SSM Parameter Store, Google Cloud Secret Manager, or OCI Vault.
 
@@ -853,6 +918,10 @@ Supported locations can change in the future. If configured location starts supp
 
 Scheduling is not yet supported for Oracle Cloud. A configured `update_cron` is ignored with a warning; run the agent's update command on an external schedule (e.g. a cron job or CI pipeline) instead.
 
+#### Azure
+
+Uses the schedule trigger of the agent update Container Apps job. [Cron expression format](https://learn.microsoft.com/en-us/azure/container-apps/jobs#scheduled-jobs) is `Minutes Hours Day-of-month Month Day-of-week`.
+
 ## State
 
 Agent stores the current state of the applied modules in a cloud provider bucket as a `state.yaml` file:
@@ -882,6 +951,7 @@ Carefully verify the planned changes before approving the pipeline when rolling 
 Rolling back module versions can be done in 2 ways:
 1. **Recommended** Set the config source `force_version` value to `true` and `version` to the desired version.
 2. **Advanced** Download the state file and modify the versions in the state file to the desired version. Upload the modified state file back to the bucket. Run the agent with `run` command and it will apply the specified versions.
+
 
 ## Migration Helper
 

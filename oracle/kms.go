@@ -306,10 +306,8 @@ func (k *KMS) waitForVaultActive(vaultId string) (*keymanagement.Vault, error) {
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("timed out waiting for kms vault %s to become active", vaultId)
 		}
-		select {
-		case <-k.ctx.Done():
-			return nil, k.ctx.Err()
-		case <-time.After(kmsPollInterval):
+		if err := util.Sleep(k.ctx, kmsPollInterval); err != nil {
+			return nil, err
 		}
 	}
 }
@@ -400,10 +398,8 @@ func (k *KMS) waitForKeyEnabled(mgmt keymanagement.KmsManagementClient, keyId st
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("timed out waiting for kms key %s to become enabled", keyId)
 		}
-		select {
-		case <-k.ctx.Done():
-			return "", k.ctx.Err()
-		case <-time.After(kmsPollInterval):
+		if err := util.Sleep(k.ctx, kmsPollInterval); err != nil {
+			return "", err
 		}
 	}
 }

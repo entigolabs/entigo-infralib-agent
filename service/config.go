@@ -504,6 +504,8 @@ func getKubernetesClusterName(providerType model.ProviderType) string {
 		return "{{ .toutput.gke.cluster_name }}"
 	case model.ORACLE:
 		return "{{ .toutput.oke.cluster_id }}"
+	case model.AZURE:
+		return "{{ .toutput.aks.cluster_name }}"
 	default:
 		return "{{ .toutput.eks.cluster_name }}"
 	}
@@ -537,6 +539,13 @@ func processStepVpcIds(step *model.Step, providerType model.ProviderType) {
 		}
 		if step.Vpc.SubnetIds == "" {
 			step.Vpc.SubnetIds = "[{{ .toutput.vpc.private_subnets[0] }}]"
+		}
+	case model.AZURE:
+		if step.Vpc.Id == "" {
+			step.Vpc.Id = "{{ .toutput.vpc.vpc_id }}"
+		}
+		if step.Vpc.SubnetIds == "" {
+			step.Vpc.SubnetIds = "[{{ .toutput.vpc.container_apps_subnets[0] }}]"
 		}
 	}
 }

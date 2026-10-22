@@ -11,6 +11,7 @@ const ProjectImageAWS = "public.ecr.aws/entigolabs/entigo-infralib-aws"
 const ProjectImageDocker = "docker.io/entigolabs/entigo-infralib-base"
 const ProjectImageGCloud = "docker.io/entigolabs/entigo-infralib-google"
 const ProjectImageOracle = "docker.io/entigolabs/entigo-infralib-oracle"
+const ProjectImageAzure = "docker.io/entigolabs/entigo-infralib-azure"
 const AgentImage = "public.ecr.aws/entigolabs/entigo-infralib-agent"
 
 // const AgentImageDocker = "docker.io/entigolabs/entigo-infralib-agent"
@@ -18,6 +19,7 @@ const AgentImageGCloud = "europe-north1-docker.pkg.dev/entigo-infralib2/entigola
 
 // AgentImageOracle is provisional; final home is OCIR once the oracle base image build lands.
 const AgentImageOracle = "docker.io/entigolabs/entigo-infralib-agent"
+const AgentImageAzure = "docker.io/entigolabs/entigo-infralib-agent"
 const LatestImageVersion = "latest"
 const AgentSource = "agent-source.zip"
 
@@ -27,12 +29,14 @@ const (
 	AWS    ProviderType = "AWS"
 	GCLOUD ProviderType = "GCLOUD"
 	ORACLE ProviderType = "ORACLE"
+	AZURE  ProviderType = "AZURE"
 )
 
 const (
 	AWSRegion    = "AWS_REGION"
 	GoogleRegion = "GOOGLE_REGION"
 	OracleRegion = "OCI_REGION"
+	AzureRegion  = "AZURE_LOCATION"
 )
 
 const (
@@ -84,6 +88,7 @@ type Resources interface {
 	GetBucket() Bucket
 	GetPipeline() Pipeline
 	GetBuilder() Builder
+	GetProjectService() string
 	GetSSM() SSM
 	GetCloudPrefix() string
 	GetBucketName() string
@@ -92,6 +97,7 @@ type Resources interface {
 	GetAccount() string
 	GetOrganizationId() string
 	GetVaultId() (string, error)
+	GetResourceGroup() (string, error)
 	GetProviderDomain() string
 }
 
@@ -114,12 +120,38 @@ type Pipeline interface {
 	UpdatePipeline(pipelineName, stepName string, step Step, bucket string, authSources map[string]SourceAuth) error
 	StartAgentExecution(pipelineName string) error
 	StartPipelineExecution(pipelineName, stepName string, step Step, customRepo string) (*string, error)
-	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove) error
+	WaitPipelineExecution(pipelineName, projectName string, executionId *string, autoApprove bool, step Step, approve ManualApprove, applying func()) error
 	DeletePipeline(projectName string) error
 	StartDestroyExecution(projectName string, step Step) error
 	// Empty campaignId means "no campaign" — wrapper runs transparently.
 	SetCampaignId(campaignId string)
 	SetPipelineIndex(index int)
+	SetApprovals(approvals ApprovalRegistry)
+}
+
+// Approver applies an external approval decision to a step waiting on manual approval.
+type Approver func(approve bool) error
+
+type ApprovalRegistry interface {
+	Register(step string, approver Approver) ApprovalWait
+}
+
+type ApprovalWait interface {
+	// Resolve records a decision observed by the wait loop, e.g. one made in the provider console.
+	Resolve(approved bool)
+	Close()
+}
+
+type noopApprovalWait struct{}
+
+func (noopApprovalWait) Resolve(bool) {}
+func (noopApprovalWait) Close()       {}
+
+func RegisterApproval(registry ApprovalRegistry, step string, approver Approver) ApprovalWait {
+	if registry == nil {
+		return noopApprovalWait{}
+	}
+	return registry.Register(step, approver)
 }
 
 type Builder interface {
@@ -158,7 +190,8 @@ type CloudResources struct {
 	ProviderType   ProviderType
 	Bucket         Bucket
 	Pipeline       Pipeline
-	CodeBuild      Builder
+	Builder        Builder
+	ProjectService string
 	SSM            SSM
 	CloudPrefix    string
 	BucketName     string
@@ -181,7 +214,12 @@ func (c CloudResources) GetPipeline() Pipeline {
 }
 
 func (c CloudResources) GetBuilder() Builder {
-	return c.CodeBuild
+	return c.Builder
+}
+
+// GetProjectService names the cloud resource of a builder project in messages, e.g. "CodeBuild project".
+func (c CloudResources) GetProjectService() string {
+	return c.ProjectService
 }
 
 func (c CloudResources) GetSSM() SSM {
@@ -210,6 +248,10 @@ func (c CloudResources) GetOrganizationId() string {
 
 func (c CloudResources) GetVaultId() (string, error) {
 	return "", fmt.Errorf("GetVaultId not supported by provider %s", c.ProviderType)
+}
+
+func (c CloudResources) GetResourceGroup() (string, error) {
+	return "", fmt.Errorf("GetResourceGroup not supported by provider %s", c.ProviderType)
 }
 
 func (c CloudResources) GetProviderDomain() string {
@@ -262,6 +304,12 @@ func GetDestroyCommands(stepType StepType) (ActionCommand, ActionCommand) {
 	default:
 		return PlanDestroyCommand, ApplyDestroyCommand
 	}
+}
+
+func GetStepCommands(stepType StepType) []ActionCommand {
+	plan, apply := GetCommands(stepType)
+	planDestroy, applyDestroy := GetDestroyCommands(stepType)
+	return []ActionCommand{plan, apply, planDestroy, applyDestroy}
 }
 
 type TFOutput struct {

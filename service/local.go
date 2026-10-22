@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/entigolabs/entigo-infralib-agent/agentstream"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/generator"
 	"github.com/entigolabs/entigo-infralib-agent/model"
@@ -62,6 +63,8 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 	case model.ORACLE:
 		regionKey = model.OracleRegion
 		compartmentId = flags.Oracle.CompartmentId
+	case model.AZURE:
+		regionKey = model.AzureRegion
 	}
 	var backendEnv map[string]string
 	if provider, ok := resources.(model.BackendEnvProvider); ok {
@@ -84,7 +87,7 @@ func NewLocalPipeline(ctx context.Context, resources model.Resources, pipeline c
 	}
 }
 
-func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth, approve model.ManualApprove) error {
+func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, sourceAuths map[string]model.SourceAuth, approve model.ManualApprove, applying func()) error {
 	prefixStep := fmt.Sprintf("%s-%s", l.prefix, step.Name)
 	log.Printf("Starting local pipeline %s", prefixStep)
 	planCommand, applyCommand := model.GetCommands(step.Type)
@@ -99,6 +102,7 @@ func (l *LocalPipeline) executeLocalPipeline(step model.Step, autoApprove bool, 
 	if !approved {
 		return nil
 	}
+	applying()
 	_, err = l.executeWrapper(prefixStep, applyCommand, step, sourceAuths)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s for %s: %v", applyCommand, prefixStep, err)
@@ -129,13 +133,12 @@ func (l *LocalPipeline) executeWrapper(prefixStep string, command model.ActionCo
 		PlanPath:      localPlanPath,
 		CampaignId:    l.campaignId,
 		PipelineIndex: strconv.Itoa(l.pipelineIndex),
-		//		Insecure:      true, // Development only
 	}
 	env := l.getEnv(prefixStep, command, step, sourceAuths)
 	var stdoutBuf bytes.Buffer
 	writers := []io.Writer{&stdoutBuf}
 	if l.pipeline.PrintLogs {
-		writers = append(writers, log.Writer())
+		writers = append(writers, agentstream.Unwrap(log.Writer()))
 	}
 	file := l.getLogFileWriter(prefixStep, command)
 	if file != nil {

@@ -5,8 +5,12 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -28,6 +32,8 @@ import (
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 )
+
+const base36Chars = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 var (
 	azureHTTPSPattern = regexp.MustCompile(`^https://(?:[^@]+@)?dev\.azure\.com/[^/]+/[^/]+/_git/[^/]+`)
@@ -358,6 +364,50 @@ func HashCode(value string) string {
 	hasher := fnv.New32a()
 	_, _ = hasher.Write([]byte(value))
 	return strings.ToLower(fmt.Sprintf("%x", hasher.Sum32()))
+}
+
+func ShortHash(input string, n int) string {
+	if n > 12 {
+		n = 12 // Characters over 12 aren't unique
+	}
+	sum := sha256.Sum256([]byte(input))
+	x := binary.BigEndian.Uint64(sum[:8])
+	result := make([]byte, n)
+	for i := range result {
+		result[i] = base36Chars[x%36]
+		x /= 36
+	}
+	return string(result)
+}
+
+// UniqueSuffix tells apart the globally unique names of one prefix in other accounts and regions.
+func UniqueSuffix(prefix, account, region string) string {
+	return ShortHash(strings.Join([]string{prefix, account, region}, "/"), 8)
+}
+
+// Sleep returns the context's error when it's cancelled before the duration passes.
+func Sleep(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// DecodeJWTClaims unmarshals the token payload into claims without verifying the signature.
+func DecodeJWTClaims(token string, claims any) error {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return errors.New("token is not a JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(payload, claims)
 }
 
 func GetOutputStringValue(outputs map[string]model.TFOutput, key string) (string, error) {

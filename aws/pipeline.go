@@ -68,6 +68,7 @@ type Pipeline struct {
 	cloudPrefix    string
 	bucket         model.Bucket
 	manager        model.NotificationManager
+	approvals      model.ApprovalRegistry
 	campaignId     string
 	pipelineIndex  string
 }
@@ -78,6 +79,10 @@ func (p *Pipeline) SetCampaignId(id string) {
 
 func (p *Pipeline) SetPipelineIndex(index int) {
 	p.pipelineIndex = strconv.Itoa(index)
+}
+
+func (p *Pipeline) SetApprovals(approvals model.ApprovalRegistry) {
+	p.approvals = approvals
 }
 
 func NewPipeline(ctx context.Context, awsConfig aws.Config, roleArn string, cloudWatch CloudWatch, logGroup string, logStream string, terraformCache bool, cloudPrefix string, bucket model.Bucket, manager model.NotificationManager) *Pipeline {
@@ -387,8 +392,21 @@ func (p *Pipeline) CreateDestroyPipeline(pipelineName string, projectName string
 		return err
 	}
 	log.Printf("Created destroy CodePipeline %s\n", pipelineName)
-
+	if err := p.disableDestroyTransitions(pipelineName); err != nil {
+		return err
+	}
 	return p.waitAndStopAutoExecution(pipelineName, autoExecutionTimeout)
+}
+
+func (p *Pipeline) disableDestroyTransitions(pipelineName string) error {
+	reason := "Disable pipeline transition to prevent accidental destruction of infrastructure"
+	for _, stage := range []string{destroyName, approveStageName, applyDestroyName} {
+		err := p.disableStageTransition(pipelineName, stage, reason)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
@@ -642,7 +660,7 @@ func getCommand(actionName string, stepType model.StepType) model.ActionCommand 
 	return ""
 }
 
-func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove) error {
+func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executionId *string, autoApprove bool, step model.Step, approve model.ManualApprove, applying func()) error {
 	if executionId == nil {
 		return fmt.Errorf("execution id is nil")
 	}
@@ -654,6 +672,17 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executio
 	ticker := time.NewTicker(pollingDelay)
 	defer ticker.Stop()
 	var status approvalStatus
+	var wait model.ApprovalWait
+	defer func() {
+		if wait != nil {
+			wait.Close()
+		}
+	}()
+	register := func() {
+		if wait == nil {
+			wait = model.RegisterApproval(p.approvals, step.Name, p.approver(pipelineName))
+		}
+	}
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -667,6 +696,9 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executio
 				return err
 			}
 			if execution.PipelineExecution.Status != types.PipelineExecutionStatusInProgress {
+				if status == approvalStatusWaiting && p.approvalRejected(pipelineName, executionId) {
+					wait.Resolve(false)
+				}
 				return getExecutionResult(execution.PipelineExecution.Status)
 			}
 			if status == approvalStatusApproved {
@@ -680,12 +712,19 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, _ string, executio
 				return err
 			}
 			p.stopPreviousExecution(pipelineName, *executionId, executionsList.ActionExecutionDetails)
-			status, err = p.processStateStages(pipelineName, *executionId, executionsList.ActionExecutionDetails, step, autoApprove, status, approve)
+			previous := status
+			status, err = p.processStateStages(pipelineName, *executionId, executionsList.ActionExecutionDetails, step, autoApprove, status, approve, register)
 			if err != nil {
 				return err
 			}
 			if status == approvalStatusStop {
 				return nil
+			}
+			if previous == approvalStatusWaiting && status == approvalStatusApproved {
+				wait.Resolve(true)
+			}
+			if previous != approvalStatusApproved && status == approvalStatusApproved && applying != nil {
+				applying()
 			}
 		}
 	}
@@ -780,7 +819,7 @@ func preApproveStage(actions []types.ActionExecutionDetail) bool {
 	return planned
 }
 
-func (p *Pipeline) processStateStages(pipelineName, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, status approvalStatus, approve model.ManualApprove) (approvalStatus, error) {
+func (p *Pipeline) processStateStages(pipelineName, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, status approvalStatus, approve model.ManualApprove, registerApproval func()) (approvalStatus, error) {
 	for _, action := range actions {
 		if *action.StageName != approveStageName || *action.ActionName != approveActionName {
 			continue
@@ -805,13 +844,13 @@ func (p *Pipeline) processStateStages(pipelineName, executionId string, actions 
 		case approvalStatusApprove:
 			return p.approveStage(pipelineName)
 		default:
-			return p.processChanges(pipelineName, executionId, actions, step, autoApprove, approve)
+			return p.processChanges(pipelineName, executionId, actions, step, autoApprove, approve, registerApproval)
 		}
 	}
 	return status, nil
 }
 
-func (p *Pipeline) processChanges(pipelineName string, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, approve model.ManualApprove) (approvalStatus, error) {
+func (p *Pipeline) processChanges(pipelineName string, executionId string, actions []types.ActionExecutionDetail, step model.Step, autoApprove bool, approve model.ManualApprove, registerApproval func()) (approvalStatus, error) {
 	pipeChanges, err := p.getChanges(pipelineName, actions, step)
 	if err != nil {
 		return approvalStatusStop, err
@@ -826,6 +865,7 @@ func (p *Pipeline) processChanges(pipelineName string, executionId string, actio
 		return p.approveStage(pipelineName)
 	}
 	log.Printf("Waiting for manual approval of pipeline %s\n", pipelineName)
+	registerApproval()
 	if p.manager != nil {
 		p.manager.ManualApproval(pipelineName, step.Name, *pipeChanges, p.getLink(pipelineName))
 	}
@@ -920,16 +960,7 @@ func (p *Pipeline) approveStage(pipelineName string) (approvalStatus, error) {
 		log.Printf("No approval token found yet for %s, please wait or approve manually\n", pipelineName)
 		return approvalStatusApprove, nil
 	}
-	_, err := p.codePipeline.PutApprovalResult(p.ctx, &codepipeline.PutApprovalResultInput{
-		PipelineName: aws.String(pipelineName),
-		StageName:    aws.String(approveStageName),
-		ActionName:   aws.String(approveActionName),
-		Token:        token,
-		Result: &types.ApprovalResult{
-			Status:  types.ApprovalStatusApproved,
-			Summary: aws.String("Approved by entigo-infralib-agent"),
-		},
-	})
+	err := p.putApprovalResult(pipelineName, token, types.ApprovalStatusApproved, "Approved by entigo-infralib-agent")
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't approve pipeline %s, approve manually: %s",
 			pipelineName, err.Error())))
@@ -937,6 +968,49 @@ func (p *Pipeline) approveStage(pipelineName string) (approvalStatus, error) {
 	}
 	log.Printf("Approved stage %s for %s\n", approveStageName, pipelineName)
 	return approvalStatusApproved, nil
+}
+
+// approvalRejected tells a rejection apart from other ways an execution waiting for
+// approval can end, e.g. being stopped or superseded.
+func (p *Pipeline) approvalRejected(pipelineName string, executionId *string) bool {
+	executions, err := p.codePipeline.ListActionExecutions(p.ctx, &codepipeline.ListActionExecutionsInput{
+		PipelineName: aws.String(pipelineName),
+		Filter:       &types.ActionExecutionFilter{PipelineExecutionId: executionId},
+	})
+	if err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to check approval result of %s: %s", pipelineName, err)))
+		return false
+	}
+	for _, action := range executions.ActionExecutionDetails {
+		if *action.StageName == approveStageName && *action.ActionName == approveActionName {
+			return action.Status == types.ActionExecutionStatusFailed
+		}
+	}
+	return false
+}
+
+func (p *Pipeline) approver(pipelineName string) model.Approver {
+	return func(approve bool) error {
+		token := p.getApprovalToken(pipelineName)
+		if token == nil {
+			return fmt.Errorf("no approval token found for pipeline %s", pipelineName)
+		}
+		if approve {
+			return p.putApprovalResult(pipelineName, token, types.ApprovalStatusApproved, "Approved through Entigo portal")
+		}
+		return p.putApprovalResult(pipelineName, token, types.ApprovalStatusRejected, "Rejected through Entigo portal")
+	}
+}
+
+func (p *Pipeline) putApprovalResult(pipelineName string, token *string, status types.ApprovalStatus, summary string) error {
+	_, err := p.codePipeline.PutApprovalResult(p.ctx, &codepipeline.PutApprovalResultInput{
+		PipelineName: aws.String(pipelineName),
+		StageName:    aws.String(approveStageName),
+		ActionName:   aws.String(approveActionName),
+		Token:        token,
+		Result:       &types.ApprovalResult{Status: status, Summary: aws.String(summary)},
+	})
+	return err
 }
 
 func (p *Pipeline) disableStageTransition(pipelineName, stage, reason string) error {
@@ -972,10 +1046,8 @@ func (p *Pipeline) waitAndStopAutoExecution(pipelineName string, timeout time.Du
 			slog.Warn("no auto-execution appeared to intercept", "pipeline", pipelineName, "timeout", timeout)
 			return nil
 		}
-		select {
-		case <-p.ctx.Done():
-			return p.ctx.Err()
-		case <-time.After(1 * time.Second):
+		if err := util.Sleep(p.ctx, 1*time.Second); err != nil {
+			return err
 		}
 	}
 }
@@ -1124,7 +1196,7 @@ func (p *Pipeline) StartDestroyExecution(projectName string, step model.Step) er
 	if err != nil {
 		return err
 	}
-	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step, "")
+	return p.WaitPipelineExecution(pipelineName, pipelineName, executionId, true, step, "", nil)
 }
 
 func (p *Pipeline) enableAllStageTransitions(pipelineName string) error {

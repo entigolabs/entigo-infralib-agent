@@ -9,4 +9,5 @@ These scripts might be outdated.
 ## Requirements
 - AWS Cli for AWS and Oracle
 - gsutil for Google
+- Azure CLI for Azure, logged in with `az login` (kubelogin for AKS)
 - Global bin script called entrypoint-core.sh as agent executes it by default. It can be copied from this directory and given execute permissions.

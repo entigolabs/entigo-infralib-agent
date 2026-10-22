@@ -24,6 +24,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+const projectService = "Cloud Run job"
+
 var tempFolder = os.TempDir()
 
 type Builder struct {

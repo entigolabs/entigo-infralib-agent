@@ -23,6 +23,7 @@ func cliCommands() []*cli.Command {
 		&migratePlanCommand,
 		&migrateValidateCommand,
 		&provisionCommand,
+		&stateCommand,
 	}
 }
 
@@ -152,4 +153,12 @@ var provisionCommand = cli.Command{
 	Usage:   "execute the Infralib Tool entrypoint, optionally forwarding logs to the portal backend",
 	Action:  action(common.ProvisionCommand),
 	Flags:   cliFlags(common.ProvisionCommand),
+}
+
+var stateCommand = cli.Command{
+	Name:    string(common.StateCommand),
+	Aliases: []string{"st"},
+	Usage:   "show applied module versions grouped by source, or pull/push the agent state file",
+	Action:  action(common.StateCommand),
+	Flags:   cliFlags(common.StateCommand),
 }

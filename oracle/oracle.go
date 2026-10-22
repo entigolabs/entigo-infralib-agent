@@ -2,8 +2,6 @@ package oracle
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	ocicommon "github.com/oracle/oci-go-sdk/v65/common"
 	"golang.org/x/sync/errgroup"
 )
@@ -107,6 +106,7 @@ func (o *oracleService) bucketResources() (Resources, *Storage, error) {
 	}
 	return Resources{
 		ProviderType:   model.ORACLE,
+		ProjectService: projectService,
 		Bucket:         storage,
 		BucketName:     bucket,
 		CloudPrefix:    o.cloudPrefix,
@@ -265,7 +265,7 @@ func (o *oracleService) SetupResources(manager model.NotificationManager, config
 	if err = gate.Ensure(); err != nil {
 		return nil, fmt.Errorf("failed to set up approval gate: %w", err)
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	resources.Pipeline = NewPipeline(o.ctx, builder, gate, logs, resources.Bucket, o.cloudPrefix, manager)
 	o.warnScheduleUnsupported(config.Schedule)
 	return resources, nil
@@ -364,10 +364,8 @@ func (o *oracleService) waitForAgentAccess() {
 				policyPropagationTimeout, errSummary(err))))
 			return
 		}
-		select {
-		case <-o.ctx.Done():
+		if util.Sleep(o.ctx, policyPropagationInterval) != nil {
 			return
-		case <-time.After(policyPropagationInterval):
 		}
 	}
 }
@@ -621,18 +619,10 @@ func (o *oracleService) userId() string {
 // checked: the claim only names the user credentials get attached to, and the SDK still
 // authenticates every API call with the token itself.
 func subjectFromJWT(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
 	var claims struct {
 		Sub string `json:"sub"`
 	}
-	if err = json.Unmarshal(payload, &claims); err != nil {
+	if err := util.DecodeJWTClaims(token, &claims); err != nil {
 		return ""
 	}
 	return claims.Sub
@@ -665,7 +655,7 @@ func (o *oracleService) GetResources() (model.Resources, error) {
 		build.Resolve() // find-only: no project/log/IAM/git creation
 		builder.devopsBuild = build
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	// No gate: destroy executions run with ApproveForce and never hit approval.
 	resources.Pipeline = NewPipeline(o.ctx, builder, nil, logs, resources.Bucket, o.cloudPrefix, nil)
 	return resources, nil
@@ -687,7 +677,7 @@ func (o *oracleService) PrepareDestroy(resources model.Resources) (model.Resourc
 // DeleteResources tears down the provider-level resources the agent owns. Per-step build
 // pipelines and the git-source/wrapper Vault secrets are already removed by the delete
 // command executor (service/delete.go); this covers everything else: the shared DevOps
-// project (cascading to its repo and pipelines), the approval topic, the service log
+// project (with its repo and pipelines), the approval topic, the service log
 // group, the credentials the agent put on the executing user, the state bucket and — last,
 // because it encrypts the bucket — the KMS vault the agent created and shares with the
 // modules. The KMS vault/key/secrets have no hard delete: they are scheduled for deletion
@@ -702,8 +692,8 @@ func (o *oracleService) DeleteResources(deleteBucket, deleteServiceAccount bool)
 	if err != nil {
 		return err
 	}
-	// DevOps project (cascades to its build-spec repo, build pipelines and approval
-	// deployment pipelines) plus the approval notification topic.
+	// DevOps project with its build-spec repo, build pipelines and approval deployment
+	// pipelines, plus the approval notification topic.
 	if build, err := NewDevOpsBuilder(o.ctx, o.provider, o.region, o.compartmentId, o.cloudPrefix); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to create DevOps builder for teardown: %s", err)))
 	} else {

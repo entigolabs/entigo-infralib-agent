@@ -114,6 +114,7 @@ func (g *gcloudService) SetupMinimalResources() (model.Resources, error) {
 	}
 	return Resources{
 		ProviderType:   model.GCLOUD,
+		ProjectService: projectService,
 		Bucket:         storage,
 		SSM:            sm,
 		BucketName:     bucket,
@@ -151,6 +152,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	}
 	resources := Resources{
 		ProviderType:   model.GCLOUD,
+		ProjectService: projectService,
 		Bucket:         storage,
 		SSM:            sm,
 		BucketName:     bucket,
@@ -184,7 +186,7 @@ func (g *gcloudService) SetupResources(manager model.NotificationManager, config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pipeline: %s", err)
 	}
-	resources.CodeBuild = builder
+	resources.Builder = builder
 	resources.Pipeline = pipeline
 	err = g.createSchedule(config.Schedule, serviceAccount, manager)
 	if err != nil {
@@ -217,8 +219,9 @@ func (g *gcloudService) GetResources() (model.Resources, error) {
 	}
 	g.resources = Resources{
 		ProviderType:   model.GCLOUD,
+		ProjectService: projectService,
 		Bucket:         codeStorage,
-		CodeBuild:      builder,
+		Builder:        builder,
 		Pipeline:       pipeline,
 		CloudPrefix:    g.cloudPrefix,
 		BucketName:     bucket,
