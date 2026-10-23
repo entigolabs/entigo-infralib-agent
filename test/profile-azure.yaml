@@ -1,0 +1,13 @@
+prefix: at
+sources:
+  - url: https://github.com/entigolabs/entigo-infralib-release
+steps:
+  - name: net
+    type: terraform
+    manual_approve_run: never
+    modules:
+      - name: vpc
+        source: azure/vpc
+        inputs:
+          container_apps_subnets: |
+            []
