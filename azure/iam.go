@@ -27,6 +27,8 @@ const (
 
 	principalPropagationTimeout = 3 * time.Minute
 	pollInterval                = 10 * time.Second
+	groupDeletionTimeout        = 30 * time.Minute
+	groupDeletingState          = "Deleting"
 )
 
 type IAM struct {
@@ -84,15 +86,41 @@ func (i *IAM) EnsureResourceGroup() error {
 	return i.CreateResourceGroup()
 }
 
+// ResourceGroupExists waits for a group that is being deleted, since Azure rejects creating
+// a group or resources in it until the deletion finishes.
 func (i *IAM) ResourceGroupExists() (bool, error) {
-	_, err := i.groups.Get(i.ctx, i.resourceGroup, nil)
-	if err == nil {
-		return true, nil
-	}
+	group, err := i.groups.Get(i.ctx, i.resourceGroup, nil)
 	if isNotFound(err) {
 		return false, nil
 	}
-	return false, fmt.Errorf("failed to get resource group %s: %w", i.resourceGroup, err)
+	if err != nil {
+		return false, fmt.Errorf("failed to get resource group %s: %w", i.resourceGroup, err)
+	}
+	if !isDeleting(group.ResourceGroup) {
+		return true, nil
+	}
+	log.Printf("Waiting for resource group %s to be deleted, this can take up to 20 minutes\n", i.resourceGroup)
+	deadline := time.Now().Add(groupDeletionTimeout)
+	for {
+		if err = util.Sleep(i.ctx, pollInterval); err != nil {
+			return false, err
+		}
+		_, err = i.groups.Get(i.ctx, i.resourceGroup, nil)
+		if isNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("failed to get resource group %s: %w", i.resourceGroup, err)
+		}
+		if time.Now().After(deadline) {
+			return false, fmt.Errorf("resource group %s is still being deleted after %s", i.resourceGroup, groupDeletionTimeout)
+		}
+	}
+}
+
+func isDeleting(group armresources.ResourceGroup) bool {
+	return group.Properties != nil && group.Properties.ProvisioningState != nil &&
+		*group.Properties.ProvisioningState == groupDeletingState
 }
 
 func (i *IAM) CreateResourceGroup() error {
@@ -108,8 +136,10 @@ func (i *IAM) CreateResourceGroup() error {
 }
 
 // DeleteResourceGroupIfEmpty keeps a group that still holds resources the agent didn't delete.
-func (i *IAM) DeleteResourceGroupIfEmpty() error {
+// The resource that is already being deleted is ignored, the group deletion waits for it in the background.
+func (i *IAM) DeleteResourceGroupIfEmpty(deleting string) error {
 	pager := i.resources.NewListByResourceGroupPager(i.resourceGroup, nil)
+	remaining := 0
 	for pager.More() {
 		page, err := pager.NextPage(i.ctx)
 		if err != nil {
@@ -118,27 +148,25 @@ func (i *IAM) DeleteResourceGroupIfEmpty() error {
 			}
 			return err
 		}
-		if len(page.Value) > 0 {
-			log.Printf("Resource group %s still has %d resources and will not be deleted\n", i.resourceGroup, len(page.Value))
-			return nil
+		for _, resource := range page.Value {
+			if resource.ID == nil || !strings.EqualFold(*resource.ID, deleting) {
+				remaining++
+			}
 		}
 	}
-	return i.deleteResourceGroup()
-}
-
-func (i *IAM) deleteResourceGroup() error {
-	poller, err := i.groups.BeginDelete(i.ctx, i.resourceGroup, nil)
+	if remaining > 0 {
+		log.Printf("Resource group %s still has %d resources and will not be deleted\n", i.resourceGroup, remaining)
+		return nil
+	}
+	_, err := i.groups.BeginDelete(i.ctx, i.resourceGroup, nil)
+	if isNotFound(err) {
+		return nil
+	}
 	if err != nil {
-		if isNotFound(err) {
-			return nil
-		}
 		return err
 	}
-	_, err = poller.PollUntilDone(i.ctx, nil)
-	if err == nil {
-		log.Printf("Deleted resource group %s\n", i.resourceGroup)
-	}
-	return err
+	log.Printf("Resource group %s is being deleted in the background\n", i.resourceGroup)
+	return nil
 }
 
 func (i *IAM) EnsureIdentity(name string) (identity, error) {

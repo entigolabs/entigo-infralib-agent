@@ -29,8 +29,11 @@ jobs:
           - name: oracle
             args: -run '^TestRunOracle$' ./commands/run/...
             profile: test/profile-oracle.yaml
+          - name: azure
+            args: -run '^TestRunAzure$' ./commands/run/...
+            profile: test/profile-azure.yaml
           - name: unit
-            args: -skip '^TestRunAWS$|^TestRunGCloud$|^TestRunOracle$' ./...
+            args: -skip '^TestRunAWS$|^TestRunGCloud$|^TestRunOracle$|^TestRunAzure$' ./...
             profile: ''
     steps:
       - name: Checkout code
@@ -61,6 +64,11 @@ jobs:
           OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
           OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }} # AppId
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }} # Password
         run: |
           if [ -n "${OCI_CONFIG}" ]; then
             mkdir -p $(echo ~)/.oci
@@ -74,4 +82,4 @@ jobs:
           gcloud config set project $PROJECT_ID
           gcloud auth list
           gcloud config set account $(gcloud auth list --filter=status:ACTIVE --format="value(account)")
-          go test -timeout 35m -v ${{ matrix.args }}
+          go test -timeout 40m -v ${{ matrix.args }}

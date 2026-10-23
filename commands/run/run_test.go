@@ -20,7 +20,8 @@ func TestRunAWS(t *testing.T) {
 		Config:                  "test/profile-aws.yaml",
 		SkipBucketCreationDelay: true,
 		Delete: common.DeleteFlags{
-			DeleteBucket: true,
+			DeleteBucket:     true,
+			SkipConfirmation: true,
 		},
 		Pipeline: common.Pipeline{
 			Type: string(common.PipelineTypeCloud),
@@ -47,7 +48,8 @@ func TestRunGCloud(t *testing.T) {
 		},
 		SkipBucketCreationDelay: true,
 		Delete: common.DeleteFlags{
-			DeleteBucket: true,
+			DeleteBucket:     true,
+			SkipConfirmation: true,
 		},
 		Pipeline: common.Pipeline{
 			Type: string(common.PipelineTypeCloud),
@@ -72,7 +74,32 @@ func TestRunOracle(t *testing.T) {
 		},
 		SkipBucketCreationDelay: true,
 		Delete: common.DeleteFlags{
-			DeleteBucket: true,
+			DeleteBucket:     true,
+			SkipConfirmation: true,
+		},
+		Pipeline: common.Pipeline{
+			Type: string(common.PipelineTypeCloud),
+		},
+	}
+	runTest(t, flags)
+}
+
+func TestRunAzure(t *testing.T) {
+	t.Parallel()
+	if err := common.ChooseLogger(string(common.DebugLogLevel)); err != nil {
+		t.Fatalf("failed to choose logger: %v", err)
+	}
+	test.ChangeRunDir()
+	flags := &common.Flags{
+		Config: "test/profile-azure.yaml",
+		Azure: common.Azure{
+			Location:       os.Getenv(model.AzureRegion),
+			SubscriptionId: os.Getenv(common.AzureSubscriptionIdEnv),
+		},
+		SkipBucketCreationDelay: true,
+		Delete: common.DeleteFlags{
+			DeleteBucket:     true,
+			SkipConfirmation: true,
 		},
 		Pipeline: common.Pipeline{
 			Type: string(common.PipelineTypeCloud),

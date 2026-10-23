@@ -415,11 +415,9 @@ func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) 
 			}
 		}
 	}
-	// Only an empty resource group is deleted, so the environment must be gone first
-	deletesGroup := deleteBucket && a.ownsGroup
 	environment, err := a.newEnvironment()
 	if err == nil {
-		err = environment.Delete(deletesGroup)
+		err = environment.Delete()
 	}
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete container apps environment: %s", err)))
@@ -442,10 +440,10 @@ func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) 
 		return nil
 	}
 	a.deleteVaultAndIdentities(iam)
-	if !deletesGroup {
+	if !a.ownsGroup || environment == nil {
 		return nil
 	}
-	if err = iam.DeleteResourceGroupIfEmpty(); err != nil {
+	if err = iam.DeleteResourceGroupIfEmpty(environment.Id()); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete resource group %s: %s", a.resourceGroup, err)))
 	}
 	return nil
