@@ -347,10 +347,9 @@ func (e *Environment) waitForDeletion() error {
 }
 
 // Delete removes the agent's environment and its workspace. Azure takes up to 20 minutes to
-// delete an environment, so without wait the deletion finishes in the background and the
-// next Ensure waits for it.
-func (e *Environment) Delete(wait bool) error {
-	if err := e.deleteEnvironment(wait); err != nil {
+// delete an environment, so the deletion finishes in the background and the next Ensure waits for it.
+func (e *Environment) Delete() error {
+	if err := e.deleteEnvironment(); err != nil {
 		return err
 	}
 	// Soft-deleted, so a new deployment within 14 days recovers it. A workspace created again
@@ -365,32 +364,18 @@ func (e *Environment) Delete(wait bool) error {
 	return nil
 }
 
-func (e *Environment) deleteEnvironment(wait bool) error {
+func (e *Environment) deleteEnvironment() error {
 	// A diagnostic setting outlives its resource and would apply to a new one with the same
 	// name. Ensure overwrites it anyway, so a failure only leaves it behind.
 	if err := e.deleteDiagnosticSetting(); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete diagnostic setting of container apps environment %s: %s", e.name, err)))
 	}
-	poller, err := e.environments.BeginDelete(e.ctx, e.resourceGroup, e.name, nil)
-	scheduled := errorCode(err) == scheduledForDeleteCode
-	switch {
-	case isNotFound(err):
-		return nil
-	case err != nil && !scheduled:
+	_, err := e.environments.BeginDelete(e.ctx, e.resourceGroup, e.name, nil)
+	if err != nil && !isNotFound(err) && errorCode(err) != scheduledForDeleteCode {
 		return fmt.Errorf("failed to delete container apps environment %s: %w", e.name, err)
-	case !wait:
+	}
+	if !isNotFound(err) {
 		log.Printf("Container apps environment %s is being deleted in the background, this can take up to 20 minutes\n", e.name)
-		return nil
 	}
-	log.Printf("Deleting container apps environment %s, this can take up to 20 minutes\n", e.name)
-	if scheduled {
-		err = e.waitForDeletion()
-	} else {
-		_, err = poller.PollUntilDone(e.ctx, nil)
-	}
-	if err != nil && !isNotFound(err) {
-		return fmt.Errorf("failed to delete container apps environment %s: %w", e.name, err)
-	}
-	log.Printf("Deleted container apps environment %s\n", e.name)
 	return nil
 }
