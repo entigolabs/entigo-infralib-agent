@@ -473,6 +473,7 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	if err != nil {
 		return err
 	}
+	p.cancelPreviousRollouts(pipelineName)
 	pipeChanges, err := p.getChanges(pipelineName, nil, step, planJob, executionName)
 	if err != nil {
 		return err
@@ -510,6 +511,33 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	applying()
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, applyCommand), true)
 	return err
+}
+
+func (p *Pipeline) cancelPreviousRollouts(pipelineName string) {
+	it := p.client.ListRollouts(p.ctx, &deploypb.ListRolloutsRequest{
+		Parent: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/-", p.projectId, p.location, pipelineName),
+		Filter: fmt.Sprintf("state=%q", deploypb.Rollout_PENDING_APPROVAL.String()),
+	})
+	suffix := fmt.Sprintf("/rollouts/%s-rollout-apply", pipelineName)
+	for {
+		rollout, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return
+		}
+		if err != nil {
+			slog.Debug(fmt.Sprintf("Couldn't list pipeline %s rollouts: %s", pipelineName, err.Error()))
+			return
+		}
+		if !strings.HasSuffix(rollout.GetName(), suffix) {
+			continue
+		}
+		slog.Debug(fmt.Sprintf("Cancelling previous pipeline %s rollout\n", pipelineName))
+		_, err = p.client.CancelRollout(p.ctx, &deploypb.CancelRolloutRequest{Name: rollout.GetName()})
+		if err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't cancel previous pipeline %s rollout %s, "+
+				"please cancel it manually, error: %s", pipelineName, rollout.GetName(), err.Error())))
+		}
+	}
 }
 
 func (p *Pipeline) StartDestroyExecution(projectName string, _ model.Step) error {
