@@ -99,6 +99,11 @@ type Resources interface {
 	GetVaultId() (string, error)
 	GetResourceGroup() (string, error)
 	GetProviderDomain() string
+	GetRegistryAuth(registry string) (*SourceAuth, error)
+}
+
+type RegistryAuthResolver interface {
+	GetRegistryAuth(registry string) (*SourceAuth, error)
 }
 
 type Bucket interface {
@@ -199,6 +204,7 @@ type CloudResources struct {
 	Account        string
 	OrganizationId string
 	ProviderDomain string
+	RegistryAuth   RegistryAuthResolver
 }
 
 func (c CloudResources) GetProviderType() ProviderType {
@@ -256,6 +262,13 @@ func (c CloudResources) GetResourceGroup() (string, error) {
 
 func (c CloudResources) GetProviderDomain() string {
 	return c.ProviderDomain
+}
+
+func (c CloudResources) GetRegistryAuth(registry string) (*SourceAuth, error) {
+	if c.RegistryAuth == nil {
+		return nil, nil
+	}
+	return c.RegistryAuth.GetRegistryAuth(registry)
 }
 
 type RepositoryMetadata struct {

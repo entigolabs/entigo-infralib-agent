@@ -30,6 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.78.5
 	github.com/aws/aws-sdk-go-v2/service/codepipeline v1.56.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.72.0
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.56.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.64.4
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.62.1
 	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.41.5
