@@ -102,9 +102,6 @@ type Resources interface {
 	GetRegistryAuth(registry string) (*SourceAuth, error)
 }
 
-// RegistryAuthResolver issues credentials for a container registry the cloud
-// provider can authenticate to with the agent's own session, such as a
-// private Amazon ECR registry. It returns nil for a registry it does not serve.
 type RegistryAuthResolver interface {
 	GetRegistryAuth(registry string) (*SourceAuth, error)
 }
@@ -267,9 +264,6 @@ func (c CloudResources) GetProviderDomain() string {
 	return c.ProviderDomain
 }
 
-// GetRegistryAuth returns credentials for a container registry the provider
-// can authenticate to with the agent's own session, nil for any other registry
-// or when the provider issues none.
 func (c CloudResources) GetRegistryAuth(registry string) (*SourceAuth, error) {
 	if c.RegistryAuth == nil {
 		return nil, nil

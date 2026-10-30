@@ -59,9 +59,7 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 	if err = ValidateConfig(config, nil); err != nil {
 		return nil, fmt.Errorf("failed to validate config: %v", err)
 	}
-	if err = resolveSourcesAuth(config.Sources, resources); err != nil {
-		return nil, err
-	}
+	resolveSourcesAuth(config.Sources, resources)
 	steps, err := getRunnableSteps(config, flags.Steps)
 	if err != nil {
 		return nil, err
@@ -76,6 +74,14 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 		deleteBucket:         flags.Delete.DeleteBucket,
 		deleteServiceAccount: flags.Delete.DeleteServiceAccount,
 	}, nil
+}
+
+func resolveSourcesAuth(sources []model.ConfigSource, resources model.Resources) {
+	for i := range sources {
+		if err := resolveSourceAuth(&sources[i], resources); err != nil {
+			slog.Warn(common.PrefixWarning(err.Error()))
+		}
+	}
 }
 
 func getBaseConfig(prefix, configFile string, bucket model.Bucket) (model.Config, error) {
@@ -142,6 +148,9 @@ func (d *deleter) Destroy() error {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get latest state: %v", err)))
 	}
+	if localPipeline == nil {
+		d.updateSourceSecrets()
+	}
 	for _, step := range slices.Backward(d.steps) {
 		projectName := fmt.Sprintf("%s-%s", d.resources.GetCloudPrefix(), step.Name)
 		log.Printf("Starting destroy execution pipeline for step %s\n", step.Name)
@@ -165,6 +174,18 @@ func (d *deleter) Destroy() error {
 		}
 	}
 	return nil
+}
+
+// updateSourceSecrets refreshes the secrets read by the cloud destroy pipelines, ECR tokens expire in 12 hours.
+func (d *deleter) updateSourceSecrets() {
+	for _, source := range d.config.Sources {
+		if source.Username == "" {
+			continue
+		}
+		if err := upsertSourceCredentials(source, d.resources.GetSSM()); err != nil {
+			slog.Warn(common.PrefixWarning(err.Error()))
+		}
+	}
 }
 
 func (d *deleter) getSourceAuths() map[string]model.SourceAuth {

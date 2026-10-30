@@ -289,11 +289,6 @@ func getWrapperConfig(notifiers []model.ConfigNotification) *model.NotificationA
 	return nil
 }
 
-// resolveSourceAuth fills in the credentials of an OCI source that has none
-// when the cloud provider issues them for its registry: a private Amazon ECR
-// registry, with the agent's own session. From there they take the path of
-// configured credentials, to the agent's own pulls and, through the source
-// secrets, to the steps. A source with a username keeps it.
 func resolveSourceAuth(source *model.ConfigSource, resources model.Resources) error {
 	if source.Username != "" || util.GetSourceType(source.URL) != model.SourceTypeOCI {
 		return nil
@@ -309,16 +304,6 @@ func resolveSourceAuth(source *model.ConfigSource, resources model.Resources) er
 	log.Printf("Using the agent's %s credentials for source %s\n", registry, source.URL)
 	source.Username = auth.Username
 	source.Password = auth.Password
-	return nil
-}
-
-// resolveSourcesAuth is resolveSourceAuth over a config's sources, in place.
-func resolveSourcesAuth(sources []model.ConfigSource, resources model.Resources) error {
-	for i := range sources {
-		if err := resolveSourceAuth(&sources[i], resources); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

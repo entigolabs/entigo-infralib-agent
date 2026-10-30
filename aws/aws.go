@@ -131,7 +131,6 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
 		ProviderDomain: a.providerDomain,
-		RegistryAuth:   NewECR(a.ctx, a.awsConfig),
 	}
 	return a.resources, nil
 }
