@@ -316,7 +316,7 @@ func (p *Pipeline) createDeliveryPipeline(pipelineName string, firstCommand, sec
 }
 
 func (p *Pipeline) waitForReleaseRender(pipelineName string, releaseId string) error {
-	ctx, cancel := context.WithTimeout(p.ctx, 1*time.Minute)
+	ctx, cancel := context.WithTimeout(p.ctx, 3*time.Minute)
 	defer cancel()
 	delay := 1
 	for {
@@ -556,6 +556,7 @@ func (p *Pipeline) waitForPlanRollout(rolloutOp *deploy.CreateRolloutOperation) 
 	if err != nil {
 		return err
 	}
+	retried := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -578,11 +579,55 @@ func (p *Pipeline) waitForPlanRollout(rolloutOp *deploy.CreateRolloutOperation) 
 				continue
 			case deploypb.Rollout_SUCCEEDED:
 				return nil
-			default:
-				return fmt.Errorf("rollout failed: %s", rollout.GetState())
 			}
+			if !retried && rollout.GetState() == deploypb.Rollout_FAILED && p.retryRollout(ctx, rollout) {
+				retried = true
+				time.Sleep(pollingDelay * time.Second)
+				continue
+			}
+			return rolloutError(rollout)
 		}
 	}
+}
+
+func (p *Pipeline) retryRollout(ctx context.Context, rollout *deploypb.Rollout) bool {
+	for _, phase := range rollout.GetPhases() {
+		jobs := phase.GetDeploymentJobs()
+		for _, job := range []*deploypb.Job{jobs.GetPredeployJob(), jobs.GetDeployJob(), jobs.GetVerifyJob(), jobs.GetPostdeployJob()} {
+			if job.GetState() != deploypb.Job_FAILED {
+				continue
+			}
+			log.Printf("Rollout %s job %s failed, retrying: %s\n", rollout.GetName(), job.GetId(), p.jobFailureMessage(ctx, rollout, job))
+			_, err := p.client.RetryJob(ctx, &deploypb.RetryJobRequest{
+				Rollout: rollout.GetName(),
+				PhaseId: phase.GetId(),
+				JobId:   job.GetId(),
+			})
+			if err != nil {
+				slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't retry rollout %s job %s: %s", rollout.GetName(), job.GetId(), err.Error())))
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Pipeline) jobFailureMessage(ctx context.Context, rollout *deploypb.Rollout, job *deploypb.Job) string {
+	if job.GetJobRun() != "" {
+		jobRun, err := p.client.GetJobRun(ctx, &deploypb.GetJobRunRequest{Name: job.GetJobRun()})
+		if err == nil && jobRun.GetDeployJobRun().GetFailureMessage() != "" {
+			return jobRun.GetDeployJobRun().GetFailureMessage()
+		}
+	}
+	return rollout.GetFailureReason()
+}
+
+func rolloutError(rollout *deploypb.Rollout) error {
+	if reason := rollout.GetFailureReason(); reason != "" {
+		return fmt.Errorf("rollout failed: %s: %s", rollout.GetState(), reason)
+	}
+	return fmt.Errorf("rollout failed: %s", rollout.GetState())
 }
 
 func (p *Pipeline) approver(rolloutName string) model.Approver {
@@ -604,6 +649,7 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 	}
 	approved := false
 	notified := false
+	retried := false
 	var wait model.ApprovalWait
 	defer func() {
 		if wait != nil {
@@ -676,10 +722,15 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 				time.Sleep(pollingDelay * time.Second)
 				continue
 			}
-			if rollout.GetState() != deploypb.Rollout_SUCCEEDED {
-				return fmt.Errorf("rollout failed: %s", rollout.GetState())
+			if rollout.GetState() == deploypb.Rollout_SUCCEEDED {
+				return nil
 			}
-			return nil
+			if !retried && rollout.GetState() == deploypb.Rollout_FAILED && p.retryRollout(ctx, rollout) {
+				retried = true
+				time.Sleep(pollingDelay * time.Second)
+				continue
+			}
+			return rolloutError(rollout)
 		}
 	}
 }
