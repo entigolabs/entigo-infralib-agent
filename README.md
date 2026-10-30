@@ -403,6 +403,8 @@ On Azure the account is a managed identity `<prefix>-sa` with Contributor, Key V
 
 Optionally, prefix will be used to pull the config and config is used to check for an encryption module. If present, the created key will be encrypted with customer encryption. More info in [Encryption](#encryption).
 
+On AWS the config sources are used to grant pull access to private Amazon ECR sources without a username, scoped to the repositories under the source path. When only prefix is given and the bucket or its config doesn't exist, no ECR access is granted. Rerun the command after adding such a source.
+
 OPTIONS:
 * config - config file path and name, only needed when overriding an existing config [$CONFIG]
 * prefix - prefix used when creating cloud resources [$PREFIX]

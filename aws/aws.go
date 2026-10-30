@@ -574,11 +574,16 @@ func (a *awsService) deleteIAMRoles() {
 	}
 }
 
-func (a *awsService) CreateServiceAccount(SAFlags common.ServiceAccount) error {
+func (a *awsService) CreateServiceAccount(SAFlags common.ServiceAccount, getConfig model.ConfigGetter) error {
 	username := fmt.Sprintf("%s-service-account-%s", a.cloudPrefix, a.awsConfig.Region)
 	bucket := a.getBucketName()
 	bucketArn := fmt.Sprintf(bucketArnFormat, bucket)
-	policyStatement := ServiceAccountPolicy(bucketArn, a.cloudPrefix, a.accountId, a.awsConfig.Region, a.getBuildRoleName(), a.getPipelineRoleName(), a.getScheduleRoleName())
+	config, err := getConfig(NewS3(a.ctx, a.awsConfig, bucket))
+	if err = checkNotFoundError(err); err != nil {
+		return fmt.Errorf("failed to get config: %w", err)
+	}
+	policyStatement := ServiceAccountPolicy(bucketArn, a.cloudPrefix, a.accountId, a.awsConfig.Region, a.getBuildRoleName(),
+		a.getPipelineRoleName(), a.getScheduleRoleName(), ecrRepositoryArns(config.Sources))
 	iam := NewIAM(a.ctx, a.awsConfig, a.accountId)
 
 	policy, err := iam.GetPolicy(username)

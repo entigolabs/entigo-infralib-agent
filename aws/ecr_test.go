@@ -2,7 +2,10 @@ package aws
 
 import (
 	"encoding/base64"
+	"slices"
 	"testing"
+
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 func TestECRRegistryRegion(t *testing.T) {
@@ -46,5 +49,23 @@ func TestDecodeECRAuthorizationToken(t *testing.T) {
 		if _, _, err := decodeECRAuthorizationToken(token); err == nil {
 			t.Errorf("decodeECRAuthorizationToken(%q) expected an error", token)
 		}
+	}
+}
+
+func TestECRRepositoryArns(t *testing.T) {
+	arns := ecrRepositoryArns([]model.ConfigSource{
+		{URL: "oci://123456789012.dkr.ecr.eu-north-1.amazonaws.com/entigolabs/release"},
+		{URL: "oci://123456789012.dkr.ecr.eu-north-1.amazonaws.com/entigolabs/release/"},
+		{URL: "oci://210987654321.dkr.ecr.us-east-1.amazonaws.com"},
+		{URL: "oci://123456789012.dkr.ecr.eu-north-1.amazonaws.com/private", Username: "user"},
+		{URL: "oci://ghcr.io/entigolabs/entigo-infralib-release"},
+		{URL: "https://github.com/entigolabs/entigo-infralib-release"},
+	})
+	want := []string{
+		"arn:aws:ecr:eu-north-1:123456789012:repository/entigolabs/release/*",
+		"arn:aws:ecr:us-east-1:210987654321:repository/*",
+	}
+	if !slices.Equal(arns, want) {
+		t.Errorf("ecrRepositoryArns() = %v, want %v", arns, want)
 	}
 }

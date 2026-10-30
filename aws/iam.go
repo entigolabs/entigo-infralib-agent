@@ -562,8 +562,8 @@ func CodePipelinePolicy(s3Arn string) []PolicyStatement {
 	}
 }
 
-func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName string) []PolicyStatement {
-	return []PolicyStatement{CodePipelineS3Policy(s3Arn),
+func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipelineRoleName, scheduleRoleName string, ecrRepositoryArns []string) []PolicyStatement {
+	statements := []PolicyStatement{CodePipelineS3Policy(s3Arn),
 		{
 			Effect:   "Allow",
 			Resource: []string{fmt.Sprintf("arn:aws:codebuild:%s:%s:project/%s-*", region, accountId, prefix)},
@@ -692,6 +692,24 @@ func ServiceAccountPolicy(s3Arn, prefix, accountId, region, buildRoleName, pipel
 			},
 		},
 	}
+	if len(ecrRepositoryArns) == 0 {
+		return statements
+	}
+	return append(statements, PolicyStatement{
+		Effect:   "Allow",
+		Resource: []string{"*"},
+		Action:   []string{"ecr:GetAuthorizationToken"},
+	}, PolicyStatement{
+		Effect:   "Allow",
+		Resource: ecrRepositoryArns,
+		Action: []string{
+			"ecr:BatchCheckLayerAvailability",
+			"ecr:BatchGetImage",
+			"ecr:GetDownloadUrlForLayer",
+			"ecr:DescribeImages",
+			"ecr:ListImages",
+		},
+	})
 }
 
 func CodePipelineS3Policy(s3Arn string) PolicyStatement {

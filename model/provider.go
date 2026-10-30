@@ -72,7 +72,7 @@ type CloudProvider interface {
 	GetResources() (Resources, error)
 	PrepareDestroy(resources Resources) (Resources, error)
 	DeleteResources(deleteBucket bool, deleteServiceAccount bool) error
-	CreateServiceAccount(SAFlags common.ServiceAccount) error
+	CreateServiceAccount(SAFlags common.ServiceAccount, getConfig ConfigGetter) error
 	AddEncryption(moduleName string, outputs map[string]TFOutput) error
 	IsRunningLocally() bool
 }
@@ -101,6 +101,9 @@ type Resources interface {
 	GetProviderDomain() string
 	GetRegistryAuth(registry string) (*SourceAuth, error)
 }
+
+// ConfigGetter returns the config, the bucket is used when no local config file is given.
+type ConfigGetter func(bucket Bucket) (Config, error)
 
 type RegistryAuthResolver interface {
 	GetRegistryAuth(registry string) (*SourceAuth, error)

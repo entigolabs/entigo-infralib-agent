@@ -111,6 +111,25 @@ func GetLocalConfig(ssm model.SSM, prefix, configFile string, bucket model.Bucke
 	return config, nil
 }
 
+// GetConfigGetter reads the config from the local config file or, when it's not given, from the bucket.
+// A missing config in the bucket returns an empty config.
+func GetConfigGetter(configFile string) model.ConfigGetter {
+	return func(bucket model.Bucket) (model.Config, error) {
+		if configFile != "" {
+			return getLocalConfigFile(configFile)
+		}
+		var config model.Config
+		bytes, err := bucket.GetFile(ConfigFile)
+		if err != nil || bytes == nil {
+			return config, err
+		}
+		if err = yaml.Unmarshal(bytes, &config); err != nil {
+			return config, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+		return config, nil
+	}
+}
+
 func getLocalConfigFile(configFile string) (model.Config, error) {
 	fileBytes, err := os.ReadFile(configFile)
 	if err != nil {

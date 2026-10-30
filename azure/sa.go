@@ -9,6 +9,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/entigolabs/entigo-infralib-agent/common"
+	"github.com/entigolabs/entigo-infralib-agent/model"
 )
 
 const (
@@ -39,7 +40,7 @@ var serviceAccountRoles = []string{roleContributor, roleKeyVaultAdministrator, r
 // CreateServiceAccount creates a managed identity for external CI/CD. A managed identity
 // has no secrets, so the CI/CD system signs in with its own OIDC token through a
 // federated credential, which is why the trust role is required.
-func (a *azureService) CreateServiceAccount(SAFlags common.ServiceAccount) error {
+func (a *azureService) CreateServiceAccount(SAFlags common.ServiceAccount, _ model.ConfigGetter) error {
 	if SAFlags.TrustRole == "" {
 		return errors.New("azure service accounts authenticate with OIDC, trust-role \"<issuer url>|<subject>\" must be set")
 	}

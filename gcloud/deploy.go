@@ -417,6 +417,12 @@ func (p *Pipeline) UpdatePipeline(projectName string, stepName string, step mode
 
 func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, _ model.Step, bucket string) (*string, error) {
 	log.Printf("Starting pipeline %s\n", pipelineName)
+	releaseId, err := p.createRelease(pipelineName, fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName)),
+		fmt.Sprintf("%s/%s.yaml", stepName, pipelineName))
+	return &releaseId, err
+}
+
+func (p *Pipeline) createRelease(pipelineName, skaffoldConfigUri, skaffoldConfigPath string) (string, error) {
 	prefix := pipelineName
 	if len(prefix) > 26 { // Max length for id is 63, uuid v4 is 36 chars plus hyphen, 63 - 37 = 26
 		prefix = prefix[:26]
@@ -426,15 +432,26 @@ func (p *Pipeline) StartPipelineExecution(pipelineName string, stepName string, 
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s", p.projectId, p.location, pipelineName),
 		ReleaseId: releaseId,
 		Release: &deploypb.Release{
-			SkaffoldConfigUri:  fmt.Sprintf("gs://%s/%s", bucket, fmt.Sprintf(bucketFileFormat, stepName)),
-			SkaffoldConfigPath: fmt.Sprintf("%s/%s.yaml", stepName, pipelineName),
+			SkaffoldConfigUri:  skaffoldConfigUri,
+			SkaffoldConfigPath: skaffoldConfigPath,
 		},
 	})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	_, err = releaseOp.Wait(p.ctx) // Wait for release creation, otherwise wait loop will fail
-	return &releaseId, err
+	return releaseId, err
+}
+
+func (p *Pipeline) recreateRelease(pipelineName, releaseId string) (string, error) {
+	release, err := p.client.GetRelease(p.ctx, &deploypb.GetReleaseRequest{
+		Name: fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location,
+			pipelineName, releaseId),
+	})
+	if err != nil {
+		return "", err
+	}
+	return p.createRelease(pipelineName, release.GetSkaffoldConfigUri(), release.GetSkaffoldConfigPath())
 }
 
 func (p *Pipeline) StartAgentExecution(pipelineName string) error {
@@ -447,23 +464,16 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		return fmt.Errorf("release id is nil")
 	}
 	log.Printf("Waiting for pipeline %s to complete\n", pipelineName)
-	err := p.waitForReleaseRender(pipelineName, *releaseId)
-	if err != nil {
-		return err
+	err := p.renderAndPlan(pipelineName, *releaseId)
+	if err != nil && p.ctx.Err() == nil {
+		log.Printf("Pipeline %s release %s failed, retrying with a new release: %s\n", pipelineName, *releaseId, err)
+		var newReleaseId string
+		newReleaseId, err = p.recreateRelease(pipelineName, *releaseId)
+		if err == nil {
+			releaseId = &newReleaseId
+			err = p.renderAndPlan(pipelineName, newReleaseId)
+		}
 	}
-	rolloutId := fmt.Sprintf("%s-rollout-plan", pipelineName)
-	rollout, err := p.client.CreateRollout(p.ctx, &deploypb.CreateRolloutRequest{
-		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
-		RolloutId: rolloutId,
-		Rollout: &deploypb.Rollout{
-			TargetId: fmt.Sprintf("%s-plan", p.cloudPrefix),
-		},
-	})
-	if err != nil {
-		return err
-	}
-	slog.Debug(fmt.Sprintf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId))
-	err = p.waitForPlanRollout(rollout)
 	if err != nil {
 		return err
 	}
@@ -492,8 +502,8 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 		}
 		return nil
 	}
-	rolloutId = fmt.Sprintf("%s-rollout-apply", pipelineName)
-	rollout, err = p.client.CreateRollout(p.ctx, &deploypb.CreateRolloutRequest{
+	rolloutId := fmt.Sprintf("%s-rollout-apply", pipelineName)
+	rollout, err := p.client.CreateRollout(p.ctx, &deploypb.CreateRolloutRequest{
 		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, *releaseId),
 		RolloutId: rolloutId,
 		Rollout: &deploypb.Rollout{
@@ -511,6 +521,26 @@ func (p *Pipeline) WaitPipelineExecution(pipelineName string, projectName string
 	applying()
 	_, err = p.builder.executeJob(fmt.Sprintf("%s-%s", projectName, applyCommand), true)
 	return err
+}
+
+func (p *Pipeline) renderAndPlan(pipelineName, releaseId string) error {
+	err := p.waitForReleaseRender(pipelineName, releaseId)
+	if err != nil {
+		return err
+	}
+	rolloutId := fmt.Sprintf("%s-rollout-plan", pipelineName)
+	rollout, err := p.client.CreateRollout(p.ctx, &deploypb.CreateRolloutRequest{
+		Parent:    fmt.Sprintf("projects/%s/locations/%s/deliveryPipelines/%s/releases/%s", p.projectId, p.location, pipelineName, releaseId),
+		RolloutId: rolloutId,
+		Rollout: &deploypb.Rollout{
+			TargetId: fmt.Sprintf("%s-plan", p.cloudPrefix),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	slog.Debug(fmt.Sprintf("Waiting for pipeline %s rollout %s to finish\n", pipelineName, rolloutId))
+	return p.waitForPlanRollout(rollout)
 }
 
 func (p *Pipeline) cancelPreviousRollouts(pipelineName string) {
@@ -556,7 +586,6 @@ func (p *Pipeline) waitForPlanRollout(rolloutOp *deploy.CreateRolloutOperation) 
 	if err != nil {
 		return err
 	}
-	retried := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -579,55 +608,43 @@ func (p *Pipeline) waitForPlanRollout(rolloutOp *deploy.CreateRolloutOperation) 
 				continue
 			case deploypb.Rollout_SUCCEEDED:
 				return nil
+			default:
+				return p.rolloutError(ctx, rollout)
 			}
-			if !retried && rollout.GetState() == deploypb.Rollout_FAILED && p.retryRollout(ctx, rollout) {
-				retried = true
-				time.Sleep(pollingDelay * time.Second)
-				continue
-			}
-			return rolloutError(rollout)
 		}
 	}
 }
 
-func (p *Pipeline) retryRollout(ctx context.Context, rollout *deploypb.Rollout) bool {
+func (p *Pipeline) rolloutError(ctx context.Context, rollout *deploypb.Rollout) error {
+	reason := p.failedJobMessage(ctx, rollout)
+	if reason == "" {
+		reason = rollout.GetFailureReason()
+	}
+	if reason == "" {
+		return fmt.Errorf("rollout failed: %s", rollout.GetState())
+	}
+	return fmt.Errorf("rollout failed: %s: %s", rollout.GetState(), reason)
+}
+
+func (p *Pipeline) failedJobMessage(ctx context.Context, rollout *deploypb.Rollout) string {
 	for _, phase := range rollout.GetPhases() {
 		jobs := phase.GetDeploymentJobs()
 		for _, job := range []*deploypb.Job{jobs.GetPredeployJob(), jobs.GetDeployJob(), jobs.GetVerifyJob(), jobs.GetPostdeployJob()} {
-			if job.GetState() != deploypb.Job_FAILED {
+			if job.GetState() != deploypb.Job_FAILED || job.GetJobRun() == "" {
 				continue
 			}
-			log.Printf("Rollout %s job %s failed, retrying: %s\n", rollout.GetName(), job.GetId(), p.jobFailureMessage(ctx, rollout, job))
-			_, err := p.client.RetryJob(ctx, &deploypb.RetryJobRequest{
-				Rollout: rollout.GetName(),
-				PhaseId: phase.GetId(),
-				JobId:   job.GetId(),
-			})
+			jobRun, err := p.client.GetJobRun(ctx, &deploypb.GetJobRunRequest{Name: job.GetJobRun()})
 			if err != nil {
-				slog.Warn(common.PrefixWarning(fmt.Sprintf("Couldn't retry rollout %s job %s: %s", rollout.GetName(), job.GetId(), err.Error())))
-				return false
+				slog.Debug(fmt.Sprintf("Couldn't get rollout %s job run %s: %s", rollout.GetName(), job.GetJobRun(), err.Error()))
+				return ""
 			}
-			return true
+			deployRun := jobRun.GetDeployJobRun()
+			slog.Debug(fmt.Sprintf("Rollout %s job %s failed with cause %s, build %s", rollout.GetName(), job.GetId(),
+				deployRun.GetFailureCause(), deployRun.GetBuild()))
+			return deployRun.GetFailureMessage()
 		}
 	}
-	return false
-}
-
-func (p *Pipeline) jobFailureMessage(ctx context.Context, rollout *deploypb.Rollout, job *deploypb.Job) string {
-	if job.GetJobRun() != "" {
-		jobRun, err := p.client.GetJobRun(ctx, &deploypb.GetJobRunRequest{Name: job.GetJobRun()})
-		if err == nil && jobRun.GetDeployJobRun().GetFailureMessage() != "" {
-			return jobRun.GetDeployJobRun().GetFailureMessage()
-		}
-	}
-	return rollout.GetFailureReason()
-}
-
-func rolloutError(rollout *deploypb.Rollout) error {
-	if reason := rollout.GetFailureReason(); reason != "" {
-		return fmt.Errorf("rollout failed: %s: %s", rollout.GetState(), reason)
-	}
-	return fmt.Errorf("rollout failed: %s", rollout.GetState())
+	return ""
 }
 
 func (p *Pipeline) approver(rolloutName string) model.Approver {
@@ -649,7 +666,6 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 	}
 	approved := false
 	notified := false
-	retried := false
 	var wait model.ApprovalWait
 	defer func() {
 		if wait != nil {
@@ -722,15 +738,10 @@ func (p *Pipeline) waitForApplyRollout(rolloutOp *deploy.CreateRolloutOperation,
 				time.Sleep(pollingDelay * time.Second)
 				continue
 			}
-			if rollout.GetState() == deploypb.Rollout_SUCCEEDED {
-				return nil
+			if rollout.GetState() != deploypb.Rollout_SUCCEEDED {
+				return p.rolloutError(ctx, rollout)
 			}
-			if !retried && rollout.GetState() == deploypb.Rollout_FAILED && p.retryRollout(ctx, rollout) {
-				retried = true
-				time.Sleep(pollingDelay * time.Second)
-				continue
-			}
-			return rolloutError(rollout)
+			return nil
 		}
 	}
 }

@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/entigolabs/entigo-infralib-agent/model"
+	"github.com/entigolabs/entigo-infralib-agent/util"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -73,6 +75,29 @@ func (e *ECR) getAuthorizationToken(registry, region string) (*model.SourceAuth,
 		return nil, fmt.Errorf("invalid ECR authorization token for %s: %w", registry, err)
 	}
 	return &model.SourceAuth{Username: username, Password: password}, nil
+}
+
+// ecrRepositoryArns returns the repositories of private ECR sources that use the agent's credentials. A source
+// is a namespace, the agent pulls <path>/index and the modules and charts from repositories under it.
+func ecrRepositoryArns(sources []model.ConfigSource) []string {
+	var arns []string
+	for _, source := range sources {
+		if source.Username != "" || util.GetSourceType(source.URL) != model.SourceTypeOCI {
+			continue
+		}
+		registry, path, _ := strings.Cut(util.TrimOCIScheme(source.URL), "/")
+		region, ok := ecrRegistryRegion(registry)
+		if !ok {
+			continue
+		}
+		repository := "*"
+		if path != "" {
+			repository = path + "/*"
+		}
+		arns = append(arns, fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", region, registry[:12], repository))
+	}
+	slices.Sort(arns)
+	return slices.Compact(arns)
 }
 
 func ecrRegistryRegion(registry string) (string, bool) {

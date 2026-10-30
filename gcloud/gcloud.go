@@ -408,7 +408,7 @@ func getBucketName(cloudPrefix, projectId, location string) string {
 	return fmt.Sprintf("%s-%s-%s", cloudPrefix, projectId, location)
 }
 
-func (g *gcloudService) CreateServiceAccount(SAFlags common.ServiceAccount) error {
+func (g *gcloudService) CreateServiceAccount(SAFlags common.ServiceAccount, _ model.ConfigGetter) error {
 	username := fmt.Sprintf("%s-sa-%s", g.cloudPrefix, g.location)
 	if len(username) > 30 {
 		return fmt.Errorf("service account name %s is too long, must be fewer than 30 characters", username)

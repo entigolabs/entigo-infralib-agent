@@ -765,7 +765,7 @@ func (o *oracleService) deleteCredentialSecrets() {
 // (cicdServiceAccountStatements) — NOT the bootstrap's policy management or
 // KMS/bucket-creation privileges. OCI has no impersonation, so TrustRole is ignored;
 // the policy is reconciled every invocation, so re-running tightens it in place.
-func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount) error {
+func (o *oracleService) CreateServiceAccount(saFlags common.ServiceAccount, _ model.ConfigGetter) error {
 	iam, err := NewIAM(o.ctx, o.provider, o.region, o.compartmentId)
 	if err != nil {
 		return err
