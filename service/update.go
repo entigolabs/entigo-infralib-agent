@@ -87,7 +87,7 @@ func NewUpdater(ctx context.Context, flags *common.Flags, resources model.Resour
 	if err != nil {
 		return nil, err
 	}
-	sources, moduleSources, err := createSources(ctx, steps, config, state, resources.GetSSM())
+	sources, moduleSources, err := createSources(ctx, steps, config, state, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -167,9 +167,13 @@ func getRunnableSteps(config model.Config, stepsFlag []string) ([]model.Step, er
 	return runnableSteps, nil
 }
 
-func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, ssm model.SSM) (map[model.SourceKey]*model.Source, map[string]model.SourceKey, error) {
+func createSources(ctx context.Context, steps []model.Step, config model.Config, state *model.State, resources model.Resources) (map[model.SourceKey]*model.Source, map[string]model.SourceKey, error) {
 	sources := make(map[model.SourceKey]*model.Source)
+	ssm := resources.GetSSM()
 	for _, source := range config.Sources {
+		if err := resolveSourceAuth(&source, resources); err != nil {
+			return nil, nil, err
+		}
 		storage, stableVersion, err := getSourceStorage(ctx, source, config.Certs)
 		if err != nil {
 			return nil, nil, err
@@ -281,6 +285,39 @@ func getWrapperConfig(notifiers []model.ConfigNotification) *model.NotificationA
 			continue
 		}
 		return notifier.Api
+	}
+	return nil
+}
+
+// resolveSourceAuth fills in the credentials of an OCI source that has none
+// when the cloud provider issues them for its registry: a private Amazon ECR
+// registry, with the agent's own session. From there they take the path of
+// configured credentials, to the agent's own pulls and, through the source
+// secrets, to the steps. A source with a username keeps it.
+func resolveSourceAuth(source *model.ConfigSource, resources model.Resources) error {
+	if source.Username != "" || util.GetSourceType(source.URL) != model.SourceTypeOCI {
+		return nil
+	}
+	registry := ociHost(source.URL)
+	auth, err := resources.GetRegistryAuth(registry)
+	if err != nil {
+		return fmt.Errorf("failed to get registry credentials for source %s: %w", source.URL, err)
+	}
+	if auth == nil {
+		return nil
+	}
+	log.Printf("Using the agent's %s credentials for source %s\n", registry, source.URL)
+	source.Username = auth.Username
+	source.Password = auth.Password
+	return nil
+}
+
+// resolveSourcesAuth is resolveSourceAuth over a config's sources, in place.
+func resolveSourcesAuth(sources []model.ConfigSource, resources model.Resources) error {
+	for i := range sources {
+		if err := resolveSourceAuth(&sources[i], resources); err != nil {
+			return err
+		}
 	}
 	return nil
 }

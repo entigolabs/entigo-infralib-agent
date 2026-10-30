@@ -131,6 +131,7 @@ func (a *awsService) SetupMinimalResources() (model.Resources, error) {
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
 		ProviderDomain: a.providerDomain,
+		RegistryAuth:   NewECR(a.ctx, a.awsConfig),
 	}
 	return a.resources, nil
 }
@@ -162,6 +163,7 @@ func (a *awsService) SetupResources(manager model.NotificationManager, config mo
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
 		ProviderDomain: a.providerDomain,
+		RegistryAuth:   NewECR(a.ctx, a.awsConfig),
 		DynamoDBTable:  *dynamoDBTable.TableName,
 		IAM:            iam,
 	}
@@ -216,6 +218,7 @@ func (a *awsService) GetResources() (model.Resources, error) {
 		Account:        a.accountId,
 		OrganizationId: a.organizationId,
 		ProviderDomain: a.providerDomain,
+		RegistryAuth:   NewECR(a.ctx, a.awsConfig),
 		IAM:            NewIAM(a.ctx, a.awsConfig, a.accountId),
 		CloudWatch:     cloudwatch,
 	}

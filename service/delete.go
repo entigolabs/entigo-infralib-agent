@@ -59,6 +59,9 @@ func NewDeleter(ctx context.Context, flags *common.Flags) (Deleter, error) {
 	if err = ValidateConfig(config, nil); err != nil {
 		return nil, fmt.Errorf("failed to validate config: %v", err)
 	}
+	if err = resolveSourcesAuth(config.Sources, resources); err != nil {
+		return nil, err
+	}
 	steps, err := getRunnableSteps(config, flags.Steps)
 	if err != nil {
 		return nil, err
