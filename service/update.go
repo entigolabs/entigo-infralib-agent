@@ -335,12 +335,7 @@ func addSourceModules(steps []model.Step, configSources []model.ConfigSource, so
 			if !moduleSources[module.Source].IsEmpty() {
 				continue
 			}
-			moduleState := GetModuleState(stepState, module.Name)
-			appliedVersion := ""
-			if moduleState != nil && moduleState.AppliedVersion != nil {
-				appliedVersion = *moduleState.AppliedVersion
-			}
-			moduleSource, err := getModuleSource(configSources, step, module, sources, appliedVersion)
+			moduleSource, err := getModuleSource(configSources, step, module, sources, GetModuleState(stepState, module.Name))
 			if err != nil {
 				return nil, fmt.Errorf("module %s in step %s source not found: %v", module.Name, step.Name, err)
 			}
@@ -350,15 +345,17 @@ func addSourceModules(steps []model.Step, configSources []model.ConfigSource, so
 	return moduleSources, nil
 }
 
-func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[model.SourceKey]*model.Source, appliedVersion string) (model.SourceKey, error) {
+func getModuleSource(configSources []model.ConfigSource, step model.Step, module model.Module, sources map[model.SourceKey]*model.Source, moduleState *model.StateModule) (model.SourceKey, error) {
 	for _, configSource := range configSources {
 		sourceKey := configSource.GetSourceKey()
 		source := sources[sourceKey]
+		appliedVersion := getAppliedVersion(moduleState, source.URL)
+		fallbackVersion := getFallbackVersion(configSource, source, module, moduleState)
 		if len(source.Includes) > 0 {
 			if !source.Includes.Contains(module.Source) {
 				continue
 			}
-			err := moduleMustExist(source, step.Type, module, appliedVersion)
+			err := moduleMustExist(source, step.Type, module, appliedVersion, fallbackVersion)
 			if err != nil {
 				return model.SourceKey{}, err
 			}
@@ -368,7 +365,7 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 		if source.Excludes.Contains(module.Source) {
 			continue
 		}
-		exists, err := moduleExists(source, step.Type, module, appliedVersion)
+		exists, err := moduleExists(source, step.Type, module, appliedVersion, fallbackVersion)
 		if err != nil {
 			return model.SourceKey{}, err
 		}
@@ -380,8 +377,36 @@ func getModuleSource(configSources []model.ConfigSource, step model.Step, module
 	return model.SourceKey{}, fmt.Errorf("no source contains module %s", module.Source)
 }
 
-func moduleMustExist(source *model.Source, stepType model.StepType, module model.Module, version string) error {
-	exists, err := moduleExists(source, stepType, module, version)
+func getAppliedVersion(moduleState *model.StateModule, sourceURL string) string {
+	if moduleState == nil || moduleState.AppliedVersion == nil || moduleSourceChanged(moduleState.Source, sourceURL) {
+		return ""
+	}
+	return *moduleState.AppliedVersion
+}
+
+// getFallbackVersion returns the version the module would be deployed with. Applied modules keep
+// checking the latest release so that existing environments don't switch module sources.
+func getFallbackVersion(configSource model.ConfigSource, source *model.Source, module model.Module, moduleState *model.StateModule) string {
+	if (moduleState == nil || moduleState.AppliedVersion == nil) && module.Version != StableVersion {
+		if module.Version != "" {
+			return getFormattedVersionString(module.Version)
+		}
+		if configSource.Version != "" && configSource.Version != StableVersion {
+			return getFormattedVersionString(configSource.Version)
+		}
+	}
+	return getStableVersion(source)
+}
+
+func getStableVersion(source *model.Source) string {
+	if source.StableVersion == nil {
+		return ""
+	}
+	return source.StableVersion.Original()
+}
+
+func moduleMustExist(source *model.Source, stepType model.StepType, module model.Module, version, fallbackVersion string) error {
+	exists, err := moduleExists(source, stepType, module, version, fallbackVersion)
 	if err != nil {
 		return err
 	}
@@ -403,7 +428,7 @@ func getModulePath(stepType model.StepType, moduleSource string) string {
 	return fmt.Sprintf("modules/%s", moduleSource)
 }
 
-func moduleExists(source *model.Source, stepType model.StepType, module model.Module, version string) (bool, error) {
+func moduleExists(source *model.Source, stepType model.StepType, module model.Module, version, fallbackVersion string) (bool, error) {
 	moduleKey := getModulePath(stepType, module.Source)
 	if source.ForcedVersion != "" {
 		exists, err := source.Storage.PathExists(moduleKey, source.ForcedVersion)
@@ -413,24 +438,18 @@ func moduleExists(source *model.Source, stepType model.StepType, module model.Mo
 		}
 		return exists, nil
 	}
-	if version != "" {
-		exists, err := source.Storage.PathExists(moduleKey, version)
-		if err != nil {
-			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %w",
-				module.Name, source.URL, version, err)
+	for _, release := range []string{version, fallbackVersion} {
+		if release == "" {
+			continue
 		}
-		if exists {
-			return true, nil
-		}
-	}
-	if source.StableVersion != nil {
-		release := source.StableVersion.Original()
 		exists, err := source.Storage.PathExists(moduleKey, release)
 		if err != nil {
 			return false, fmt.Errorf("failed to check if module %s exists in source %s with version %s: %w",
 				module.Name, source.URL, release, err)
 		}
-		return exists, nil
+		if exists {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -1852,7 +1871,7 @@ func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateSt
 				return nil, err
 			}
 			if changed {
-				if err = moduleMustExist(source, step.Type, module, moduleVersion); err != nil {
+				if err = moduleMustExist(source, step.Type, module, moduleVersion, getStableVersion(source)); err != nil {
 					return nil, err
 				}
 			}

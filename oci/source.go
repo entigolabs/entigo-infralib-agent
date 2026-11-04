@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/go-version"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/retry"
@@ -212,6 +213,9 @@ func (s *SourceClient) FileExists(path, release string) bool {
 
 func (s *SourceClient) PathExists(path, release string) (bool, error) {
 	dir, err := s.ensureExtracted(release)
+	if errors.Is(err, errdef.ErrNotFound) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
