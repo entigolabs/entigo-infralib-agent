@@ -47,7 +47,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.27.0
 	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/hcl/v2 v2.25.0
-	github.com/oapi-codegen/runtime v1.7.0
+	github.com/oapi-codegen/runtime v1.8.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/oracle/oci-go-sdk/v65 v65.128.0
 	github.com/sigstore/protobuf-specs v0.5.2
