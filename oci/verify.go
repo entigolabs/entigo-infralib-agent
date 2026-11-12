@@ -58,22 +58,26 @@ type Verifier interface {
 }
 
 // SignerRepositories returns the GitHub repositories whose release may sign
-// the OCI source, derived from its path by naming convention: a source
-// <registry>/<org>/<name>-release is released from github.com/<org>/<name> or
-// github.com/<org>/<name>-source. It returns nil when the source does not
-// follow the convention and so has no known signer.
+// the OCI source, derived from the last two segments of its path by naming
+// convention: a source <registry>/<org>/<name>-release is released from
+// github.com/<org>/<name> or github.com/<org>/<name>-source, any other source
+// <registry>/<org>/<name> from github.com/<org>/<name> itself. It returns nil
+// when the path has no <org>/<name> to derive a signer from.
 func SignerRepositories(source string) []string {
 	parts := strings.Split(strings.TrimSuffix(source, "/"), "/")
 	if len(parts) < 3 {
 		return nil
 	}
-	org := parts[len(parts)-2]
-	name, ok := strings.CutSuffix(parts[len(parts)-1], releaseSuffix)
-	if !ok || org == "" || name == "" {
+	org, repo := parts[len(parts)-2], parts[len(parts)-1]
+	if org == "" || repo == "" {
 		return nil
 	}
-	repo := "https://github.com/" + org + "/" + name
-	return []string{repo, repo + sourceSuffix}
+	github := "https://github.com/" + org + "/"
+	name, ok := strings.CutSuffix(repo, releaseSuffix)
+	if !ok || name == "" {
+		return []string{github + repo}
+	}
+	return []string{github + name, github + name + sourceSuffix}
 }
 
 // CosignVerifier verifies OCI index image signatures with sigstore-go. The

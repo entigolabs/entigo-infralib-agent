@@ -93,10 +93,11 @@ func TestSignerRepositories(t *testing.T) {
 			"https://github.com/entigolabs/entigo-infralib-example-source"},
 		"registry.example.com/mirror/acme/modules-release": {
 			"https://github.com/acme/modules", "https://github.com/acme/modules-source"},
-		"ghcr.io/entigolabs/entigo-infralib": nil,
-		"ghcr.io/entigolabs/-release":        nil,
-		"ghcr.io/modules-release":            nil,
-		"":                                   nil,
+		"public.ecr.aws/entigolabs/entigo-infralib": {infralibRepo},
+		"ghcr.io/entigolabs/-release":               {"https://github.com/entigolabs/-release"},
+		"ghcr.io/modules-release":                   nil,
+		"ghcr.io//modules":                          nil,
+		"":                                          nil,
 	}
 	for source, want := range tests {
 		got := SignerRepositories(source)

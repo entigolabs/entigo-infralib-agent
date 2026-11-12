@@ -1770,8 +1770,8 @@ func isEntigoReleaseSource(url string) bool {
 
 // verifyIndexSignature validates the source's index image signature once per
 // resolved image (deduped across steps/modules). The signer is derived from
-// the source path (see oci.SignerRepositories); sources that do not follow the
-// naming convention are skipped with a one-time warning.
+// the source path (see oci.SignerRepositories); sources it cannot be derived
+// for are skipped with a one-time warning.
 func (u *updater) verifyIndexSignature(source *model.Source, release string) error {
 	if !source.VerifySignature {
 		return nil
@@ -1779,7 +1779,7 @@ func (u *updater) verifyIndexSignature(source *model.Source, release string) err
 	signers := oci.SignerRepositories(util.TrimOCIScheme(source.URL))
 	if util.GetSourceType(source.URL) != model.SourceTypeOCI || len(signers) == 0 {
 		if _, loaded := u.verified.LoadOrStore("unverifiable:"+source.URL, struct{}{}); !loaded {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("verify_signature is only supported for OCI sources named <registry>/<org>/<name>-release, skipping %s", source.URL)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("verify_signature is only supported for OCI sources with a <registry>/<org>/<name> path, skipping %s", source.URL)))
 		}
 		return nil
 	}
