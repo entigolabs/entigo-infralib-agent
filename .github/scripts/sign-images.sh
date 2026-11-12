@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signs the image a release build pushed and writes the release notes section
+# Signs the image the Release workflow pushed and writes the release notes section
 # that says where it was published, under which tags and with which digest.
 #
 # One buildx build pushes the same multi-arch index to every registry, so all
