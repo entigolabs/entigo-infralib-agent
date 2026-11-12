@@ -2,6 +2,8 @@ package oci
 
 import (
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"os"
 	"testing"
 
@@ -110,5 +112,81 @@ func TestSignerRepositories(t *testing.T) {
 				t.Errorf("%q: got %v, want %v", source, got, want)
 			}
 		}
+	}
+}
+
+func TestSplitDigest(t *testing.T) {
+	repo, digest, err := splitDigest("public.ecr.aws/entigolabs/entigo-infralib-release/index@sha256:abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo != "public.ecr.aws/entigolabs/entigo-infralib-release/index" || digest != "abc123" {
+		t.Fatalf("repo=%q digest=%q", repo, digest)
+	}
+	if _, _, err := splitDigest("public.ecr.aws/entigolabs/index:1.21.2"); err == nil {
+		t.Fatal("expected error for non-digest reference")
+	}
+}
+
+func TestVerifyImageBinding(t *testing.T) {
+	const digest = "14a95480023a264c758bbaeb9f12cb9ad6cda229674d63de5c3c5c563e2ef944"
+	image := "ghcr.io/entigolabs/entigo-infralib-release/index@sha256:" + digest
+	match := []byte(`{"critical":{"image":{"docker-manifest-digest":"sha256:` + digest + `"}}}`)
+	if err := verifyImageBinding(match, image); err != nil {
+		t.Fatalf("matching payload rejected: %v", err)
+	}
+	mismatch := []byte(`{"critical":{"image":{"docker-manifest-digest":"sha256:deadbeef"}}}`)
+	if err := verifyImageBinding(mismatch, image); err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if err := verifyImageBinding([]byte("not json"), image); err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
+func TestParseRekorBundle(t *testing.T) {
+	body := base64.StdEncoding.EncodeToString([]byte(`{"apiVersion":"0.0.1","kind":"hashedrekord"}`))
+	set := base64.StdEncoding.EncodeToString([]byte("signed-entry-timestamp"))
+	logID := hex.EncodeToString([]byte("logid"))
+	rekorJSON := `{"SignedEntryTimestamp":"` + set + `","Payload":{"body":"` + body +
+		`","integratedTime":1700000000,"logIndex":42,"logID":"` + logID + `"}}`
+
+	entry, err := parseRekorBundle(rekorJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.LogIndex != 42 || entry.IntegratedTime != 1700000000 {
+		t.Fatalf("logIndex=%d integratedTime=%d", entry.LogIndex, entry.IntegratedTime)
+	}
+	if entry.KindVersion.Kind != "hashedrekord" || entry.KindVersion.Version != "0.0.1" {
+		t.Fatalf("kindVersion=%+v", entry.KindVersion)
+	}
+	if string(entry.InclusionPromise.SignedEntryTimestamp) != "signed-entry-timestamp" {
+		t.Fatalf("SET=%q", entry.InclusionPromise.SignedEntryTimestamp)
+	}
+	if string(entry.LogId.KeyId) != "logid" {
+		t.Fatalf("logID=%q", entry.LogId.KeyId)
+	}
+
+	if _, err := parseRekorBundle(""); err == nil {
+		t.Fatal("expected error for empty bundle")
+	}
+	if _, err := parseRekorBundle("{bad"); err == nil {
+		t.Fatal("expected error for invalid json")
+	}
+}
+
+func TestDecodePEM(t *testing.T) {
+	pemData := "-----BEGIN CERTIFICATE-----\nYWJj\n-----END CERTIFICATE-----\n" +
+		"-----BEGIN CERTIFICATE-----\nZGVm\n-----END CERTIFICATE-----\n"
+	blocks := decodePEM(pemData)
+	if len(blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2", len(blocks))
+	}
+	if string(blocks[0]) != "abc" || string(blocks[1]) != "def" {
+		t.Fatalf("blocks=%q,%q", blocks[0], blocks[1])
+	}
+	if len(decodePEM("not pem")) != 0 {
+		t.Fatal("expected no blocks")
 	}
 }

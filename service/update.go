@@ -1545,7 +1545,7 @@ func (u *updater) createTerraformMain(step model.Step, moduleVersions map[string
 		if err != nil {
 			return false, "", nil, err
 		}
-		ociVersion, err := u.getOCIModuleVersion(step.Type, moduleVersion.Source, module.Source, moduleVersion.Version)
+		ociVersion, err := u.getOCIModuleVersion(moduleVersion.Source, module.Source, moduleVersion.Version)
 		if err != nil {
 			return false, "", nil, err
 		}
@@ -1567,7 +1567,7 @@ func (u *updater) createArgoCDApp(module model.Module, step model.Step, moduleVe
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to resolve OCI proxy source: %w", err)
 	}
-	ociVersion, err := u.getOCIModuleVersion(step.Type, u.moduleSources[module.Source], fmt.Sprintf("k8s/%s", module.Source), moduleVersion)
+	ociVersion, err := u.getOCIModuleVersion(u.moduleSources[module.Source], fmt.Sprintf("k8s/%s", module.Source), moduleVersion)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1678,12 +1678,7 @@ func replaceOCIRegistry(source, newRegistry string) string {
 // use_oci_digests or when the release is already a digest. The release stays the
 // version used for storage lookups (outputs.tf, argo-apps.yaml); only the
 // emitted reference switches to a digest.
-func (u *updater) getOCIModuleVersion(stepType model.StepType, sourceKey model.SourceKey, moduleSourcePath, release string) (string, error) {
-	// ArgoCD can't resolve an OCI Helm chart by digest, so apps steps stay on
-	// tags regardless of digest mode: https://github.com/argoproj/argo-cd/issues/25078
-	if stepType == model.StepTypeArgoCD {
-		return release, nil
-	}
+func (u *updater) getOCIModuleVersion(sourceKey model.SourceKey, moduleSourcePath, release string) (string, error) {
 	if !util.IsOCISource(sourceKey.URL) {
 		return release, nil
 	}
