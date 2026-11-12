@@ -39,6 +39,8 @@ docker pull entigolabs/entigo-infralib-agent                  # Docker Hub
 docker pull public.ecr.aws/entigolabs/entigo-infralib-agent   # ECR Public
 ```
 
+Release images are signed, see [Verifying the image](#verifying-the-image).
+
 Installing with `go install` places the binary in `$(go env GOPATH)/bin` as `entigo-infralib-agent`. Examples below use `ei-agent`, the name used when building from source.
 
 ## Documentation
@@ -163,6 +165,32 @@ Prebuilt Docker image is available from
 or
 
 [Amazon ECR Gallery](https://gallery.ecr.aws/entigolabs/entigo-infralib-agent) `public.ecr.aws/entigolabs/entigo-infralib-agent`
+
+### Verifying the image
+
+Every release pushes one multi-arch image (linux/amd64, linux/arm64) to all registries, so a version has the same sha256 digest everywhere. The [release notes](https://github.com/entigolabs/entigo-infralib-agent/releases) of a version list the registries, the tags and that digest. Images released after v1.15.2 are signed with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) keyless signing: the signature is made by this repository's release workflow and logged in the public Rekor transparency log, there is no key to distribute.
+
+A tag can be moved, `latest` and the major tag `v1` move with every release, a digest cannot. To check that a tag points to the digest in the release notes:
+
+```bash
+docker buildx imagetools inspect public.ecr.aws/entigolabs/entigo-infralib-agent:v1.15.3 --format '{{.Manifest.Digest}}'
+```
+
+To verify that the digest was built and signed by this repository's GitHub workflow (replace the digest with the one from the release notes):
+
+```bash
+cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/entigolabs/entigo-infralib-agent/' \
+  public.ecr.aws/entigolabs/entigo-infralib-agent@sha256:<digest>
+```
+
+The command exits non-zero when there is no valid signature. It works the same with a tag in place of the digest, and prints the digest the tag resolved to (`docker-manifest-digest`). The signature is on the multi-arch image, the digest that a pull by tag resolves; the per-platform digests that `docker images --digests` may show after a pull are not signed separately.
+
+To run exactly the verified image, use the digest instead of a tag. The `version` command prints the version, build date and commit the binary was built from, which should match the release:
+
+```bash
+docker run --rm public.ecr.aws/entigolabs/entigo-infralib-agent@sha256:<digest> ei-agent version
+```
 
 ### Building a local Docker image
 

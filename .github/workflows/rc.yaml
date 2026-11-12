@@ -18,6 +18,9 @@ jobs:
     name: Build
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # keyless cosign signing of the image
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -25,6 +28,8 @@ jobs:
         uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
       - name: Get latest release
         id: get_latest_release
         uses: actions/github-script@v9
@@ -70,9 +75,21 @@ jobs:
           --build-arg VERSION=${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           --sbom=true \
           --provenance=mode=max \
+          --metadata-file build-metadata.json \
           -t public.ecr.aws/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           -t europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           -t entigolabs/entigo-infralib-agent:${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} .
+
+      - name: Sign image
+        env:
+          METADATA: build-metadata.json
+          IMAGES: >-
+            entigolabs/entigo-infralib-agent
+            public.ecr.aws/entigolabs/entigo-infralib-agent
+            europe-north1-docker.pkg.dev/entigo-infralib2/entigolabs/entigo-infralib-agent
+          TAGS: ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}
+          NOTES: image-notes.md
+        run: .github/scripts/sign-images.sh
 
       - name: Authenticate with GitHub CLI
         run: gh auth login --with-token <<< ${{ secrets.GITHUB_TOKEN }}
@@ -88,6 +105,7 @@ jobs:
           RELEASE_URL=$(gh release create ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }} \
           --title "Release ${{ steps.get_latest_release.outputs.new_version }}-rc${{ github.run_number }}" \
           --generate-notes \
+          --notes-file image-notes.md \
           --draft=false \
           --latest=false \
           --prerelease=true)
