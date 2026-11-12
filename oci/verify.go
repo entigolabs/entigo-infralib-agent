@@ -20,15 +20,23 @@ import (
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	protorekor "github.com/sigstore/protobuf-specs/gen/pb-go/rekor/v1"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 )
 
-// entigolabs release images are signed by GitHub Actions workflows in the
-// entigo-infralib repo, so verification pins that OIDC issuer and identity.
+// entigolabs release images are signed by the shared module-release workflow
+// of entigo-infralib-test, called from the Release workflow of entigo-infralib.
+// A reusable workflow signs with its own identity, so the certificate SAN names
+// the shared workflow whichever repo called it; the caller is only recorded in
+// the Fulcio extensions. Verification therefore pins both: the SAN to the
+// shared workflow, and the source repository and calling workflow to
+// entigo-infralib, so another repo using the same workflow is rejected.
 const (
 	cosignOIDCIssuer     = "https://token.actions.githubusercontent.com"
-	cosignIdentityRegexp = `^https://github\.com/entigolabs/entigo-infralib/\.github/workflows/.*@refs/.*$`
+	cosignIdentityRegexp = `^https://github\.com/entigolabs/entigo-infralib-test/\.github/workflows/module-release\.yaml@refs/.*$`
+	cosignSourceRepo     = "https://github.com/entigolabs/entigo-infralib"
+	cosignBuildConfig    = cosignSourceRepo + "/.github/workflows/release.yaml@refs/heads/main"
 
 	// classic cosign signature layer annotations.
 	sigAnnotation   = "dev.cosignproject.cosign/signature"
@@ -75,10 +83,26 @@ func (v *CosignVerifier) init() {
 		v.initErr = fmt.Errorf("failed to build signature verifier: %w", err)
 		return
 	}
-	v.identity, err = verify.NewShortCertificateIdentity(cosignOIDCIssuer, "", "", cosignIdentityRegexp)
+	v.identity, err = releaseIdentity()
 	if err != nil {
 		v.initErr = fmt.Errorf("failed to build certificate identity: %w", err)
 	}
+}
+
+// releaseIdentity is the signing identity an entigolabs release must carry.
+func releaseIdentity() (verify.CertificateIdentity, error) {
+	san, err := verify.NewSANMatcher("", cosignIdentityRegexp)
+	if err != nil {
+		return verify.CertificateIdentity{}, err
+	}
+	issuer, err := verify.NewIssuerMatcher(cosignOIDCIssuer, "")
+	if err != nil {
+		return verify.CertificateIdentity{}, err
+	}
+	return verify.NewCertificateIdentity(san, issuer, certificate.Extensions{
+		SourceRepositoryURI: cosignSourceRepo,
+		BuildConfigURI:      cosignBuildConfig,
+	})
 }
 
 func (v *CosignVerifier) loadTrustedRoot() (root.TrustedMaterial, error) {
