@@ -696,7 +696,7 @@ Source version is overwritten by module version. Default version is **stable** w
   * repo_path - path to the git repository root directory, default uses Go's TempDir to create a directory named after the repository url. Use debug logging to see the path. **Warning!** Agent prunes the repo to match the remote.
   * ca_file - name of the CA certificate file in the `./ca-certificates` folder to use for git authentication
   * use_oci_digests - use OCI digests for module sources instead of version tags when using OCI source with version tag, default **false**
-  * verify_signature - verify the OCI index signature when using OCI entigolabs source, true value forces use_oci_digests to true as well, default **false**
+  * verify_signature - verify the OCI index signature of an OCI source, true value forces use_oci_digests to true as well, default **false**. The index must be signed by the Release workflow of the GitHub repository the source is released from, found by naming convention: a source `<registry>/<org>/<name>-release` must be signed by `github.com/<org>/<name>` or `github.com/<org>/<name>-source`. Sources named otherwise are skipped with a warning
 * destinations - list of destinations where the agent will push the generated step files, in addition to the default bucket
   * name - name of the destination
   * git - git repository must be accessible by the agent. For authentication, use either key or username/password. For the key and password, it's recommended to use custom replacement tags, e.g. `"{{ .output-custom.git-key }}"`

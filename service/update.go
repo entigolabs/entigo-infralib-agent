@@ -1762,27 +1762,24 @@ func moduleSourceChanged(previous, current string) bool {
 
 func isEntigoReleaseSource(url string) bool {
 	if util.GetSourceType(url) == model.SourceTypeOCI {
-		return isVerifiableSource(url)
+		trimmed := util.TrimOCIScheme(url)
+		return trimmed == "public.ecr.aws/"+EntigoRepo || trimmed == "ghcr.io/"+EntigoRepo
 	}
 	return strings.Contains(url, EntigoSource)
 }
 
-func isVerifiableSource(url string) bool {
-	trimmed := util.TrimOCIScheme(url)
-	return trimmed == "public.ecr.aws/"+EntigoRepo || trimmed == "ghcr.io/"+EntigoRepo
-}
-
 // verifyIndexSignature validates the source's index image signature once per
-// resolved image (deduped across steps/modules). Only official entigolabs
-// release sources are verifiable; other sources with the flag set are skipped
-// with a one-time warning.
+// resolved image (deduped across steps/modules). The signer is derived from
+// the source path (see oci.SignerRepositories); sources that do not follow the
+// naming convention are skipped with a one-time warning.
 func (u *updater) verifyIndexSignature(source *model.Source, release string) error {
 	if !source.VerifySignature {
 		return nil
 	}
-	if !isVerifiableSource(source.URL) {
+	signers := oci.SignerRepositories(util.TrimOCIScheme(source.URL))
+	if util.GetSourceType(source.URL) != model.SourceTypeOCI || len(signers) == 0 {
 		if _, loaded := u.verified.LoadOrStore("unverifiable:"+source.URL, struct{}{}); !loaded {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("verify_signature is only supported for entigolabs release sources, skipping %s", source.URL)))
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("verify_signature is only supported for OCI sources named <registry>/<org>/<name>-release, skipping %s", source.URL)))
 		}
 		return nil
 	}
@@ -1801,7 +1798,7 @@ func (u *updater) verifyIndexSignature(source *model.Source, release string) err
 		if _, ok := u.verified.Load(image); ok {
 			return nil, nil
 		}
-		if err := u.verifier.Verify(u.ctx, image); err != nil {
+		if err := u.verifier.Verify(u.ctx, image, signers); err != nil {
 			return nil, err
 		}
 		log.Printf("Verified OCI index image signature %s", image)

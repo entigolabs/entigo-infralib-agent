@@ -25,18 +25,20 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/verify"
 )
 
-// entigolabs release images are signed by the shared module-release workflow
-// of entigo-infralib-test, called from the Release workflow of entigo-infralib.
-// A reusable workflow signs with its own identity, so the certificate SAN names
-// the shared workflow whichever repo called it; the caller is only recorded in
-// the Fulcio extensions. Verification therefore pins both: the SAN to the
-// shared workflow, and the source repository and calling workflow to
-// entigo-infralib, so another repo using the same workflow is rejected.
+// Releases are signed by the shared module-release workflow of
+// entigo-infralib-test, called from the Release workflow of the module source
+// repository. A reusable workflow signs with its own identity, so the
+// certificate SAN names the shared workflow whichever repo called it; the
+// caller is only recorded in the Fulcio extensions. Verification therefore pins
+// both: the SAN to the shared workflow, and the source repository and calling
+// workflow to the repository the source is released from.
 const (
 	cosignOIDCIssuer     = "https://token.actions.githubusercontent.com"
 	cosignIdentityRegexp = `^https://github\.com/entigolabs/entigo-infralib-test/\.github/workflows/module-release\.yaml@refs/.*$`
-	cosignSourceRepo     = "https://github.com/entigolabs/entigo-infralib"
-	cosignBuildConfig    = cosignSourceRepo + "/.github/workflows/release.yaml@refs/heads/main"
+	cosignBuildConfig    = "/.github/workflows/release.yaml@refs/heads/main"
+
+	releaseSuffix = "-release"
+	sourceSuffix  = "-source"
 
 	// classic cosign signature layer annotations.
 	sigAnnotation   = "dev.cosignproject.cosign/signature"
@@ -49,8 +51,29 @@ const (
 	bundleMediaType = "application/vnd.dev.sigstore.bundle+json;version=0.1"
 )
 
+// Verifier verifies that image is signed by a release of one of the signers,
+// the GitHub repository URLs returned by SignerRepositories.
 type Verifier interface {
-	Verify(ctx context.Context, image string) error
+	Verify(ctx context.Context, image string, signers []string) error
+}
+
+// SignerRepositories returns the GitHub repositories whose release may sign
+// the OCI source, derived from its path by naming convention: a source
+// <registry>/<org>/<name>-release is released from github.com/<org>/<name> or
+// github.com/<org>/<name>-source. It returns nil when the source does not
+// follow the convention and so has no known signer.
+func SignerRepositories(source string) []string {
+	parts := strings.Split(strings.TrimSuffix(source, "/"), "/")
+	if len(parts) < 3 {
+		return nil
+	}
+	org := parts[len(parts)-2]
+	name, ok := strings.CutSuffix(parts[len(parts)-1], releaseSuffix)
+	if !ok || org == "" || name == "" {
+		return nil
+	}
+	repo := "https://github.com/" + org + "/" + name
+	return []string{repo, repo + sourceSuffix}
 }
 
 // CosignVerifier verifies OCI index image signatures with sigstore-go. The
@@ -61,7 +84,6 @@ type CosignVerifier struct {
 	trustBundlePath string
 	once            sync.Once
 	verifier        *verify.Verifier
-	identity        verify.CertificateIdentity
 	initErr         error
 }
 
@@ -83,14 +105,11 @@ func (v *CosignVerifier) init() {
 		v.initErr = fmt.Errorf("failed to build signature verifier: %w", err)
 		return
 	}
-	v.identity, err = releaseIdentity()
-	if err != nil {
-		v.initErr = fmt.Errorf("failed to build certificate identity: %w", err)
-	}
 }
 
-// releaseIdentity is the signing identity an entigolabs release must carry.
-func releaseIdentity() (verify.CertificateIdentity, error) {
+// releaseIdentity is the signing identity a release of the GitHub repository
+// sourceRepo must carry.
+func releaseIdentity(sourceRepo string) (verify.CertificateIdentity, error) {
 	san, err := verify.NewSANMatcher("", cosignIdentityRegexp)
 	if err != nil {
 		return verify.CertificateIdentity{}, err
@@ -100,8 +119,8 @@ func releaseIdentity() (verify.CertificateIdentity, error) {
 		return verify.CertificateIdentity{}, err
 	}
 	return verify.NewCertificateIdentity(san, issuer, certificate.Extensions{
-		SourceRepositoryURI: cosignSourceRepo,
-		BuildConfigURI:      cosignBuildConfig,
+		SourceRepositoryURI: sourceRepo,
+		BuildConfigURI:      sourceRepo + cosignBuildConfig,
 	})
 }
 
@@ -112,17 +131,28 @@ func (v *CosignVerifier) loadTrustedRoot() (root.TrustedMaterial, error) {
 	return root.FetchTrustedRoot()
 }
 
-func (v *CosignVerifier) Verify(ctx context.Context, image string) error {
+func (v *CosignVerifier) Verify(ctx context.Context, image string, signers []string) error {
+	if len(signers) == 0 {
+		return fmt.Errorf("no signer repositories to verify %s against", image)
+	}
 	v.once.Do(v.init)
 	if v.initErr != nil {
 		return v.initErr
+	}
+	// The policy passes when the certificate matches any one identity.
+	options := make([]verify.PolicyOption, 0, len(signers))
+	for _, signer := range signers {
+		identity, err := releaseIdentity(signer)
+		if err != nil {
+			return fmt.Errorf("failed to build certificate identity: %w", err)
+		}
+		options = append(options, verify.WithCertificateIdentity(identity))
 	}
 	entity, payload, err := fetchSignedEntity(ctx, image)
 	if err != nil {
 		return err
 	}
-	policy := verify.NewPolicy(verify.WithArtifact(bytes.NewReader(payload)),
-		verify.WithCertificateIdentity(v.identity))
+	policy := verify.NewPolicy(verify.WithArtifact(bytes.NewReader(payload)), options...)
 	if _, err := v.verifier.Verify(entity, policy); err != nil {
 		return fmt.Errorf("signature verification failed for %s: %w", image, err)
 	}
