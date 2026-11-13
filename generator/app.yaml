@@ -7,10 +7,11 @@ spec:
     server: https://kubernetes.default.svc
     namespace: '{{moduleName}}'
   project: default
+  info: '{{moduleInfo}}'
   sources:
     - repoURL: '{{moduleSourceURL}}'
       targetRevision: '{{moduleVersion}}'
-      path: "modules/k8s/{{moduleSource}}"
+      path: '{{modulePath}}'
       helm:
         ignoreMissingValueFiles: true
         valueFiles:

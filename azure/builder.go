@@ -102,7 +102,7 @@ func getImage(imageVersion, imageSource string) string {
 	if imageSource == "" {
 		imageSource = model.ProjectImageAzure
 	}
-	return fmt.Sprintf("%s:%s", imageSource, imageVersion)
+	return util.ImageReference(imageSource, imageVersion)
 }
 
 func (b *Builder) CreateProject(projectName, _, _ string, step model.Step, imageVersion, imageSource string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {

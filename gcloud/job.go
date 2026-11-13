@@ -83,7 +83,7 @@ func getImage(imageVersion, imageSource string) string {
 			imageSource = model.ProjectImageGCloud
 		}
 	}
-	return fmt.Sprintf("%s:%s", imageSource, imageVersion)
+	return util.ImageReference(imageSource, imageVersion)
 }
 
 func (b *Builder) createJobManifests(projectName string, bucket string, stepName string, step model.Step, image string, vpcConfig *model.VpcConfig, authSources map[string]model.SourceAuth) error {
