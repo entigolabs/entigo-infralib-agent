@@ -121,7 +121,7 @@ func getImage(imageVersion, imageSource string) *string {
 			imageSource = model.ProjectImageAWS
 		}
 	}
-	return aws.String(fmt.Sprintf("%s:%s", imageSource, imageVersion))
+	return aws.String(util.ImageReference(imageSource, imageVersion))
 }
 
 func (b *builder) getEnvironmentVariables(projectName, stepName, bucket string) []types.EnvironmentVariable {

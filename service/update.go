@@ -33,6 +33,8 @@ const (
 	StateFile       = "state.yaml"
 	ssmPrefix       = "/entigo-infralib"
 	ociManifestFile = "manifest.json"
+	// minDigestImageVersion is the first release whose manifest lists base image digests.
+	minDigestImageVersion = "v1.25.7"
 )
 
 type Updater interface {
@@ -1081,7 +1083,10 @@ func (u *updater) createExecuteStepPipelines(step model.Step, stepState *model.S
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 
 	vpcConfig := u.getVpcConfig(step)
-	imageVersion, imageSource := u.getBaseImage(step, index)
+	imageVersion, imageSource, err := u.getBaseImage(step, index)
+	if err != nil {
+		return err
+	}
 	sources := u.getStepAuthSources(step)
 	err = u.resources.GetBuilder().CreateProject(stepName, repoMetadata.URL, stepName, step, imageVersion, imageSource,
 		vpcConfig, sources)
@@ -1156,7 +1161,10 @@ func (u *updater) getStepAuthSources(step model.Step) map[string]model.SourceAut
 func (u *updater) executeStepPipelines(step model.Step, stepState *model.StateStep, autoApprove bool, index int) error {
 	stepName := fmt.Sprintf("%s-%s", u.resources.GetCloudPrefix(), step.Name)
 	vpcConfig := u.getVpcConfig(step)
-	imageVersion, imageSource := u.getBaseImage(step, index)
+	imageVersion, imageSource, err := u.getBaseImage(step, index)
+	if err != nil {
+		return err
+	}
 	bucket := u.resources.GetBucket()
 	repoMetadata, err := bucket.GetRepoMetadata()
 	if err != nil {
@@ -1689,11 +1697,11 @@ func (u *updater) getOCIModuleVersion(sourceKey model.SourceKey, moduleSourcePat
 	if !source.UseOCIDigests && !util.IsOCIDigest(release) {
 		return release, nil
 	}
-	manifest, err := u.getModuleManifest(sourceKey, release)
+	manifest, err := u.getOCIManifest(sourceKey, release)
 	if err != nil {
 		return "", err
 	}
-	if module, ok := manifest[moduleSourcePath]; ok {
+	if module, ok := manifest.GetModule(moduleSourcePath); ok {
 		if digest := moduleDigest(module, sourceKey.URL); digest != "" {
 			return digest, nil
 		}
@@ -1803,12 +1811,12 @@ func (u *updater) verifyIndexSignature(source *model.Source, release string) err
 	return err
 }
 
-// getModuleManifest parses manifest.json from the source's index for a release
-// into a map keyed by module source path (type/name), caching per source+release.
-func (u *updater) getModuleManifest(sourceKey model.SourceKey, release string) (map[string]model.OCIManifestModule, error) {
+// getOCIManifest parses manifest.json from the source's index for a release,
+// caching per source+release.
+func (u *updater) getOCIManifest(sourceKey model.SourceKey, release string) (*model.OCIManifest, error) {
 	cacheKey := fmt.Sprintf("%s|%s", sourceKey, release)
 	if val, ok := u.manifests.Load(cacheKey); ok {
-		return val.(map[string]model.OCIManifestModule), nil
+		return val.(*model.OCIManifest), nil
 	}
 	result, err, _ := u.manifestGroup.Do(cacheKey, func() (any, error) {
 		if val, ok := u.manifests.Load(cacheKey); ok {
@@ -1822,29 +1830,17 @@ func (u *updater) getModuleManifest(sourceKey model.SourceKey, release string) (
 		if err != nil {
 			return nil, fmt.Errorf("failed to read OCI manifest for %s@%s: %w", sourceKey, release, err)
 		}
-		modules, err := parseOCIManifest(data)
-		if err != nil {
+		var manifest model.OCIManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
 			return nil, fmt.Errorf("failed to parse OCI manifest for %s@%s: %w", sourceKey, release, err)
 		}
-		u.manifests.Store(cacheKey, modules)
-		return modules, nil
+		u.manifests.Store(cacheKey, &manifest)
+		return &manifest, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return result.(map[string]model.OCIManifestModule), nil
-}
-
-func parseOCIManifest(data []byte) (map[string]model.OCIManifestModule, error) {
-	var manifest model.OCIManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, err
-	}
-	modules := make(map[string]model.OCIManifestModule, len(manifest.Modules))
-	for _, module := range manifest.Modules {
-		modules[fmt.Sprintf("%s/%s", module.Type, module.Name)] = module
-	}
-	return modules, nil
+	return result.(*model.OCIManifest), nil
 }
 
 func (u *updater) updateModuleVersions(step model.Step, stepState *model.StateStep, index int) (map[string]model.ModuleVersion, error) {
@@ -1987,41 +1983,95 @@ func (u *updater) updatePipelines(projectName string, step model.Step, bucket st
 	return nil
 }
 
-func (u *updater) getBaseImage(step model.Step, index int) (string, string) {
-	release := u.getBaseImageVersion(step, index)
-	imageSource := ""
-	if step.BaseImageSource != "" {
-		imageSource = step.BaseImageSource
-	} else if u.config.BaseImageSource != "" {
+func (u *updater) getBaseImage(step model.Step, index int) (string, string, error) {
+	imageSource := step.BaseImageSource
+	if imageSource == "" {
 		imageSource = u.config.BaseImageSource
 	}
-	return release, imageSource
+	imageVersion, err := u.getBaseImageVersion(step, index, imageSource)
+	return imageVersion, imageSource, err
 }
 
-func (u *updater) getBaseImageVersion(step model.Step, index int) string {
-	release := model.LatestImageVersion
+// getBaseImageVersion returns the image tag, or the image digest from the
+// release manifest when the step's infralib release source uses OCI digests.
+func (u *updater) getBaseImageVersion(step model.Step, index int, imageSource string) (string, error) {
 	if step.BaseImageVersion != "" {
-		release = step.BaseImageVersion
-	} else if u.config.BaseImageVersion != "" {
-		release = u.config.BaseImageVersion
-	} else {
-		for _, module := range step.Modules {
-			if util.IsClientModule(module) {
-				continue
+		return step.BaseImageVersion, nil
+	}
+	if u.config.BaseImageVersion != "" {
+		return u.config.BaseImageVersion, nil
+	}
+	for _, module := range step.Modules {
+		if util.IsClientModule(module) {
+			continue
+		}
+		sourceKey := u.moduleSources[module.Source]
+		source := u.sources[sourceKey]
+		if !isEntigoReleaseSource(source.URL) {
+			continue
+		}
+		release := source.ForcedVersion
+		if release == "" {
+			release = getFormattedVersion(source.Releases[util.MinInt(index, len(source.Releases)-1)])
+		}
+		if source.UseOCIDigests && util.IsOCISource(source.URL) && !util.IsVersionOlder(release, minDigestImageVersion) {
+			digest, err := u.getBaseImageDigest(sourceKey, release, imageSource)
+			if err != nil || digest != "" {
+				return digest, err
 			}
-			source := u.getModuleSource(module.Source)
-			if !isEntigoReleaseSource(source.URL) {
-				continue
-			}
-			if source.ForcedVersion != "" {
-				break
-			} else {
-				release = getFormattedVersion(source.Releases[util.MinInt(index, len(source.Releases)-1)])
-				break
+		}
+		if source.ForcedVersion != "" {
+			return model.LatestImageVersion, nil
+		}
+		return release, nil
+	}
+	return model.LatestImageVersion, nil
+}
+
+// getBaseImageDigest finds the base image in the release manifest and returns it
+// as tag@digest (the tag is informational), or an empty string when the manifest
+// has no matching image.
+func (u *updater) getBaseImageDigest(sourceKey model.SourceKey, release, imageSource string) (string, error) {
+	manifest, err := u.getOCIManifest(sourceKey, release)
+	if err != nil {
+		return "", err
+	}
+	repository := imageSource
+	if repository == "" {
+		repository = model.DefaultProjectImage(u.resources.GetProviderType())
+	}
+	if tag, digest := imageDigest(manifest.Images, repository); digest != "" {
+		slog.Debug(fmt.Sprintf("Using base image %s %s (%s)", repository, tag, digest))
+		if tag == "" {
+			return digest, nil
+		}
+		return tag + "@" + digest, nil
+	}
+	slog.Warn(common.PrefixWarning(fmt.Sprintf("no OCI digest for image %s in %s@%s, using tag",
+		repository, sourceKey, release)))
+	return "", nil
+}
+
+func imageDigest(images []model.OCIManifestImage, repository string) (string, string) {
+	repository = normalizeImageRepository(repository)
+	for _, image := range images {
+		for _, ref := range image.Registries {
+			if ref.Digest != "" && normalizeImageRepository(ref.Repository) == repository {
+				return image.Tag, ref.Digest
 			}
 		}
 	}
-	return release
+	return "", ""
+}
+
+func normalizeImageRepository(repository string) string {
+	repository = util.TrimOCIScheme(repository)
+	for _, prefix := range []string{"docker.io/", "index.docker.io/", "registry-1.docker.io/"} {
+		if after, ok := strings.CutPrefix(repository, prefix); ok {
+			return after
+		}
+	}
+	return repository
 }
 
 func (u *updater) updateChecksums(index int) error {

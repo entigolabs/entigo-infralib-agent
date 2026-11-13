@@ -62,6 +62,19 @@ const (
 	CampaignSentinelNone = "none"
 )
 
+func DefaultProjectImage(provider ProviderType) string {
+	switch provider {
+	case GCLOUD:
+		return ProjectImageGCloud
+	case ORACLE:
+		return ProjectImageOracle
+	case AZURE:
+		return ProjectImageAzure
+	default:
+		return ProjectImageAWS
+	}
+}
+
 func WrapperConfigSecretName(prefix string) string {
 	return fmt.Sprintf("entigo-infralib-%s-wrapper-config", prefix)
 }
