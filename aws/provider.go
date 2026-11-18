@@ -2,10 +2,11 @@ package aws
 
 import (
 	"context"
+	"log"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/entigolabs/entigo-infralib-agent/common"
 	"github.com/entigolabs/entigo-infralib-agent/model"
-	"log"
 )
 
 type awsProvider struct {

@@ -241,6 +241,9 @@ func (b *Builder) agentContainer(version string, cmd common.Command) *armappcont
 		"AZURE_TOKEN_CREDENTIALS":     "ManagedIdentityCredential",
 		"TERRAFORM_CACHE":             strconv.FormatBool(b.terraformCache),
 	}
+	if b.identity.Provided {
+		env[common.AzureManagedIdentityIdEnv] = b.identity.Id
+	}
 	return &armappcontainers.Container{
 		Name:      new(containerNameAgent),
 		Image:     new(fmt.Sprintf("%s:%s", model.AgentImageAzure, version)),

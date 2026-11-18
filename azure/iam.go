@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
@@ -29,10 +30,12 @@ const (
 	pollInterval                = 10 * time.Second
 	groupDeletionTimeout        = 30 * time.Minute
 	groupDeletingState          = "Deleting"
+	identityResourceType        = "Microsoft.ManagedIdentity/userAssignedIdentities"
 )
 
 type IAM struct {
 	ctx            context.Context
+	credential     azcore.TokenCredential
 	subscriptionId string
 	resourceGroup  string
 	location       string
@@ -47,6 +50,7 @@ type identity struct {
 	Name        string
 	PrincipalId string
 	ClientId    string
+	Provided    bool
 }
 
 func NewIAM(ctx context.Context, credential azcore.TokenCredential, subscriptionId, resourceGroup, location string) (*IAM, error) {
@@ -68,6 +72,7 @@ func NewIAM(ctx context.Context, credential azcore.TokenCredential, subscription
 	}
 	return &IAM{
 		ctx:            ctx,
+		credential:     credential,
 		subscriptionId: subscriptionId,
 		resourceGroup:  resourceGroup,
 		location:       location,
@@ -194,6 +199,40 @@ func (i *IAM) GetIdentity(name string) (identity, error) {
 		return identity{}, fmt.Errorf("failed to get managed identity %s: %w", name, err)
 	}
 	return toIdentity(existing.Identity), nil
+}
+
+// GetProvidedIdentity gets an identity the agent doesn't own, which may be in another
+// resource group or subscription.
+func (i *IAM) GetProvidedIdentity(id string) (identity, error) {
+	resourceId, err := parseIdentityId(id)
+	if err != nil {
+		return identity{}, err
+	}
+	identities := i.identities
+	if !strings.EqualFold(resourceId.SubscriptionID, i.subscriptionId) {
+		identities, err = armmsi.NewUserAssignedIdentitiesClient(resourceId.SubscriptionID, i.credential, nil)
+		if err != nil {
+			return identity{}, err
+		}
+	}
+	existing, err := identities.Get(i.ctx, resourceId.ResourceGroupName, resourceId.Name, nil)
+	if err != nil {
+		return identity{}, fmt.Errorf("failed to get managed identity %s: %w", id, err)
+	}
+	found := toIdentity(existing.Identity)
+	found.Provided = true
+	return found, nil
+}
+
+func parseIdentityId(id string) (*arm.ResourceID, error) {
+	resourceId, err := arm.ParseResourceID(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid managed identity id %s: %w", id, err)
+	}
+	if !strings.EqualFold(resourceId.ResourceType.String(), identityResourceType) {
+		return nil, fmt.Errorf("managed identity id %s must be a %s resource id", id, identityResourceType)
+	}
+	return resourceId, nil
 }
 
 func (i *IAM) DeleteIdentity(name string) error {

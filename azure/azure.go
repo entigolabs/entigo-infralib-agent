@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/entigolabs/entigo-infralib-agent/common"
@@ -16,18 +17,19 @@ import (
 )
 
 type azureService struct {
-	ctx            context.Context
-	cloudPrefix    string
-	subscriptionId string
-	location       string
-	regionCode     string
-	resourceGroup  string
-	ownsGroup      bool
-	credential     azcore.TokenCredential
-	pipeline       common.Pipeline
-	skipDelay      bool
-	store          *stateStore
-	resources      Resources
+	ctx               context.Context
+	cloudPrefix       string
+	subscriptionId    string
+	location          string
+	regionCode        string
+	resourceGroup     string
+	ownsGroup         bool
+	managedIdentityId string
+	credential        azcore.TokenCredential
+	pipeline          common.Pipeline
+	skipDelay         bool
+	store             *stateStore
+	resources         Resources
 }
 
 type Resources struct {
@@ -79,21 +81,27 @@ func NewAzure(ctx context.Context, cloudPrefix string, azure common.Azure, pipel
 	if err != nil {
 		return nil, err
 	}
+	if azure.ManagedIdentityId != "" {
+		if _, err = parseIdentityId(azure.ManagedIdentityId); err != nil {
+			return nil, err
+		}
+	}
 	credential, err := newCredential()
 	if err != nil {
 		return nil, err
 	}
 	return &azureService{
-		ctx:            ctx,
-		cloudPrefix:    cloudPrefix,
-		subscriptionId: azure.SubscriptionId,
-		location:       azure.Location,
-		regionCode:     code,
-		resourceGroup:  resourceGroup(azure, cloudPrefix),
-		ownsGroup:      azure.ResourceGroup == "",
-		credential:     credential,
-		pipeline:       pipeline,
-		skipDelay:      skipBucketDelay,
+		ctx:               ctx,
+		cloudPrefix:       cloudPrefix,
+		subscriptionId:    azure.SubscriptionId,
+		location:          azure.Location,
+		regionCode:        code,
+		resourceGroup:     resourceGroup(azure, cloudPrefix),
+		ownsGroup:         azure.ResourceGroup == "",
+		managedIdentityId: azure.ManagedIdentityId,
+		credential:        credential,
+		pipeline:          pipeline,
+		skipDelay:         skipBucketDelay,
 	}, nil
 }
 
@@ -217,7 +225,7 @@ func (a *azureService) assignJobRole(iam *IAM, jobIdentity identity) error {
 		return err
 	}
 	slog.Warn(common.PrefixWarning(fmt.Sprintf("Not allowed to assign Owner to managed identity %s, assigning Contributor instead. Modules that create role assignments will fail until an administrator assigns Owner to it",
-		identityName(a.cloudPrefix))))
+		jobIdentity.Name)))
 	return iam.AssignRole(iam.subscriptionScope(), jobIdentity.principal(), roleContributor)
 }
 
@@ -287,7 +295,7 @@ func (a *azureService) setupStore() (*stateStore, error) {
 	})
 	group.Go(func() error {
 		var err error
-		jobIdentity, err = iam.EnsureIdentity(identityName(a.cloudPrefix))
+		jobIdentity, err = a.ensureJobIdentity(iam)
 		return err
 	})
 	group.Go(func() error {
@@ -324,6 +332,13 @@ func (a *azureService) setupStore() (*stateStore, error) {
 	resources.SSM = ssm
 	resources.VaultId = kms.VaultId()
 	return &stateStore{resources: resources, iam: iam, ssm: ssm, identity: jobIdentity}, nil
+}
+
+func (a *azureService) ensureJobIdentity(iam *IAM) (identity, error) {
+	if a.managedIdentityId != "" {
+		return iam.GetProvidedIdentity(a.managedIdentityId)
+	}
+	return iam.EnsureIdentity(identityName(a.cloudPrefix))
 }
 
 // checkNewDeployment runs before anything is created, since without the vault the deployment
@@ -378,8 +393,8 @@ func (a *azureService) GetResources() (model.Resources, error) {
 	if err != nil {
 		return nil, err
 	}
-	jobIdentity, err := iam.GetIdentity(identityName(a.cloudPrefix))
-	if err != nil && !isNotFound(err) {
+	jobIdentity, err := a.getJobIdentity(iam)
+	if err != nil {
 		return nil, err
 	}
 	environment, err := a.newEnvironment()
@@ -399,6 +414,17 @@ func (a *azureService) GetResources() (model.Resources, error) {
 	resources.Pipeline = pipeline
 	a.resources = resources
 	return a.resources, nil
+}
+
+func (a *azureService) getJobIdentity(iam *IAM) (identity, error) {
+	if a.managedIdentityId != "" {
+		return iam.GetProvidedIdentity(a.managedIdentityId)
+	}
+	jobIdentity, err := iam.GetIdentity(identityName(a.cloudPrefix))
+	if err != nil && !isNotFound(err) {
+		return identity{}, err
+	}
+	return jobIdentity, nil
 }
 
 func (a *azureService) PrepareDestroy(resources model.Resources) (model.Resources, error) {
@@ -430,8 +456,12 @@ func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) 
 		a.deleteServiceAccount(iam)
 	}
 	if !deleteBucket {
-		log.Printf("Storage account %s, key vault and managed identities %s and %s will not be deleted, delete them manually if needed\n",
-			a.resources.GetBucketName(), identityName(a.cloudPrefix), storageIdentityName(a.cloudPrefix))
+		identities := []string{storageIdentityName(a.cloudPrefix)}
+		if a.managedIdentityId == "" {
+			identities = append([]string{identityName(a.cloudPrefix)}, identities...)
+		}
+		log.Printf("Storage account %s, key vault and managed identities %s will not be deleted, delete them manually if needed\n",
+			a.resources.GetBucketName(), strings.Join(identities, ", "))
 		return nil
 	}
 	if err = a.resources.GetBucket().Delete(); err != nil {
@@ -450,6 +480,7 @@ func (a *azureService) DeleteResources(deleteBucket, deleteServiceAccount bool) 
 }
 
 // deleteVaultAndIdentities deletes the identities with the vault, since their roles on it would be left behind.
+// A provided job identity is kept, only the roles the agent assigned to it are removed.
 func (a *azureService) deleteVaultAndIdentities(iam *IAM) {
 	vaultId := ""
 	kms, err := a.newKMS(a.resources.TenantId)
@@ -460,11 +491,16 @@ func (a *azureService) deleteVaultAndIdentities(iam *IAM) {
 	if err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to get key vault: %s", err)))
 	}
-	deleteIdentity(iam, identityName(a.cloudPrefix), map[string]string{
+	jobRoles := map[string]string{
 		roleOwner:                 iam.subscriptionScope(),
 		roleContributor:           iam.subscriptionScope(),
 		roleKeyVaultAdministrator: vaultId,
-	})
+	}
+	if a.managedIdentityId != "" {
+		a.deleteProvidedIdentityRoles(iam, jobRoles)
+	} else {
+		deleteIdentity(iam, identityName(a.cloudPrefix), jobRoles)
+	}
 	deleteIdentity(iam, storageIdentityName(a.cloudPrefix), map[string]string{roleKeyVaultCryptoEncryption: vaultId})
 	if vaultId == "" {
 		return
@@ -474,8 +510,19 @@ func (a *azureService) deleteVaultAndIdentities(iam *IAM) {
 	}
 }
 
+// deleteProvidedIdentityRoles removes only assignments the agent created, since their names are
+// deterministic, so roles granted to the identity by others are kept.
+func (a *azureService) deleteProvidedIdentityRoles(iam *IAM, roles map[string]string) {
+	provided, err := iam.GetProvidedIdentity(a.managedIdentityId)
+	if err != nil {
+		slog.Warn(common.PrefixWarning(err.Error()))
+		return
+	}
+	deleteRoleAssignments(iam, provided, roles)
+}
+
 // deleteIdentity removes the identity's role assignments first, since assignments of a
-// deleted principal are left behind. roles maps a role to its scope, an empty scope is skipped.
+// deleted principal are left behind.
 func deleteIdentity(iam *IAM, name string, roles map[string]string) {
 	found, err := iam.GetIdentity(name)
 	if err != nil {
@@ -484,19 +531,24 @@ func deleteIdentity(iam *IAM, name string, roles map[string]string) {
 		}
 		return
 	}
-	for role, scope := range roles {
-		if scope == "" {
-			continue
-		}
-		if err = iam.DeleteRoleAssignment(scope, found.PrincipalId, role); err != nil {
-			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete role %s assignment of %s: %s", role, name, err)))
-		}
-	}
+	deleteRoleAssignments(iam, found, roles)
 	if err = iam.DeleteIdentity(name); err != nil {
 		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete managed identity %s: %s", name, err)))
 		return
 	}
 	log.Printf("Deleted managed identity %s\n", name)
+}
+
+// deleteRoleAssignments takes a map of role to scope, an empty scope is skipped.
+func deleteRoleAssignments(iam *IAM, assignee identity, roles map[string]string) {
+	for role, scope := range roles {
+		if scope == "" {
+			continue
+		}
+		if err := iam.DeleteRoleAssignment(scope, assignee.PrincipalId, role); err != nil {
+			slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to delete role %s assignment of %s: %s", role, assignee.Name, err)))
+		}
+	}
 }
 
 func (a *azureService) AddEncryption(_ string, _ map[string]model.TFOutput) error {
