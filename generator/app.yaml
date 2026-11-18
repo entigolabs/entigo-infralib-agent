@@ -17,6 +17,7 @@ spec:
         valueFiles:
           - 'values.yaml'
           - 'values-{{cloudProvider}}.yaml'
+          - 'values-images.yaml'
         values: |
           {{moduleValues}}
   syncPolicy:

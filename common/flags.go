@@ -15,8 +15,9 @@ const (
 	OracleProfileEnv       = "OCI_PROFILE"
 	OracleConfigFileEnv    = "OCI_CONFIG_FILE"
 
-	AzureSubscriptionIdEnv = "AZURE_SUBSCRIPTION_ID"
-	AzureResourceGroupEnv  = "AZURE_RESOURCE_GROUP"
+	AzureSubscriptionIdEnv    = "AZURE_SUBSCRIPTION_ID"
+	AzureResourceGroupEnv     = "AZURE_RESOURCE_GROUP"
+	AzureManagedIdentityIdEnv = "AZURE_MANAGED_IDENTITY_ID"
 )
 
 type Flags struct {
@@ -73,10 +74,13 @@ type Oracle struct {
 // SubscriptionId selects the Azure provider when set. Credentials are resolved by the
 // SDK default chain: environment, managed identity or the Azure CLI login.
 // ResourceGroup is an existing group to use instead of the agent-owned <prefix>-<location>.
+// ManagedIdentityId is the resource id of an existing user-assigned identity jobs run as
+// instead of the agent-owned <prefix>-agent.
 type Azure struct {
-	SubscriptionId string
-	Location       string
-	ResourceGroup  string
+	SubscriptionId    string
+	Location          string
+	ResourceGroup     string
+	ManagedIdentityId string
 }
 
 type ServiceAccount struct {

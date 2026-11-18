@@ -2262,6 +2262,16 @@ func (u *updater) getModuleValues(stepType model.StepType, module model.Module, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %w", err)
 	}
+	// values-images.yaml is the last value file of the generated Application, so it is merged last here too.
+	filePath = fmt.Sprintf("modules/%s/values-images.yaml", moduleSource)
+	imageValues, err := u.getModuleFileMapValues(filePath, source, moduleVersion)
+	if err != nil {
+		return nil, err
+	}
+	values, err = mergeMaps(values, imageValues)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge inputs: %w", err)
+	}
 	values, err = mergeMaps(values, module.ConfigInputs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge inputs: %w", err)

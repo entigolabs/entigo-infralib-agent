@@ -76,6 +76,7 @@ func getProviderFlags() []cli.Flag {
 		&azureSubscriptionIdFlag,
 		&azureLocationFlag,
 		&azureResourceGroupFlag,
+		&azureManagedIdentityIdFlag,
 	}
 }
 
@@ -106,6 +107,16 @@ var azureResourceGroupFlag = cli.StringFlag{
 	Value:       "",
 	Usage:       "existing azure resource group for the agent resources, defaults to <prefix>-<location> which the agent creates",
 	Destination: &flags.Azure.ResourceGroup,
+	Required:    false,
+}
+
+var azureManagedIdentityIdFlag = cli.StringFlag{
+	Name:        "azure-managed-identity-id",
+	Aliases:     []string{"amid"},
+	Sources:     cli.EnvVars(common.AzureManagedIdentityIdEnv),
+	Value:       "",
+	Usage:       "resource id of an existing user-assigned managed identity for the jobs, the agent creates one when empty",
+	Destination: &flags.Azure.ManagedIdentityId,
 	Required:    false,
 }
 
