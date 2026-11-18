@@ -162,6 +162,14 @@ func IsOCIDigest(version string) bool {
 	return strings.HasPrefix(version, "sha256:")
 }
 
+// ImageReference joins an image repository with a tag, or with a digest using "@".
+func ImageReference(repository, version string) string {
+	if IsOCIDigest(version) {
+		return repository + "@" + version
+	}
+	return repository + ":" + version
+}
+
 // NormalizeOCIVersion converts an agent version string to its OCI reference
 // form. Digests pass through untouched; otherwise the leading "v" (kept for git
 // tag parity across the agent) is stripped, since OCI tags carry no "v".

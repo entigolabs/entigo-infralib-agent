@@ -18,11 +18,9 @@ import (
 //go:embed app.yaml
 var appYaml []byte
 
-// ociChartLineRegex matches the git-style source locator line
-// (path: "modules/k8s/{{moduleSource}}") so it can be swapped for an OCI Helm
-// chart reference. It keys on the yet-unreplaced {{moduleSource}} token, which
-// survives the YAML round-trip in mergeAppFiles regardless of quote style.
-var ociChartLineRegex = regexp.MustCompile(`(?m)^(\s*)path:.*\{\{moduleSource\}\}.*$`)
+// moduleInfoLineRegex matches the spec.info placeholder line regardless of the
+// quote style the YAML round-trip in mergeAppFiles produces.
+var moduleInfoLineRegex = regexp.MustCompile(`(?m)^([ \t]*)info:.*\{\{moduleInfo\}\}.*\n?`)
 
 var argoCDPlanRegex = regexp.MustCompile(`ArgoCD Applications: (\d+) has changed objects, (\d+) has RequiredPruning objects`)
 var argoCDNewPlanRegex = regexp.MustCompile(`ArgoCD Applications: (?P<add>\d+) to add, (?P<change>\d+) to change, (?P<destroy>\d+) to destroy`)
@@ -45,8 +43,8 @@ func NewArgoCD(providerType model.ProviderType) ArgoCD {
 }
 
 // release is the version used to fetch the module's argo-apps.yaml from storage;
-// ociVersion is the reference written as targetRevision (a digest in digest mode,
-// else the tag). They differ only for OCI sources in digest mode.
+// ociVersion is the module's OCI reference (a digest in digest mode, else the
+// release). They differ only for OCI sources in digest mode.
 func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, source, release, ociVersion string, values []byte) ([]byte, error) {
 	baseBytes := getBaseApplicationFile()
 	moduleFile, err := getModuleApplicationFile(storage, release, module.Source)
@@ -57,7 +55,7 @@ func (a *ArgoCD) GetApplicationFile(storage model.Storage, module model.Module, 
 	if err != nil {
 		return nil, err
 	}
-	return a.replacePlaceholders(bytes, module, source, ociVersion, values), nil
+	return a.replacePlaceholders(bytes, module, source, release, ociVersion, values), nil
 }
 
 func getBaseApplicationFile() []byte {
@@ -66,7 +64,7 @@ func getBaseApplicationFile() []byte {
 	return contentCopy
 }
 
-func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, version string, values []byte) []byte {
+func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, release, ociVersion string, values []byte) []byte {
 	file := string(bytes)
 	var cloudProvider string
 	switch a.provider {
@@ -79,20 +77,40 @@ func (a *ArgoCD) replacePlaceholders(bytes []byte, module model.Module, source, 
 	default:
 		cloudProvider = "aws"
 	}
-	url := source
+	url, path, version := source, "modules/k8s/"+module.Source, release
 	if util.IsLocalSource(source) {
 		url = "file:///tmp" + source
 	} else if util.IsOCISource(source) {
-		url = util.TrimOCIScheme(source) + "/k8s"
-		version = util.NormalizeOCIVersion(version)
-		file = ociChartLineRegex.ReplaceAllString(file, "${1}chart: '{{moduleSource}}'")
+		url = fmt.Sprintf("oci://%s/k8s/%s", util.TrimOCIScheme(source), module.Source)
+		path = "."
+		version = ociTargetRevision(release, ociVersion)
 	} else if !strings.HasSuffix(url, ".git") && !util.IsAzureDevOps(source) {
 		url += ".git"
 	}
+	file = replaceModuleInfo(file, release, ociVersion)
 	replacer := strings.NewReplacer("{{moduleName}}", module.Name, "{{moduleVersion}}", version,
-		"{{moduleSource}}", module.Source, "{{moduleValues}}", getValuesString(file, []byte(file), values),
+		"{{modulePath}}", path, "{{moduleValues}}", getValuesString(file, []byte(file), values),
 		"{{cloudProvider}}", cloudProvider, "{{moduleSourceURL}}", url)
 	return []byte(replacer.Replace(file))
+}
+
+// ociTargetRevision pins the tag to the module digest (tag@sha256:...) in digest
+// mode, keeping the tag readable in the ArgoCD UI.
+func ociTargetRevision(release, ociVersion string) string {
+	if !util.IsOCIDigest(ociVersion) || util.IsOCIDigest(release) {
+		return util.NormalizeOCIVersion(ociVersion)
+	}
+	return util.NormalizeOCIVersion(release) + "@" + ociVersion
+}
+
+// replaceModuleInfo shows the Infralib version in the ArgoCD UI when the source
+// is pinned to a digest, otherwise drops the info placeholder.
+func replaceModuleInfo(file, release, ociVersion string) string {
+	if !util.IsOCIDigest(ociVersion) {
+		return moduleInfoLineRegex.ReplaceAllString(file, "")
+	}
+	info := fmt.Sprintf("${1}info:\n${1}  - name: 'Infralib:'\n${1}    value: '%s'\n", util.NormalizeOCIVersion(release))
+	return moduleInfoLineRegex.ReplaceAllString(file, info)
 }
 
 func getValuesString(file string, bytes []byte, values []byte) string {
