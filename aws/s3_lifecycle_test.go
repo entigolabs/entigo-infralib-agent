@@ -30,9 +30,8 @@ func TestBucketLifecycleRules(t *testing.T) {
 	if !aws.ToBool(all.Expiration.ExpiredObjectDeleteMarker) || all.Expiration.Days != nil {
 		t.Errorf("every file: want only the leftover delete markers removed, got %+v", all.Expiration)
 	}
-	steps := byID[stepNoncurrentRule]
-	if aws.ToString(steps.Filter.Prefix) != "steps/" || aws.ToInt32(steps.NoncurrentVersionExpiration.NoncurrentDays) != 1 || steps.Expiration != nil {
-		t.Errorf("step files: want noncurrent versions gone after a day and current files untouched, got %+v", steps)
+	if len(rules) != 2 {
+		t.Errorf("want the rule for every file and the one for build logs, got %s", ruleIDs(rules))
 	}
 	logs := byID[buildLogRule]
 	if aws.ToString(logs.Filter.Prefix) != "build-log-" || aws.ToInt32(logs.Expiration.Days) != 365 {
@@ -70,7 +69,7 @@ func TestArtifactKeyPrefixes(t *testing.T) {
 func TestMergeLifecycleRules(t *testing.T) {
 	foreign := types.LifecycleRule{ID: aws.String("someone-elses")}
 	legacy := types.LifecycleRule{ID: aws.String(legacyLifecycleRule)}
-	outdated := types.LifecycleRule{ID: aws.String(lifecycleRulePrefix + "noncurrent-7d")}
+	outdated := types.LifecycleRule{ID: aws.String(lifecycleRulePrefix + "steps-noncurrent-1d")}
 	otherPipeline := artifactLifecycleRules("dev-infra")
 
 	// A bucket of an earlier agent version.
@@ -100,7 +99,7 @@ func TestMergeLifecycleRules(t *testing.T) {
 
 	// A rule of ours whose content has changed since is replaced.
 	replaced, changed := mergeLifecycleRules(append([]types.LifecycleRule{outdated}, bucketLifecycleRules()...), bucketLifecycleRules())
-	if !changed || strings.Contains(ruleIDs(replaced), "noncurrent-7d") {
+	if !changed || strings.Contains(ruleIDs(replaced), "steps-noncurrent-1d") {
 		t.Errorf("outdated rule kept: %s", ruleIDs(replaced))
 	}
 }

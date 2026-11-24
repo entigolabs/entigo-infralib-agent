@@ -1,7 +1,6 @@
 package oracle
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
@@ -19,9 +18,8 @@ func TestBucketLifecycleRules(t *testing.T) {
 	if *all.Action != "DELETE" || *all.Target != "previous-object-versions" || *all.TimeAmount != 30 || all.ObjectNameFilter != nil {
 		t.Errorf("every file: want previous versions deleted after 30 days, got %+v", all)
 	}
-	steps := byName[stepPreviousVersionRule]
-	if *steps.TimeAmount != 1 || steps.ObjectNameFilter == nil || strings.Join(steps.ObjectNameFilter.InclusionPrefixes, ",") != "steps/" {
-		t.Errorf("step files: want previous versions deleted after a day, got %+v", steps)
+	if len(byName) != 2 {
+		t.Errorf("want the rule for previous versions and the one for unfinished uploads, got %d", len(byName))
 	}
 	uploads := byName[incompleteUploadRule]
 	if *uploads.Action != "ABORT" || *uploads.Target != "multipart-uploads" {
@@ -31,10 +29,10 @@ func TestBucketLifecycleRules(t *testing.T) {
 
 func TestMergeLifecycleRules(t *testing.T) {
 	foreign := objectstorage.ObjectLifecycleRule{Name: new("someone-elses")}
-	outdated := objectstorage.ObjectLifecycleRule{Name: new(lifecycleRulePrefix + "previous-versions-7d")}
+	outdated := objectstorage.ObjectLifecycleRule{Name: new(lifecycleRulePrefix + "steps-previous-versions-1d")}
 
 	merged, changed := mergeLifecycleRules([]objectstorage.ObjectLifecycleRule{foreign, outdated}, bucketLifecycleRules())
-	if !changed || len(merged) != 4 || *merged[0].Name != "someone-elses" {
+	if !changed || len(merged) != 3 || *merged[0].Name != "someone-elses" {
 		t.Fatalf("changed=%v rules=%d", changed, len(merged))
 	}
 	for _, rule := range merged {

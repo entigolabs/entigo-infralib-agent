@@ -27,11 +27,9 @@ import (
 // by hand, stays recoverable for its retention. So versions are removed a
 // day after they were written and soft delete keeps them from then on.
 //
-// Soft delete covers the whole account, without exception: the old versions
-// of the step files and of the terraform cache are kept as long as any
-// other, unlike on the other clouds. The plan of a run is one blob per step,
-// replaced by the next run, so its versions are covered too; build logs are
-// in Log Analytics, not in the account.
+// The plan of a run is one blob per step, replaced by the next run, so its
+// versions are covered too; build logs are in Log Analytics, not in the
+// account.
 const (
 	versionRetentionDays = 1
 	// A replaced or deleted blob can be brought back for this long.
