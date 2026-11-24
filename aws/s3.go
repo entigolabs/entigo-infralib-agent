@@ -413,47 +413,192 @@ func (s *S3) putBucketVersioning() error {
 	return err
 }
 
+// Lifecycle of the bucket. Versioning is on, so nothing leaves the bucket
+// unless a rule removes it: a replaced or deleted file stays as a noncurrent
+// version, and a file with a name of its own (a pipeline artifact, a build
+// log) stays as it is.
+const (
+	// A replaced or deleted file can be brought back for this long.
+	noncurrentRetentionDays = 30
+	// CodePipeline writes every artifact, the plan of a run among them, under
+	// a name of its own.
+	artifactRetentionDays = 30
+	buildLogRetentionDays = 365
+
+	// The rules the agent owns. A rule whose content changes gets a new ID:
+	// the IDs are how an existing bucket is found to be behind.
+	lifecycleRulePrefix    = "infralib-"
+	noncurrentRule         = lifecycleRulePrefix + "noncurrent-30d"
+	buildLogRule           = lifecycleRulePrefix + "build-logs-365d"
+	artifactRulePrefix     = lifecycleRulePrefix + "artifacts-30d-"
+	legacyLifecycleRule    = "DeleteOlderVersions"
+	buildLogPrefix         = "build-log-"
+	pipelineNameKeyLimit   = 20 // CodePipeline cuts the pipeline name of an artifact key
+	artifactNameKeyLimit   = 10 // and the artifact name
+	planArtifactName       = "Plan"
+	sourceArtifactName     = "source_output"
+	incompleteUploadDays   = 1
+	lifecycleRuleIDMaxSize = 255
+)
+
+// bucketLifecycleRules are the rules every bucket has. Only two kinds of
+// rule remove a file that is in use, and both are tied to names nothing else
+// has: the build logs here and the artifact folders of a pipeline in
+// artifactLifecycleRules. The state of a step, its outputs and its plan are
+// at <prefix>-<step>/, the agent's own files at the top and under config/ and
+// steps/; for those only old versions are ever removed.
+func bucketLifecycleRules(bucket string) []types.LifecycleRule {
+	rules := []types.LifecycleRule{
+		{
+			ID:     aws.String(noncurrentRule),
+			Status: types.ExpirationStatusEnabled,
+			Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
+			NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{
+				NoncurrentDays: aws.Int32(noncurrentRetentionDays),
+			},
+			// A delete marker with no version left behind it.
+			Expiration: &types.LifecycleExpiration{ExpiredObjectDeleteMarker: aws.Bool(true)},
+			AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{
+				DaysAfterInitiation: aws.Int32(incompleteUploadDays),
+			},
+		},
+	}
+	// The bucket is named <prefix>-<account>-<region> and a step's state is at
+	// <prefix>-<step>/terraform.tfstate: with a prefix that itself begins
+	// with "build-log" the state would be under the build logs' prefix.
+	if !strings.HasPrefix(bucket, strings.TrimSuffix(buildLogPrefix, "-")) {
+		rules = append(rules, expireRule(buildLogRule, buildLogPrefix, buildLogRetentionDays))
+	}
+	return rules
+}
+
+// expireRule removes the files under a prefix after a number of days, and
+// their versions a day later: the retention is the days given, not those plus
+// the retention of noncurrent versions.
+func expireRule(id, prefix string, days int32) types.LifecycleRule {
+	return types.LifecycleRule{
+		ID:         aws.String(id),
+		Status:     types.ExpirationStatusEnabled,
+		Filter:     &types.LifecycleRuleFilter{Prefix: aws.String(prefix)},
+		Expiration: &types.LifecycleExpiration{Days: aws.Int32(days)},
+		NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{
+			NoncurrentDays: aws.Int32(1),
+		},
+	}
+}
+
+// artifactKeyPrefixes are the folders CodePipeline keeps the artifacts of a
+// pipeline in: <pipeline name>/<artifact name>/, both cut short. The state
+// and the outputs of a step live next to them, in <pipeline name>/, which is
+// why the rules name the artifact folders and not the pipeline's.
+func artifactKeyPrefixes(pipelineName string) []string {
+	if len(pipelineName) > pipelineNameKeyLimit {
+		pipelineName = pipelineName[:pipelineNameKeyLimit]
+	}
+	var prefixes []string
+	for _, artifact := range []string{planArtifactName, sourceArtifactName} {
+		if len(artifact) > artifactNameKeyLimit {
+			artifact = artifact[:artifactNameKeyLimit]
+		}
+		prefixes = append(prefixes, fmt.Sprintf("%s/%s/", pipelineName, artifact))
+	}
+	return prefixes
+}
+
+func artifactLifecycleRules(pipelineNames ...string) []types.LifecycleRule {
+	var rules []types.LifecycleRule
+	seen := map[string]bool{}
+	for _, name := range pipelineNames {
+		for _, prefix := range artifactKeyPrefixes(name) {
+			id := artifactRulePrefix + prefix
+			if seen[id] || len(id) > lifecycleRuleIDMaxSize {
+				continue
+			}
+			seen[id] = true
+			rules = append(rules, expireRule(id, prefix, artifactRetentionDays))
+		}
+	}
+	return rules
+}
+
+// mergeLifecycleRules adds the wanted rules to the existing ones. It returns
+// false when the bucket has them all already. Rules the agent does not own
+// are kept, as are the artifact rules of other pipelines; the rule of earlier
+// agent versions is dropped.
+func mergeLifecycleRules(existing, wanted []types.LifecycleRule) ([]types.LifecycleRule, bool) {
+	ids := map[string]bool{}
+	changed := false
+	var merged []types.LifecycleRule
+	for _, rule := range existing {
+		id := aws.ToString(rule.ID)
+		// An agent rule that is not an artifact rule and is not wanted any
+		// more is one whose content has changed since.
+		outdated := strings.HasPrefix(id, lifecycleRulePrefix) && !strings.HasPrefix(id, artifactRulePrefix) && !hasRule(wanted, id)
+		if id == legacyLifecycleRule || outdated {
+			changed = true
+			continue
+		}
+		ids[id] = true
+		merged = append(merged, rule)
+	}
+	for _, rule := range wanted {
+		if ids[aws.ToString(rule.ID)] {
+			continue
+		}
+		changed = true
+		merged = append(merged, rule)
+	}
+	return merged, changed
+}
+
+func hasRule(rules []types.LifecycleRule, id string) bool {
+	for _, rule := range rules {
+		if aws.ToString(rule.ID) == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *S3) checkLifecycle() error {
+	return s.ensureLifecycleRules(bucketLifecycleRules(s.bucket))
+}
+
+// EnsureArtifactExpiration makes the artifacts of the pipelines expire.
+func (s *S3) EnsureArtifactExpiration(pipelineNames ...string) error {
+	return s.ensureLifecycleRules(append(bucketLifecycleRules(s.bucket), artifactLifecycleRules(pipelineNames...)...))
+}
+
+func (s *S3) ensureLifecycleRules(wanted []types.LifecycleRule) error {
+	var existing []types.LifecycleRule
 	resp, err := s.awsS3.GetBucketLifecycleConfiguration(s.ctx, &awsS3.GetBucketLifecycleConfigurationInput{
 		Bucket: aws.String(s.bucket),
 	})
 	if err != nil {
 		var notFound *types.NotFound
 		var apiErr smithy.APIError
-		if errors.As(err, &notFound) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchLifecycleConfiguration") {
-			return s.putBucketLifecycle()
+		if !errors.As(err, &notFound) && !(errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchLifecycleConfiguration") {
+			return err
 		}
-		return err
+	} else {
+		existing = resp.Rules
 	}
-	for _, rule := range resp.Rules {
-		if rule.ID != nil && *rule.ID == "DeleteOlderVersions" {
-			return nil
-		}
+	rules, changed := mergeLifecycleRules(existing, wanted)
+	if !changed {
+		return nil
 	}
-	return s.putBucketLifecycle()
+	_, err = s.awsS3.PutBucketLifecycleConfiguration(s.ctx, &awsS3.PutBucketLifecycleConfigurationInput{
+		Bucket:                 aws.String(s.bucket),
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: rules},
+	})
+	if err == nil {
+		log.Printf("Updated the lifecycle rules of bucket %s\n", s.bucket)
+	}
+	return err
 }
 
 func (s *S3) putBucketLifecycle() error {
-	_, err := s.awsS3.PutBucketLifecycleConfiguration(s.ctx, &awsS3.PutBucketLifecycleConfigurationInput{
-		Bucket: aws.String(s.bucket),
-		LifecycleConfiguration: &types.BucketLifecycleConfiguration{
-			Rules: []types.LifecycleRule{
-				{
-					ID:     aws.String("DeleteOlderVersions"),
-					Status: types.ExpirationStatusEnabled,
-					Filter: &types.LifecycleRuleFilter{},
-					NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{
-						NoncurrentDays:          aws.Int32(1),
-						NewerNoncurrentVersions: aws.Int32(5),
-					},
-				},
-			},
-		},
-	})
-	if err == nil {
-		log.Printf("Enabled lifecycle rule DeleteOlderVersions for bucket %s\n", s.bucket)
-	}
-	return err
+	return s.checkLifecycle()
 }
 
 func (s *S3) newAllowSSLStatement() PolicyStatement {

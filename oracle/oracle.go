@@ -172,15 +172,15 @@ func (o *oracleService) SetupMinimalResources() (model.Resources, error) {
 		return nil, err
 	}
 	// Grant the Object Storage service principal use of the agent's KMS key for the
-	// bucket CMK. The policy is compartment-attached, but a consume run (RP or CI/CD SA)
+	// bucket CMK, and management of the bucket's objects for its lifecycle policy. The policy is compartment-attached, but a consume run (RP or CI/CD SA)
 	// holds no policy-management grant and gets NotAuthorizedOrNotFound — the policy
 	// already exists, so warn and continue (admin-vs-consume split, like
 	// reconcileAgentServiceAccount). Other errors are real and propagate.
-	if err = iam.EnsureObjectStorageKeyAccess(o.cloudPrefix, o.region, kms.KeyId()); err != nil {
+	if err = iam.EnsureObjectStorageAccess(o.cloudPrefix, o.region, kms.KeyId(), getBucketName(o.cloudPrefix, o.region)); err != nil {
 		if !isNotAuthorized(err) {
-			return nil, fmt.Errorf("failed to grant Object Storage access to the kms key: %w", err)
+			return nil, fmt.Errorf("failed to grant Object Storage access to the kms key and the bucket: %w", err)
 		}
-		log.Printf("Skipping Object Storage KMS access policy reconcile (no IAM permissions — expected on a "+
+		log.Printf("Skipping Object Storage access policy reconcile (no IAM permissions — expected on a "+
 			"non-admin run); using the existing bucket and policy (%s)\n", errSummary(err))
 	}
 	resources, storage, err := o.bucketResources()
@@ -286,7 +286,7 @@ func (o *oracleService) setupDevOpsBuild(logs *Logging) (*DevOpsBuilder, error) 
 	if err = build.Ensure(); err != nil {
 		return nil, err
 	}
-	// Like EnsureObjectStorageKeyAccess, a consume run without policy management gets
+	// Like EnsureObjectStorageAccess, a consume run without policy management gets
 	// NotAuthorizedOrNotFound and warns rather than failing.
 	if err = iam.EnsureDevOpsBuildAccess(o.cloudPrefix); err != nil {
 		if !isNotAuthorized(err) {
