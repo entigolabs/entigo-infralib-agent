@@ -441,9 +441,14 @@ const (
 	lifecycleRuleIDMaxSize = 255
 )
 
-// bucketLifecycleRules are the rules every bucket has.
-func bucketLifecycleRules() []types.LifecycleRule {
-	return []types.LifecycleRule{
+// bucketLifecycleRules are the rules every bucket has. Only two kinds of
+// rule remove a file that is in use, and both are tied to names nothing else
+// has: the build logs here and the artifact folders of a pipeline in
+// artifactLifecycleRules. The state of a step, its outputs and its plan are
+// at <prefix>-<step>/, the agent's own files at the top and under config/ and
+// steps/; for those only old versions are ever removed.
+func bucketLifecycleRules(bucket string) []types.LifecycleRule {
+	rules := []types.LifecycleRule{
 		{
 			ID:     aws.String(noncurrentRule),
 			Status: types.ExpirationStatusEnabled,
@@ -457,8 +462,14 @@ func bucketLifecycleRules() []types.LifecycleRule {
 				DaysAfterInitiation: aws.Int32(incompleteUploadDays),
 			},
 		},
-		expireRule(buildLogRule, buildLogPrefix, buildLogRetentionDays),
 	}
+	// The bucket is named <prefix>-<account>-<region> and a step's state is at
+	// <prefix>-<step>/terraform.tfstate: with a prefix that itself begins
+	// with "build-log" the state would be under the build logs' prefix.
+	if !strings.HasPrefix(bucket, strings.TrimSuffix(buildLogPrefix, "-")) {
+		rules = append(rules, expireRule(buildLogRule, buildLogPrefix, buildLogRetentionDays))
+	}
+	return rules
 }
 
 // expireRule removes the files under a prefix after a number of days, and
@@ -550,12 +561,12 @@ func hasRule(rules []types.LifecycleRule, id string) bool {
 }
 
 func (s *S3) checkLifecycle() error {
-	return s.ensureLifecycleRules(bucketLifecycleRules())
+	return s.ensureLifecycleRules(bucketLifecycleRules(s.bucket))
 }
 
 // EnsureArtifactExpiration makes the artifacts of the pipelines expire.
 func (s *S3) EnsureArtifactExpiration(pipelineNames ...string) error {
-	return s.ensureLifecycleRules(append(bucketLifecycleRules(), artifactLifecycleRules(pipelineNames...)...))
+	return s.ensureLifecycleRules(append(bucketLifecycleRules(s.bucket), artifactLifecycleRules(pipelineNames...)...))
 }
 
 func (s *S3) ensureLifecycleRules(wanted []types.LifecycleRule) error {
