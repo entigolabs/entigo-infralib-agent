@@ -18,10 +18,26 @@ import (
 	"github.com/entigolabs/entigo-infralib-agent/util"
 )
 
+// Lifecycle of the account's blobs. Versioning is on, so a replaced blob stays
+// as a previous version until the lifecycle policy removes it. That policy
+// counts a version's age from when it was written, not from when it was
+// replaced, so on its own it cannot promise a time to bring a file back in:
+// a state file that was current for two months would lose that version the
+// day it is replaced. Soft delete can: whatever is deleted, by the policy or
+// by hand, stays recoverable for its retention. So versions are removed a
+// day after they were written and soft delete keeps them from then on.
+//
+// Soft delete covers the whole account, without exception: the old versions
+// of the step files and of the terraform cache are kept as long as any
+// other, unlike on the other clouds. The plan of a run is one blob per step,
+// replaced by the next run, so its versions are covered too; build logs are
+// in Log Analytics, not in the account.
 const (
-	versionRetentionDays    = 14
-	softDeleteRetentionDays = 7
-	keyAccessTimeout        = 5 * time.Minute
+	versionRetentionDays = 1
+	// A replaced or deleted blob can be brought back for this long.
+	softDeleteRetentionDays          = 30
+	containerSoftDeleteRetentionDays = 7
+	keyAccessTimeout                 = 5 * time.Minute
 )
 
 // Storage is a single blob container in the agent's storage account. Shared key
@@ -226,7 +242,7 @@ func (s *Storage) ensureBlobServices() error {
 			},
 			ContainerDeleteRetentionPolicy: &armstorage.DeleteRetentionPolicy{
 				Enabled: new(true),
-				Days:    new(int32(softDeleteRetentionDays)),
+				Days:    new(int32(containerSoftDeleteRetentionDays)),
 			},
 		},
 	}, nil)

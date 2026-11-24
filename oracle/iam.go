@@ -438,14 +438,25 @@ func devOpsBuildStatements(compartmentId string) []string {
 	}
 }
 
-// EnsureObjectStorageKeyAccess lets the Object Storage service principal use the agent's
-// KMS key to encrypt the bucket with a customer-managed key. The service name is
-// region-qualified (objectstorage-<region>), scoped to the single key by target.key.id.
-func (i *IAM) EnsureObjectStorageKeyAccess(cloudPrefix, region, keyId string) error {
-	statement := fmt.Sprintf("Allow service objectstorage-%s to use keys in compartment id %s where target.key.id = '%s'",
-		region, i.compartmentId, keyId)
-	_, err := i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access", []string{statement})
+// EnsureObjectStorageAccess grants the Object Storage service principal what it needs on
+// the agent's behalf: use of the agent's KMS key, to encrypt the bucket with a
+// customer-managed key, and management of the bucket's objects, without which the service
+// refuses a lifecycle policy (it is the service that deletes the expired versions). The
+// service name is region-qualified (objectstorage-<region>); the grants are scoped to the
+// single key by target.key.id and to the single bucket by target.bucket.name.
+func (i *IAM) EnsureObjectStorageAccess(cloudPrefix, region, keyId, bucketName string) error {
+	_, err := i.ensurePolicy(fmt.Sprintf("%s-infralib-kms", cloudPrefix), "Entigo infralib Object Storage KMS access",
+		objectStorageServiceStatements(region, i.compartmentId, keyId, bucketName))
 	return err
+}
+
+func objectStorageServiceStatements(region, compartmentId, keyId, bucketName string) []string {
+	return []string{
+		fmt.Sprintf("Allow service objectstorage-%s to use keys in compartment id %s where target.key.id = '%s'",
+			region, compartmentId, keyId),
+		fmt.Sprintf("Allow service objectstorage-%s to manage object-family in compartment id %s where target.bucket.name = '%s'",
+			region, compartmentId, bucketName),
+	}
 }
 
 // agentGrant names the principal the agent's own access policy grants: the EXECUTING user by

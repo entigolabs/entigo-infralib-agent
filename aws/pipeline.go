@@ -106,13 +106,33 @@ func (p *Pipeline) CreatePipeline(projectName string, stepName string, step mode
 	if err != nil {
 		return nil, err
 	}
+	destroyName := fmt.Sprintf("%s-destroy", projectName)
+	expireArtifacts(bucket, projectName, destroyName)
 	execution, err := p.CreateApplyPipeline(projectName, projectName, stepName, step, metadata.Name, authSources)
 	if err != nil {
 		return nil, err
 	}
-	err = p.CreateDestroyPipeline(fmt.Sprintf("%s-destroy", projectName), projectName, stepName, step,
-		metadata.Name, authSources)
+	err = p.CreateDestroyPipeline(destroyName, projectName, stepName, step, metadata.Name, authSources)
 	return execution, err
+}
+
+// artifactExpirer is the bucket of the pipelines' artifact store.
+type artifactExpirer interface {
+	EnsureArtifactExpiration(pipelineNames ...string) error
+}
+
+// expireArtifacts gives the artifacts of the pipelines a lifetime. Without it
+// they pile up in the bucket; with a failure here they still do, which is no
+// reason to fail the run.
+func expireArtifacts(bucket model.Bucket, pipelineNames ...string) {
+	expirer, ok := bucket.(artifactExpirer)
+	if !ok {
+		return
+	}
+	if err := expirer.EnsureArtifactExpiration(pipelineNames...); err != nil {
+		slog.Warn(common.PrefixWarning(fmt.Sprintf("Failed to set the lifecycle of the artifacts of %s: %v",
+			strings.Join(pipelineNames, ", "), err)))
+	}
 }
 
 func (p *Pipeline) DeletePipeline(projectName string) error {
@@ -411,6 +431,7 @@ func (p *Pipeline) disableDestroyTransitions(pipelineName string) error {
 
 func (p *Pipeline) CreateAgentPipelines(prefix string, projectName string, bucket string, run bool) error {
 	updatePipeline := fmt.Sprintf("%s-%s", projectName, common.UpdateCommand)
+	expireArtifacts(p.bucket, updatePipeline, fmt.Sprintf("%s-%s", projectName, common.RunCommand))
 	pipe, err := p.getPipeline(updatePipeline)
 	if err != nil {
 		return err
